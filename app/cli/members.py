@@ -90,13 +90,19 @@ logger = logging.getLogger(__name__)
 members_cli = AppGroup("members", help="Member registry operations.")
 
 
+class _RowError(ValueError):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+
 @members_cli.command("import")
 @click.argument("csv_path", type=click.Path(exists=True, dir_okay=False))
 @click.option("--dry-run", is_flag=True, help="Print the full import plan without writing.")
 @click.option(
     "--counts-only",
     is_flag=True,
-    help="Run the real import in a transaction that is rolled back; print only counts, no names (#117).",
+    help="Roll back the real import and print counts, error locations and herd warnings without personal data.",
 )
 def import_cmd(csv_path: str, dry_run: bool, counts_only: bool) -> None:
     """Import memberships from a MATR2026 CSV file."""
@@ -108,8 +114,10 @@ def import_cmd(csv_path: str, dry_run: bool, counts_only: bool) -> None:
         # address layout we cannot read). Abort here — before _group_rows and
         # before the counter is raised — so a rejected file leaves nothing
         # behind, not even a moved member-number high-water mark.
-        for line in [f"{len(file_errors)} file error(s)"] if counts_only else file_errors:
-            click.echo(f"Error: {line}", err=True)
+        if counts_only:
+            click.echo(f"Error: {len(file_errors)} file error(s)", err=True)
+        for detail, diagnostic in file_errors:
+            click.echo(f"Error: {diagnostic if counts_only else detail}", err=True)
         raise click.ClickException("filen avvisades — inga rader importerade")
     if counts_only:
         # nested atomic() blocks become savepoints: persons, links and the counter all roll back
@@ -118,6 +126,8 @@ def import_cmd(csv_path: str, dry_run: bool, counts_only: bool) -> None:
             outer.rollback()
         for line in _count_lines(report):
             click.echo(line)
+        for warning in report["herd_warnings"]:
+            click.echo(f"  warning: {warning.partition(' to membership ')[0]}", err=True)
         click.echo("(counts-only — rolled back, nothing written)")
     else:
         report = _import(rows, errors, dry_run)
@@ -125,14 +135,14 @@ def import_cmd(csv_path: str, dry_run: bool, counts_only: bool) -> None:
 
     # Non-zero exit code when any rows errored — lets CI detect bad imports.
     if report["errors"]:
+        for line in report["error_codes"] if counts_only else report["errors"]:
+            click.echo(f"Error: {line}", err=True)
         if counts_only:
             raise click.ClickException(f"{len(report['errors'])} row(s) failed to import")
-        for line in report["errors"]:
-            click.echo(f"Error: {line}", err=True)
         raise click.ClickException(f"{len(report['errors'])} row(s) failed to import — see stderr for details")
 
 
-def _import(rows: list[dict], errors: list[str], dry_run: bool) -> dict:
+def _import(rows: list[dict], errors: list[tuple[str, str]], dry_run: bool) -> dict:
     """Write the groups (unless dry_run) and return the report."""
     groups, friexemplar_groups = _group_rows(rows)
 
@@ -150,7 +160,8 @@ def _import(rows: list[dict], errors: list[str], dry_run: bool) -> dict:
         "postal_review": [],  # (label, raw Postadress) — legacy value that did not parse
         "herd_links": 0,
         "contact_cases": Counter(),  # (row, case) -> herds linked, from link_herd
-        "errors": errors,
+        "errors": [detail for detail, _ in errors],
+        "error_codes": [diagnostic for _, diagnostic in errors],  # only location and code for --counts-only
     }
     for row in rows:
         report["name_splits"].append((row["name"], row["first_name"], row["last_name"]))
@@ -175,12 +186,14 @@ def _import(rows: list[dict], errors: list[str], dry_run: bool) -> dict:
             _import_membership_group(nr, group, dry_run, report)
         except Exception as e:  # pylint: disable=broad-exception-caught
             report["errors"].append(f"Nr {nr}: {e}")
+            report["error_codes"].append(f"Nr {nr}: {type(e).__name__}")
 
-    for name_key, group in friexemplar_groups.items():
+    for index, (name_key, group) in enumerate(friexemplar_groups.items(), start=1):
         try:
             _import_friexemplar_group(name_key, group, dry_run, report)
         except Exception as e:  # pylint: disable=broad-exception-caught
             report["errors"].append(f"friexemplar {name_key!r}: {e}")
+            report["error_codes"].append(f"friexemplar {index}: {type(e).__name__}")
     return report
 
 
@@ -224,10 +237,25 @@ def _detect_layout(normalized: list[str]) -> str:
     )
 
 
-def _read_rows(csv_path: str) -> tuple[list[dict], list[str], list[str]]:
+class _BadEncoding(ValueError):
+    def __init__(self, line_num: int):
+        super().__init__(f"line {line_num}")
+        self.line_num = line_num
+
+
+def _decoded_lines(f):
+    for line_num, raw in enumerate(f, 1):
+        try:
+            yield raw.decode("utf-8-sig" if line_num == 1 else "utf-8")
+        except UnicodeDecodeError as e:
+            raise _BadEncoding(line_num) from e
+
+
+def _read_rows(csv_path: str) -> tuple[list[dict], list[tuple[str, str]], list[tuple[str, str]]]:
     """Parse the CSV into normalized row dicts.
 
-    Returns (rows, row_errors, file_errors). file_errors (no header row,
+    Returns (rows, row_errors, file_errors). Each error pairs the original
+    detail with a diagnostic safe for --counts-only. file_errors (no header row,
     duplicate columns, an address layout that is neither the legacy
     'Postadress' nor the split 'Postnummer'+'Postort') mean NOTHING may be
     written — the caller aborts before touching the counter.
@@ -238,19 +266,34 @@ def _read_rows(csv_path: str) -> tuple[list[dict], list[str], list[str]]:
     without a name still errors — that is corruption, not filler.
     """
     rows, errors, file_errors = [], [], []
-    with open(csv_path, encoding="utf-8-sig", newline="") as f:
-        reader = csv.reader(f)
+    with open(csv_path, "rb") as f:
+        # Decoded one physical line at a time, so a bad byte is reported on its own line (a text reader buffers
+        # ahead). shortcut: a file with bare CR line ends reads as one line and fails as ogiltig-csv.
+        reader = csv.reader(_decoded_lines(f))
         fieldnames = None
         layout = None
-        for cells in reader:
+        while True:
+            start_line = reader.line_num + 1
+            try:
+                cells = next(reader, None)
+            except _BadEncoding as e:  # the message carries the byte: only the detail keeps it
+                file_errors.append((f"rad {e.line_num}: {e.__cause__}", f"row {e.line_num}: ogiltig-teckenkodning"))
+                return [], [], file_errors
+            except csv.Error as e:  # the raw message can carry text from the file
+                file_errors.append((f"rad {start_line}: {e}", f"row {start_line}: ogiltig-csv"))
+                return [], [], file_errors
+            if cells is None:
+                break
             if fieldnames is None:
                 normalized = [_normalize_header(c) for c in cells]
                 if {"nr", "namn_efternamn"} <= set(normalized):
-                    file_errors.extend(_duplicate_headers(cells))
+                    file_errors.extend(
+                        (detail, f"row {start_line}: dubblettkolumn") for detail in _duplicate_headers(cells)
+                    )
                     try:
                         layout = _detect_layout(normalized)
                     except ValueError as e:
-                        file_errors.append(str(e))
+                        file_errors.append((str(e), f"row {start_line}: ogiltig-adresslayout"))
                     if file_errors:
                         return [], [], file_errors
                     fieldnames = normalized
@@ -263,9 +306,12 @@ def _read_rows(csv_path: str) -> tuple[list[dict], list[str], list[str]]:
             try:
                 rows.append(_parse_row(raw, layout))
             except ValueError as e:
-                errors.append(f"row {reader.line_num}: {e}")
+                code = e.code if isinstance(e, _RowError) else "ogiltig-rad"
+                errors.append((f"row {reader.line_num}: {e}", f"row {start_line}: {code}"))
     if fieldnames is None:
-        file_errors.append("hittade ingen rubrikrad (med kolumnerna 'Nr' och 'Namn Efternamn') i filen")
+        file_errors.append(
+            ("hittade ingen rubrikrad (med kolumnerna 'Nr' och 'Namn Efternamn') i filen", "rubrikrad-saknas")
+        )
     return rows, errors, file_errors
 
 
@@ -280,23 +326,23 @@ def _parse_row(raw: dict[str, str], layout: str) -> dict:
 
     name = " ".join(row.get("namn_efternamn", "").split())
     if not name:
-        raise ValueError("kolumnen 'Namn Efternamn' saknas eller är tom")
+        raise _RowError("namn-saknas", "kolumnen 'Namn Efternamn' saknas eller är tom")
 
     nr_raw = row.get("nr", "")
     if nr_raw == "":
-        raise ValueError("kolumnen 'Nr' saknas eller är tom")
+        raise _RowError("nr-saknas", "kolumnen 'Nr' saknas eller är tom")
     try:
         nr = int(nr_raw)
     except ValueError as exc:
-        raise ValueError(f"ogiltigt Nr: {nr_raw!r}") from exc
-    if nr < 0:
-        raise ValueError(f"ogiltigt Nr: {nr_raw!r}")
+        raise _RowError("ogiltigt-nr", f"ogiltigt Nr: {nr_raw!r}") from exc
+    if not 0 <= nr <= 999_999:  # member numbers have four digits; a huge one would exhaust the 32-bit counter
+        raise _RowError("ogiltigt-nr", f"ogiltigt Nr: {nr_raw!r}")
 
     if layout == SPLIT_LAYOUT:
         try:
             postal_code = normalize_postal_code(row.get("postnummer") or None)
         except ValueError as exc:
-            raise ValueError(f"ogiltigt postnummer: {row.get('postnummer')!r}") from exc
+            raise _RowError("ogiltigt-postnummer", f"ogiltigt postnummer: {row.get('postnummer')!r}") from exc
         city = row.get("postort") or None
         postal_raw, needs_review = None, False
     else:
@@ -305,7 +351,7 @@ def _parse_row(raw: dict[str, str], layout: str) -> dict:
         needs_review = city is not None and postal_code is None
     if city is not None and len(city) > 100:
         # After BOTH branches — a non-parsing legacy Postadress lands whole in city.
-        raise ValueError("Postort får vara högst 100 tecken")
+        raise _RowError("postort-for-lang", "Postort får vara högst 100 tecken")
 
     first_name, last_name = _split_name(name, treat_as_org=(nr == 0))
     return {
@@ -825,7 +871,7 @@ def _print_report(report: dict, dry_run: bool) -> None:
 
 
 def _count_lines(report: dict) -> list[str]:
-    """The report's counts, without names, addresses or herd codes: all that --counts-only prints."""
+    """Summary counts shared by all import modes."""
     return [
         f"Memberships created: {report['memberships_created']}, "
         f"Persons created: {report['persons_created']}, "
