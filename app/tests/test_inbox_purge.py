@@ -335,12 +335,12 @@ class TestDeletedItems(PurgeTest):
         gone = self.make(state="klar", closed_at=limit - MINUTE, kind="meddelande", documents=0)
         open_one = self.make(limit - MINUTE, state="tagen", kind="meddelande", documents=0)
         with_document = self.make(state="klar", closed_at=limit - MINUTE, kind="meddelande")
-        attachments_skipped = self.make(state="klar", closed_at=limit - MINUTE, kind="mail", documents=0)
+        mail_with_document = self.make(state="klar", closed_at=limit - MINUTE, kind="mail")
 
         self.assertEqual(purge.purge_messages(NOW), 1)
 
         self.assertDeleted(gone, [])
-        for item in (kept, open_one, with_document, attachments_skipped):
+        for item in (kept, open_one, with_document, mail_with_document):
             self.assertIsNotNone(db.InboxItem.get_or_none(db.InboxItem.id == item.id))
         self.assertIdempotent(purge.purge_messages)
 

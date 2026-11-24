@@ -343,7 +343,8 @@ till avsändaren väntar, och senast 30 dagar efter stängningen.
 | `original_raderat` | `{"document": 31}`; originalet raderades på begäran (`…/radera-original`) |
 | `kopia_borttagen` | `{"document": 31}`; den maskade kopian togs bort (`…/kopia`) |
 
-När postens text gallras försvinner `text`, `note` och `not_saved` ur `detail`; händelsen står kvar.
+När postens text gallras försvinner `text`, `subject`, `note`, `not_saved` och `not_saved_reasons`
+ur `detail`. Händelsen står kvar.
 
 ## Ladda upp
 
@@ -1131,9 +1132,9 @@ text på en gammal post) och när posten senast markerades `ofullstandig`.
 | Originalet till ett intyg eller bevis (`doc_type` `intyg`, `bevis`) | `INLASNING_ORIGINAL_MANADER` månader (standard 12) efter postens gallringsstart (se nedan), i alla lägen |
 | Originalet till ett dokument med `purge_after` satt, av vilken typ som helst | när tidpunkten har passerat, också före månaderna. Årsrapporten sätter den på en årsblankett när blanketten matas in, eftersom fotot visar bankkonto och underskrift. Tolkningen och förslaget går med originalet |
 | Bevisets original | också när kaninen sålts vidare: en senare `TRANSFER` från köparens besättning som inte är makulerad. Försäljningens rad i besättningshistoriken står kvar |
-| Postens text: `message` och `text`, `note` och `not_saved` i händelserna | samtidigt som originalen, för en post som har dokument. Händelserna står kvar med typ, tid och person |
+| Postens `message` samt `text`, `subject`, `note`, `not_saved` och `not_saved_reasons` i händelserna | samtidigt som originalen, för en post som har dokument. Händelserna står kvar med typ, tid och person |
 | Händelsen `oppnad` | 13 månader efter händelsen |
-| Ett stängt meddelande (`kind: "meddelande"`) utan dokument | 13 månader efter stängningen |
+| En stängd post av typen `meddelande` eller `mail` utan dokument, även när mejlet bara hade en länkad bild eller avvisade bilagor | 13 månader efter stängningen |
 | En post i läget `skrap` | 30 dagar efter stängningen |
 | En post i läget `ofullstandig` | 12 månader efter postens gallringsstart; mejl när den markeras och efter 11 månader (se [Mejl](#mejl)) |
 | `sender_address` på en stängd post | när inget mejl till avsändaren väntar, senast 30 dagar efter stängningen, också när Gmail-läsningen är avstängd |

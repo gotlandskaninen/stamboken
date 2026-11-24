@@ -266,10 +266,10 @@ def purge_junk(now):
 
 
 def purge_messages(now):
-    """A closed message ("meddelande") without documents 13 months after it closed."""
+    """A closed mail or message without documents 13 months after it closed."""
     no_documents = InboxItem.id.not_in(InboxDocument.select(InboxDocument.item))
     closed = InboxItem.state.in_(inbox.CLOSED_STATES) & (InboxItem.closed_at < now - inbox.months(MESSAGE_MONTHS))
-    return _delete_items((InboxItem.kind == "meddelande") & closed & no_documents)
+    return _delete_items(InboxItem.kind.in_(("meddelande", "mail")) & closed & no_documents)
 
 
 def purge_opened(now):

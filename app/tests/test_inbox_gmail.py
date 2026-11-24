@@ -558,6 +558,27 @@ class TestItemsFromMail(GmailTest):
         self.assertEqual(skipped["name"], "Länkad bild")
         self.assertIn("extern länk", skipped["reason"])
 
+    def test_closed_mail_with_only_a_linked_image_or_a_refused_attachment_is_purged(self):
+        linked = message()
+        linked.add_alternative('<img src="https://example.org/pixel.png">', subtype="html")
+        self.fake.deliver(linked)
+        self.fake.deliver(message(files=[("bilaga.txt", "text/plain", b"test")]))
+        self.read()
+        items = self.items()
+        self.assertCountEqual(
+            [item.events.get().detail["not_saved"] for item in items], [["Länkad bild"], ["bilaga.txt"]]
+        )
+        closed_at = inbox.now()
+        for item in items:
+            self.assertEqual((item.kind, item.documents.count()), ("mail", 0))
+            item.state, item.closed_at = "klar", closed_at
+            item.save()
+        limit = closed_at + inbox.months(13)
+        self.assertEqual(purge.purge_messages(limit), 0)
+        self.assertEqual(purge.purge_messages(limit + timedelta(seconds=1)), 2)
+        self.assertEqual(self.items(), [])
+        self.assertFalse(db.InboxEvent.select().exists())
+
     def test_a_link_resolved_by_a_related_image_is_saved(self):
         url = "https://example.org/intyg.png"
         msg = message()
