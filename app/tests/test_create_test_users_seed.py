@@ -16,6 +16,7 @@ from unittest import mock
 import utils.data_access as da  # noqa: E402
 import utils.database as db  # noqa: E402
 from cli.create_test_users import create_test_users  # noqa: E402
+from utils.herd_contact import herd_contact  # noqa: E402
 
 from tests.database_test import DatabaseTest  # noqa: E402
 from tests.ht_helpers import ht_row  # noqa: E402
@@ -101,3 +102,21 @@ class TestCreateTestUsersSeed(DatabaseTest):
         self.assertEqual(family.membership_id, own.membership_id)
         self.assertEqual(family.role, "familjemedlem")
         self.assertEqual(family.user.email, "test-family@test.local")
+
+    def test_seed_gives_pending_mobile_and_derived_email(self):
+        """#117: the seeded herd is linked with link_herd once both persons exist. Its name is the main member's, so
+        she is the contact; its empty e-mail is fetched from her; its own mobile differs from hers and waits."""
+        with redirect_stdout(io.StringIO()):
+            create_test_users()
+
+        main = db.Member.get(db.Member.email == "test-member@test.local")
+        herd = db.Herd.get_by_id(self.herds[0].id)
+        self.assertEqual((herd.membership_id, herd.contact_member_id), (main.membership_id, main.id))
+        self.assertEqual(herd.contact_pending, ["mobile_phone"])
+        rows = herd_contact(herd).rows
+        self.assertEqual((rows["name"].value, rows["name"].source), ("Playwright TestMember", "person"))
+        self.assertEqual((rows["email"].value, rows["email"].source), ("test-member@test.local", "person"))
+        self.assertEqual(rows["mobile_phone"].source, "egen")
+        self.assertEqual(rows["mobile_phone"].alternative, main.phone)
+        family = db.Member.get(db.Member.email == "test-family@test.local")
+        self.assertEqual(family.membership_id, main.membership_id)

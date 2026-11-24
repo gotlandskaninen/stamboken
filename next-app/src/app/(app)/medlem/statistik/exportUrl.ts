@@ -25,3 +25,14 @@ export function koharenExportUrl(
   const base = mode === "demo" && apiTestUrl ? apiTestUrl : "/api";
   return `${base}/v2/members/koharen-export`;
 }
+
+// The printer's mailing list for Koharen. Same demo/prod routing rule;
+// feeReminder fills the "Betala nu" column (the year's first two issues).
+export function addressListUrl(
+  mode: Mode,
+  apiTestUrl: string | undefined,
+  feeReminder: boolean,
+): string {
+  const base = mode === "demo" && apiTestUrl ? apiTestUrl : "/api";
+  return `${base}/v2/members/address-list${feeReminder ? "?fee_reminder=1" : ""}`;
+}

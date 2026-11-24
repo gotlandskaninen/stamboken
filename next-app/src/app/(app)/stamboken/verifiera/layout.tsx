@@ -2,6 +2,7 @@ import { ReactNode } from "react";
 import Image from "next/image";
 import { Source_Serif_4, IBM_Plex_Sans, IBM_Plex_Mono } from "next/font/google";
 import "./verifiera.css";
+import { TyckTillTab } from "@/components/tyck-till/TyckTillDialog.client";
 
 const sourceSerif = Source_Serif_4({
   subsets: ["latin"],
@@ -49,6 +50,7 @@ export default function VerifieraLayout({ children }: { children: ReactNode }) {
         </div>
       </header>
       {children}
+      <TyckTillTab />
     </div>
   );
 }

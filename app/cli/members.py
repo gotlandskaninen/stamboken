@@ -2,8 +2,10 @@
 Flask CLI for member registry operations.
 
 Usage:
-    flask members import <csv_path> [--dry-run]
+    flask members import <csv_path> [--dry-run | --counts-only]
+    flask members billing-proposals --out <file> | --apply <file> --actor-user-id <id>
     flask members link-by-herd [--apply --actor-user-id <id> --plan <value>]
+    flask members link-same-number [--apply --actor-user-id <id> --plan <value>]
 
 `import` expects the MATR2026 paper-matrikel layout (headers matched
 case-insensitively after normalization):
@@ -32,7 +34,7 @@ Rules (Member Model v2 design spec):
 - G/M flags link herd G<Nr>/M<Nr> to the membership; a missing herd only
   logs a warning (the membership is still created).
 - Merge policy: (1) member_number match means already imported, skip;
-  (2) main-person name + contact email against active number-less
+  (2) recipient or main-person name + contact email against active number-less
   memberships means the CSV row adopts that membership and sets its number.
 - Both merge paths re-read the membership FOR UPDATE inside the group's
   transaction and UPDATE only the importer-owned fields they changed:
@@ -49,59 +51,109 @@ Rules (Member Model v2 design spec):
 - gdpr_consented_at is NEVER fabricated: MATR2026 has no consent column,
   so imported persons always have NULL.
 - Import never sets Member.user and never calls the auto-link helper.
-- A main member's address becomes a login address (reserve_login_address): when
+- Except for friexemplar, a main member's address becomes a login address: when
   another person holds it, the whole group fails and is listed as an error.
 
 `link-by-herd` links existing accounts to member rows through herd
-ownership: the only account with role `owner` on herd G<Nr>/M<Nr> whose name
-equals the name of membership Nr's main member is linked (mode "cli"). Other
+ownership: the sole owner of herd G<Nr>/M<Nr> can match membership Nr's
+main member by name, e-mail address or e-mail local part (mode "cli"). Other
 cases are listed for the register manager. Plan only unless --apply.
 """
 
 import csv
 import hashlib
+import json
 import logging
 import re
 import unicodedata
+from collections import Counter
 
 import click
 from flask.cli import AppGroup
-from peewee import IntegrityError, fn
-from utils.database import DB_PROXY, Genebank, Herd, Member, Membership, User
+from peewee import DatabaseError, IntegrityError, fn
+from utils.database import BILLING_FIELDS, DB_PROXY, Genebank, Herd, Member, Membership, User
+from utils.herd_contact import link_herd
 from utils.login_code import reserve_login_address
 from utils.matrikel import (
     ANONYMIZED_FIRST_NAME,
     ANONYMIZED_LAST_NAME,
     ConfirmRequired,
     LinkError,
+    legacy_owner_index,
     link_access_delta,
     link_member_user,
     new_membership,
     normalize_postal_code,
+    parse_billing_fields,
     raise_counter_to,
     split_postal_address,
+    write_matrikel_audit,
 )
+from utils.members import WORKSPACE_DOMAIN
 from utils.membership_lifecycle import Status
+
+from cli.billing_notes import parse_billing_note
+from cli.proposal_file import proposal_cell, read_decisions, write_proposals
 
 logger = logging.getLogger(__name__)
 
 members_cli = AppGroup("members", help="Member registry operations.")
 
 
+class _RowError(ValueError):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+
 @members_cli.command("import")
 @click.argument("csv_path", type=click.Path(exists=True, dir_okay=False))
 @click.option("--dry-run", is_flag=True, help="Print the full import plan without writing.")
-def import_cmd(csv_path: str, dry_run: bool) -> None:
+@click.option(
+    "--counts-only",
+    is_flag=True,
+    help="Roll back the real import and print counts, error locations and herd warnings without personal data.",
+)
+def import_cmd(csv_path: str, dry_run: bool, counts_only: bool) -> None:
     """Import memberships from a MATR2026 CSV file."""
+    if dry_run and counts_only:
+        raise click.UsageError("--dry-run och --counts-only går inte att kombinera")
     rows, errors, file_errors = _read_rows(csv_path)
     if file_errors:
         # The whole file is unusable (no header row, duplicate columns, an
         # address layout we cannot read). Abort here — before _group_rows and
         # before the counter is raised — so a rejected file leaves nothing
         # behind, not even a moved member-number high-water mark.
-        for line in file_errors:
-            click.echo(f"Error: {line}", err=True)
+        if counts_only:
+            click.echo(f"Error: {len(file_errors)} file error(s)", err=True)
+        for detail, diagnostic in file_errors:
+            click.echo(f"Error: {diagnostic if counts_only else detail}", err=True)
         raise click.ClickException("filen avvisades — inga rader importerade")
+    if counts_only:
+        # nested atomic() blocks become savepoints: persons, links and the counter all roll back
+        with DB_PROXY.atomic() as outer:
+            report = _import(rows, errors, dry_run=False)
+            outer.rollback()
+        for line in _count_lines(report):
+            click.echo(line)
+        for warning in report["herd_warnings"]:
+            click.echo(f"  warning: {warning.partition(' to membership ')[0]}", err=True)
+        click.echo("(counts-only — rolled back, nothing written)")
+    else:
+        report = _import(rows, errors, dry_run)
+        _print_report(report, dry_run)
+
+    # Non-zero exit code when any rows errored — lets CI detect bad imports.
+    if report["errors"]:
+        for line in report["error_codes"] if counts_only else report["errors"]:
+            click.echo(f"Error: {line}", err=True)
+        if counts_only:
+            raise click.ClickException(f"{len(report['errors'])} row(s) failed to import")
+        raise click.ClickException(f"{len(report['errors'])} row(s) failed to import — see stderr for details")
+
+
+def _import(rows: list[dict], errors: list[tuple[str, str]], dry_run: bool) -> dict:
+    """Write the groups (unless dry_run) and return the report."""
     groups, friexemplar_groups = _group_rows(rows)
 
     report = {
@@ -117,7 +169,9 @@ def import_cmd(csv_path: str, dry_run: bool) -> None:
         "name_splits": [],  # (raw, first, last)
         "postal_review": [],  # (label, raw Postadress) — legacy value that did not parse
         "herd_links": 0,
-        "errors": errors,
+        "contact_cases": Counter(),  # (row, case) -> herds linked, from link_herd
+        "errors": [detail for detail, _ in errors],
+        "error_codes": [diagnostic for _, diagnostic in errors],  # only location and code for --counts-only
     }
     for row in rows:
         report["name_splits"].append((row["name"], row["first_name"], row["last_name"]))
@@ -142,20 +196,15 @@ def import_cmd(csv_path: str, dry_run: bool) -> None:
             _import_membership_group(nr, group, dry_run, report)
         except Exception as e:  # pylint: disable=broad-exception-caught
             report["errors"].append(f"Nr {nr}: {e}")
+            report["error_codes"].append(f"Nr {nr}: {type(e).__name__}")
 
-    for name_key, group in friexemplar_groups.items():
+    for index, (name_key, group) in enumerate(friexemplar_groups.items(), start=1):
         try:
             _import_friexemplar_group(name_key, group, dry_run, report)
         except Exception as e:  # pylint: disable=broad-exception-caught
             report["errors"].append(f"friexemplar {name_key!r}: {e}")
-
-    _print_report(report, dry_run)
-
-    # Non-zero exit code when any rows errored — lets CI detect bad imports.
-    if report["errors"]:
-        for line in report["errors"]:
-            click.echo(f"Error: {line}", err=True)
-        raise click.ClickException(f"{len(report['errors'])} row(s) failed to import — see stderr for details")
+            report["error_codes"].append(f"friexemplar {index}: {type(e).__name__}")
+    return report
 
 
 LEGACY_LAYOUT = "legacy"  # single "Postadress" column (paper matrikel)
@@ -198,10 +247,25 @@ def _detect_layout(normalized: list[str]) -> str:
     )
 
 
-def _read_rows(csv_path: str) -> tuple[list[dict], list[str], list[str]]:
+class _BadEncoding(ValueError):
+    def __init__(self, line_num: int):
+        super().__init__(f"line {line_num}")
+        self.line_num = line_num
+
+
+def _decoded_lines(f):
+    for line_num, raw in enumerate(f, 1):
+        try:
+            yield raw.decode("utf-8-sig" if line_num == 1 else "utf-8")
+        except UnicodeDecodeError as e:
+            raise _BadEncoding(line_num) from e
+
+
+def _read_rows(csv_path: str) -> tuple[list[dict], list[tuple[str, str]], list[tuple[str, str]]]:
     """Parse the CSV into normalized row dicts.
 
-    Returns (rows, row_errors, file_errors). file_errors (no header row,
+    Returns (rows, row_errors, file_errors). Each error pairs the original
+    detail with a diagnostic safe for --counts-only. file_errors (no header row,
     duplicate columns, an address layout that is neither the legacy
     'Postadress' nor the split 'Postnummer'+'Postort') mean NOTHING may be
     written — the caller aborts before touching the counter.
@@ -212,19 +276,34 @@ def _read_rows(csv_path: str) -> tuple[list[dict], list[str], list[str]]:
     without a name still errors — that is corruption, not filler.
     """
     rows, errors, file_errors = [], [], []
-    with open(csv_path, encoding="utf-8-sig", newline="") as f:
-        reader = csv.reader(f)
+    with open(csv_path, "rb") as f:
+        # Decoded one physical line at a time, so a bad byte is reported on its own line (a text reader buffers
+        # ahead). shortcut: a file with bare CR line ends reads as one line and fails as ogiltig-csv.
+        reader = csv.reader(_decoded_lines(f))
         fieldnames = None
         layout = None
-        for cells in reader:
+        while True:
+            start_line = reader.line_num + 1
+            try:
+                cells = next(reader, None)
+            except _BadEncoding as e:  # the message carries the byte: only the detail keeps it
+                file_errors.append((f"rad {e.line_num}: {e.__cause__}", f"row {e.line_num}: ogiltig-teckenkodning"))
+                return [], [], file_errors
+            except csv.Error as e:  # the raw message can carry text from the file
+                file_errors.append((f"rad {start_line}: {e}", f"row {start_line}: ogiltig-csv"))
+                return [], [], file_errors
+            if cells is None:
+                break
             if fieldnames is None:
                 normalized = [_normalize_header(c) for c in cells]
                 if {"nr", "namn_efternamn"} <= set(normalized):
-                    file_errors.extend(_duplicate_headers(cells))
+                    file_errors.extend(
+                        (detail, f"row {start_line}: dubblettkolumn") for detail in _duplicate_headers(cells)
+                    )
                     try:
                         layout = _detect_layout(normalized)
                     except ValueError as e:
-                        file_errors.append(str(e))
+                        file_errors.append((str(e), f"row {start_line}: ogiltig-adresslayout"))
                     if file_errors:
                         return [], [], file_errors
                     fieldnames = normalized
@@ -237,9 +316,12 @@ def _read_rows(csv_path: str) -> tuple[list[dict], list[str], list[str]]:
             try:
                 rows.append(_parse_row(raw, layout))
             except ValueError as e:
-                errors.append(f"row {reader.line_num}: {e}")
+                code = e.code if isinstance(e, _RowError) else "ogiltig-rad"
+                errors.append((f"row {reader.line_num}: {e}", f"row {start_line}: {code}"))
     if fieldnames is None:
-        file_errors.append("hittade ingen rubrikrad (med kolumnerna 'Nr' och 'Namn Efternamn') i filen")
+        file_errors.append(
+            ("hittade ingen rubrikrad (med kolumnerna 'Nr' och 'Namn Efternamn') i filen", "rubrikrad-saknas")
+        )
     return rows, errors, file_errors
 
 
@@ -254,23 +336,23 @@ def _parse_row(raw: dict[str, str], layout: str) -> dict:
 
     name = " ".join(row.get("namn_efternamn", "").split())
     if not name:
-        raise ValueError("kolumnen 'Namn Efternamn' saknas eller är tom")
+        raise _RowError("namn-saknas", "kolumnen 'Namn Efternamn' saknas eller är tom")
 
     nr_raw = row.get("nr", "")
     if nr_raw == "":
-        raise ValueError("kolumnen 'Nr' saknas eller är tom")
+        raise _RowError("nr-saknas", "kolumnen 'Nr' saknas eller är tom")
     try:
         nr = int(nr_raw)
     except ValueError as exc:
-        raise ValueError(f"ogiltigt Nr: {nr_raw!r}") from exc
-    if nr < 0:
-        raise ValueError(f"ogiltigt Nr: {nr_raw!r}")
+        raise _RowError("ogiltigt-nr", f"ogiltigt Nr: {nr_raw!r}") from exc
+    if not 0 <= nr <= 999_999:  # member numbers have four digits; a huge one would exhaust the 32-bit counter
+        raise _RowError("ogiltigt-nr", f"ogiltigt Nr: {nr_raw!r}")
 
     if layout == SPLIT_LAYOUT:
         try:
             postal_code = normalize_postal_code(row.get("postnummer") or None)
         except ValueError as exc:
-            raise ValueError(f"ogiltigt postnummer: {row.get('postnummer')!r}") from exc
+            raise _RowError("ogiltigt-postnummer", f"ogiltigt postnummer: {row.get('postnummer')!r}") from exc
         city = row.get("postort") or None
         postal_raw, needs_review = None, False
     else:
@@ -279,7 +361,7 @@ def _parse_row(raw: dict[str, str], layout: str) -> dict:
         needs_review = city is not None and postal_code is None
     if city is not None and len(city) > 100:
         # After BOTH branches — a non-parsing legacy Postadress lands whole in city.
-        raise ValueError("Postort får vara högst 100 tecken")
+        raise _RowError("postort-for-lang", "Postort får vara högst 100 tecken")
 
     first_name, last_name = _split_name(name, treat_as_org=(nr == 0))
     return {
@@ -335,7 +417,7 @@ def _first_value(group: list[dict], key: str):
 
 
 def _find_adoptable_membership(main: dict):
-    """Merge rule 2: main-person name + contact email against active number-less memberships."""
+    """Merge rule 2: recipient name + main contact email on an active numberless membership."""
     if not main["email"]:
         return None
     candidates = (
@@ -350,14 +432,24 @@ def _find_adoptable_membership(main: dict):
         )
     )
     for person in candidates:
-        if _main_person_matches(person, main):
+        if _main_person_matches(person, person.membership, main["name"].lower()):
             return person.membership
     return None
 
 
-def _main_person_matches(person, main: dict) -> bool:
-    existing_name = " ".join(f"{person.first_name} {person.last_name}".split()).lower()
-    return existing_name == main["name"].lower()
+def _name_key(name: str) -> str:
+    return " ".join(name.split()).lower()
+
+
+def _main_person_matches(person: Member, membership: Membership, name_key: str) -> bool:
+    """Accept a current MATR recipient name or the personal name in older files."""
+    if (
+        person.role == "huvudmedlem"
+        and membership.organization_name
+        and _name_key(membership.organization_name) == name_key
+    ):
+        return True
+    return _name_key(f"{person.first_name} {person.last_name}") == name_key
 
 
 def _still_adoptable(row: Membership, main: dict) -> bool:
@@ -379,7 +471,7 @@ def _still_adoptable(row: Membership, main: dict) -> bool:
         Member.end_date.is_null(True),
         fn.LOWER(Member.email) == main["email"],
     )
-    return any(_main_person_matches(person, main) for person in mains)
+    return any(_main_person_matches(person, row, main["name"].lower()) for person in mains)
 
 
 def _manual_review_reason(membership) -> str | None:
@@ -486,7 +578,7 @@ def _import_membership_group(nr: int, group: list[dict], dry_run: bool, report: 
                 for key, value in fields.items():
                     if value is not None and getattr(membership, key) != value:
                         changed[key] = value
-                _save_importer_fields(membership, changed)
+                _save_membership_fields(membership, changed)
         else:
             report["memberships_created"] += 1
             report["persons_created"] += 1
@@ -513,8 +605,8 @@ def _locked_membership_by_number(nr: int) -> Membership | None:
     return Membership.select().where(Membership.member_number == nr).for_update().get_or_none()
 
 
-def _save_importer_fields(membership, changed: dict) -> None:
-    """UPDATE only the columns the importer owns AND actually changed.
+def _save_membership_fields(membership, changed: dict) -> None:
+    """UPDATE only the membership columns the caller changed.
 
     The row lock serialises the write, but a full-row save would still push
     every attribute the instance carries — including membership_status and
@@ -535,12 +627,15 @@ def _fill_empty_fields(membership, fields: dict) -> None:
     """Reconciliation: set only membership fields that are currently NULL/empty
     from the CSV — never overwrite a non-empty stored value."""
     changed = {key: value for key, value in fields.items() if value is not None and not getattr(membership, key)}
-    _save_importer_fields(membership, changed)
+    _save_membership_fields(membership, changed)
 
 
 def _ensure_main_person(membership, main: dict) -> None:
     """Reconciliation: create the huvudmedlem if a prior interrupted run left
     the membership without one; a matching active huvudmedlem is left as is."""
+    if membership.organization_name:
+        # The recipient is the organization. It cannot restore a missing contact.
+        return
     has_main = (
         Member.select()
         .where(
@@ -555,8 +650,7 @@ def _ensure_main_person(membership, main: dict) -> None:
 
 
 def _create_main(membership, row: dict) -> None:
-    """The main member from a CSV row. Her address becomes a login address: AddressTaken (the group's error, nothing
-    of the group written) when another person holds it."""
+    """Create the main person. A friexemplar keeps its e-mail for contact only."""
     person = Member.create(
         membership=membership,
         role="huvudmedlem",
@@ -565,7 +659,8 @@ def _create_main(membership, row: dict) -> None:
         email=row["email"],
         phone=row["phone"],
     )
-    reserve_login_address(person.email, person.id)
+    if membership.membership_status != Status.FRIEXEMPLAR:
+        reserve_login_address(person.email, person.id)
 
 
 def _add_family_members(membership, rows: list[dict], dry_run: bool, report: dict) -> None:
@@ -574,20 +669,17 @@ def _add_family_members(membership, rows: list[dict], dry_run: bool, report: dic
     membership is None on the dry-run new-membership path — nothing to
     dedupe against, every row counts as a would-be person.
     """
+    names = set()
+    if membership is not None and rows:
+        people = Member.select(Member.first_name, Member.last_name).where(
+            Member.membership == membership, Member.end_date.is_null(True)
+        )
+        names = {_name_key(f"{p.first_name} {p.last_name}") for p in people}
     for row in rows:
-        if membership is not None:
-            exists = (
-                Member.select()
-                .where(
-                    Member.membership == membership,
-                    Member.end_date.is_null(True),
-                    fn.LOWER(Member.first_name) == row["first_name"].lower(),
-                    fn.LOWER(Member.last_name) == row["last_name"].lower(),
-                )
-                .exists()
-            )
-            if exists:
-                continue
+        # A MATR name cell cannot distinguish compound surnames from given names.
+        name = _name_key(row["name"])
+        if name in names:
+            continue
         report["persons_created"] += 1
         if not dry_run and membership is not None:
             Member.create(
@@ -598,27 +690,48 @@ def _add_family_members(membership, rows: list[dict], dry_run: bool, report: dic
                 email=row["email"],
                 phone=row["phone"],
             )
+            names.add(name)
+
+
+def _flag_genebank_ids(prefix: str) -> list[int]:
+    return [gb.id for gb in Genebank.select(Genebank.id, Genebank.name) if gb.name[:1].upper() == prefix]
 
 
 def _link_flag_herds(nr: int, group: list[dict], membership, dry_run: bool, report: dict) -> None:
-    """G/M flags link herd G<Nr>/M<Nr>. A missing herd is a warning, never a row skip."""
+    """G/M flags link herd G<Nr>/M<Nr> with link_herd, which compares the herd's contact with the register (#117).
+    A missing or ambiguous herd is a warning, never a row skip."""
     for key, prefix in (("g", "G"), ("m", "M")):
         if not any(row[key] for row in group):
             continue
+        if membership is not None and membership.organization_name:
+            # The exported flag says only that the organization has a herd
+            # with this prefix. Its herd need not share its member number.
+            if Herd.select().where(Herd.membership == membership, fn.SUBSTR(Herd.herd, 1, 1) == prefix).exists():
+                continue
         code = f"{prefix}{nr}"
-        herd = Herd.get_or_none(Herd.herd == code)
-        if herd is None:
-            report["herd_warnings"].append(f"herd {code} not found — flag ignored")
+        genebanks = _flag_genebank_ids(prefix)
+        matches = (
+            list(Herd.select().where(Herd.herd == code, Herd.genebank.in_(genebanks))) if len(genebanks) == 1 else []
+        )
+        if len(matches) != 1:  # the flag's genebank must be one, and the herd in it one
+            reason = "not found" if len(genebanks) == 1 else f"flag {prefix} names {len(genebanks)} genebanks"
+            report["herd_warnings"].append(f"herd {code} {reason} — flag ignored")
             continue
+        herd = matches[0]
         if herd.membership_id is not None:
             if membership is not None and herd.membership_id == membership.id:
                 continue  # already linked (re-import)
             report["herd_warnings"].append(f"herd {code} already linked to membership {herd.membership_id}")
             continue
+        if dry_run or membership is None:
+            report["herd_links"] += 1
+            continue
+        cases = link_herd(herd.id, membership.id, herd_code=code, genebank_id=herd.genebank_id)
+        if cases is None:  # linked, renumbered or moved since the lookup
+            report["herd_warnings"].append(f"herd {code} changed or linked meanwhile — not linked")
+            continue
         report["herd_links"] += 1
-        if not dry_run and membership is not None:
-            herd.membership = membership
-            herd.save()
+        report["contact_cases"].update(cases.items())
 
 
 _FRIEXEMPLAR_COMPARE_KEYS = (
@@ -657,25 +770,35 @@ def _import_friexemplar_group(name_key: str, group: list[dict], dry_run: bool, r
     # Idempotent re-import: a friexemplar contact with this name exists. A retired
     # friexemplar (status inactive, no number) or an ended contact counts as
     # present too, but is reported for review instead of being created again.
-    existing = (
-        Member.select(Member, Membership)
-        .join(Membership)
-        .where(
-            (Membership.membership_status == "friexemplar")
-            | ((Membership.membership_status == "inactive") & Membership.member_number.is_null(True))
-        )
+    candidates = (Membership.membership_status == Status.FRIEXEMPLAR) | (
+        (Membership.membership_status == Status.INACTIVE) & Membership.member_number.is_null()
     )
-    matches = [
-        person for person in existing if " ".join(f"{person.first_name} {person.last_name}".split()).lower() == name_key
-    ]
+    label = f"friexemplar {group[0]['name']}"
+    # An organization can receive the magazine without a person row, even in the last export before retirement.
+    organizations = Membership.select(Membership.id, Membership.organization_name, Membership.membership_status).where(
+        candidates, Membership.organization_name.is_null(False)
+    )
+    organization_match = False
+    for ms in organizations:
+        if _name_key(ms.organization_name) == name_key:
+            if ms.membership_status == Status.INACTIVE:
+                report["review"].append((label, ms.id, "inaktivt medlemskap"))
+                return
+            organization_match = True
+
+    existing = Member.select(Member, Membership).join(Membership).where(candidates)
+    matches = [person for person in existing if _main_person_matches(person, person.membership, name_key)]
     if matches:
         if any(p.end_date is None and p.membership.membership_status == "friexemplar" for p in matches):
             report["matched_existing"] += 1
         else:
-            report["review"].append((f"friexemplar {group[0]['name']}", matches[0].membership_id, "avslutad kontakt"))
+            report["review"].append((label, matches[0].membership_id, "avslutad kontakt"))
+        return
+    if organization_match:
+        report["matched_existing"] += 1
         return
     if _erased_friexemplar_exists():
-        report["review"].append((f"friexemplar {group[0]['name']}", None, "en raderad kontakt kan inte uteslutas"))
+        report["review"].append((label, None, "en raderad kontakt kan inte uteslutas"))
         return
 
     # First row verbatim — no cross-row field mixing.
@@ -781,7 +904,15 @@ def _print_report(report: dict, dry_run: bool) -> None:
         for membership_id, name in leftovers:
             click.echo(f"  membership {membership_id}: {name}")
 
-    click.echo(
+    for line in _count_lines(report):
+        click.echo(line)
+    if dry_run:
+        click.echo("(dry-run — no writes performed)")
+
+
+def _count_lines(report: dict) -> list[str]:
+    """Summary counts shared by all import modes."""
+    return [
         f"Memberships created: {report['memberships_created']}, "
         f"Persons created: {report['persons_created']}, "
         f"Friexemplar created: {report['friexemplar_created']}, "
@@ -789,26 +920,220 @@ def _print_report(report: dict, dry_run: bool) -> None:
         f"Matched existing (skipped): {report['matched_existing']}, "
         f"Manual review: {len(report['review'])}, "
         f"Herd links: {report['herd_links']}, "
-        f"Errors: {len(report['errors'])}"
-    )
-    if dry_run:
-        click.echo("(dry-run — no writes performed)")
+        f"Errors: {len(report['errors'])}",
+        f"Herd warnings: {len(report['herd_warnings'])}",
+        *(f"Contact {field} {case}: {n}" for (field, case), n in sorted(report["contact_cases"].items())),
+    ]
 
 
-@members_cli.command("link-by-herd")
-@click.option("--apply", "apply_links", is_flag=True, help="Write the links (default prints the plan only).")
-@click.option(
+BILLING_PROPOSAL_HEADER = (
+    "membership_id",
+    "member_number",
+    *(f"current_{field}" for field in BILLING_FIELDS),
+    *(f"proposed_{field}" for field in BILLING_FIELDS),
+    "anteckning",
+    "beslut",
+    *(f"exporterat_{field}" for field in BILLING_FIELDS),
+    "underlag",
+)
+
+
+def _require_matrikel_actor(actor_user_id: int | str | None) -> User:
+    if actor_user_id is None:
+        raise click.UsageError("--apply kräver --actor-user-id <id> (auditloggens aktör)")
+    try:
+        actor_user_id = int(actor_user_id)
+    except ValueError:
+        raise click.UsageError("--actor-user-id måste vara ett heltal") from None
+    actor = User.get_or_none(User.id == actor_user_id)
+    if actor is None or not actor.is_active or not (actor.is_admin or actor.is_matrikel_admin):
+        raise click.UsageError("--actor-user-id måste vara ett aktivt konto med rollen admin eller matrikel_admin")
+    return actor
+
+
+def _validated_billing(values: dict) -> dict:
+    from blueprints.common import EMAIL_RE  # Load blueprints after CLI registration.
+
+    fields = parse_billing_fields(values)
+    if fields.get("billing_email") and not EMAIL_RE.fullmatch(fields["billing_email"]):
+        raise ValueError("Ogiltig e-post för faktura")
+    if any("\0" in value for value in fields.values() if value):
+        raise ValueError("Ogiltigt textfält")
+    return fields
+
+
+def _billing_source(ms: Membership) -> dict:
+    return {
+        "membership_id": ms.id,
+        "member_number": ms.member_number,
+        "anteckning": ms.notes,
+        **{f"current_{key}": getattr(ms, key) for key in BILLING_FIELDS},
+    }
+
+
+def _billing_proof(source: dict, exported: dict) -> str:
+    return hashlib.sha256(json.dumps([source, exported], sort_keys=True).encode()).hexdigest()
+
+
+def _memberships_with_current_persons():
+    return _active_main_members().select(Member.membership)
+
+
+def _export_billing_proposals(path: str) -> None:
+    rows = []
+    with_notes = 0
+    query = Membership.select().where(Membership.notes != "", Membership.id.in_(_memberships_with_current_persons()))
+    for ms in query.order_by(Membership.id).iterator():
+        if not ms.notes.strip():
+            continue
+        with_notes += 1
+        # The full note must fit in a CSV field when the reviewed file is read back.
+        if len(ms.notes) > 100_000:
+            continue
+        proposal = parse_billing_note(ms.notes)
+        if proposal is None:
+            continue
+        fields, _ = proposal
+        try:
+            fields = _validated_billing(fields)
+        except ValueError:
+            continue
+        if all(value == getattr(ms, key) for key, value in fields.items()):
+            continue
+        source = _billing_source(ms)
+        exported = {key: fields.get(key, getattr(ms, key)) for key in BILLING_FIELDS}
+        rows.append(
+            {
+                **source,
+                **{f"proposed_{k}": v for k, v in exported.items()},
+                **{f"exporterat_{k}": v for k, v in exported.items()},
+                "underlag": _billing_proof(source, {k: proposal_cell(v) for k, v in exported.items()}),
+            }
+        )
+
+    try:
+        write_proposals(path, BILLING_PROPOSAL_HEADER, rows)
+    except FileExistsError:
+        raise click.ClickException("Förslagsfilen finns redan") from None
+    except OSError:
+        raise click.ClickException("Förslagsfilen kunde inte skapas") from None
+    click.echo(f"Med anteckning: {with_notes}, med förslag: {len(rows)}, utan förslag: {with_notes - len(rows)}")
+
+
+def _apply_billing_row(row: dict, actor: User) -> str:
+    if row["beslut"] == "hoppa över":
+        return "hoppa över (beslut)"
+    try:
+        membership_id = int(row["membership_id"])
+    except ValueError:
+        return "ogiltiga värden"
+    with DB_PROXY.atomic():
+        try:
+            ms = _locked_membership(membership_id)
+        except Membership.DoesNotExist:
+            return "underlaget har ändrats"
+        source = _billing_source(ms)
+        exported = {key: row[f"exporterat_{key}"] for key in BILLING_FIELDS}
+        if (
+            _billing_proof(source, exported) != row["underlag"]
+            or any(row[k] != proposal_cell(v) for k, v in source.items())
+            or not _memberships_with_current_persons().where(Member.membership == ms).exists()
+        ):
+            return "underlaget har ändrats"
+        proposed = {key: row[f"proposed_{key}"] for key in BILLING_FIELDS}
+        if row["beslut"] == "godkänn" and proposed != exported:
+            return "ändrad rad utan beslutet ändra"
+        try:
+            desired = _validated_billing(proposed)
+        except ValueError:
+            return "ogiltiga värden"
+        changed = {key: v for key, v in desired.items() if v != getattr(ms, key)}
+        if not changed:
+            return "oförändrade"
+        before = {key: getattr(ms, key) for key in changed}
+        _save_membership_fields(ms, changed)
+        write_matrikel_audit(actor, "membership_updated", ms, {"before": before, "after": changed})
+    return "Skrivna"
+
+
+@members_cli.command("billing-proposals")
+@click.option("--out", metavar="FIL", help="Skapa en ny förslagsfil för granskning.")
+@click.option("--apply", "apply_file", metavar="FIL", help="Verkställ godkända och ändrade rader i förslagsfilen.")
+@click.option("--actor-user-id", metavar="ID", help="Aktiv admin eller matrikel_admin (krävs med --apply).")
+def billing_proposals_cmd(out: str | None, apply_file: str | None, actor_user_id: str | None) -> None:
+    """Föreslå fakturaadresser ur anteckningarna eller verkställ en granskad fil.
+
+    Ange godkänn, ändra eller hoppa över i kolumnen beslut. Tomt beslut hoppar
+    över raden. Välj ändra om du rättar något i kolumnerna proposed_*.
+    """
+    if (out is None) == (apply_file is None):
+        raise click.UsageError("Ange antingen --out FIL eller --apply FIL")
+    counts = {
+        "Skrivna": 0,
+        "hoppa över (beslut)": 0,
+        "underlaget har ändrats": 0,
+        "ändrad rad utan beslutet ändra": 0,
+        "ogiltiga värden": 0,
+        "oförändrade": 0,
+    }
+    try:
+        if out is not None:
+            _export_billing_proposals(out)
+            return
+        actor = _require_matrikel_actor(actor_user_id)
+        try:
+            rows = read_decisions(apply_file, BILLING_PROPOSAL_HEADER, raw_cells=True)
+        except (OSError, UnicodeError, csv.Error):
+            raise click.ClickException("Förslagsfilen kunde inte läsas") from None
+        except ValueError as err:
+            raise click.ClickException(str(err)) from None
+        for row in rows:
+            counts[_apply_billing_row(row, actor)] += 1
+    except DatabaseError:
+        # PostgreSQL diagnostics can include the row or the rejected value.
+        if apply_file is not None:
+            click.echo(f"Skrivna: {counts['Skrivna']}", err=True)
+        raise click.ClickException("Databasfel vid hantering av fakturaförslag") from None
+    click.echo(", ".join(f"{reason}: {count}" for reason, count in counts.items()))
+
+
+_apply_option = click.option(
+    "--apply", "apply_links", is_flag=True, help="Write the links (default prints the plan only)."
+)
+_actor_option = click.option(
     "--actor-user-id",
     type=int,
     default=None,
     help="Admin/matrikel_admin user recorded as audit actor (required with --apply).",
 )
-@click.option("--plan", "plan_value", default=None, help="Kontrollvärde från planen du läst (required with --apply).")
+_plan_option = click.option("--plan", "plan_value", help="Kontrollvärde från planen du läst (required with --apply).")
+_PLAN_CHANGED = "planen har ändrats sedan du läste den — läs den nya planen ovan och kör om med dess värde"
+
+
+def _link_actor(apply_links, actor_user_id, plan_value):
+    if not apply_links:
+        return None
+    if actor_user_id is None:
+        raise click.UsageError("--apply kräver --actor-user-id <id> (auditloggens aktör)")
+    if plan_value is None:
+        raise click.UsageError("--apply kräver --plan <kontrollvärde> från planen du har läst")
+    return _require_matrikel_actor(actor_user_id)
+
+
+def _plan_checksum(lines) -> str:
+    return hashlib.sha256("\n".join(sorted(lines)).encode()).hexdigest()[:16]
+
+
+@members_cli.command("link-by-herd")
+@_apply_option
+@_actor_option
+@_plan_option
 def link_by_herd_cmd(apply_links: bool, actor_user_id: int | None, plan_value: str | None) -> None:
     """Link accounts to the main member of the membership whose herd they own.
 
-    The only account with role `owner` on herd G<Nr>/M<Nr> (tied to membership Nr) whose name equals the
-    name of membership Nr's main member is proposed as that member's account.
+    The sole owner of herd G<Nr>/M<Nr> (tied to membership Nr) is proposed if
+    the main member's name matches, or if either account e-mail matches the
+    member's address in full or by a non-generic local part of at least five characters.
     NEITHER THE NAME NOR THE ACCOUNT'S E-MAIL IS PROOF: the account holder can
     edit both, and so can a genebank manager, who can also hand out `owner`.
     The Google address was verified at the Google sign-in that stored it; a
@@ -820,27 +1145,14 @@ def link_by_herd_cmd(apply_links: bool, actor_user_id: int | None, plan_value: s
     before the first write and prints the new plan. Everything else is listed
     for the register manager. Each link commits on its own (mode "cli").
     """
-    actor = None
-    if apply_links:
-        if actor_user_id is None:
-            raise click.UsageError("--apply kräver --actor-user-id <id> (auditloggens aktör)")
-        if plan_value is None:
-            raise click.UsageError("--apply kräver --plan <kontrollvärde> från planen du har läst")
-        actor = User.get_or_none(User.id == actor_user_id)
-        if actor is None or not actor.is_active or not (actor.is_admin or actor.is_matrikel_admin):
-            raise click.UsageError(
-                f"--actor-user-id {actor_user_id}: måste vara ett aktivt konto med rollen admin eller matrikel_admin"
-            )
-
+    actor = _link_actor(apply_links, actor_user_id, plan_value)
     to_link, listed, already = _plan_herd_links()
     lines = {id(pair): _pair_line(*pair) for pair in to_link}
-    value = hashlib.sha256("\n".join(sorted(lines.values())).encode()).hexdigest()[:16]
+    value = _plan_checksum(lines.values())
     if apply_links and plan_value != value:
         _echo_plan("Att koppla", [lines[id(p)] for p in to_link], listed, already)
         click.echo(f"Kontrollvärde: {value}")
-        raise click.ClickException(
-            "planen har ändrats sedan du läste den — läs den nya planen ovan och kör om med dess värde"
-        )
+        raise click.ClickException(_PLAN_CHANGED)
 
     linked = []
     for pair in to_link:
@@ -858,8 +1170,8 @@ def link_by_herd_cmd(apply_links: bool, actor_user_id: int | None, plan_value: s
         click.echo("(endast plan — läs paren ovan, inget skrevs; kör om med --apply --plan <kontrollvärde>)")
 
 
-def _pair_line(main, user, codes) -> str:
-    return f"{'/'.join(codes)}: {_pair_detail(main, user)}"
+def _pair_line(main, user, codes, reason) -> str:
+    return f"{'/'.join(codes)}: {_pair_detail(main, user)} | skäl: {reason}"
 
 
 def _echo_plan(heading: str, pair_lines: list[str], listed: list, already: int) -> None:
@@ -875,6 +1187,47 @@ def _echo_plan(heading: str, pair_lines: list[str], listed: list, already: int) 
 def _norm_name(name: str | None) -> str:
     # NFC: "Å" typed as one character and as A with a combining ring are the same name.
     return " ".join(unicodedata.normalize("NFC", name or "").split()).casefold()
+
+
+_GENERIC_LOCAL_PARTS = frozenset(
+    """
+    admin administrator bibliotek biblioteket bokning contact e-post ekonomi epost expedition expeditionen
+    faktura fakturor foreningen föreningen garden gården hej hello info info- kaniner kansli kansliet kassan
+    kassor kassör klubben kontakt kontakta kontakten kontoret mail medlem medlemmar museet museum no-reply
+    noreply office order ordforande ordförande post posten postmaster reception receptionen sekretariat
+    sekretariatet sekreterare styrelse styrelsen support webmaster
+    gotlandskanin gotlandskaninen mellerudskanin mellerudskaninen
+    """.split()
+)
+
+
+def _norm_email(address: str | None) -> str:
+    address = (address or "").strip().lower()
+    return address if re.fullmatch(r"[^@\s]+@[^@\s]+", address) else ""
+
+
+def _match_reason(person: Member, user: User) -> str | None:
+    name = _norm_name(user.fullname)
+    if name and name == _norm_name(f"{person.first_name} {person.last_name}"):
+        return "namn lika"
+    # the association's own address for the person, which Google sign-in also links by
+    workspace = _norm_email(person.workspace_email)
+    if workspace.endswith(WORKSPACE_DOMAIN) and workspace == _norm_email(user.google_email):
+        return "Workspace-adress lika (Google)"
+
+    address = _norm_email(person.email)
+    if not address:
+        return None
+    account_addresses = (("Google", _norm_email(user.google_email)), ("kontots e-post", _norm_email(user.email)))
+    for source, email in account_addresses:
+        if email == address:
+            return f"e-post lika ({source})"
+    local = address.partition("@")[0]
+    if len(local) >= 5 and local not in _GENERIC_LOCAL_PARTS:
+        for source, email in account_addresses:
+            if email.partition("@")[0] == local:
+                return f"lokaldel lika ({source})"
+    return None
 
 
 def _q(text) -> str:
@@ -903,30 +1256,9 @@ def _pair_detail(main, user) -> str:
     )
 
 
-def _owner_index() -> tuple[dict[int, dict[int, User]], set[int]]:
-    """Herd id -> {user id: user} with role owner, and the users with an incomplete owner role."""
-    owners: dict[int, dict[int, User]] = {}
-    incomplete: set[int] = set()
-    for user in User.select().order_by(User.id):
-        for role in user.privileges:
-            if not isinstance(role, dict) or "level" not in role:
-                incomplete.add(user.id)  # link_access_delta reads role["level"]
-                continue
-            if role["level"] != "owner":
-                continue
-            herd_id = role.get("herd")
-            if isinstance(herd_id, str) and re.fullmatch(r"[0-9]+", herd_id):
-                herd_id = int(herd_id)  # older rows may store the id as a string
-            if isinstance(herd_id, bool) or not isinstance(herd_id, int):
-                incomplete.add(user.id)
-                continue
-            owners.setdefault(herd_id, {})[user.id] = user
-    return owners, incomplete
-
-
 def _plan_herd_links() -> tuple[list, list, int]:
-    """Decide every link first: returns (to_link [(main, user, codes)], listed [(codes, reason)], already)."""
-    owners, incomplete = _owner_index()
+    """Decide every link first: returns (to_link [(main, user, codes, reason)], listed [(codes, reason)], already)."""
+    owners, incomplete = legacy_owner_index()
     memberships = {m.member_number: m for m in Membership.select().where(Membership.member_number.is_null(False))}
     herds_by_code: dict[str, list] = {}
     for herd in Herd.select(Herd, Genebank).join(Genebank):
@@ -937,11 +1269,11 @@ def _plan_herd_links() -> tuple[list, list, int]:
 
     listed: list = []
     already: set[tuple[int, int]] = set()
-    pairs: dict[tuple[int, int], list] = {}  # (main id, user id) -> [main, user, codes]
-    possible: set[tuple[int, int]] = set()  # every name-matching owner: a counterpart, linked only through pairs
+    pairs: dict[tuple[int, int], list] = {}  # (main id, user id) -> [main, user, codes, reason]
+    possible: set[tuple[int, int]] = set()  # every matching owner: a counterpart, linked only through pairs
     # Counterparts are counted in one place and before anything is filtered or sorted out: for every herd row
     # that has an owner, whatever its code, genebank or state, every person left in the membership the row is
-    # stored on, and in the one its code's number names, who has an owner's name.
+    # stored on, and in the one its code's number names, who matches an owner.
     for herd in Herd.select():
         herd_owners = owners.get(herd.id)
         if not herd_owners:
@@ -951,10 +1283,7 @@ def _plan_herd_links() -> tuple[list, list, int]:
         named = memberships.get(int(number.group(1))) if number else None
         behind = {herd.membership_id, getattr(named, "id", None)} - {None}
         for person in Member.select().where(Member.membership.in_(behind), Member.end_date.is_null(True)):
-            wanted = _norm_name(f"{person.first_name} {person.last_name}")
-            possible |= {
-                (person.id, uid) for uid, u in herd_owners.items() if wanted and _norm_name(u.fullname) == wanted
-            }
+            possible |= {(person.id, uid) for uid, user in herd_owners.items() if _match_reason(person, user)}
     for code in sorted(herds_by_code, key=lambda c: (int(c[1:]), c[0])):
         herds = herds_by_code[code]
         owner_users = {uid: u for h in herds for uid, u in owners.get(h.id, {}).items()}
@@ -994,13 +1323,13 @@ def _plan_herd_links() -> tuple[list, list, int]:
         by_main.setdefault(key[0], []).append(key)
         by_user.setdefault(key[1], []).append(key)
     to_link = []
-    for key, (main, user, codes) in pairs.items():
+    for key, (main, user, codes, reason) in pairs.items():
         if len(by_main[key[0]]) > 1 or len(by_user[key[1]]) > 1:
             listed.append((codes, f"flera möjliga kopplingar ({_pair_detail(main, user)})"))
         elif link_access_delta(main, user):
             listed.append((codes, "länken skulle ge kontot åtkomst till fler besättningar"))
         else:
-            to_link.append((main, user, codes))
+            to_link.append((main, user, codes, reason))
     return to_link, listed, len(already)
 
 
@@ -1012,11 +1341,9 @@ def _check_owner(code, main, user, incomplete, listed, already, pairs) -> None:
         listed.append(([code], "kontots ägarroll är ofullständig"))
     elif not user.is_active:
         listed.append(([code], "kontot är inaktivt"))
-    elif not _norm_name(user.fullname) or _norm_name(user.fullname) != _norm_name(
-        f"{main.first_name} {main.last_name}"
-    ):
+    elif (reason := _match_reason(main, user)) is None:
         listed.append(([code], "namnet skiljer sig mellan kontot och huvudmedlemmen"))
-    elif (
+    elif reason == "namn lika" and (
         sum(
             _norm_name(f"{m.first_name} {m.last_name}") == _norm_name(user.fullname)
             for m in Member.select().where(Member.membership == main.membership_id, Member.end_date.is_null(True))
@@ -1029,4 +1356,151 @@ def _check_owner(code, main, user, incomplete, listed, already, pairs) -> None:
     elif Member.select().where(Member.user == user).exists():
         listed.append(([code], "kontot är redan kopplat till en annan medlem"))
     else:
-        pairs.setdefault((main.id, user.id), [main, user, []])[2].append(code)
+        pairs.setdefault((main.id, user.id), [main, user, [], reason])[2].append(code)
+
+
+def _owner_membership_detail(owner_ids, membership_by_user, membership_id, incomplete) -> tuple[str, bool]:
+    details = []
+    needs_review = False
+    for user_id in owner_ids:
+        linked_id = membership_by_user.get(user_id)
+        if linked_id is None:
+            relation = "ägaren är inte kopplad till matrikeln"
+        elif linked_id == membership_id:
+            relation = "ägaren hör till medlemskapet"
+        else:
+            relation = "ägaren hör till ett annat medlemskap"
+            needs_review = True
+        if user_id in incomplete:
+            relation += ", kontots ägarroll är ofullständig"
+            needs_review = True
+        details.append(f"konto {user_id}: {relation}")
+    return ", ".join(details) or "ingen ägare", needs_review
+
+
+def _active_main_members():
+    return Member.select(Member.id, Member.membership, Member.user, Member.first_name, Member.last_name).where(
+        Member.role == "huvudmedlem", Member.end_date.is_null(True)
+    )
+
+
+def _plan_same_number_links() -> tuple[list, list[str]]:
+    banks = {prefix: _flag_genebank_ids(prefix) for prefix in "GM"}
+    owners, incomplete = legacy_owner_index()
+    membership_by_user = dict(
+        Member.select(Member.user, Member.membership)
+        .where(Member.user.is_null(False), Member.end_date.is_null())
+        .tuples()
+    )
+    mains = {main.membership_id: main for main in _active_main_members()}
+    memberships = {
+        m.member_number: m
+        for m in Membership.select(Membership.id, Membership.member_number, Membership.membership_status).where(
+            Membership.member_number.is_null(False)
+        )
+    }
+    to_link, listed = [], []
+    herds = Herd.select(Herd, Genebank).join(Genebank).where(Herd.membership.is_null()).order_by(Herd.herd, Herd.id)
+    for herd in herds:
+        code = herd.herd
+        if not re.fullmatch(r"[GM][1-9][0-9]*", code):
+            continue
+        prefix, number = code[0], int(code[1:])
+        status = "inaktiv" if herd.is_active is False else "aktiv"
+        detail = f"{code} (id {herd.id}), genbank {_q(herd.genebank.name)}, {status}"
+        membership = memberships.get(number)
+        if len(banks[prefix]) != 1:
+            listed.append(f"{detail} | {prefix} motsvarar {len(banks[prefix])} genbanker")
+        elif herd.genebank_id != banks[prefix][0]:
+            listed.append(f"{detail} | fel genbank för prefixet")
+        elif membership is None:
+            listed.append(f"{detail} | medlemskap nr {number} saknas")
+        else:
+            detail += f" -> medlemskap nr {number} (id {membership.id}, {membership.membership_status})"
+            main = mains.get(membership.id)
+            if main is None:
+                end_dates = [person.end_date for person in membership.persons.select(Member.end_date)]
+                reason = (
+                    "medlemskapet är avslutat" if end_dates and all(end_dates) else "medlemskapet saknar huvudmedlem"
+                )
+                listed.append(f"{detail} | {reason}")
+                continue
+            relation, needs_review = _owner_membership_detail(
+                owners.get(herd.id, ()), membership_by_user, membership.id, incomplete
+            )
+            name = _q(f"{main.first_name} {main.last_name}".strip())
+            account = f"konto {main.user_id}" if main.user_id else "inget konto"
+            line = f"{detail} | huvudmedlem {main.id}: {name} ({account}) | {relation}"
+            if needs_review:
+                listed.append(line)
+            else:
+                to_link.append((herd, membership, (main.id, main.user_id), line))
+    return to_link, listed
+
+
+def _apply_same_number_link(herd, membership, main, actor) -> str | None:
+    """Return the reason if the herd could no longer be linked as planned."""
+    with DB_PROXY.atomic():
+        current = _locked_membership_by_number(membership.member_number)
+        if current is None or current.id != membership.id:
+            return "medlemsnumret hör inte längre till medlemskapet"
+        if current.membership_status != membership.membership_status:
+            return "medlemskapets status har ändrats"
+        main_id, user_id = main  # the account that gets access is part of the plan
+        account = Member.user == user_id if user_id else Member.user.is_null(True)
+        if not _active_main_members().where(Member.membership == current, Member.id == main_id, account).exists():
+            return "huvudmedlemmen eller huvudmedlemmens konto har ändrats"
+        try:
+            cases = link_herd(herd.id, membership.id, herd_code=herd.herd, genebank_id=herd.genebank_id)
+        except Herd.DoesNotExist:
+            return "besättningen finns inte längre"
+        if cases is None:
+            current_herd = Herd.get_by_id(herd.id)  # still locked by link_herd
+            if current_herd.membership_id is not None:
+                return "besättningen är redan kopplad"
+            if current_herd.herd != herd.herd:
+                return "besättningens kod har ändrats"
+            return "besättningens genbank har ändrats"
+        write_matrikel_audit(
+            actor,
+            "herd_membership_linked",
+            membership,
+            {"herd_id": herd.id, "main_member_id": main_id, "source": "cli"},
+        )
+    return None
+
+
+@members_cli.command("link-same-number")
+@_apply_option
+@_actor_option
+@_plan_option
+def link_same_number_cmd(apply_links: bool, actor_user_id: int | None, plan_value: str | None) -> None:
+    """Link unassigned G/M herds to the membership with the same number.
+
+    Read the plan first: each link gives the household access to the herd.
+    """
+    actor = _link_actor(apply_links, actor_user_id, plan_value)
+    candidates, listed = _plan_same_number_links()
+    lines = [
+        f"Att koppla: {len(candidates)}",
+        *(f"  {line}" for _, _, _, line in candidates),
+        f"Till granskning: {len(listed)}",
+        *(f"  {line}" for line in listed),
+    ]
+    value = _plan_checksum(lines)
+    click.echo("\n".join(lines))
+    click.echo(f"Kontrollvärde: {value}")
+    if not apply_links:
+        click.echo("(endast plan — kör om med --apply --actor-user-id <id> --plan <kontrollvärde>)")
+        return
+    if plan_value != value:
+        raise click.ClickException(_PLAN_CHANGED)
+
+    skipped = []
+    for herd, membership, main, _ in candidates:
+        reason = _apply_same_number_link(herd, membership, main, actor)
+        if reason:
+            skipped.append(f"  {herd.herd} (id {herd.id}): {reason}")
+    click.echo(f"Kopplade: {len(candidates) - len(skipped)}, Överhoppade: {len(skipped)}")
+    for line in skipped:
+        click.echo(line)

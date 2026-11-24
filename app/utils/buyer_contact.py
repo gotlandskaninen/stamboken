@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 from peewee import Case, fn
 
+import utils.sale_proposal as sale_proposal
 from utils import settings
 from utils.database import (
     DB_PROXY,
@@ -18,6 +19,7 @@ from utils.database import (
     BuyerContact,
     HerdTracking,
     Individual,
+    SaleProposal,
     ht_sort_key,
     lock_individuals,
 )
@@ -35,9 +37,12 @@ from utils.herd_tracking import (
     sold_on,
 )
 from utils.inbox_purge import remove_originals
+from utils.individual_commands import FREE_TEXT_RETENTION
 from utils.mail import address_hash, forget_recipient, is_address
 
 logger = logging.getLogger("herdbook.buyer_contact")
+
+PROPOSAL_BUYER_FOR = FREE_TEXT_RETENTION  # spec section 6: 13 months, as the command log's free text
 
 
 def buyer_genebank(contact_id):
@@ -108,12 +113,12 @@ def _delete_under_locks(candidates, eligible, action):
     if not buyer_items(holding) <= items:
         logger.warning("Buyer purge %s: the queue changed under the locks; the next run takes it", action)
         return 0, []
-    still = BuyerContact.select(BuyerContact.id).where(BuyerContact.id.in_(ids) & eligible())
-    return delete_buyer_contacts([contact_id for (contact_id,) in still.tuples()], action)
+    still = BuyerContact.select(BuyerContact.id).where(BuyerContact.id.in_(ids) & eligible()).order_by(BuyerContact.id)
+    return delete_buyer_contacts([contact_id for (contact_id,) in still.for_update().tuples()], action)
 
 
 def purge_expired(now):
-    """Name and town five years after the sale: the buyer goes."""
+    """Delete buyers when the five years after a sale or the keep window after withdrawal expires."""
     expired = BuyerContact.purge_at <= now
     with DB_PROXY.atomic():
         count, paths = _delete_under_locks(
@@ -132,18 +137,21 @@ def _dead_since(individual_ids, now):
     that recorded the death (death_date or death_note set) is at least that old, or, recorded before the audit
     trigger, the death date is.
     """
+    dead = list(
+        Individual.select(Individual.id, Individual.death_date).where(Individual.id.in_(individual_ids), _dead())
+    )
     recorded = {}
     entries = AuditLog.select(AuditLog.record_id, AuditLog.changed_at, AuditLog.new_data).where(
         (AuditLog.table_name == Individual._meta.table_name)
         & AuditLog.operation.in_(("INSERT", "UPDATE"))
-        & AuditLog.record_id.in_([str(i) for i in individual_ids])
+        & AuditLog.record_id.in_([str(individual.id) for individual in dead])
         & (AuditLog.changed_fields.contains("death_date") | AuditLog.changed_fields.contains("death_note"))
     )
     for record_id, changed_at, new in entries.order_by(AuditLog.id).tuples():
         if (new or {}).get("death_date") or (new or {}).get("death_note"):
             recorded[int(record_id)] = changed_at
     settled = set()
-    for individual in Individual.select().where(Individual.id.in_(list(individual_ids))):
+    for individual in dead:
         at = recorded.get(individual.id)
         if at is None and individual.death_date is not None:
             at = datetime.combine(individual.death_date, datetime.min.time(), timezone.utc)
@@ -152,9 +160,13 @@ def _dead_since(individual_ids, now):
     return settled
 
 
+def _dead():
+    return Individual.death_date.is_null(False) | (fn.COALESCE(Individual.death_note, "") != "")
+
+
 def _held_by_dead(individual_ids=None):
     """The buyers held by a row of a rabbit recorded as dead (among `individual_ids`, when given)."""
-    dead = (Individual.death_date.is_null(False)) | (fn.COALESCE(Individual.death_note, "") != "")
+    dead = _dead()
     if individual_ids is not None:
         dead &= Individual.id.in_(list(individual_ids))
     return (
@@ -181,6 +193,22 @@ def purge_dead(now):
         count, paths = _delete_under_locks(BuyerContact.select(BuyerContact.id).where(held()), held, "gallring_dod")
     remove_originals(paths)
     return count
+
+
+def purge_proposal_buyers(now):
+    """
+    Purge a pending proposal's buyer after 13 months or when the death has stood recorded for 30 days.
+    Recheck each proposal under its locks so that correcting a death keeps the buyer.
+    """
+
+    def due(individual_ids):
+        return (SaleProposal.created_at < now - PROPOSAL_BUYER_FOR) | SaleProposal.individual.in_(
+            _dead_since(individual_ids, now)
+        )
+
+    pending = SaleProposal.select().where(SaleProposal.state == "foreslagen", SaleProposal.buyer.is_null(False))
+    found = list(pending.where(due(pending.select(SaleProposal.individual))).order_by(SaleProposal.id))
+    return sum(sale_proposal.clear_buyer(proposal, "gallring_forslag", still=due) for proposal in found)
 
 
 def _null_fields(where, changes, action):
@@ -245,7 +273,7 @@ def purge_membership_optin(now):
     return _null_fields(BuyerContact.membership_optin_at <= now - MEMBERSHIP_OPTIN_FOR, changes, "gallring_medlemskap")
 
 
-RULES = (purge_membership_optin, purge_sold_on, purge_dead, purge_expired)
+RULES = (purge_membership_optin, purge_sold_on, purge_dead, purge_expired, purge_proposal_buyers)
 
 
 def run(now):

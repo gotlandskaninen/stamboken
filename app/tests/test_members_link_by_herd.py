@@ -56,9 +56,10 @@ class TestMembersLinkByHerd(DatabaseTest):
         )
         return db.Herd.create(genebank=self.genebanks[genebank], herd=code, **{"is_active": True, **kwargs})
 
-    def _account(self, fullname="Anna Svensson", owns=None):
+    def _account(self, fullname="Anna Svensson", owns=None, email=None):
         self._n += 1
-        user = da.register_user(f"konto{self._n}@example.org", "pass", username=f"konto{self._n}", fullname=fullname)
+        email = email or f"konto{self._n}@example.org"
+        user = da.register_user(email, "pass", username=f"konto{self._n}", fullname=fullname)
         if owns is not None:
             user.add_role("owner", owns.id)
         return user
@@ -87,6 +88,47 @@ class TestMembersLinkByHerd(DatabaseTest):
 
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(self._linked_user_id(person), user.id)
+
+    def test_sole_owner_is_linked_by_google_email_local_part(self):
+        _, person = self._membership(901, first="Exempelmuseet", last="", email="anna.exempel@example.org")
+        user = self._account(fullname="Anna Exempel", owns=self._herd("G901"), email="anna.exempel@example.net")
+        user.google_email = " ANNA.EXEMPEL@example.invalid "
+        user.save()
+
+        plan = self._run()
+
+        self.assertEqual(plan.exit_code, 0, plan.output)
+        self.assertRegex(
+            plan.output, rf"G901: medlem {person.id} -> konto {user.id} .* \| skäl: lokaldel lika \(Google\)\n"
+        )
+        self.assertIsNone(self._linked_user_id(person))
+        result = self._apply()
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(self._linked_user_id(person), user.id)
+
+    def test_full_account_email_matches_even_with_a_generic_local_part(self):
+        _, person = self._membership(901, first="Exempelmuseet", last="", email=" INFO@example.invalid ")
+        user = self._account(fullname="Anna Exempel", owns=self._herd("G901"), email="info@example.invalid")
+
+        plan = self._run()
+
+        self.assertEqual(plan.exit_code, 0, plan.output)
+        self.assertRegex(
+            plan.output, rf"G901: medlem {person.id} -> konto {user.id} .* \| skäl: e-post lika \(kontots e-post\)\n"
+        )
+
+    def test_generic_and_short_local_parts_are_listed(self):
+        for number, local in enumerate(("info", "kontakt", "abc", "kansliet", "gotlandskanin"), start=901):
+            self._membership(number, first="Exempelmuseet", last="", email=f"{local}@example.org")
+            self._account(fullname="Anna Exempel", owns=self._herd(f"G{number}"), email=f"{local}@example.invalid")
+
+        plan = self._run()
+
+        self.assertEqual(plan.exit_code, 0, plan.output)
+        self.assertIn("Att koppla: 0", plan.output)
+        self.assertIn("Till granskning: 5", plan.output)
+        for number in (901, 902, 903, 904, 905):
+            self.assertIn(f"G{number}: namnet skiljer sig", plan.output)
 
     def test_different_name_is_listed_not_linked(self):
         _, person = self._membership(901)
@@ -181,11 +223,11 @@ class TestMembersLinkByHerd(DatabaseTest):
         self.assertEqual(self._linked_user_id(person), user.id)
 
     def test_main_member_linked_to_another_account_is_listed_and_unchanged(self):
-        _, person = self._membership(901)
+        _, person = self._membership(901, first="Exempelmuseet", last="", email="anna.exempel@example.invalid")
         other = self._account()
         person.user = other
         person.save()
-        self._account(owns=self._herd("G901"))
+        self._account(fullname="Anna Exempel", owns=self._herd("G901"), email=person.email)
 
         result = self._apply()
 
@@ -477,7 +519,7 @@ class TestMembersLinkByHerd(DatabaseTest):
         self.assertIn(
             f'  G901: medlem {person.id} -> konto {user.id} | medlem: "Anna Svensson" "anna@example.org" | '
             f'konto: namn "Anna Svensson", användarnamn "konto1", e-post (overifierad) "konto1@example.org", '
-            f'senast sparade Google-adress "anna.svensson@example.org"\n',
+            f'senast sparade Google-adress "anna.svensson@example.org" | skäl: namn lika\n',
             result.output,
         )
 
@@ -611,6 +653,21 @@ class TestMembersLinkByHerd(DatabaseTest):
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(self._linked_user_id(person), user.id)
 
+    def test_apply_refuses_when_a_local_part_match_becomes_a_full_address_match(self):
+        _, person = self._membership(901, first="Exempelmuseet", last="", email="anna.exempel@example.org")
+        user = self._account(fullname="Anna Exempel", owns=self._herd("G901"), email="anna.exempel@example.invalid")
+        self.assertIn("| skäl: lokaldel lika (kontots e-post)\n", self._run().output)
+        stale = self._plan_value()
+        user.google_email = person.email
+        user.save()
+
+        result = self._apply(stale)
+
+        self.assertNotEqual(result.exit_code, 0, result.output)
+        self.assertIn("planen har ändrats", result.output)
+        self.assertIn("| skäl: e-post lika (Google)\n", result.output)
+        self.assertIsNone(self._linked_user_id(person))
+
     def test_apply_refuses_when_the_sole_owner_was_swapped_after_the_plan(self):
         _, person = self._membership(901)
         herd = self._herd("G901")
@@ -667,6 +724,18 @@ class TestMembersLinkByHerd(DatabaseTest):
 
         self.assertIsNone(self._linked_user_id(person))
         self.assertIn("besättningen är inte knuten till medlemskapet", result.output)
+
+    def test_competing_email_match_behind_an_untied_herd_blocks_the_link(self):
+        _, person = self._membership(901)
+        self._membership(902, first="Exempelmuseet", last="", email="anna.exempel@example.org")
+        user = self._account(owns=self._herd("G901"), email="anna.exempel@example.invalid")
+        user.add_role("owner", self._herd("G902", membership=None).id)
+
+        result = self._apply()
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("G901: flera möjliga kopplingar", result.output)
+        self.assertIsNone(self._linked_user_id(person))
 
     def _plan_pair_lines(self):
         return [x for x in self._run().output.splitlines() if x.startswith("  G901:")]
@@ -733,6 +802,51 @@ class TestMembersLinkByHerd(DatabaseTest):
         self.assertIn("Kontot är låst\\x1b[2K", result.output)
         self.assertNotIn("\x1b", result.output)
         self.assertIn("Kopplade: 1", result.output)
+
+    def test_family_members_exact_email_blocks_main_members_local_part_match(self):
+        membership, _ = self._membership(901, email="familjen@example.org")
+        user = self._account(fullname="Eva Lund", owns=self._herd("G901"), email="familjen@example.net")
+        db.Member.create(
+            membership=membership, role="familjemedlem", first_name="Bo", last_name="Lund", email=user.email
+        )
+
+        plan = self._run()
+
+        self.assertEqual(plan.exit_code, 0, plan.output)
+        self.assertIn("Att koppla: 0", plan.output)
+        self.assertIn("G901: flera möjliga kopplingar", plan.output)
+
+    def test_family_members_workspace_address_blocks_main_members_local_part_match(self):
+        membership, _ = self._membership(901, email="bo.lund@example.org")
+        user = self._account(fullname="Eva Lund", owns=self._herd("G901"))
+        user.google_email = "bo.lund@gotlandskaninen.se"
+        user.save()
+        db.Member.create(
+            membership=membership,
+            role="familjemedlem",
+            first_name="Bo",
+            last_name="Lund",
+            workspace_email="bo.lund@gotlandskaninen.se",
+        )
+
+        plan = self._run()
+
+        self.assertEqual(plan.exit_code, 0, plan.output)
+        self.assertIn("Att koppla: 0", plan.output)
+        self.assertIn("G901: flera möjliga kopplingar", plan.output)
+
+    def test_workspace_address_outside_the_association_is_no_match(self):
+        _, main = self._membership(901, first="Exempelmuseet", last="", email="museet@example.org")
+        user = self._account(fullname="Eva Lund", owns=self._herd("G901"))
+        user.google_email = "eva.lund@example.invalid"
+        user.save()
+        db.Member.update(workspace_email="eva.lund@example.invalid").where(db.Member.id == main.id).execute()
+
+        plan = self._run()
+
+        self.assertEqual(plan.exit_code, 0, plan.output)
+        self.assertIn("Att koppla: 0", plan.output)
+        self.assertIn("G901: namnet skiljer sig", plan.output)
 
     def test_family_member_with_the_main_members_name_blocks_the_link(self):
         membership, person = self._membership(901)

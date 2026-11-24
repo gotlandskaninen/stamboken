@@ -437,3 +437,47 @@ textarea.input {
   outline-offset: 3px;
   border-radius: 2px;
 }
+
+/* The tab at the right edge: above the page, below menus and dialogs. */
+.sidetab {
+  position: fixed;
+  z-index: 40;
+  right: env(safe-area-inset-right, 0px);
+  top: 55%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 44 px: the smallest tap target (ADR-0010, e2e/touch-targets.spec.ts). */
+  width: 44px;
+  min-height: 44px;
+  padding: 14px 0;
+  border: 0;
+  border-radius: var(--sb-r-3) 0 0 var(--sb-r-3);
+  background: var(--sb-skog);
+  color: #fff;
+  box-shadow: -2px 2px 10px rgba(31, 27, 22, 0.18);
+  font: 600 14px/1 var(--sb-body);
+  letter-spacing: 0.02em;
+  writing-mode: vertical-rl;
+  cursor: pointer;
+  transition: background-color var(--sb-dur-fast) var(--sb-ease);
+}
+.sidetab span {
+  transform: rotate(180deg);
+}
+.sidetab:hover {
+  background: var(--sb-skog-deep);
+}
+.sidetab:focus-visible {
+  outline: 2px solid var(--sb-lera);
+  outline-offset: 2px;
+}
+:global(body[data-tyck-pointing]) .sidetab {
+  display: none;
+}
+@media print {
+  .sidetab {
+    display: none;
+  }
+}

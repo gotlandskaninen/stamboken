@@ -1279,15 +1279,13 @@ class TestAuditBlueprint(DatabaseTest):
         self.login(username)
 
     def test_herd_identity_and_ownership_are_admin_only_in_audit_undo(self):
-        """update_herd drops herd, genebank and membership unless the caller is admin (herd_id is never
-        written); a revert or restore of a herd row must not be a way round that. A manager's revert is
-        refused, a manager's restore skips them."""
+        """update_herd drops herd and genebank unless the caller is admin (herd_id is never written); a revert or
+        restore of a herd row must not be a way round that. A manager's revert is refused, a manager's restore
+        skips them."""
         herd = self.herds[0]
-        membership = db.Membership.create()
         entries = {
             "herd": self._audit_update("herd", herd.id, herd="G9"),
             "genebank_id": self._audit_update("herd", herd.id, genebank_id=self.genebanks[1].id),
-            "membership_id": self._audit_update("herd", herd.id, membership_id=membership.id),
         }
         self._login_as("man")
         for column, entry in entries.items():
@@ -1296,51 +1294,88 @@ class TestAuditBlueprint(DatabaseTest):
                     self.assertEqual(resp.status_code, status, resp.get_json())
                     self.assertIn(column, resp.get_json()["message"])
         stored = db.Herd.get_by_id(herd.id)
-        self.assertEqual((stored.herd, stored.genebank_id, stored.membership_id), ("G1", self.genebanks[0].id, None))
+        self.assertEqual((stored.herd, stored.genebank_id), ("G1", self.genebanks[0].id))
 
         self._login_as("admin")
         for column, entry in entries.items():
             with self.subTest(column=column, admin=True):
                 self.assertEqual(self._revert(entry).status_code, 200)
         stored = db.Herd.get_by_id(herd.id)
-        self.assertEqual(
-            (stored.herd, stored.genebank_id, stored.membership_id), ("G9", self.genebanks[1].id, membership.id)
-        )
+        self.assertEqual((stored.herd, stored.genebank_id), ("G9", self.genebanks[1].id))
         resp = self._restore("herd", herd.id, entries["herd"])  # the snapshot: back in the first genebank
         self.assertEqual((resp.status_code, db.Herd.get_by_id(herd.id).genebank_id), (200, self.genebanks[0].id))
 
+    def test_audit_undo_never_writes_the_herd_contact(self):
+        """#117, spec Granskningsloggen: the membership, the contact person, the rows waiting for an answer and the
+        contact rows' privacy change only where the contact's rules run. The history keeps no contact values, so
+        an old privacy would apply to a newer value. Refused for admin too; is_active is still restored."""
+        herd = self.herds[0]
+        membership = db.Membership.create()
+        person = db.Member.create(membership=membership, first_name="Anna", last_name="Exempel", role="huvudmedlem")
+        protected = {
+            "membership_id": membership.id,
+            "contact_member_id": person.id,
+            "contact_pending": ["email"],
+            **{f"{column}_privacy": "public" for column in db.HERD_CONTACT_COLUMNS},
+        }
+
+        def stored():
+            row = da._stored_row("herd", "herd_id", herd.id)
+            return {column: row[column] for column in protected}
+
+        hidden = {f"{column}_privacy": "private" for column in db.HERD_CONTACT_COLUMNS}
+        db.Herd.update(**hidden).where(db.Herd.id == herd.id).execute()  # each "public" above is another value
+        before = stored()
+        for username in ("man", "admin"):
+            self._login_as(username)
+            for column, value in protected.items():
+                with self.subTest(user=username, column=column):
+                    db.Herd.update(is_active=True).where(db.Herd.id == herd.id).execute()
+                    entry = self._audit_update("herd", herd.id, **{column: value}, is_active=False)
+                    for resp, status in ((self._revert(entry), 409), (self._restore("herd", herd.id, entry), 200)):
+                        self.assertEqual(resp.status_code, status, resp.get_json())
+                        self.assertIn(column, resp.get_json()["message"])
+                    self.assertEqual(stored(), before)
+                    self.assertFalse(db.Herd.get_by_id(herd.id).is_active)  # the rest of the snapshot
+                    db.Herd.update(is_active=True).where(db.Herd.id == herd.id).execute()
+                    resp = self._revert(entry, fields=["is_active"])  # a field outside the contact still reverts
+                    self.assertEqual(resp.status_code, 200, resp.get_json())
+                    self.assertFalse(db.Herd.get_by_id(herd.id).is_active)
+
     def test_audit_undo_refuses_an_invalid_herd_privacy_value(self):
         """update_herd refuses a *_privacy that is not None/public/authenticated/private (readers fail
-        closed on it, but it must not get into the table); undo takes the value from an old snapshot."""
+        closed on it, but it must not get into the table); undo takes the value from an old snapshot. The
+        contact rows' privacy is never undone (test_audit_undo_never_writes_the_herd_contact): location's is."""
         herd = self.herds[0]
-        bad = self._audit_update("herd", herd.id, name_privacy="Public ")
+        db.Herd.update(location_privacy="private").where(db.Herd.id == herd.id).execute()
+        bad = self._audit_update("herd", herd.id, location_privacy="Public ")
         for username in ("man", "admin"):
             self._login_as(username)
             with self.subTest(user=username):
                 for resp in (self._revert(bad), self._restore("herd", herd.id, bad)):
                     self.assertEqual(resp.status_code, 409, resp.get_json())
-                    self.assertIn("name_privacy", resp.get_json()["message"])
-        self.assertEqual(db.Herd.get_by_id(herd.id).name_privacy, "private")
+                    self.assertIn("location_privacy", resp.get_json()["message"])
+        self.assertEqual(db.Herd.get_by_id(herd.id).location_privacy, "private")
 
         self._login_as("man")
         for level in (None, "public", "authenticated", "private"):
             with self.subTest(level=level):
-                entry = self._audit_update("herd", herd.id, email_privacy=level)
+                entry = self._audit_update("herd", herd.id, location_privacy=level)
                 self.assertEqual(self._revert(entry).status_code, 200)
-                self.assertEqual(db.Herd.get_by_id(herd.id).email_privacy, level)
+                self.assertEqual(db.Herd.get_by_id(herd.id).location_privacy, level)
 
     def test_restore_refuses_an_invalid_privacy_value_the_row_already_holds(self):
         """Restore writes every snapshot column, also those equal to the stored row: an invalid *_privacy that
         both hold (an old row) is written again and must be refused like any other."""
         herd = self.herds[0]
-        db.Herd.update(name_privacy="Public ").where(db.Herd.id == herd.id).execute()
+        db.Herd.update(location_privacy="Public ").where(db.Herd.id == herd.id).execute()
         entry = self._audit_update("herd", herd.id, herd_name="Gammalt namn")
         for username in ("man", "admin"):
             self._login_as(username)
             with self.subTest(user=username):
                 resp = self._restore("herd", herd.id, entry)
                 self.assertEqual(resp.status_code, 409, resp.get_json())
-                self.assertIn("name_privacy", resp.get_json()["message"])
+                self.assertIn("location_privacy", resp.get_json()["message"])
         self.assertNotEqual(db.Herd.get_by_id(herd.id).herd_name, "Gammalt namn")
 
     def test_revert_and_restore_never_write_bank_privacy(self):
@@ -1348,16 +1383,16 @@ class TestAuditBlueprint(DatabaseTest):
         skipped by revert and restore, and does not block the other fields."""
         herd = self.herds[0]
         db.Herd.update(bank_name_privacy="Public ").where(db.Herd.id == herd.id).execute()
-        entry = self._audit_update("herd", herd.id, bank_account_number_privacy="public", www="old")
+        entry = self._audit_update("herd", herd.id, bank_account_number_privacy="public", location="old")
         self._login_as("man")
         self.assertEqual(self._revert(entry).status_code, 200)
-        self.assertEqual(db.Herd.get_by_id(herd.id).www, "old")
+        self.assertEqual(db.Herd.get_by_id(herd.id).location, "old")
         db.Herd.update(bank_name_privacy="private").where(db.Herd.id == herd.id).execute()
         resp = self._restore("herd", herd.id, entry)
         self.assertEqual(resp.status_code, 200, resp.get_json())
         row = db.Herd.get_by_id(herd.id)
         self.assertEqual((row.bank_account_number_privacy, row.bank_name_privacy), ("private", "private"))
-        self.assertEqual(row.www, "old")  # the other field was restored
+        self.assertEqual(row.location, "old")  # the other field was restored
 
     def test_revert_of_a_bank_privacy_only_entry_is_a_silent_success(self):
         """A migration 40 style entry that changed only bank privacy: nothing to write, no 400."""
@@ -1372,19 +1407,21 @@ class TestAuditBlueprint(DatabaseTest):
         """A correction of the invalid value between restore's read of the row and its UPDATE (a concurrent
         update_herd) must not be overwritten with the invalid snapshot value."""
         herd = self.herds[0]
-        db.Herd.update(name_privacy="Public ").where(db.Herd.id == herd.id).execute()
+        db.Herd.update(location_privacy="Public ").where(db.Herd.id == herd.id).execute()
         entry = self._audit_update("herd", herd.id, herd_name="Gammalt namn")
         read = da._stored_row
 
         def read_then_correct(*args):
             row = read(*args)
-            db.Herd.update(name_privacy="private").where(db.Herd.id == herd.id).execute()
+            db.Herd.update(location_privacy="private").where(db.Herd.id == herd.id).execute()
             return row
 
         self._login_as("man")
         with mock.patch.object(da, "_stored_row", side_effect=read_then_correct):
             resp = self._restore("herd", herd.id, entry)
-        self.assertEqual((resp.status_code, db.Herd.get_by_id(herd.id).name_privacy), (409, "private"), resp.get_json())
+        self.assertEqual(
+            (resp.status_code, db.Herd.get_by_id(herd.id).location_privacy), (409, "private"), resp.get_json()
+        )
 
 
 class TestCreateBreedingV2(DatabaseTest):
@@ -1890,6 +1927,35 @@ class TestUpdateHerdV2(DatabaseTest):
         self.assertIn("herd", data)
         self.assertIn("herd_name", data)
         self.assertEqual(data["herd_name"], "Updated Herd Name")
+
+    def test_general_calls_never_write_contact_columns(self):
+        """contact_member and contact_pending are not writable through POST/PATCH /api/manage/herd or PATCH
+        /api/v2/herd (any role); the other fields of the same call are saved."""
+        self.login("admin")
+        member = db.Member.create(membership=db.Membership.create(member_number=4747), first_name="A", last_name="B")
+        extra = {"contact_member": member.id, "contact_pending": ["email"]}
+        herd = self.herds[0]
+
+        def untouched(h):
+            row = db.Herd.get_by_id(h.id)
+            self.assertIsNone(row.contact_member_id)
+            self.assertIsNone(row.contact_pending)
+
+        resp = self.client.patch("/api/manage/herd", json={"id": herd.id, "location": "Legacy", **extra})
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(db.Herd.get_by_id(herd.id).location, "Legacy")
+        untouched(herd)
+        resp = self.client.patch(f"/api/v2/herd/{herd.herd}", json={"herd_name": "V2 name", **extra})
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(db.Herd.get_by_id(herd.id).herd_name, "V2 name")
+        untouched(herd)
+        resp = self.client.post(
+            "/api/manage/herd", json={"herd": "N47", "genebank": self.genebanks[0].id, "location": "New", **extra}
+        )
+        self.assertEqual(resp.get_json()["status"], "success", resp.data)
+        created = db.Herd.get(db.Herd.herd == "N47")
+        self.assertEqual(created.location, "New")
+        untouched(created)
 
     def test_forbidden_returns_403(self):
         """PATCH by user without permission returns 403."""

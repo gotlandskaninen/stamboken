@@ -509,18 +509,42 @@ Från kaninens sida kommer du hit med **Fler åtgärder** → **Provpara**.
 
 ### Uppdatera besättningsuppgifter
 
-Kontaktuppgifterna på Min besättning ser andra uppfödare. Du väljer själv vad som visas.
+På **Min besättning**, fliken **Översikt**, finns två kort: **Din besättning** och
+**Kontakt för besättningen**. Andra uppfödare ser det du väljer att visa. För varje
+uppgift väljer du **Endast genbanksansvarig** eller **Inloggade besättningar**.
 
-1. Öppna **Min besättning**, fliken **Översikt**, och klicka **Redigera** vid
-   **Besättningsuppgifter**.
-2. Fyll i **Kontaktperson**, **E-post**, **Mobil**, **Fast telefon**, **Hemsida**
-   och **Adress**.
-3. Välj för varje uppgift vem som ser den: **Endast genbanksansvarig** eller
-   **Inloggade besättningar**.
-4. Klicka **Klar**. Bekräftelsen "Kontaktinformation sparad" visas.
+**Din besättning** gäller platsen där kaninerna finns.
 
-Ändringar här når inte föreningens medlemsmatrikel. Har du flyttat eller bytt e-post
-ändrar du det också under [Min profil](#min-profil) eller meddelar kassören.
+1. Klicka **Redigera** vid **Din besättning**.
+2. Fyll i **Besättningens namn**, **Ort**, **Hemsida** och **Fast telefon**, och välj
+   vem som ser orten, hemsidan och den fasta telefonen.
+3. Klicka **Spara**. Bekräftelsen "Besättningsuppgifter sparade" visas.
+
+**Kontakt för besättningen** visar kontaktpersonen och kontaktens **E-post**, **Mobil**
+och **Adress**. De hämtas från medlemskapet, så en rättelse där gäller överallt. En rad
+kan i stället ha en egen uppgift som bara gäller besättningen.
+
+1. Klicka **Redigera** vid **Kontakt för besättningen**.
+2. Välj **Kontaktperson** bland personerna i medlemskapet, eller **Annan kontakt, som
+   inte finns i matrikeln**. Bara huvudmedlemmen, genbanksansvarig och admin byter
+   kontaktperson.
+3. Välj för en rad **Från medlemskapet** eller **Egen**. En egen uppgift skriver du i
+   fältet.
+4. Välj vem som ser varje uppgift och klicka **Spara**. Bekräftelsen "Kontaktuppgifter
+   sparade" visas.
+
+**Stämmer det?** Den frågan ställer kortet när en egen uppgift skiljer sig från
+medlemskapets eller inte går att jämföra med den. Klicka **Ja, behåll** om uppgiften
+stämmer för besättningen. Skiljer den sig från medlemskapets kan du i stället klicka
+**Använd medlemskapets**.
+
+En egen uppgift rättar du på kortet. En uppgift från medlemskapet rättar du där den
+finns: är kontaktpersonen huvudmedlem ändrar hen e-post och mobil under
+[Min profil](#min-profil), annars rättar matrikeladministratören dem. Adressen gäller hela
+hushållet och ändras av huvudmedlemmen.
+
+Har uppgifterna ändrats sedan du öppnade kortet sparas ingenting. Kortet läses om, och
+du kontrollerar och sparar igen.
 
 ![Besättningsuppgifter](besattningsuppgifter-mobil.png)
 
@@ -585,7 +609,10 @@ under rubriken. Sidan har fyra flikar.
   parningar som gått mer än 35 dagar utan födsel (märke **Parning**).
 - **Snabbåtgärder** – **+ Registrera kull**, **Ny parning**, **Skapa genbanksintyg**
   (inte klar än) och **Registrera ny kanin** (leder till kullistan).
-- **Besättningsuppgifter** – kontaktuppgifter med knappen **Redigera**.
+- **Din besättning** – namn, ort, hemsida och fast telefon. **Kontakt för besättningen**
+  – kontaktperson, e-post, mobil och adress, hämtade från medlemskapet eller egna för
+  besättningen. Båda har knappen **Redigera**, se
+  [Uppdatera besättningsuppgifter](#uppdatera-besättningsuppgifter).
 
 ![Min besättning, översikt](min-besattning-oversikt-desktop.png)
 
@@ -720,6 +747,88 @@ listan över valda filer, **Meddelande** och **Skicka**. Bilderna skickas en gå
 varning över en bild har inget sparats, **Skicka** byts mot **Skicka ändå**, och bilden har
 knappen **Ta om**. Har du ingen
 besättning säger sidan det. Se [Ladda upp intyg](#ladda-upp-intyg).
+
+#### Årsrapport
+
+<!-- route: /stamboken/arsrapport -->
+
+Dina besättningars årsrapporter i en öppen runda, med **Inskickad** eller **Inte
+inskickad** och sista dag. Har du en enda besättning och ingen roll i en genbank
+kommer du direkt till rapporten. Är ingen runda öppen säger sidan det.
+
+#### Årsrapport för en besättning
+
+<!-- route: /stamboken/arsrapport/[herd]/[year] -->
+
+Rapporten för ett avelsår. Dina kaniner står redan i listan; för varje kanin väljer du
+**Finns kvar** (med vikt och hull: mager, normal eller fet), **Död** (med månad,
+och om kaninen slaktades) eller **Såld** (till en besättning i genbanken, eller köparens namn och
+ort utanför genbanken). Har du 15 kaniner eller fler kan du söka med **Hitta en kanin**. Filtrera listan och se
+hur många som är klara. Under **Hälsa** svarar du **Inga sjukdomsfall eller defekter**
+eller **Ja, fyll i**. Avslutar du besättningen kryssar du **Jag avslutar min besättning** och
+väljer vad som händer med medlemskapet; då behöver kaninerna inget val.
+
+Det du fyller i sparas medan du skriver. **Skicka årsrapporten** visar ett kvitto.
+Därefter kan du **Ändra** och skicka ändringarna, eller **Dra tillbaka rapporten**
+inom sju dagar. En skötare kan inte registrera en försäljning. Säger rutan **Rapporten
+kan inte skickas** listar den vad som saknas, med länkar till kaninerna.
+
+**Från blankett.** Genbanksansvarig och genbankshjälpare matar in en pappersblankett
+från ett ärende i inkorgen (**Mata in årsrapporten**). Sidan heter då **Från blankett**,
+med fotot av blanketten bredvid formuläret (under **Visa blanketten** på en smal skärm)
+och samma formulär i pappersläge. Fyll i **Mottagen** och **Blankettens datum**, och
+skriv varje kanins nummer efter besättningens prefix och tryck Enter. Tangent 1, 2 och 3
+väljer **Finns kvar**, **Död** och **Såld**; Enter går vidare till nästa
+fält och sist till nästa rad. Kaniner som inte står på blanketten ligger under **Kvar i
+Stamboken men inte på blanketten**, där **Markera som ej angivna på blanketten** tar alla
+på en gång. Under **Uppgifter på blanketten** skriver du in svaret om Koharen och nya
+kontouppgifter; de sparas direkt i matrikeln när du skickar, och sidan visar aldrig de
+nuvarande värdena, bara de två sista siffrorna i kontot. Har medlemmen påbörjat rapporten
+frågar sidan om du vill fortsätta på utkastet eller börja från blanketten. Är besättningen
+redan rapporterad kan du **Arkivera blanketten** eller **Ändra rapporten** med en orsak.
+Orsak krävs också när blanketten kommer efter sista dagen. **Skicka och nästa blankett**
+går tillbaka till inkorgen; kvittot stannar kvar när matrikeln ändrades eller när en
+ändring hoppades över för att matrikeln ändrats efter blankettens datum.
+
+#### Status för årsrapporten
+
+<!-- route: /stamboken/arsrapport/status/[year] -->
+
+Genbanksansvarig, administratör och genbankshjälpare ser hur rundan går i en genbank; länken
+**Status för genbanken** finns på **Årsrapport** för genbanksansvariga. Överst väljer du
+genbank (om du har flera) och kan **Skriv ut tom blankett**. Är rundan inte aktiverad för
+genbanken visar sidan de tre datumen (**Öppnar**, **Sista dag för stödet**, **Stänger**) och
+**Aktivera**; datumen gäller alla genbanker. Under datumen står hur många besättningar
+inbjudan går till och hur många som saknar e-post och får blanketten med post, och
+**Skicka provmejl till mig** skickar inbjudan till din egen adress. I provmejlet finns länken
+`/rapport#prov`, som bara visar att länken fungerar; den riktiga länken skapas först i det
+riktiga mejlet. Inbjudningarna skickas klockan 07 på rundans första dag, med registerutdraget
+som PDF. Därefter står aktiveringen på en rad, med dagen då inbjudningarna skickades, och
+**Ändra datum** öppnar datumen igen. Aktivera, ändra datum och provmejl kan bara
+genbanksansvarig och administratör; hjälpare ser bara listan och antalen.
+
+**Länken i inbjudan** är personlig och ser ut som `/rapport#` följt av en kod. Medlemmen öppnar
+den utan att logga in, och länken gäller bara den besättningen till rundans sista dag. Koden
+står efter `#`, så den finns inte i adressen som webbläsaren ber servern om. Sidan tar
+bort koden ur adressfältet och skickar den sedan för att öppna rapporten. Skriv
+aldrig ut en riktig länk i ett ärende eller en rapport.
+
+Under det står ett filter per läge med antal (**Att ringa**, **Påbörjade**, **Alla** och de
+andra lägena); valet ligger i adressen. **Att ringa** är påbörjade rapporter
+från två dagar före sista dag för stödet, och besättningar vars blankett lämnade ut
+kaniner som avgör stödet. Varje rad visar besättningen (koden öppnar rapporten), läget,
+villkoren för stöd (**Hane**, **Hona**, **Kull**, **I tid**, med bock eller kryss), flaggor som
+**3 ej angivna** eller **Ingen e-post**, när rapporten togs emot och åtgärder. Under läget står
+inbjudans läge: **Inbjudan skickad**, **Inbjudan studsade**, **Inbjudan misslyckades** eller
+**Länken öppnad**. Studsade och misslyckade inbjudningar kommer också under **Att ringa** tills
+besättningen har rapporterat. **Mata in blankett** öppnar inkorgen
+för besättningen, och genbanksansvarig kan välja **I tid** (**Räknas**, **Ja** eller **Nej**)
+på en rad med rapport. **Ny länk** på en besättning med e-post frågar
+**Den gamla länken slutar gälla. Skicka en ny länk till huvudmedlemmen?**; svarar du ja
+får huvudmedlemmen ett mejl med en ny länk, och den gamla slutar fungera. Det du eller
+medlemmen redan fyllt i finns kvar, och en medlem som redan rapporterat behöver den nya
+länken för att ändra eller dra tillbaka. Genbanksansvariga ser också huvudmedlemmens telefonnummer på raden, så att de kan ringa;
+hjälpare ser det inte.
 
 #### Notiser
 
@@ -1009,6 +1118,9 @@ mejl skickas då till adressen), **Gäller kanske** när det kan höra till ett 
 eller kom efter de tio första bilderna. På ett klart intyg finns **Gör om maskningen** för dem som
 får. **Fråga uppfödaren** finns när ärendet är ditt
 och taget, se [Arbeta i inkorgen](#arbeta-i-inkorgen).
+
+På ett dokument av typen Årsblankett finns **Mata in årsrapporten**, som öppnar blanketten
+bredvid rapportformuläret, se [Årsrapport för en besättning](#årsrapport-för-en-besättning).
 
 ---
 

@@ -1,4 +1,5 @@
 import { ReactNode } from "react";
+import { TyckTillTab } from "@/components/tyck-till/TyckTillDialog.client";
 
 export default function Layout({ children }: { children: ReactNode }) {
   return (
@@ -12,6 +13,7 @@ export default function Layout({ children }: { children: ReactNode }) {
       }}
     >
       {children}
+      <TyckTillTab />
     </div>
   );
 }

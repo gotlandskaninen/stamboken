@@ -156,10 +156,20 @@ sitt nummer av Stamboken. När kaninen har ett intygsnummer kan uppfödaren inte
 individnummer eller härstamning, bara namn, färg, kön och anteckningar.\
 Kod: `certificate` (papper), `digital_certificate` (digitalt) · Legacy-manual: "intygsnummer" · Legacy: "Intygsnummer", "Nummer på pappersintyg" · Nytt UI: "Intygsnummer"
 
+**Juridisk person**\
+En organisation som själv är medlem i föreningen, till exempel en förening eller ett företag.
+Medlemskapet registreras i organisationens namn.\
+Kod: `Membership.organization_name` är ifyllt · Legacy-manual: – · Legacy: – · Nytt UI: "Juridisk person (organisation)"
+
 **Kastrerad**\
 En kastrerad kanin har ett kastreringsdatum. Den räknas inte som aktiv och inte som avelsdjur,
 även om den lever.\
 Kod: `castration_date` · Legacy-manual: – · Legacy: – · Nytt UI: "Kastrerad"
+
+**Kontaktperson**\
+I matrikeln är kontaktpersonen den som företräder en juridisk person och har rollen huvudmedlem.
+Kontaktpersonens namn kan lämnas tomt. På en besättning är kontaktpersonen den som valts för besättningens kontaktuppgifter.\
+Kod: `Member.role` = `huvudmedlem` för en juridisk person, `Herd.contact_member` för en besättning · Legacy-manual: – · Legacy: – · Nytt UI: samma
 
 **Kull**\
 Ungarna från en födsel. Parning och kull är samma post: först registreras parningen, sedan födseln
@@ -206,6 +216,15 @@ Kod: `Membership`, `member_number`, `Member` · Legacy-manual: "medlemsregistret
 Avgiften för ett års medlemskap i Föreningen Gotlandskaninen. Samma avgift har också kallats
 årsavgift; skriv medlemsavgift, som inte går att blanda ihop med årsrapporten.\
 Kod: – · Nytt UI: "Medlemsavgiften", "Betala medlemsavgiften"
+
+**Organisationsnamn**\
+Namnet på den juridiska person som har medlemskapet. Det används som mottagarnamn på föreningens tidning.\
+Kod: `Membership.organization_name` · Legacy-manual: – · Legacy: – · Nytt UI: samma
+
+**Organisationsnummer**\
+Den juridiska personens identitetsnummer. I matrikeln är numret frivilligt och skrivs med tio siffror
+och ett bindestreck, NNNNNN-NNNN.\
+Kod: `Membership.organization_number` · Legacy-manual: – · Legacy: – · Nytt UI: samma
 
 **Oregistrerad unge**\
 Gamla manualen: en unge som ännu inte fått ett intyg. I nya Stamboken är det en rad i kullistan
@@ -269,6 +288,14 @@ Släktträdet visar kaninens föräldrar, mor- och farföräldrar och längre ba
 kaninens mor och far; den anges när kaninen läggs in och kan inte ändras av uppfödaren när kaninen
 har intyg. På de publika sidorna används stamtavla i samma mening.\
 Kod: `Breeding.mother`, `Breeding.father` · Legacy-manual: "Släktträd", "härstamning" · Legacy: samma · Nytt UI: "Släktträd", "stamtavla", "Mor", "Far"
+
+**Stamboken / Stamboken Online**\
+Stamboken är föreningens register över kaninerna i genbankerna: det som står registrerat, vem som än
+har lagt in det. Stamboken Online är webbsystemet där registret förs, där medlemmar rapporterar och
+genbanksansvariga lägger in intyg. I texter som når medlemmen utanför systemet (blanketter, mejl,
+Koharen, hemsidan) skrivs Stamboken Online när läsaren ska gå dit och göra något, och Stamboken när
+texten gäller det som står registrerat. Inne i systemet räcker Stamboken. Stort O.\
+Kod: – · Legacy-manual: "Stamboken Online" · Legacy: "Stamboken Online" · Nytt UI: "Stamboken Online" på hemsidan och inloggningen
 
 **Sälja / säljdatum / såld**\
 När en kanin byter besättning registrerar säljaren försäljningen: ny besättning (eller GX1/MX1) och
@@ -340,7 +367,7 @@ ordet i `scripts/check-ui-terms.sh`, med datum om det beslutades 2026-10-30 (se 
 | Begrepp | Legacy-manual | Legacy | Nytt UI (före 2026-10-29) | Nytt UI (nu) | Beslut |
 | --- | --- | --- | --- | --- | --- |
 | Kaninens nummer | "individnumret" (manual:147), "individ-nummer" (manual:184), "genbanksnummer" (manual:200, 214) | "Individnummer" (individual_form.tsx:177), "Nummer" (filter_table.tsx:222, individual_view.tsx:222) | "Genbanksnummer" (`certificate.individualNumber`, RabbitExplorer.tsx:127, `explorer.search`) | "Individnummer" (samma ställen) | Individnummer |
-| Besättningens nummer | "besättningsnummer" (manual:166, 219) | "Besättningsnummer" (individual_certificate.tsx:439), "Besättnings-ID" (herdForm.tsx:392), "Genbanksnummer" (YearlyReportForm.tsx:384) | "genbanksnummer" (bli-genbanksbesattning/page.tsx:103), "Besättningsnummer" (CreateHerdForm.tsx:131) | "Besättningsnummer" (bli-genbanksbesattning/page.tsx:103, CreateHerdForm.tsx:131), "Besättnings-ID" (BesattningsuppgifterCard.tsx:98) | Besättningsnummer |
+| Besättningens nummer | "besättningsnummer" (manual:166, 219) | "Besättningsnummer" (individual_certificate.tsx:439), "Besättnings-ID" (herdForm.tsx:392), "Genbanksnummer" (YearlyReportForm.tsx:384) | "genbanksnummer" (bli-genbanksbesattning/page.tsx:103), "Besättningsnummer" (CreateHerdForm.tsx:131) | "Besättningsnummer" (bli-genbanksbesattning/page.tsx:103, CreateHerdForm.tsx:131) | Besättningsnummer |
 | Intygets nummer | "intygsnummer" (manual:187) | "Intygsnummer" (individual_view.tsx:371, individual_form.tsx:193), "Nummer på pappersintyg" (cert_autocomplete.tsx:104) | "Certifikatnummer" (`certificate.number`), "Certifikatnr" (verifiera/[uuid]/page.tsx:107) | "Intygsnummer" (`certificate.number`, `addRabbit.paperCertificateNumber`, verifiera/[uuid]/page.tsx:107) | Intygsnummer |
 | Dokumentet | "genbanksintyg" (manual:28, 64), "intyg" (manual:30) | "intyg", "genbanksintyg" (YearlyReportForm.tsx:523), "stamtavlor (genbanksintyg)" (static_pages.tsx:210) | "certifikat v2" (`addRabbit.certificateDigitalDisabled`) | "intyg", "genbanksintyg" (`certificate.verified`), "stamtavleintyg" (IndividualCard.tsx:404) | intyg, aldrig certifikat |
 | Intygstyp | "pappersintyg" (manual:116), "digitalt intyg" (manual:165) | "Papper", "Digital", "Inget intyg" (cert_autocomplete.tsx:31–33), "Typ av intyg" (cert_autocomplete.tsx:73) | samma som nu | "Papper", "Digitalt" (`addRabbit.certificatePaper`, `addRabbit.certificateDigital`); "Pappersintyg", "Digitalt intyg" (KaninerTab.tsx:92–93) | Pappersintyg, Digitalt intyg (valet ej ändrat) |
@@ -419,6 +446,7 @@ Projektägaren beslutade 2026-10-30:
     (beslutat 2026-11-12).
 13. Beslutat 2026-11-12: **Besättning** om en enskild uppfödares kaniner, aldrig genbank. **Genbank** är hela rasens bevarade population, och föreningen har två. **Genbanksbesättning** får användas som förtydligande. Orden följer handlingsplanen och FAO, se posterna Besättning och Genbank.
 14. **Medlemsavgift**, inte årsavgift, om avgiften för ett års medlemskap (beslutat 2026-11-18).
+15. Beslutat 2026-11-21: **Stamboken Online** om webbsystemet när texten utanför systemet ber läsaren göra något där, **Stamboken** om registret. Se posten Stamboken / Stamboken Online.
 
 ## Öppna frågor
 
@@ -426,7 +454,7 @@ Inget av detta är beslutat. En rad per fråga med alternativen.
 
 - **Aktiv**: gamla manualen nämner inte kastrering (manual:32); nya koden kräver att kaninen inte är kastrerad.
 - **Kaninens nummer i gamla manualen**: "genbanksnummer" (manual:200, 214) mot "individnumret" (manual:147) och kanoniska Individnummer.
-- **Besättningsnummer**: legacy-UI säger också "Genbanksnummer" (YearlyReportForm.tsx:384) och "Besättnings-ID" (herdForm.tsx:392); nya UI har kvar "Besättnings-ID" i ett felmeddelande (BesattningsuppgifterCard.tsx:98).
+- **Besättningsnummer**: legacy-UI säger också "Genbanksnummer" (YearlyReportForm.tsx:384) och "Besättnings-ID" (herdForm.tsx:392).
 - **Menyvalet**: "Sälj individ" (båda UI) eller "Sälj kanin" (manual:218).
 - **Flytta**: gamla manualen (manual:219–220) och gamla dialogen (individual_sell.tsx:174) säger flytta om en försäljning; kanon tillåter flytt bara i historiktext. USER_MANUAL.md har rubriken "Sälja eller flytta en kanin".
 - **Intygsnummer**: ett ord för både pappersnumret och det digitala numret (nya UI) eller två ("Nummer på pappersintyg" mot "Intygsnummer", cert_autocomplete.tsx:104, individual_form.tsx:193).

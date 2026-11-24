@@ -109,6 +109,20 @@
   border-bottom: 1px solid var(--sb-line);
   vertical-align: top;
 }
+/* The report photo's check (ReportPhotoCheck): the field names at reading size, a differing row marked */
+.photoCheck th {
+  font-family: var(--sb-body);
+  font-size: 14px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--sb-ink-2);
+}
+.photoCheck tr[data-differs] {
+  background: var(--sb-warning-soft);
+}
+.photoCheck tr[data-differs] > th {
+  border-left: 4px solid var(--sb-warning);
+}
 .caseLink {
   font-weight: 600;
   color: var(--sb-ink);
@@ -164,17 +178,62 @@
   }
 }
 
-/* ---- The working view: documents | photo | form ---- */
+/* ---- The working view ---- */
 .work {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
-@media (min-width: 1100px) {
+.work > [hidden] {
+  display: none;
+}
+@media (min-width: 960px) {
   .work {
-    grid-template-columns: 260px minmax(0, 1fr) 400px;
+    grid-template-columns: minmax(20rem, 1fr) minmax(0, 2.4fr);
+    gap: var(--sb-s-5);
   }
+  .work > aside {
+    grid-area: 1 / 1 / span 2;
+  }
+  .mailThread {
+    grid-column: 2 / -1;
+  }
+  .registration {
+    grid-column: 2;
+  }
+}
+@media (min-width: 1200px) {
+  .work[data-documents="true"] {
+    grid-template-columns: minmax(20rem, 1fr) minmax(0, 1.6fr) minmax(
+        22rem,
+        1.2fr
+      );
+  }
+  .registration {
+    grid-column: 3;
+  }
+}
+.mailThread {
+  padding: clamp(var(--sb-s-4), 2.5vw, var(--sb-s-6));
+  overflow-wrap: anywhere;
+}
+.mailThread article + article {
+  border-top: 1px solid var(--sb-line);
+  padding-top: var(--sb-s-4);
+}
+.mailThread dl,
+.mailThread p {
+  margin: var(--sb-s-3) 0 0;
+}
+.mailThread dd {
+  margin: var(--sb-s-1) 0 0;
+}
+.mailThread p {
+  max-width: 68ch;
+  white-space: pre-wrap;
+  font-size: var(--sb-fs-md);
+  line-height: 1.55;
 }
 .docList {
   list-style: none;
@@ -217,24 +276,27 @@
   color: var(--sb-ink-3);
 }
 .facts {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 4px 10px;
   margin: 0;
-  font-size: 14px;
+  font-size: var(--sb-fs-base);
 }
 .facts dt {
+  font-size: var(--sb-fs-sm);
   color: var(--sb-ink-3);
+}
+.facts dd + dt {
+  margin-top: var(--sb-s-3);
 }
 .facts dd {
   margin: 0;
-  min-width: 0;
   overflow-wrap: anywhere;
 }
 .actions {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+.actions > button {
+  align-self: flex-start;
 }
 .actions > button,
 .actions > form button {
@@ -421,6 +483,36 @@
 .submitRow > :first-child {
   flex: 1;
   justify-content: center;
+}
+/* A column with nothing to show (a purchase notice's right column): no empty card */
+.hideEmpty:empty {
+  display: none;
+}
+/* A purchase notice in the main column: its facts at reading size, the number unbroken */
+.purchase {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: flex-start;
+  font-size: 16px;
+}
+.purchase p {
+  margin: 0;
+}
+.purchaseFacts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 16px;
+  margin: 0;
+}
+.purchaseFacts dt {
+  color: var(--sb-ink-2);
+}
+.purchaseFacts dd {
+  margin: 0;
+}
+.number {
+  white-space: nowrap;
 }
 .note {
   font-size: 13px;

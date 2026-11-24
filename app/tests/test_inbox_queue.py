@@ -12,6 +12,25 @@ from tests.inbox_fixtures import InboxTest  # noqa: E402
 
 
 class TestVisibility(InboxTest):
+    def test_mail_mentions_are_suggestions_filtered_for_each_reader(self):
+        db.Individual.update(voided=True).where(db.Individual.number == "G1-1911").execute()
+        # G1-2112's current holder is in Gotland even if its recorded origin is elsewhere.
+        db.Individual.update(origin_herd=self.herds[2]).where(db.Individual.number == "G1-2112").execute()
+        item = db.InboxItem.create(kind="meddelande", message="(g1-2111), M3-2111 och G9-9999.")
+        inbox.log_event(item, None, "inkommen", subject="Fråga om G1-2112 och G1-2111")
+        inbox.log_event(item, None, "svar", subject="M3-1811", text="G2-1711, G1-1911. Feltryck G2-2011x.")
+        for username, expected in (
+            ("hjalp", ["G1-2111", "G1-2112", "G2-1711"]),
+            ("mhjalp", ["M3-1811", "M3-2111"]),
+        ):
+            with self.subTest(username):
+                self.login(username)
+                resp = self.client.get(f"/api/v2/inkorg/{item.id}")
+                self.assertEqual(resp.status_code, 200, resp.get_json())
+                self.assertEqual(resp.get_json()["mentioned_individuals"], expected)
+                self.assertEqual(resp.get_json()["documents"], [])
+        self.assertFalse(db.InboxOperation.select().exists())
+
     def test_admin_manager_and_helpers_see_the_whole_queue(self):
         gotland, mellerud = self.item(0), self.item(2)
         for username in ("admin", "man", "hjalp", "mhjalp"):
@@ -441,6 +460,16 @@ class TestUploaderAndNotices(InboxTest):
         )
         self.assertNotIn(other.id, [i["id"] for i in resp.get_json()["items"]])
         self.assertNotIn("assigned_to", resp.get_json()["items"][0])
+
+    def test_my_uploads_leave_out_a_held_photo_of_every_purpose(self):
+        sent = self.item(0)
+        held = [self.item(0) for _ in (*inbox.PURPOSES, inbox.HELD_RABBIT)]
+        for item, purpose in zip(held, (*inbox.PURPOSES, inbox.HELD_RABBIT), strict=True):
+            item.ref_data = {inbox.PURPOSE: purpose}
+            item.save()
+        self.login("owner")
+        ids = [i["id"] for i in self.client.get("/api/v2/inkorg/mina-inskick").get_json()["items"]]
+        self.assertEqual(ids, [sent.id])
 
     def test_the_list_reads_no_notice_and_the_page_marks_them_seen(self):
         mine = self.item(0)

@@ -1,0 +1,9 @@
+{% block subject %}{{ number }} är registrerad i din besättning{% endblock %}
+
+{% block body %}
+Hej!
+
+{{ number }} är registrerad i din besättning från {{ datum }}. Ändra din årsrapport och välj Finns kvar för kaninen, så räknas den den 31 december.
+
+Har du frågor? Svara på det här mejlet.
+{% endblock %}

@@ -2,7 +2,8 @@
 #
 # Tests that the demo sync copies production without the data of the queue
 # tables: the demo API keeps running through the load, and its mail sender must
-# never see production's queue. Nor does the demo keep production's buyers
+# never see production's queue. The yearly report's drafts, change requests and
+# sale proposals stay behind too. Nor does the demo keep production's buyers
 # outside the association: they are deleted after the load. Runs the pg_dump
 # flags and the buyer step from sync-demo-db.sh against a throwaway Postgres
 # container.
@@ -88,6 +89,24 @@ CREATE TABLE buyer_contact (id int PRIMARY KEY);
 CREATE TABLE herd_tracking (id int PRIMARY KEY, holder_contact_id int REFERENCES buyer_contact ON DELETE SET NULL, buyer_removed boolean NOT NULL DEFAULT false);
 INSERT INTO buyer_contact VALUES (1);
 INSERT INTO herd_tracking VALUES (1, 1);
+CREATE TABLE inbox_item (id int PRIMARY KEY);
+CREATE TABLE yearlyherdreport (id int PRIMARY KEY, inbox_item_id int);  -- no FK, so the report loads without the item
+CREATE TABLE yearly_report_submission (id int PRIMARY KEY, report_id int REFERENCES yearlyherdreport);
+CREATE TABLE yearly_report_draft (id int PRIMARY KEY);
+CREATE TABLE member_change_request (id int PRIMARY KEY, submission_id int REFERENCES yearly_report_submission);
+CREATE TABLE sale_proposal (id int PRIMARY KEY, submission_id int REFERENCES yearly_report_submission);
+INSERT INTO inbox_item VALUES (1);
+INSERT INTO yearlyherdreport VALUES (1, 1);
+INSERT INTO yearly_report_submission VALUES (1, 1);
+INSERT INTO yearly_report_draft VALUES (1);
+INSERT INTO member_change_request VALUES (1, 1);
+INSERT INTO sale_proposal VALUES (1, 1);
+CREATE TABLE report_access_code (id int PRIMARY KEY, revoked_at timestamptz);
+ALTER TABLE yearly_report_submission ADD COLUMN access_code_id int REFERENCES report_access_code;
+CREATE TABLE yearly_report_round_genebank (id int PRIMARY KEY, sent_at timestamptz);
+INSERT INTO report_access_code VALUES (1, NULL), (2, '2026-01-01');
+INSERT INTO yearly_report_round_genebank VALUES (1, NULL), (2, '2026-01-01');
+UPDATE yearly_report_submission SET access_code_id = 1;  -- a submission made through a link
 SQL
 
 # The dump-and-load step of sync-demo-db.sh. No inbox_*, notice or gmail_*
@@ -111,9 +130,23 @@ check "login_code (codes and unconfirmed addresses) comes over without rows" 0 "
 check "member_previous_address (addresses left) comes over without rows" 0 "$(sql -d dst -c 'SELECT count(*) FROM member_previous_address')"
 check "notice_setting (a user preference) keeps its rows" 1 "$(sql -d dst -c 'SELECT count(*) FROM notice_setting')"
 check "an ordinary table keeps its rows" 1 "$(sql -d dst -c 'SELECT count(*) FROM hbuser')"
+check "the yearly report keeps its rows, without its queue item" "1|0" \
+  "$(sql -d dst -c 'SELECT (SELECT count(*) FROM yearlyherdreport), (SELECT count(*) FROM inbox_item)')"
+check "the report's submissions keep their rows" 1 "$(sql -d dst -c 'SELECT count(*) FROM yearly_report_submission')"
+check "the report drafts come over without rows" 0 "$(sql -d dst -c 'SELECT count(*) FROM yearly_report_draft')"
+check "the change requests come over without rows" 0 "$(sql -d dst -c 'SELECT count(*) FROM member_change_request')"
+check "the sale proposals come over without rows" 0 "$(sql -d dst -c 'SELECT count(*) FROM sale_proposal')"
+
+check "the report links are revoked, and the rows stay for the submissions" "2|0|1" \
+  "$(sql -d dst -c 'SELECT count(*), count(*) FILTER (WHERE revoked_at IS NULL), (SELECT count(access_code_id) FROM yearly_report_submission) FROM report_access_code')"
+check "the activations are marked sent, none deleted" "2|0" \
+  "$(sql -d dst -c 'SELECT count(*), count(*) FILTER (WHERE sent_at IS NULL) FROM yearly_report_round_genebank')"
 
 check "the demo has no buyers" 0 "$(sql -d dst -c 'SELECT count(*) FROM buyer_contact')"
 check "the sale stays, without its buyer, marked as removed" "1||t" "$(sql -d dst -c 'SELECT id, holder_contact_id, buyer_removed FROM herd_tracking')"
+# The dump leaves sale proposals out; the step deletes any that came anyway.
+sql -d dst -c "INSERT INTO sale_proposal VALUES (1, 1)" -c "$DROP_BUYERS_SQL" >/dev/null
+check "a sale proposal that came anyway is deleted" 0 "$(sql -d dst -c 'SELECT count(*) FROM sale_proposal')"
 sql -d dst -c "DROP TABLE herd_tracking, buyer_contact" -c "$DROP_BUYERS_SQL" >/dev/null
 check "an older schema without buyers is skipped" 0 "$?"
 

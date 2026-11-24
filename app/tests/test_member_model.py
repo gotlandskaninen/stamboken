@@ -52,6 +52,13 @@ class TestMemberModel(DatabaseTest):
 class TestInvoiceAddress(DatabaseTest):
     POSTAL = {"address": "Hemvägen 1", "postal_code": "123 45", "city": "Exempelby"}
 
+    def test_organization_is_the_invoice_recipient_unless_overridden(self):
+        ms = db.Membership.create(organization_name="Exempelby museum")
+        db.Member.create(membership=ms, first_name="Lo", last_name="Exempel")
+        self.assertEqual(ms.invoice_address["name"], "Exempelby museum")
+        ms.billing_name = "Ekonomikontoret"
+        self.assertEqual(ms.invoice_address["name"], "Ekonomikontoret")
+
     def test_without_billing_address_falls_back_to_postal_address(self):
         ms = db.Membership.create(**self.POSTAL)
         self.assertEqual(

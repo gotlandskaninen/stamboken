@@ -9,8 +9,9 @@ Member row and address/consent on the Membership. See ADR-0007 and ADR-0008.
 
 import csv
 import io
+import re
 import secrets
-from datetime import date
+from datetime import date, datetime, timezone
 
 import utils.settings as settings
 from flask import Blueprint, Response, jsonify, request, session
@@ -18,7 +19,8 @@ from flask_login import current_user
 from peewee import IntegrityError
 from utils.csv_safe import csv_safe
 from utils.data_access import session_holds
-from utils.database import BILLING_FIELDS, DB_PROXY, Herd, HerdAccessGrant, Member, Membership, User
+from utils.database import BILLING_FIELDS, DB_PROXY, AuditLog, Herd, HerdAccessGrant, Member, Membership, User
+from utils.herd_contact import on_membership_active
 from utils.login_code import (
     AddressTaken,
     CodeLoginClosed,
@@ -34,11 +36,20 @@ from utils.mail import _normalize, enqueue_mail
 from utils.matrikel import (
     AddressValidationError,
     is_anonymized,
+    membership_recipient,
     parse_postal_fields,
     set_member_email,
     set_membership_status,
+    write_matrikel_audit,
 )
-from utils.members import CONSENT_KEYS, consent_answered, effective_consent, stored_consent
+from utils.members import (
+    CONSENT_KEYS,
+    PROFILE_CONSENT_TEXT_VERSION,
+    consent_answered,
+    effective_consent,
+    set_consent,
+    stored_consent,
+)
 from utils.membership_lifecycle import Status, TransitionRefused
 
 from blueprints.common import (
@@ -46,6 +57,7 @@ from blueprints.common import (
     json_login_required,
     matrikel_admin_required,
     matrikel_read_required,
+    membership_organization_fields,
     problem,
 )
 
@@ -83,6 +95,7 @@ def _membership_to_dict(ms: Membership, persons: list[Member] | None = None) -> 
     return {
         "id": ms.id,
         "member_number": ms.member_number,
+        **membership_organization_fields(ms, account_details=True),
         "membership_status": ms.membership_status,
         "address": ms.address,
         "postal_code": ms.postal_code,
@@ -135,7 +148,7 @@ def list_members():
         person_match = Member.select(Member.membership).where(
             (Member.first_name**like) | (Member.last_name**like) | (Member.email**like)
         )
-        match = Membership.id.in_(person_match)
+        match = Membership.id.in_(person_match) | (Membership.organization_name**like)
         # A purely numeric search also matches on member number. ASCII-only:
         # isdigit() alone accepts characters int() rejects (e.g. "²"), and the
         # length cap bounds the value to int4 before conversion.
@@ -243,8 +256,9 @@ def patch_membership(membership_id: int):
             # linked huvudmedlem's herd access (same rule as memberships.py).
             ms = Membership.select().where(Membership.id == ms.id).for_update().get()
             changed = []
+            activated = False
             if new_status is not None and new_status != ms.membership_status:
-                set_membership_status(ms, new_status, current_user)
+                activated = set_membership_status(ms, new_status, current_user)
                 changed.append(Membership.membership_status)
             if "notes" in body:
                 ms.notes = (body["notes"] or "").strip() or None
@@ -252,6 +266,10 @@ def patch_membership(membership_id: int):
             # UPDATE only the changed columns — a full-row save would push every
             # attribute the instance carries, changed or not.
             ms.save(only=changed + [Membership.updated_at])
+            if activated:  # after the save: the comparison reads the saved membership (#117)
+                on_membership_active(ms.id)
+    except AddressTaken:
+        return problem(409, AddressTaken.title, "En annan medlem kan redan logga in med e-postadressen")
     except TransitionRefused:
         # Raised, not returned: a `return` inside atomic() would commit the rest of the request.
         return problem(
@@ -309,6 +327,7 @@ def _me_response(m: Member) -> dict:
     data["membership"] = {
         "id": ms.id,
         "member_number": ms.member_number,
+        **membership_organization_fields(ms, account_details=False),
         "membership_status": ms.membership_status,
         "address": ms.address,
         "postal_code": ms.postal_code,
@@ -322,14 +341,15 @@ def _me_response(m: Member) -> dict:
     # PATCH of an all-off answer would otherwise leave the row "ej angivet".
     data["consent_answered"] = consent_answered(ms)
     main = (
-        Member.select(Member.first_name, Member.last_name)
+        Member.select(Member.first_name, Member.last_name, Member.role, Membership.id, Membership.organization_name)
+        .join(Membership)
         .where(Member.membership == ms, Member.role == "huvudmedlem", Member.end_date.is_null(True))
         .order_by(Member.id)
         .first()
     )
     # Additive: /v2/my-membership hides other persons from
     # non-main members, so the profile card gets the name here.
-    data["main_member_name"] = f"{main.first_name} {main.last_name}".strip() if main else None
+    data["main_member_name"] = main.display_name if main else None
     return data
 
 
@@ -401,11 +421,6 @@ def patch_me_contact():
     if new_email is not None and settings.service.demo_instance:
         # The demo never replaces an account's mark (new_generation): the change could not end the sessions.
         refused, new_email = DEMO_REFUSAL, None
-    if new_email is not None:
-        try:
-            refuse_unsafe()
-        except CodeRefused:
-            return _codes_unavailable()
 
     try:
         # Split keys only — the postal_address alias is an admin/legacy input,
@@ -434,6 +449,11 @@ def patch_me_contact():
             m, ms, err = _relock_me(membership_id, person_id)
             if err is not None:
                 return err
+            changed = [f for f, v in membership_updates.items() if getattr(ms, f) != v]
+            changed += [f for f, v in person_updates.items() if getattr(m, f) != v]
+            if changed:  # D19: a paper form signed before this change must not overwrite it; the names only
+                payload = {"person_id": m.id, "fields": changed, "source": "profil"}
+                write_matrikel_audit(current_user, "kontakt_andrad", ms, payload)
             for field, value in person_updates.items():
                 setattr(m, field, value)
             for field, value in membership_updates.items():
@@ -442,7 +462,13 @@ def patch_me_contact():
                 ms.save(only=[getattr(Membership, f) for f in membership_updates] + [Membership.updated_at])
             m.save(only=[getattr(Member, f) for f in person_updates] + [Member.updated_at])
             if new_email is not None:
-                _ask_for_code(m, new_email)
+                if ms.membership_status == Status.FRIEXEMPLAR:
+                    refused, new_email = "E-postadressen för ett friexemplar kan bara bytas i matrikeln.", None
+                else:
+                    refuse_unsafe()
+                    _ask_for_code(m, new_email)
+    except CodeRefused:
+        return _codes_unavailable()
     except IntegrityError:
         # DEAD BACKSTOP: the legacy
         # per-genebank contact-email index `idx_member_genebank_email_unique`
@@ -537,14 +563,18 @@ def verify_me_email():
         User.select().where(User.id == current_user.id).for_update().get()
         if not session_holds(session):  # revoked while the request waited for the account's row
             return problem(401, "Sessionen gäller inte längre", "Logga in igen.")
-        m, _ms, err = _relock_me(membership_id, person_id)
+        m, ms, err = _relock_me(membership_id, person_id)
         if err is not None:
             return err
         if not row.new_address or row.user_id != m.user_id or not consume(row):
             return _wrong_code()
         try:
             with DB_PROXY.atomic():
+                previous = m.email
                 m = set_member_email(m, row.new_address, current_user, by="self")
+                if m.email != previous:
+                    payload = {"person_id": m.id, "fields": ["email"], "source": "profil"}
+                    write_matrikel_audit(current_user, "kontakt_andrad", ms, payload)
         except AddressTaken:
             return _wrong_code()  # taken since the code went; the code stays used (the return commits)
     session.pop("login_request", None)
@@ -612,10 +642,7 @@ def patch_me_consent():
         # (fail-closed).
         merged = {k: v is True for k, v in stored_consent(ms).items() if k in CONSENT_KEYS}
         merged.update(updates)
-        ms.publication_consent = merged
-        # Consent only — never carry membership_status or the address along
-        # (same rule as the contact route).
-        ms.save(only=[Membership.publication_consent, Membership.updated_at])
+        set_consent(ms, merged, source="profil", text_version=PROFILE_CONSENT_TEXT_VERSION, user=current_user.id)
     return jsonify(_me_response(m))
 
 
@@ -664,6 +691,8 @@ INVOICE_HEADER = (
 @json_login_required
 @matrikel_admin_required
 def export_members():
+    if settings.service.demo_instance:
+        return problem(403, "Inte i testmiljön", DEMO_EXPORT_REFUSED)
     # Matrikel/mailing-list export in the MATR paper layout, so the matrikel
     # keeper keeps the spreadsheet format he already works in — and the file
     # round-trips straight back through `flask members import`
@@ -677,7 +706,7 @@ def export_members():
     # this CSV's only consumers are the matrikel keeper and our own
     # importer, which accepts both layouts.
     #
-    # The Faktura* columns at the end are Membership.invoice_address: the
+    # The Faktura* columns are Membership.invoice_address: the
     # address the fee invoice goes to, which is the postal address unless the
     # membership has a billing address. The importer ignores them.
     q = Membership.select().where(Membership.membership_status.in_(("active", "friexemplar")))
@@ -699,22 +728,24 @@ def export_members():
             "Bet senast",
             "Noteringar",
             *INVOICE_HEADER,
+            "c/o",
         ]
     )
 
     # MATR file order: friexemplar/number-less memberships first, then
     # ascending member number.
-    for ms in q.order_by(Membership.member_number.asc(nulls="FIRST"), Membership.id):
-        # One row per ACTIVE person, huvudmedlem first.
-        persons = sorted(
-            Member.select().where(Member.membership == ms, Member.end_date.is_null(True)),
-            key=lambda p: (p.role != "huvudmedlem", p.id),
-        )
+    q = q.order_by(Membership.member_number.asc(nulls="FIRST"), Membership.id)
+    active_persons = (
+        Member.select().where(Member.end_date.is_null(True)).order_by(Member.role != "huvudmedlem", Member.id)
+    )
+    for ms in q.prefetch(active_persons):
+        persons = ms.persons
+        if ms.organization_name and (not persons or persons[0].role != "huvudmedlem"):
+            # The organization still receives the magazine without an active contact.
+            persons = [None, *persons]
         if not persons:
-            # Nobody left to mail (every person ended/anonymized), and a
-            # nameless row is rejected by the importer's "Namn Efternamn"
-            # check — skip the membership entirely.
             continue
+        _, care_of = membership_recipient(ms)
 
         herd_codes = [h.herd or "" for h in Herd.select().where(Herd.membership == ms)]
         g_flag = "G" if any(code.startswith("G") for code in herd_codes) else ""
@@ -734,6 +765,7 @@ def export_members():
 
         for index, person in enumerate(persons):
             main_row = index == 0
+            name = ms.organization_name if main_row and ms.organization_name else person.display_name
             writer.writerow(
                 [
                     # Membership-level cells only on the main row; the Nr is
@@ -742,23 +774,28 @@ def export_members():
                     g_flag if main_row else "",
                     m_flag if main_row else "",
                     nr,
-                    csv_safe(f"{person.first_name} {person.last_name}".strip()),
+                    csv_safe(name),
                     csv_safe(ms.address) if main_row else "",
                     csv_safe(ms.postal_code) if main_row else "",
                     csv_safe(ms.city) if main_row else "",
-                    csv_safe(person.phone),
-                    csv_safe(person.email),
+                    csv_safe(person.phone if person else None),
+                    csv_safe(person.email if person else None),
                     csv_safe(ms.payment_note) if main_row else "",
                     csv_safe(ms.notes) if main_row else "",
                     *(invoice_cells if main_row else [""] * len(INVOICE_KEYS)),
+                    csv_safe(care_of) if main_row else "",
                 ]
             )
 
     filename = f"matrikel_export_{date.today().isoformat()}.csv"
+    log_member_export("matr")
     return Response(
         buf.getvalue(),
         mimetype="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",  # a cached copy would skip the audit row
+        },
     )
 
 
@@ -776,12 +813,11 @@ def export_koharen():
     writer.writerow(KOHAREN_HEADER)
     q = Membership.select().where(Membership.membership_status == "active")
     for ms in q.order_by(Membership.member_number.asc(nulls="LAST"), Membership.id):
-        persons = sorted(
-            Member.select().where(Member.membership == ms, Member.end_date.is_null(True)),
-            key=lambda p: (p.role != "huvudmedlem", p.id),
-        )
-        if not persons:
-            continue
+        persons = Member.select().where(Member.membership == ms, Member.end_date.is_null(True))
+        if ms.organization_name:
+            persons = [persons.where(Member.role == "huvudmedlem").first()]
+        else:
+            persons = persons.order_by(Member.role != "huvudmedlem", Member.id)
         # {} = never answered: blank PII + "ej angivet" so the keeper
         # can fall back to the yearly-report answer by hand. No automatic seeding.
         answered = consent_answered(ms)
@@ -789,12 +825,13 @@ def export_koharen():
         samtycke = "angivet" if answered else "ej angivet"
         nr = str(ms.member_number) if ms.member_number is not None else ""
         for person in persons:
+            name = ms.organization_name or person.display_name
             writer.writerow(
                 [
                     nr,
-                    csv_safe(f"{person.first_name} {person.last_name}".strip()) if consent["name"] else "",
-                    csv_safe(person.phone) if consent["phone"] else "",
-                    csv_safe(person.email) if consent["email"] else "",
+                    csv_safe(name) if consent["name"] else "",
+                    csv_safe(person.phone) if consent["phone"] and person else "",
+                    csv_safe(person.email) if consent["email"] and person else "",
                     csv_safe(ms.address) if consent["address"] else "",
                     csv_safe(ms.postal_code) if consent["address"] else "",
                     csv_safe(ms.city) if consent["address"] else "",
@@ -805,4 +842,91 @@ def export_koharen():
         buf.getvalue(),
         mimetype="text/csv; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="koharen-matrikel.csv"'},
+    )
+
+
+def log_member_export(action, **details):
+    """One audit_log row per download of the MATR export or the address list: who, when and which, never a value."""
+    AuditLog.create(
+        table_name=Membership._meta.table_name,
+        record_id=f"export-{action}-{datetime.now(timezone.utc).isoformat()}",
+        operation="READ",
+        new_data={"action": action, **details},
+        changed_by=current_user.username or current_user.email,
+    )
+
+
+# The demo is a nightly copy of production: an export there would carry real members
+# while its audit row is gone at the next sync.
+DEMO_EXPORT_REFUSED = "Exporten går bara att göra i den riktiga Stamboken, där varje uttag loggas."
+
+ADDRESS_LIST_HEADER = ["Nr", "Namn Efternamn", "Adress", "Postadress", "Betala nu"]
+
+
+def fee_unpaid(payment_note, year):
+    """True when the latest year in the payment note is before `year`.
+
+    Two layouts: the paper matrikel's bare "25", and the guide's "Betalt 2026-11-16 Swish".
+    A note without a year (empty, "gratis") never gives a reminder.
+    """
+    note = (payment_note or "").strip()
+    if re.fullmatch(r"\d{2}", note, re.ASCII):
+        return 2000 + int(note) < year
+    years = [int(y) for y in re.findall(r"(?<!\d)(?:19|20)\d{2}(?!\d)", note, re.ASCII)]
+    return bool(years) and max(years) < year
+
+
+# The printer's mailing list for Koharen (#186), in the layout the printer already gets:
+# one row per household with the huvudmedlem's name only, sorted by postal code.
+# New route; the MATR export's contract is untouched (ADR-0006).
+@members_bp.route("/v2/members/address-list", methods=["GET"])
+@json_login_required
+@matrikel_admin_required
+def export_address_list():
+    if settings.service.demo_instance:
+        return problem(403, "Inte i testmiljön", DEMO_EXPORT_REFUSED)
+    fee_reminder = request.args.get("fee_reminder") == "1"  # only for the year's first two issues
+    year = date.today().year
+    rows = []
+    for ms in Membership.select().where(Membership.membership_status.in_(("active", "friexemplar"))):
+        if not ms.address and not ms.postal_address:
+            continue
+        persons = sorted(
+            Member.select().where(Member.membership == ms, Member.end_date.is_null(True)),
+            key=lambda p: (p.role != "huvudmedlem", p.id),
+        )
+        if not persons:
+            continue
+        if ms.member_number is not None:
+            nr = str(ms.member_number)
+        else:
+            nr = "0" if ms.membership_status == "friexemplar" else ""
+        unpaid = fee_reminder and ms.membership_status == "active" and fee_unpaid(ms.payment_note, year)
+        sort_key = (ms.postal_code is None, ms.postal_code or "", ms.id)  # a foreign address has no postal code: last
+        rows.append(
+            (
+                sort_key,
+                [
+                    nr,
+                    csv_safe(f"{persons[0].first_name} {persons[0].last_name}".strip()),
+                    csv_safe(ms.address),
+                    csv_safe(ms.postal_address),
+                    "Betala nu" if unpaid else "",
+                ],
+            )
+        )
+
+    buf = io.StringIO()
+    buf.write("\ufeff")  # UTF-8 BOM for Excel
+    writer = csv.writer(buf, quoting=csv.QUOTE_ALL)
+    writer.writerow(ADDRESS_LIST_HEADER)
+    writer.writerows(row for _, row in sorted(rows, key=lambda r: r[0]))
+    log_member_export("address-list", rows=len(rows), fee_reminder=fee_reminder)
+    return Response(
+        buf.getvalue(),
+        mimetype="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="koharen-adresslista-{date.today().isoformat()}.csv"',
+            "Cache-Control": "no-store",  # personal data: never kept by a browser or a proxy
+        },
     )

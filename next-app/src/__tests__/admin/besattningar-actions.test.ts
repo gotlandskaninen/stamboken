@@ -37,7 +37,7 @@ describe("admin herd actions — prod-mode guard runs before any fetch", () => {
 
   test("updateHerd with sb_mode=demo rejects before any fetchApi", async () => {
     mockedGuard.mockRejectedValue(new Error("NEXT_REDIRECT"));
-    await expect(updateHerd("G42", { name: "X" })).rejects.toThrow(
+    await expect(updateHerd("G42", { www: "X" })).rejects.toThrow(
       "NEXT_REDIRECT",
     );
     expect(mockedFetch).not.toHaveBeenCalled();
@@ -58,5 +58,17 @@ describe("admin herd actions — prod-mode guard runs before any fetch", () => {
       field: "herd",
       error: "Besättningsnumret finns redan. Välj ett annat nummer.",
     });
+  });
+});
+
+describe("saveHerdContact", () => {
+  test("a transport error becomes a failed result, not a rejection", async () => {
+    mockedGuard.mockResolvedValue(undefined);
+    mockedFetch.mockRejectedValue(new TypeError("fetch failed"));
+    const { saveHerdContact } = await import(
+      "@/app/(app)/stamboken/(dashboard)/admin/besattningar/actions"
+    );
+    const r = await saveHerdContact("G42", { contact: {} });
+    expect(r).toMatchObject({ success: false });
   });
 });

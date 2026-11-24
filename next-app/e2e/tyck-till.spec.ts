@@ -64,6 +64,21 @@ test.describe("Tyck till, inloggad", () => {
     await expect(dialog(page)).toBeVisible();
   });
 
+  test("the tab at the edge opens it, and hides while pointing", async ({
+    page,
+  }) => {
+    await page.goto(APP);
+    const tab = page.getByRole("button", { name: "Tyck till om sidan" });
+    await tab.click();
+    await expect(
+      dialog(page).getByText("Vem får läsa det du skriver?"),
+    ).toBeVisible();
+    await dialog(page).getByRole("button", { name: "Peka på sidan" }).click();
+    await expect(tab).toBeHidden();
+    await page.keyboard.press("Escape");
+    await expect(dialog(page)).toBeVisible();
+  });
+
   test("opens from the footer", async ({ page }) => {
     await page.goto(APP);
     await page
@@ -183,11 +198,19 @@ test.describe("Tyck till, utloggad", () => {
     await page.goto(
       "/stamboken/verifiera/00000000-0000-0000-0000-000000000000",
     );
-    await page.getByRole("button", { name: "Tyck till" }).click();
+    await page.getByRole("button", { name: "Tyck till", exact: true }).click();
     await expect(dialog(page)).toBeVisible();
     await expect(
       dialog(page).getByText("Vem får läsa det du skriver?"),
     ).toBeHidden();
+  });
+
+  test("the tab at the edge opens it on the public site", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: "Tyck till om sidan" }).click();
+    await expect(dialog(page)).toBeVisible();
+    await expect(dialog(page).getByLabel("Din e-postadress")).toBeVisible();
+    await noHorizontalScroll(page);
   });
 
   test("asks for an address and answers to it", async ({ page }) => {

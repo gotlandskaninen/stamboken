@@ -1,6 +1,7 @@
 import { ReactNode } from "react";
 import { Box } from "@mui/material";
 import { StambokenThemeProvider } from "@/components/public/StambokenThemeProvider";
+import { TyckTillTab } from "@/components/tyck-till/TyckTillDialog.client";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +20,7 @@ export default function Layout({ children }: { children: ReactNode }) {
         <Box sx={{ minHeight: "100dvh", bgcolor: "paper.main" }}>
           {children}
         </Box>
+        <TyckTillTab />
       </StambokenThemeProvider>
     </Box>
   );

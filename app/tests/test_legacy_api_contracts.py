@@ -34,6 +34,9 @@ class FlaskTest(DatabaseTest):
     def setUp(self):
         APP.config["TESTING"] = True  # nosemgrep
         APP.config["DEBUG"] = False  # nosemgrep
+        # Restored afterwards: a test file that runs later reads the session cookie by its real name
+        for key in ("SESSION_COOKIE_NAME", "SESSION_PERMANENT"):
+            self.addCleanup(APP.config.__setitem__, key, APP.config[key])
         APP.config["SESSION_COOKIE_NAME"] = "test_session"
         APP.config["SESSION_PERMANENT"] = False
         limiter.enabled = False
@@ -2676,3 +2679,41 @@ class TestLegacyHostCompat(FlaskTest):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestHerdContactFormat(FlaskTest):
+    def test_herd_read_keys_unchanged_for_unlinked_herd(self):
+        """An unlinked herd answers as before; `contact` is the only new key, and only with private access."""
+        with self.app as ctx:
+            self.login(ctx, self.owner)
+            owner_data = ctx.get(f"/api/herd/{self.herds[0].herd}").get_json()
+        with APP.test_client(use_cookies=True) as ctx:
+            self.login(ctx, self.viewer)
+            viewer_data = ctx.get(f"/api/herd/{self.herds[0].herd}").get_json()
+        self.assertIn("contact", owner_data)
+        self.assertNotIn("contact", viewer_data)
+        self.assertEqual(owner_data["name"], "owner1")
+        self.assertEqual(viewer_data["email"], "o@h1")
+        for key in ("contact_member_id", "contact_member", "contact_pending"):
+            self.assertNotIn(key, owner_data)
+
+    def test_manage_herd_patch_on_linked_herd_keeps_envelope(self):
+        """On a herd linked to a membership (#117) a contact change gets the legacy error envelope with the text
+        that points to new Stamboken; any other save answers exactly as before."""
+        db.Herd.update(membership=db.Membership.create(member_number=7)).where(db.Herd.id == self.herds[0].id).execute()
+        with self.app as ctx:
+            self.login(ctx, self.admin)
+            refused = ctx.patch("/api/manage/herd", json={"id": self.herds[0].id, "email": "ny@example.invalid"})
+            saved = ctx.patch("/api/manage/herd", json={"id": self.herds[0].id, "herd_name": "Nytt namn"})
+        self.assertEqual(refused.status_code, 200)
+        self.assertEqual(
+            refused.get_json(),
+            {
+                "status": "error",
+                "message": "Kontaktuppgifterna ändras i nya Stamboken. Har du inte tillgång där, kontakta "
+                "genbanksansvarig.",
+            },
+        )
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(saved.get_json(), {"status": "updated"})
+        self.assertEqual(db.Herd.get_by_id(self.herds[0].id).email, "o@h1")

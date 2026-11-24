@@ -5,6 +5,7 @@ import { ThemeProvider, createTheme } from "@mui/material/styles";
 import {
   BUYER_PRIVACY_HELP,
   GENETICS_INFO,
+  SYSTEM_REASON,
   VoidHerdTrackingDialog,
 } from "@/components/individual/VoidHerdTrackingDialog";
 import type { HerdTrackingRow } from "@/lib/herdTracking";
@@ -34,6 +35,7 @@ const row = (date: string): HerdTrackingRow => ({
   can_void: true,
   can_undo_sale: true,
   can_undo_operation: false,
+  report: null,
 });
 
 const open = (
@@ -68,6 +70,17 @@ describe("VoidHerdTrackingDialog", () => {
     });
     fireEvent.click(confirm);
     expect(onConfirm).toHaveBeenCalledWith("Fel köpare", expect.any(String));
+  });
+
+  it("asks for no reason that the server replaces, and sends the system's", () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const onConfirm = open({ row: { ...row(today), reason_replaced: true } });
+    expect(screen.queryByLabelText("Anledning")).toBeNull();
+    expect(screen.queryByText(BUYER_PRIVACY_HELP)).toBeNull();
+    const confirm = screen.getByRole("button", { name: "Ångra försäljning" });
+    expect((confirm as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(confirm);
+    expect(onConfirm).toHaveBeenCalledWith(SYSTEM_REASON, expect.any(String));
   });
 
   it("keeps one operation id per opening (a double click is one operation)", () => {

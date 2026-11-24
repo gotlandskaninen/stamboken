@@ -1,5 +1,50 @@
 import Link from "next/link";
+import { formatTime } from "@/lib/inkorg";
 import type { InboxDetail } from "../lib";
+import styles from "../inkorg.module.css";
+
+export function MailThread({ item }: { item: InboxDetail }) {
+  const arrived = item.events.find((e) => e.kind === "inkommen");
+  const messages = [
+    {
+      id: 0,
+      label:
+        item.kind === "mail" || item.kind === "meddelande"
+          ? "Mejl"
+          : "Meddelande",
+      subject: arrived?.detail?.subject,
+      text: item.message,
+    },
+    ...item.events
+      .filter((e) => e.kind === "svar")
+      .map((e) => ({
+        id: e.id,
+        label: `Svar · ${formatTime(e.at)}`,
+        subject: e.detail?.subject,
+        text: e.detail?.text,
+      })),
+  ].filter((m) => m.subject || m.text);
+  if (!messages.length) return null;
+  return (
+    <section
+      aria-label="Meddelande"
+      className={`sb-card ${styles.card} ${styles.mailThread}`}
+    >
+      {messages.map(({ id, label, subject, text }) => (
+        <article key={id}>
+          <h2 className={styles.cardTitle}>{label}</h2>
+          {typeof subject === "string" && (
+            <dl>
+              <dt className="sb-meta">Ämne</dt>
+              <dd className="sb-h5">{subject}</dd>
+            </dl>
+          )}
+          {typeof text === "string" && <p>{text}</p>}
+        </article>
+      ))}
+    </section>
+  );
+}
 
 /** Beside the sender address of a mail whose sender could not be confirmed. */
 export function SenderUnconfirmed({ item }: { item: InboxDetail }) {
@@ -19,12 +64,34 @@ export function SenderUnconfirmed({ item }: { item: InboxDetail }) {
  * reply from someone else may be about, and the files that were not stored.
  */
 export function MailFacts({ item }: { item: InboxDetail }) {
+  const mentioned = item.mentioned_individuals ?? [];
   const arrived = item.events.find((e) => e.kind === "inkommen")?.detail ?? {};
   const maybe =
     typeof arrived.maybe_item === "number" ? arrived.maybe_item : null;
-  const notSaved = Array.isArray(arrived.not_saved) ? arrived.not_saved : [];
+  const notSaved = item.events.flatMap(({ kind, detail }) => {
+    if (kind !== "inkommen" && kind !== "svar") return [];
+    if (Array.isArray(detail?.not_saved_reasons))
+      return detail.not_saved_reasons.map(
+        ({ name, reason }) => `${name} – ${reason}`,
+      );
+    return Array.isArray(detail?.not_saved) ? detail.not_saved : [];
+  });
   return (
     <>
+      {mentioned.length > 0 && (
+        <>
+          <dt>Nämnda kaniner</dt>
+          <dd>
+            {mentioned.map((number) => (
+              <div key={number}>
+                <Link href={`/stamboken/individ/${encodeURIComponent(number)}`}>
+                  {number}
+                </Link>
+              </div>
+            ))}
+          </dd>
+        </>
+      )}
       {maybe !== null && (
         <>
           <dt>Gäller kanske</dt>
@@ -36,7 +103,11 @@ export function MailFacts({ item }: { item: InboxDetail }) {
       {notSaved.length > 0 && (
         <>
           <dt>Sparades inte</dt>
-          <dd>{notSaved.join(", ")}</dd>
+          <dd>
+            {notSaved.map((file, index) => (
+              <div key={index}>{file}</div>
+            ))}
+          </dd>
         </>
       )}
     </>

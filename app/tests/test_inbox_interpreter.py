@@ -11,6 +11,7 @@ from unittest import mock
 
 import requests
 import utils.inbox_interpreter as interpreter
+import utils.mail as mail
 import utils.settings as settings
 from PIL import Image, ImageDraw, ImageStat
 
@@ -75,6 +76,17 @@ class TestInterpreter(unittest.TestCase):
             },
         )
         self.assertIsNone(interpreter.conform([], interpreter.SCHEMA))
+
+    def test_conform_masks_a_token_after_normalizing_and_cutting(self):  # FA3
+        with mock.patch.object(settings.mail, "link_secret", "test-link-secret"):
+            token = mail.link_token("rapport", 12)
+        row, secret = token.split(".")
+        pad = "x" * (interpreter.MAX_STRING - len(token) - 1) + " "
+        schema = {"type": "object", "properties": {"namn": {"type": "string"}}}
+        for text in (token, f"{row}.{secret[:10]}\x00{secret[10:]}", f"{pad}{token}X"):
+            with self.subTest(text=text[-30:]):
+                kept = interpreter.conform({"namn": text}, schema)
+                self.assertNotIn(secret, kept["namn"])
 
     def test_off_reads_nothing(self):
         for value in ("av", "okänd"):

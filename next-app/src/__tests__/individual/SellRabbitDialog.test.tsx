@@ -98,6 +98,31 @@ describe("SellRabbitDialog", () => {
     expect(onConfirm.mock.calls[0][1]).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
+  it("starts from a purchase notice's buyer herd and date, and still asks for the acknowledgement", async () => {
+    const onConfirm = vi.fn();
+    render(dialog({ onConfirm, initial: { herd: "G2", date: "2025-05-14" } }));
+    await waitFor(() =>
+      expect(screen.getByTestId("sell-summary").textContent).toContain(
+        "G2 – Grannen",
+      ),
+    );
+    fireEvent.click(screen.getByRole("checkbox"));
+    const confirm = screen.getByRole("button", {
+      name: "Bekräfta försäljning",
+    });
+    await waitFor(() =>
+      expect((confirm as HTMLButtonElement).disabled).toBe(false),
+    );
+    fireEvent.click(confirm);
+    expect(onConfirm.mock.calls[0].slice(0, 2)).toEqual(["G2", "2025-05-14"]);
+  });
+
+  it("leaves the herd unchosen when the notice names one the picker does not offer", async () => {
+    render(dialog({ initial: { herd: "G1", date: "2025-05-14" } })); // the seller's own herd
+    await openHerdOptions();
+    expect(screen.queryByTestId("sell-summary")).toBeNull();
+  });
+
   describe("buyer outside the association", () => {
     const CONSENT =
       "Köparen har kryssat ja: föreningen får spara e-post och telefon så länge köparen har kaninen";

@@ -5,6 +5,7 @@ import { Alert } from "@mui/material";
 import { useMode } from "@/lib/mode-context";
 import { Topbar } from "@/components/shell/Topbar";
 import { ShellFooter } from "@/components/shell/ShellFooter";
+import { TyckTillTab } from "@/components/tyck-till/TyckTillDialog.client";
 import { DemoBanner } from "@/components/public/DemoBanner.client";
 import { ModeHtmlAttribute } from "@/components/public/ModeHtmlAttribute.client";
 import { WipBanner } from "@/components/public/WipBanner.client";
@@ -41,6 +42,7 @@ export function DashboardShell({
         {children}
       </main>
       <ShellFooter />
+      <TyckTillTab />
       <SessionExpiredModal />
     </div>
   );

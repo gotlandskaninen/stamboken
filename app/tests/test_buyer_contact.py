@@ -4,6 +4,7 @@ isort:skip_file
 """
 
 import os
+import threading
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest import mock
@@ -13,17 +14,18 @@ os.environ.setdefault("AUTHCONFIGFILE", os.path.join(os.path.dirname(__file__), 
 
 import utils.data_access as da  # noqa: E402
 import utils.database as db  # noqa: E402
-import utils.herd_tracking as herd_tracking_module  # noqa: E402
 import utils.inbox as inbox  # noqa: E402
 import utils.inbox_purge as purge  # noqa: E402
 from herdbook import APP, limiter  # noqa: E402
 from peewee import IntegrityError  # noqa: E402
-from utils import buyer_contact  # noqa: E402
+from utils import buyer_contact, herd_tracking  # noqa: E402
 from utils.herd_tracking import (  # noqa: E402
     ONE_SALE_OUT,
+    UNDO_REASON,
     HerdTrackingConflict,
     HerdTrackingError,
     HerdTrackingInvalid,
+    QueueChanged,
     attach_buyer,
     buyer_contact_fields,
     correct_herd_tracking,
@@ -36,12 +38,13 @@ from utils.herd_tracking import (  # noqa: E402
 )
 from utils.individual_commands import RecordAttestation, Undo, execute, record_sale  # noqa: E402
 
-from tests.database_test import DatabaseTest  # noqa: E402
+from tests.database_test import _USE_POSTGRES, DatabaseTest, rewind_migrations  # noqa: E402
 from tests.test_bunny_v2_api import _old_litter, _promote_without_certificate
 from tests.test_herd_tracking_locks import capture_sql
 from tests.test_inbox_erasure import ErasureTest
 from tests.test_inbox_purge import NOW as PURGE_NOW  # noqa: E402
 from tests.test_inbox_purge import PurgeTest
+from tests.test_purchase_notice import in_thread, lock_waiter, run_all, until
 
 limiter.enabled = False
 
@@ -131,7 +134,7 @@ class TestSchema(BuyerBase):
         sql('ALTER TABLE herd_tracking DROP CONSTRAINT "herd_tracking_holder_contact_id_fkey"')
         sql('DROP INDEX "herdtracking_holder_contact_id"')
         sql("DROP TABLE buyer_contact")
-        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 44).execute()
+        rewind_migrations(44)
         if db.SchemaHistory.get_or_none(db.SchemaHistory.version == 43) is None:
             db.SchemaHistory.insert(version=43, comment="test seed", applied=datetime.now()).execute()  # pylint: disable=E1120
 
@@ -628,7 +631,7 @@ class TestVoid(BuyerBase):
 
     def test_a_legacy_move_without_a_herd_is_not_outside(self):
         legacy = SimpleNamespace(kind="TRANSFER", herd=None, herd_id=None)
-        self.assertEqual(herd_tracking_module._outside_pairs([legacy], []), {})
+        self.assertEqual(herd_tracking._outside_pairs([legacy], []), {})
 
     def test_the_event_api_takes_no_holder_contact_id(self):
         event = {"kind": "TRANSFER", "date": on(30), "herd": "G2", "holder_contact_id": self.contact_id}
@@ -637,14 +640,18 @@ class TestVoid(BuyerBase):
 
     def test_the_reason_never_names_the_buyer(self):
         with self.assertRaises(HerdTrackingInvalid):
-            void_herd_tracking(self.sale.id, self.owner, f"Såld till {NAME.upper()} av misstag")
+            void_herd_tracking(self.sale.id, self.manager, f"Såld till {NAME.upper()} av misstag")
         self.assertIsNotNone(self._contact(self.contact_id))
+
+    def test_the_sellers_reason_is_the_systems(self):  # one who may not see the buyer gets no answer to a guess
+        void_herd_tracking(self.sale.id, self.owner, f"Såld till {NAME.upper()} av misstag")
+        self.assertEqual(db.HerdTracking.get_by_id(self.sale.id).voided_reason, UNDO_REASON)
 
     def test_the_name_guard_takes_whole_words_of_typed_text_only(self):
         db.BuyerContact.update(name="Anna de Berg").where(db.BuyerContact.id == self.contact_id).execute()
         for reason in ("Såld till Anna", "Annas kanin", "såld till anna de berg"):
             with self.subTest(reason=reason), self.assertRaises(HerdTrackingInvalid):
-                void_herd_tracking(self.sale.id, self.owner, reason)
+                void_herd_tracking(self.sale.id, self.manager, reason)
         event = {"kind": "TRANSFER", "date": on(30), "herd": "GX1", "notes": "köpt av anna"}
         with self.assertRaises(HerdTrackingInvalid):  # a correction's notes too
             correct_herd_tracking(self.rabbit, self.manager, None, [self.sale.id], [event], "Fel datum")
@@ -662,18 +669,18 @@ class TestVoid(BuyerBase):
         db.BuyerContact.update(name="Li-Bo").where(db.BuyerContact.id == self.contact_id).execute()
         for reason in ("Såld till Li-Bo", "Li-Bos kanin", "li bo"):
             with self.subTest(reason=reason), self.assertRaises(HerdTrackingInvalid):
-                void_herd_tracking(self.sale.id, self.owner, reason)
+                void_herd_tracking(self.sale.id, self.manager, reason)
 
     def test_short_words_of_the_name_are_ordinary_words_and_apostrophes_join_it(self):
         db.BuyerContact.update(name="Per Ström").where(db.BuyerContact.id == self.contact_id).execute()
         with self.assertRaises(HerdTrackingInvalid):
-            void_herd_tracking(self.sale.id, self.owner, "Ströms kanin")
+            void_herd_tracking(self.sale.id, self.manager, "Ströms kanin")
         db.BuyerContact.update(name="O'Neil").where(db.BuyerContact.id == self.contact_id).execute()
         for reason in ("Såld till O'Neil", "o’neils kanin"):
             with self.subTest(reason=reason), self.assertRaises(HerdTrackingInvalid):
-                void_herd_tracking(self.sale.id, self.owner, reason)
+                void_herd_tracking(self.sale.id, self.manager, reason)
         db.BuyerContact.update(name="Per Ström").where(db.BuyerContact.id == self.contact_id).execute()
-        void_herd_tracking(self.sale.id, self.owner, "Intyget skickat per post")  # "per" alone is a word
+        void_herd_tracking(self.sale.id, self.manager, "Intyget skickat per post")  # "per" alone is a word
         self.assertIsNotNone(db.HerdTracking.get_by_id(self.sale.id).voided_at)
 
     def test_the_undo_commands_own_reason_is_never_checked(self):
@@ -686,7 +693,7 @@ class TestVoid(BuyerBase):
         execute(self.manager, self.rabbit.id, lambda ctx: [Undo(op)])
         self.assertEqual(self._latest().id, self.sale.id)
         with self.assertRaises(HerdTrackingInvalid):  # typed by a user, a word of the name is refused
-            void_herd_tracking(self.sale.id, self.owner, "Bergs köpare ångrade sig")
+            void_herd_tracking(self.sale.id, self.manager, "Bergs köpare ångrade sig")
 
     def test_a_system_reason_is_never_checked(self):
         db.BuyerContact.update(name="Avpromoverad").where(db.BuyerContact.id == self.contact_id).execute()
@@ -972,6 +979,63 @@ class TestQueueDocuments(PurgeTest):
     def test_the_five_year_purge_too(self):
         buyer_contact.purge_expired(NOW + timedelta(days=5 * 366))
         self.assertScrubbed([self.certificate, self.photo], [self.proof, self.other])
+
+    def against_a_late_item(self, job, module):
+        """
+        `job` in one transaction and the queue in another: while `job` holds the rabbit, the queue links another item
+        to the sale, locks that item and waits for the rabbit, its own order. Returns both results and the document.
+        """
+        if not _USE_POSTGRES:
+            self.skipTest("row locks need PostgreSQL")
+        (late,) = self.make().documents
+        held, original, results = threading.Event(), module.lock_individuals, {}
+
+        def rabbit_held(ids):
+            value = original(ids)
+            if not held.is_set():
+                held.set()
+                until(lock_waiter)  # the queue holds its item and waits for the rabbit
+            return value
+
+        def queue():  # the queue's own order: its item, then the rabbit
+            held.wait(10)
+            db.InboxDocument.update(herd_tracking_id=self.sale.id).where(db.InboxDocument.id == late.id).execute()
+            with db.DB_PROXY.atomic():
+                inbox.lock_item(late.item_id)
+                db.lock_individuals([self.rabbit.id])
+            return "ok"
+
+        with mock.patch.object(module, "lock_individuals", side_effect=rabbit_held):
+            done = run_all(in_thread(results, "job", job), in_thread(results, "queue", queue))
+        self.assertTrue(done, "hung threads")
+        self.assertTrue(held.is_set())
+        return results, late
+
+    def test_the_purge_defers_a_late_item_to_its_next_run(self):  # Codex P2, finding 4
+        results, late = self.against_a_late_item(
+            lambda: buyer_contact.purge_expired(NOW + timedelta(days=5 * 366)), buyer_contact
+        )
+        self.assertEqual(results, {"job": 0, "queue": "ok"})
+        self.assertEqual(buyer_contact.purge_expired(NOW + timedelta(days=5 * 366)), 1)
+        self.assertScrubbed([self.certificate, self.photo, late], [self.proof, self.other])
+
+    def test_an_erasure_refuses_a_late_item_and_a_retry_erases_it(self):  # Codex: item scans
+        def erase():
+            buyer_contact.erase_buyer_contact(self.sale.holder_contact_id, self.manager)
+            return "ok"
+
+        results, late = self.against_a_late_item(erase, buyer_contact)
+        self.assertEqual(results, {"job": repr(HerdTrackingConflict(herd_tracking.QUEUE_CHANGED)), "queue": "ok"})
+        erase()
+        self.assertScrubbed([self.certificate, self.photo, self.proof, late], [self.other])
+
+    def test_a_void_answers_409_for_an_item_linked_after_its_scan(self):  # Codex: item scans
+        results, _late = self.against_a_late_item(
+            lambda: void_herd_tracking(self.sale.id, self.manager, "Fel"), herd_tracking
+        )
+        self.assertEqual(results, {"job": repr(QueueChanged()), "queue": "ok"})
+        self.assertIsNone(db.HerdTracking.get_by_id(self.sale.id).voided_at)
+        self.assertIsNotNone(db.BuyerContact.get_or_none(db.BuyerContact.id == self.sale.holder_contact_id))
 
     def test_after_the_originals_purge_only_what_is_left_is_cleared(self):
         purge.purge_originals(PURGE_NOW + timedelta(days=400))  # certificates and proofs, not other photos
@@ -1309,7 +1373,7 @@ class TestLockOrder(PurgeTest):
     def test_a_void_refuses_a_buyer_and_item_that_appeared_before_its_rabbit_lock(self):
         rabbit = db.Individual.get(db.Individual.number == "G1-2112")
         sale = record_herd_tracking(rabbit, self.gx1, recent(0), "TRANSFER", self.manager)  # no buyer yet
-        real_lock = herd_tracking_module.lock_individuals
+        real_lock = herd_tracking.lock_individuals
 
         def proof_linked_first(ids):
             # attach_buyer and a linked proof commit just before the void gets the rabbit's lock.
@@ -1333,7 +1397,7 @@ class TestLockOrder(PurgeTest):
         sale = record_herd_tracking(rabbit, self.gx1, recent(0), "TRANSFER", self.manager)  # no buyer yet
         item = self.make()  # an item with a document of the sale
         db.InboxDocument.update(herd_tracking_id=sale.id).where(db.InboxDocument.item == item.id).execute()
-        real_lock = herd_tracking_module.lock_individuals
+        real_lock = herd_tracking.lock_individuals
 
         def buyer_attached_first(ids):  # attach_buyer commits just before the correction gets the rabbit's lock
             contact = db.BuyerContact.create(

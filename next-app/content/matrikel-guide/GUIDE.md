@@ -171,7 +171,8 @@ gamla matrikelfilen. Skriv till exempel "Betalt 2026-11-16 Swish" och klicka
 exporten.
 
 Stamboken har inget eget fält för om avgiften är betald eller inte. Det är bara
-den här texten.
+den här texten. Skriv alltid med året: adresslistan till tryckeriet sätter
+"Betala nu" när det senaste året i noteringen är före i år.
 
 **Anteckningar** är för annat du vill komma ihåg om medlemskapet.
 
@@ -202,7 +203,11 @@ Under **Personer** står hushållets personer med roll, kontakt, konto och
   - **Gör till huvudmedlem** byter huvudmedlem i hushållet.
   - **Ta bort** avslutar personen i medlemskapet och drar in hens åtkomster.
   - **Anonymisera** ersätter personens namn med en platshållare, tar bort
-    kontaktuppgifterna och drar in åtkomsterna. Ansökningar med personens namn
+    kontaktuppgifterna och drar in åtkomsterna. Personens konto töms: namn,
+    e-post, Google-uppgifter, profilbild och roller tas bort, och kontot kan inte
+    längre logga in. Har kontot rollen administratör, matrikeladministratör eller
+    genbanksansvarig går det inte att anonymisera personen förrän rollen är
+    borttagen. Ansökningar med personens namn
     och e-post anonymiseras också, och en sådan ansökan som väntar avslås.
     Intyg och bevis i inkorgen som är kopplade till personen förlorar sina
     original. Ett inskick som inkorgen har kopplat till personen som avsändare,
@@ -238,7 +243,8 @@ annan.
 ### Anonymisering efter 12 månader
 
 Stamboken anonymiserar personer automatiskt: namnen ersätts med en platshållare
-och kontaktuppgifterna tas bort. Intyg och bevis i inkorgen som är kopplade
+och kontaktuppgifterna tas bort. Personens konto töms på samma sätt som vid
+**Anonymisera**. Intyg och bevis i inkorgen som är kopplade
 till personen förlorar sina original. Tiden räknas från när personerna avslutades, alltså från
 **Avsluta medlemskap**, **Ta bort** eller **Anonymisera**. Att bara välja status
 Inaktiv avslutar ingen, och då börjar ingen tid räknas.
@@ -276,7 +282,7 @@ medlemskap som är nya i år. Friexemplar ingår inte i de andra talen.
 
 ## Exportera
 
-Knapparna finns överst i **Matrikel** och på **Statistik**. Båda laddar ner en
+Knapparna finns överst i **Matrikel** och på **Statistik**. Alla laddar ner en
 CSV-fil som går att öppna i Excel.
 
 - **Exportera MATR** ger aktiva medlemskap och friexemplar med samma kolumner
@@ -284,8 +290,13 @@ CSV-fil som går att öppna i Excel.
   och anteckningar på huvudmedlemmens rad och fakturaadressen sist.
   Friexemplar utan medlemsnummer får nummer 0, men ett friexemplar som har
   fått ett nummer står med det numret. Filen har ingen kolumn för status, så
-  kontrollera status i matrikeln innan du följer upp avgifter. Använd filen som
-  adresslista för Koharen och för avgiftsuppföljning.
+  kontrollera status i matrikeln innan du följer upp avgifter. Använd filen för
+  avgiftsuppföljning. Den finns kvar under en övergångstid.
+- **Exportera adresslista** ger listan till tryckeriet för Koharen: en rad per
+  hushåll med medlemsnummer, huvudmedlemmens namn, adress och postadress,
+  sorterad på postnummer. Aktiva medlemskap och friexemplar ingår, men inte de
+  som saknar adress. Kryssa i **Med Betala nu** till årets två första nummer.
+  Då står "Betala nu" hos dem vars betalningsnotering har ett år före i år.
 - **Exportera Koharen** ger personerna i aktiva medlemskap, med bara de
   uppgifter hushållet har sagt ja till att publicera: namn, telefon, e-post och
   adress. Valet gäller hela hushållet och görs av huvudmedlemmen under
@@ -294,4 +305,5 @@ CSV-fil som går att öppna i Excel.
   underlaget till medlemsförteckningen i Koharen.
 
 Filerna innehåller personuppgifter. Spara dem inte där andra kommer åt dem, och
-ta bort dem när du inte behöver dem längre.
+ta bort dem när du inte behöver dem längre. Varje uttag av MATR och adresslistan
+loggas med vem som tog ut den och när. I testmiljön går de två inte att ta ut.

@@ -9,6 +9,7 @@ import hashlib
 import io
 import math
 import os
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -31,10 +32,16 @@ from utils.database import (
     Member,
     Notice,
     NoticeSetting,
+    SaleProposal,
     User,
+    YearlyHerdReport,
+    YearlyReportRound,
+    not_voided,
 )
-from utils.individual_number_v2 import parse_number
+from utils.inbox_proposal import build_proposal
+from utils.individual_number_v2 import NUMBER_PATTERN, parse_number
 from utils.individual_policy import Role
+from utils.log_masking import mask_tokens
 from utils.mail import enqueue_mail, forget_recipient, mail_kind
 
 OPEN_STATES = ("ny", "tagen", "vantar_uppfodare", "vantar_foralder", "hos_genbanksansvarig", "ofullstandig")
@@ -81,6 +88,9 @@ NOTICE_TEXTS = {
 DOC_TYPES = ("intyg", "bevis", "arsblankett", "annat")
 CERT_FORMATS = ("handskrivet", "datorskrivet", "v1_pdf", "intyg_b", "digitalt_v2")
 OPENED_EVERY = timedelta(hours=1)
+PURPOSE = "syfte"  # ref_data's key on a report photo held for a purchase: "kop" (a notice's) or "inskick" (S7, to send)
+PURPOSES = ("kop", "inskick")
+HELD_RABBIT = "kanin"  # PURPOSE of a photo for "Lägg till kanin", held until Spara registers the rabbit (not sent)
 # An item left "ofullstandig" is deleted this long after its retention_start (utils/inbox_purge.py),
 # and its sender is reminded after REMIND_MONTHS.
 INCOMPLETE_MONTHS = 12
@@ -237,18 +247,40 @@ def handlers():
     return sorted((_person(w.id, names) for w in workers), key=lambda p: p["name"].casefold())
 
 
-def create_upload(user, herd, message, stored):
-    """The item of an upload: one document per stored image ((path, sha256, quality)), and its notices."""
-    item = InboxItem.create(kind="upload", genebank=herd.genebank_id, herd=herd, sender_user=user, message=message)
+def create_upload(user, herd, message, stored, *, kind="upload", ref_type=None, held=None, member=None, **detail):
+    """
+    The item of an upload: one document per stored image ((path, sha256, quality)), and its notices; `member` is the
+    person who sent it, recorded as it comes in (the report's Ärenden lists the herd's main member's). The report's
+    photo (4b) is a `kontroll` item with `ref_type`; its `user` is None for the report link, which `detail` names
+    (access_code_id), as an account would be named. Its notices wait for its rabbit (bind_report_photo). A photo
+    `held` for a purchase (PURPOSES) or for a rabbit (HELD_RABBIT), kept in `ref_data`, is not read while it is held
+    (unread) nor listed as the queue's work: its documents are off from the start, so no reading claims them.
+    """
+    item = InboxItem.create(
+        kind=kind,
+        genebank=herd.genebank_id,
+        herd=herd,
+        sender_user=user,
+        member=member,
+        message=mask_tokens(message),
+        ref_type=ref_type,
+        ref_data={PURPOSE: held} if held else None,
+    )
+    off = {"interpretation_status": "av"} if held else {}
     documents = [
-        InboxDocument.create(item=item, original_path=path, mime="image/jpeg", sha256=sha256, quality=quality)
+        InboxDocument.create(item=item, original_path=path, mime="image/jpeg", sha256=sha256, quality=quality, **off)
         for path, sha256, quality in stored
     ]
-    log_event(item, user, "inkommen", documents=len(documents))
-    for worker in queue_workers(item.genebank_id):
-        if worker.id != user.id:
-            notify(worker, "ny_post", item)
+    log_event(item, user, "inkommen", documents=len(documents), **detail)
+    if not report_photo(item):
+        _notify_workers(item, user)
     return item, documents
+
+
+def _notify_workers(item, user):
+    for worker in queue_workers(item.genebank_id):
+        if user is None or worker.id != user.id:
+            notify(worker, "ny_post", item)
 
 
 def person_names(ids):
@@ -420,7 +452,7 @@ def change_state(item, user, state, *, note=None, duplicate_of=None):
         require_handler(item, user)
     if note is not None and (not isinstance(note, str) or len(note) > MAX_NOTE):
         raise InboxError(400, f"Anteckningen ska vara text, högst {MAX_NOTE} tecken.")
-    detail = {"from": item.state, "to": state, **({"note": note.strip()} if note and note.strip() else {})}
+    detail = {"from": item.state, "to": state, **({"note": mask_tokens(note.strip())} if note and note.strip() else {})}
     if state == "ofullstandig" and "note" not in detail:
         raise InboxError(400, "Skriv vad som saknas.")
     if state == "vantar_foralder":
@@ -443,6 +475,10 @@ def change_state(item, user, state, *, note=None, duplicate_of=None):
     _set_state(item, state)
     if reopened:
         item.assigned_to, item.assigned_at = user, now()
+    if reopened and report_photo(item):  # "Öppna igen": the photo is checked again, so nothing else closes it
+        InboxDocument.update(done_at=None).where(
+            (InboxDocument.item == item.id) & InboxDocument.individual.is_null(False)
+        ).execute()
     if state == "hos_genbanksansvarig":
         item.assigned_to, item.assigned_at = None, None
     item.save()
@@ -519,12 +555,15 @@ def retention_start(item):
 def mail_sender(item, kind, params, **options):
     """
     Queues `kind` to the item's uploader, or else to the address a mailed item came from, but only when Gmail
-    authenticated it: a forged From must never make us mail its victim. None without either.
+    authenticated it: a forged From must never make us mail its victim. An upload with no account (a link's, S7) goes
+    to its `member`; a mail's `member` is matched from its From, so never that. None without any.
     """
     if item.sender_user_id is not None:
         recipient = ("user", item.sender_user_id)
     elif item.sender_address and item.sender_authenticated:
         recipient = ("inbox_sender", item.id)
+    elif item.kind == "upload" and item.member_id is not None:
+        recipient = ("member", item.member_id)
     else:
         return None
     options.update(ref=("inbox_item", item.id), herd=item.herd_id, genebank=item.genebank_id)
@@ -590,8 +629,9 @@ def update_document(item, document, user, changes):
         _rotation(changes["rotation"])
     if "dismissed" in changes and not isinstance(changes["dismissed"], bool):
         raise InboxError(400, "dismissed är true eller false.")
-    if changes.get("doc_type", document.doc_type) != document.doc_type:  # only certificates are read
-        document.interpretation_status = interpreter.initial_status() if changes["doc_type"] == "intyg" else "av"
+    if changes.get("doc_type", document.doc_type) != document.doc_type:  # only certificates are read, never a notice's
+        read = changes["doc_type"] == "intyg" and not unread(item)
+        document.interpretation_status = interpreter.initial_status() if read else "av"
         document.attempts = 0
     for key in ("doc_type", "cert_format", "rotation"):
         if key in changes:
@@ -609,12 +649,32 @@ def update_document(item, document, user, changes):
     close_if_done(item, user)
 
 
+NOTICE_UNREAD = "Fotot till ett anmält köp tolkas inte."
+
+
+def not_held():
+    """The items that are not a held report photo (`ref_data` PURPOSE): the queue's work and a sender's own list."""
+    return InboxItem.ref_data.is_null() | ~InboxItem.ref_data.has_key(PURPOSE)
+
+
+def unread(item):
+    """
+    The model never reads the item's photos: a purchase notice's, and a report photo held (`ref_data` PURPOSE) for a
+    purchase or a rabbit until the notice takes it, its sending makes it an ordinary upload (S7), or a rabbit is
+    registered from it.
+    """
+    return item.ref_type == "kopanmalan" or bool(item.ref_data and item.ref_data.get(PURPOSE))
+
+
 def reinterpret(item, document, user):
     """ "Tolka igen", after a turn: the certificate waits for the image reading again, its old proposal gone."""
     require_handler(item, user)
     if not interpreter.enabled():
         raise InboxError(409, "Bildtolkningen är avstängd.")
-    if document.doc_type != "intyg" or document.done_at is not None or document.individual_id is not None:
+    if unread(item):
+        raise InboxError(409, NOTICE_UNREAD)
+    saved_elsewhere = document.individual_id is not None and not report_photo(item)
+    if document.doc_type != "intyg" or document.done_at is not None or saved_elsewhere:
         raise InboxError(409, "Bara ett intyg som inte är sparat kan tolkas.")
     if document.original_path is None:
         raise InboxError(409, "Originalet är raderat.")
@@ -696,15 +756,15 @@ def paper_certificate(individual):
     )
 
 
-def _document_status(document):
-    if document.done_at:
-        return "klar" if document.public_path or document.herd_tracking_id else "avfardad"
+def _document_status(document, report=False):
+    if document.done_at:  # a report photo is done when it is checked against its rabbit (check_report_photo)
+        return "klar" if document.public_path or document.herd_tracking_id or report else "avfardad"
     if document.individual_id:
         return "sparad"
     return "vantar_foralder" if document.waiting_for else "ny"
 
 
-def documents_json(documents):
+def documents_json(documents, report=False):
     numbers = {}
     individual_ids = {d.individual_id for d in documents if d.individual_id}
     if individual_ids:
@@ -719,7 +779,7 @@ def documents_json(documents):
     return [
         {
             "id": d.id,
-            "status": _document_status(d),
+            "status": _document_status(d, report),
             "mime": d.mime,
             "quality": d.quality,
             "warnings": warnings(d.quality),
@@ -742,20 +802,123 @@ def documents_json(documents):
     ]
 
 
-def item_detail(item):
-    """GET …/<id>: the list form plus the message, the documents and the history."""
+_MENTION = re.compile(rf"\b{NUMBER_PATTERN.pattern}\b")
+
+
+def _rabbit_numbers(item, events, user):
+    """Numbers mentioned in incoming mail that this reader can open, as in get_individual."""
+    texts = [item.message] if item.kind in ("mail", "meddelande") else []
+    for event in events:
+        detail = event.detail or {}
+        if event.kind in ("inkommen", "svar"):
+            texts.append(detail.get("subject"))
+        if event.kind == "svar":
+            texts.append(detail.get("text"))
+    mentions = _MENTION.finditer(" ".join(text for text in texts if text))
+    numbers = {match[0].upper() for match in mentions if parse_number(match[0])}
+    if not numbers:
+        return []
+    accessible = user.accessible_genebanks
+    rabbits = Individual.select().where(Individual.number.in_(numbers), not_voided())
+    return sorted(r.number for r in rabbits if r.current_herd.genebank_id in accessible)
+
+
+def report_photo(item):
+    """A certificate photo from the yearly report (4b, G5): its rabbit is registered, and the reading checks it."""
+    return item.kind == "kontroll" and item.ref_type == "individual"
+
+
+CHECK_OUTCOMES = ("stammer", "rattat")  # "Stämmer", or "Rättat": the handler corrected the rabbit to the photo
+
+
+def check_report_photo(item, document, user, outcome):
+    """
+    A report photo compared with its rabbit by the item's handler (4b): the document is done, with the outcome in the
+    item's history, and the item closes as "klar" the way an ordinary item does once its documents are done.
+    """
+    if not report_photo(item):
+        raise InboxError(409, "Bara ett foto från årsrapporten kontrolleras så.")
+    require_handler(item, user)
+    if item.state != "tagen":
+        raise InboxError(409, "Posten väntar. Gör den till tagen igen för att spara.")
+    if outcome not in CHECK_OUTCOMES:
+        raise InboxError(400, 'outcome är "stammer" eller "rattat".')
+    if item.ref_id is None or document.individual_id != item.ref_id:  # a photo checks only the rabbit it registered
+        raise InboxError(409, "Fotot är inte kopplat till någon registrerad kanin. Det kan inte kontrolleras.")
+    if document.done_at is not None:
+        raise InboxError(409, "Dokumentet är redan klart.")
+    document.done_at = now()
+    document.save()
+    log_event(item, user, "kontrollerad", document=document.id, outcome=outcome)
+    close_if_done(item, user)
+
+
+def registered_rabbit(item):
+    """
+    A report photo's rabbit as the member registered it, keyed as the certificate form's fields, for the queue to
+    set beside the reading; None for any other item, or before the rabbit is saved.
+    """
+    rabbit = Individual.get_or_none(Individual.id == item.ref_id) if report_photo(item) and item.ref_id else None
+    if rabbit is None:
+        return None
+    litter = rabbit.breeding
+    mother, father = (litter.mother, litter.father) if litter else (None, None)
+    return {
+        "paper_number": rabbit.number,
+        "paper_certificate": rabbit.certificate,
+        "name": rabbit.name,
+        "sex": rabbit.sex,
+        "birth_date": _iso(litter.birth_date) if litter else None,
+        "color": rabbit.color.name if rabbit.color_id else None,
+        "mother": mother.number if mother else None,
+        "father": father.number if father else None,
+        "litter_size": litter.litter_size if litter else None,
+        "litter_size6w": litter.litter_size6w if litter else None,
+    }
+
+
+def _report_year(item):
+    """
+    The round year of a sale proposal's item, whose status view decides it (5.9), or of the proposal a purchase
+    notice matches (4a Task 5); None for any other item.
+    """
+    if item.ref_type == "kopanmalan":
+        from utils.purchase_notice import proposal_for  # pylint: disable=import-outside-toplevel  # it imports us
+
+        proposal = proposal_for(item)
+        return proposal.report.round.report_year if proposal is not None else None
+    if item.ref_type != "sale_proposal":
+        return None
+    return (
+        YearlyReportRound.select(YearlyReportRound.report_year)
+        .join(YearlyHerdReport)
+        .join(SaleProposal)
+        .where(SaleProposal.id == item.ref_id)
+        .scalar()
+    )
+
+
+def item_detail(item, user):
+    """
+    GET …/<id>: the list form plus the message, the documents, the history, a sale proposal's year, a kontroll
+    item's or a sent upload's structured fields (ref_data), a report photo's rabbit, and rabbits the reader can open.
+    """
     documents = list(item.documents.order_by(InboxDocument.id))
     events = list(item.events.order_by(InboxEvent.at, InboxEvent.id))
     names = person_names([e.user_id for e in events])
     return {
         **items_json([item])[0],
+        "report_year": _report_year(item),
+        "ref_data": item.ref_data,
         "message": item.message,
+        "mentioned_individuals": _rabbit_numbers(item, events, user),
         "sender_address": item.sender_address,
-        "documents": documents_json(documents),
+        "documents": documents_json(documents, report_photo(item)),
         "events": [
             {"id": e.id, "at": _iso(e.at), "kind": e.kind, "user": _person(e.user_id, names), "detail": e.detail}
             for e in events
         ],
+        "registered": registered_rabbit(item),
     }
 
 
@@ -784,7 +947,11 @@ def uploads_seen(user):
 
 def my_uploads(user):
     """ "Mina inskick": the user's own items in plain words, and the rabbits registered from them."""
-    items = list(InboxItem.select().where(InboxItem.sender_user == user.id).order_by(InboxItem.received_at.desc()))
+    items = list(
+        InboxItem.select()
+        .where(InboxItem.sender_user == user.id, not_held())  # a held photo is not sent yet
+        .order_by(InboxItem.received_at.desc())
+    )
     listed = {row["id"]: row for row in items_json(items)}
     rabbits = {}
     if items:
@@ -809,7 +976,7 @@ def my_uploads(user):
     ]
 
 
-def _rabbit_numbers(user, notices):
+def _notice_rabbit_numbers(user, notices):
     """
     Notice id -> the number of the rabbit it is about, for the notices `user` may still see it on: a manager of
     the rabbit's genebank (its origin herd's) or an admin, as when the notice was made. A role withdrawn since
@@ -834,7 +1001,7 @@ def notices_json(user, *, unread_only, limit, offset):
     if unread_only:
         query = query.where(Notice.read_at.is_null(True))
     rows = list(query.order_by(Notice.created_at.desc(), Notice.id.desc()).limit(limit).offset(offset))
-    numbers = _rabbit_numbers(user, rows)
+    numbers = _notice_rabbit_numbers(user, rows)
     return [
         {
             "id": n.id,
@@ -898,8 +1065,11 @@ class InboxGrant:
             and herd.herd not in OUTSIDE_GENEBANK_HERDS
         )
 
+    def roles_in(self, user, herd):
+        return frozenset({Role.HANDLAGGARE}) if self.allows(user, herd) else frozenset()
+
     def roles(self, user, individual):
-        return frozenset({Role.HANDLAGGARE}) if self.allows(user, individual.current_herd) else frozenset()
+        return self.roles_in(user, individual.current_herd)
 
     def trace(self, operation_id):
         """ "Inlagd från foto av": the write's operation id, its handler and the document."""
@@ -941,6 +1111,24 @@ def saved(item, document, user, individual, action):
     document.seller_member = herd_holder(individual.current_herd.id) or document.seller_member
     document.save()
     log_event(item, user, "sparad", document=document.id, action=action, individual=individual.number)
+
+
+def bind_report_photo(item, document, user, individual):
+    """
+    A report photo bound to the rabbit registered from it (4b, G5), under the item's lock and in the registration's
+    transaction: a reading already made is set beside the rabbit again from what was read (no new reading), and only
+    now do the queue's workers hear of it; a photo never bound may be scrapped, which asks for a new upload.
+    """
+    InboxItem.update(ref_id=individual.id, ref_data=None).where(InboxItem.id == item.id).execute()
+    item.ref_id, item.ref_data = individual.id, None  # held for a purchase no longer: a rabbit's photo is read
+    saved(item, document, user, individual, "ny_kanin")
+    if document.interpretation_status == "av":  # uploaded for a purchase notice (unread): a rabbit's photo is read (G5)
+        document.interpretation_status = interpreter.initial_status()
+        document.save()
+    if document.interpretation_status == "klar" and document.interpretation is not None:
+        document.proposal = build_proposal(document.interpretation, item.genebank_id, item.herd_id, individual)
+        document.save()
+    _notify_workers(item, user)
 
 
 def bound_rabbit(document):
@@ -1176,7 +1364,7 @@ def _digest_mail(params):
         .where((Notice.user == user.id) & Notice.read_at.is_null(True) & (Notice.kind != "klar"))
         .order_by(Notice.created_at, Notice.id)
     )
-    numbers = _rabbit_numbers(user, notices)
+    numbers = _notice_rabbit_numbers(user, notices)
     rows = [
         {"text": NOTICE_TEXTS.get(n.kind, n.kind), "item_id": n.item_id, "individual_number": numbers.get(n.id)}
         for n in notices
