@@ -53,8 +53,8 @@ Rules (Member Model v2 design spec):
   another person holds it, the whole group fails and is listed as an error.
 
 `link-by-herd` links existing accounts to member rows through herd
-ownership: the only account with role `owner` on herd G<Nr>/M<Nr> whose name
-equals the name of membership Nr's main member is linked (mode "cli"). Other
+ownership: the sole owner of herd G<Nr>/M<Nr> can match membership Nr's
+main member by name, e-mail address or e-mail local part (mode "cli"). Other
 cases are listed for the register manager. Plan only unless --apply.
 """
 
@@ -83,6 +83,7 @@ from utils.matrikel import (
     raise_counter_to,
     split_postal_address,
 )
+from utils.members import WORKSPACE_DOMAIN
 from utils.membership_lifecycle import Status
 
 logger = logging.getLogger(__name__)
@@ -898,8 +899,9 @@ def _count_lines(report: dict) -> list[str]:
 def link_by_herd_cmd(apply_links: bool, actor_user_id: int | None, plan_value: str | None) -> None:
     """Link accounts to the main member of the membership whose herd they own.
 
-    The only account with role `owner` on herd G<Nr>/M<Nr> (tied to membership Nr) whose name equals the
-    name of membership Nr's main member is proposed as that member's account.
+    The sole owner of herd G<Nr>/M<Nr> (tied to membership Nr) is proposed if
+    the main member's name matches, or if either account e-mail matches the
+    member's address in full or by a non-generic local part of at least five characters.
     NEITHER THE NAME NOR THE ACCOUNT'S E-MAIL IS PROOF: the account holder can
     edit both, and so can a genebank manager, who can also hand out `owner`.
     The Google address was verified at the Google sign-in that stored it; a
@@ -949,8 +951,8 @@ def link_by_herd_cmd(apply_links: bool, actor_user_id: int | None, plan_value: s
         click.echo("(endast plan — läs paren ovan, inget skrevs; kör om med --apply --plan <kontrollvärde>)")
 
 
-def _pair_line(main, user, codes) -> str:
-    return f"{'/'.join(codes)}: {_pair_detail(main, user)}"
+def _pair_line(main, user, codes, reason) -> str:
+    return f"{'/'.join(codes)}: {_pair_detail(main, user)} | skäl: {reason}"
 
 
 def _echo_plan(heading: str, pair_lines: list[str], listed: list, already: int) -> None:
@@ -966,6 +968,47 @@ def _echo_plan(heading: str, pair_lines: list[str], listed: list, already: int) 
 def _norm_name(name: str | None) -> str:
     # NFC: "Å" typed as one character and as A with a combining ring are the same name.
     return " ".join(unicodedata.normalize("NFC", name or "").split()).casefold()
+
+
+_GENERIC_LOCAL_PARTS = frozenset(
+    """
+    admin administrator bibliotek biblioteket bokning contact e-post ekonomi epost expedition expeditionen
+    faktura fakturor foreningen föreningen garden gården hej hello info info- kaniner kansli kansliet kassan
+    kassor kassör klubben kontakt kontakta kontakten kontoret mail medlem medlemmar museet museum no-reply
+    noreply office order ordforande ordförande post posten postmaster reception receptionen sekretariat
+    sekretariatet sekreterare styrelse styrelsen support webmaster
+    gotlandskanin gotlandskaninen mellerudskanin mellerudskaninen
+    """.split()
+)
+
+
+def _norm_email(address: str | None) -> str:
+    address = (address or "").strip().lower()
+    return address if re.fullmatch(r"[^@\s]+@[^@\s]+", address) else ""
+
+
+def _match_reason(person: Member, user: User) -> str | None:
+    name = _norm_name(user.fullname)
+    if name and name == _norm_name(f"{person.first_name} {person.last_name}"):
+        return "namn lika"
+    # the association's own address for the person, which Google sign-in also links by
+    workspace = _norm_email(person.workspace_email)
+    if workspace.endswith(WORKSPACE_DOMAIN) and workspace == _norm_email(user.google_email):
+        return "Workspace-adress lika (Google)"
+
+    address = _norm_email(person.email)
+    if not address:
+        return None
+    account_addresses = (("Google", _norm_email(user.google_email)), ("kontots e-post", _norm_email(user.email)))
+    for source, email in account_addresses:
+        if email == address:
+            return f"e-post lika ({source})"
+    local = address.partition("@")[0]
+    if len(local) >= 5 and local not in _GENERIC_LOCAL_PARTS:
+        for source, email in account_addresses:
+            if email.partition("@")[0] == local:
+                return f"lokaldel lika ({source})"
+    return None
 
 
 def _q(text) -> str:
@@ -1016,7 +1059,7 @@ def _owner_index() -> tuple[dict[int, dict[int, User]], set[int]]:
 
 
 def _plan_herd_links() -> tuple[list, list, int]:
-    """Decide every link first: returns (to_link [(main, user, codes)], listed [(codes, reason)], already)."""
+    """Decide every link first: returns (to_link [(main, user, codes, reason)], listed [(codes, reason)], already)."""
     owners, incomplete = _owner_index()
     memberships = {m.member_number: m for m in Membership.select().where(Membership.member_number.is_null(False))}
     herds_by_code: dict[str, list] = {}
@@ -1028,11 +1071,11 @@ def _plan_herd_links() -> tuple[list, list, int]:
 
     listed: list = []
     already: set[tuple[int, int]] = set()
-    pairs: dict[tuple[int, int], list] = {}  # (main id, user id) -> [main, user, codes]
-    possible: set[tuple[int, int]] = set()  # every name-matching owner: a counterpart, linked only through pairs
+    pairs: dict[tuple[int, int], list] = {}  # (main id, user id) -> [main, user, codes, reason]
+    possible: set[tuple[int, int]] = set()  # every matching owner: a counterpart, linked only through pairs
     # Counterparts are counted in one place and before anything is filtered or sorted out: for every herd row
     # that has an owner, whatever its code, genebank or state, every person left in the membership the row is
-    # stored on, and in the one its code's number names, who has an owner's name.
+    # stored on, and in the one its code's number names, who matches an owner.
     for herd in Herd.select():
         herd_owners = owners.get(herd.id)
         if not herd_owners:
@@ -1042,10 +1085,7 @@ def _plan_herd_links() -> tuple[list, list, int]:
         named = memberships.get(int(number.group(1))) if number else None
         behind = {herd.membership_id, getattr(named, "id", None)} - {None}
         for person in Member.select().where(Member.membership.in_(behind), Member.end_date.is_null(True)):
-            wanted = _norm_name(f"{person.first_name} {person.last_name}")
-            possible |= {
-                (person.id, uid) for uid, u in herd_owners.items() if wanted and _norm_name(u.fullname) == wanted
-            }
+            possible |= {(person.id, uid) for uid, user in herd_owners.items() if _match_reason(person, user)}
     for code in sorted(herds_by_code, key=lambda c: (int(c[1:]), c[0])):
         herds = herds_by_code[code]
         owner_users = {uid: u for h in herds for uid, u in owners.get(h.id, {}).items()}
@@ -1085,13 +1125,13 @@ def _plan_herd_links() -> tuple[list, list, int]:
         by_main.setdefault(key[0], []).append(key)
         by_user.setdefault(key[1], []).append(key)
     to_link = []
-    for key, (main, user, codes) in pairs.items():
+    for key, (main, user, codes, reason) in pairs.items():
         if len(by_main[key[0]]) > 1 or len(by_user[key[1]]) > 1:
             listed.append((codes, f"flera möjliga kopplingar ({_pair_detail(main, user)})"))
         elif link_access_delta(main, user):
             listed.append((codes, "länken skulle ge kontot åtkomst till fler besättningar"))
         else:
-            to_link.append((main, user, codes))
+            to_link.append((main, user, codes, reason))
     return to_link, listed, len(already)
 
 
@@ -1103,11 +1143,9 @@ def _check_owner(code, main, user, incomplete, listed, already, pairs) -> None:
         listed.append(([code], "kontots ägarroll är ofullständig"))
     elif not user.is_active:
         listed.append(([code], "kontot är inaktivt"))
-    elif not _norm_name(user.fullname) or _norm_name(user.fullname) != _norm_name(
-        f"{main.first_name} {main.last_name}"
-    ):
+    elif (reason := _match_reason(main, user)) is None:
         listed.append(([code], "namnet skiljer sig mellan kontot och huvudmedlemmen"))
-    elif (
+    elif reason == "namn lika" and (
         sum(
             _norm_name(f"{m.first_name} {m.last_name}") == _norm_name(user.fullname)
             for m in Member.select().where(Member.membership == main.membership_id, Member.end_date.is_null(True))
@@ -1120,4 +1158,4 @@ def _check_owner(code, main, user, incomplete, listed, already, pairs) -> None:
     elif Member.select().where(Member.user == user).exists():
         listed.append(([code], "kontot är redan kopplat till en annan medlem"))
     else:
-        pairs.setdefault((main.id, user.id), [main, user, []])[2].append(code)
+        pairs.setdefault((main.id, user.id), [main, user, [], reason])[2].append(code)
