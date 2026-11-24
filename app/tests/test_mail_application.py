@@ -406,7 +406,11 @@ class TestMemberAdded(MailTest):
         matrikel.swap_main_member(
             other, matrikel.add_person(other, {"first_name": "Ny", "last_name": "Huvud"}, self.actor), self.actor
         )
-        for n, person in enumerate((imported, was_main)):
+        once_main = self.add(first_name="Blev", email=None)  # put in by another, then main member for a while
+        head = db.Member.get(db.Member.first_name == "Huvud")
+        matrikel.swap_main_member(self.membership, once_main, self.actor)
+        matrikel.swap_main_member(self.membership, db.Member.get_by_id(head.id), self.actor)
+        for n, person in enumerate((imported, was_main, once_main)):
             matrikel.set_member_email(
                 db.Member.get_by_id(person.id), f"senare{n}@example.org", self.actor, by="matrikel"
             )
@@ -428,6 +432,27 @@ class TestMemberAdded(MailTest):
         self.assertEqual(sorted(self.sent_to()), ["ratt0@example.org", "ratt1@example.org", "ratt2@example.org"])
         self.assertEqual([(row.status, row.attempts) for row in self.mails()], [("sent", 1)] * 3)
 
+    def test_a_notice_held_for_its_address_goes_to_the_new_one(self):
+        for n in range(4):
+            self.add(first_name=f"Nummer {n}", email="samma@example.org")
+        self.sent_to()
+        held = db.Member.get(db.Member.first_name == "Nummer 3")
+        matrikel.set_member_email(held, "egen@example.org", self.actor, by="matrikel")
+        self.later(minutes=2)
+        self.assertEqual(self.sent_to(), ["egen@example.org"])
+
+    def test_notices_a_limit_puts_back_do_not_use_up_the_sender_s_run(self):
+        for n in range(3):
+            self.add(first_name=f"Nummer {n}", email="samma@example.org")
+        self.sent_to()
+        for m in range(4):  # 32 more to the address, from four memberships: more than one run takes
+            other = db.Membership.create(membership_status="active")
+            for n in range(8):
+                fields = {"first_name": f"Fler {m} {n}", "last_name": "Person", "email": "samma@example.org"}
+                matrikel.add_person(other, fields, self.actor)
+        self.queue("kvitto@example.org")
+        self.assertEqual(self.sent_to(), ["kvitto@example.org"])
+
     def test_a_notice_stopped_by_hand_stays_stopped(self):
         person = self.add()
         db.MailMessage.update(status="cancelled", last_error="stoppat i statusvyn").execute()  # as "Stoppa" does
@@ -447,6 +472,21 @@ class TestMemberAdded(MailTest):
             mail.send_pending(self.now)
         self.assertEqual([envelope_to for _msg, _sender, envelope_to in relay.sent], [["ratt@example.org"]])
         self.assertEqual([row.status for row in self.mails()], ["sent"])
+
+    def test_an_address_removed_while_the_sender_connects_is_not_written_to(self):
+        person = self.add()
+        relay = self.relay()
+        connect = mail._connect
+
+        def removed_meanwhile(conn):
+            connect(conn)
+            matrikel.set_member_email(db.Member.get_by_id(person.id), None, self.actor, by="matrikel")
+
+        with mock.patch.object(mail, "_connect", removed_meanwhile):
+            mail.send_pending(self.now)
+        self.assertEqual(relay.sent, [])
+        matrikel.set_member_email(db.Member.get_by_id(person.id), "ratt@example.org", self.actor, by="matrikel")
+        self.assertEqual(self.sent_to(), ["ratt@example.org"])
 
     def test_an_address_given_to_someone_who_left_queues_nothing(self):
         person = self.add(email=None)

@@ -88,6 +88,9 @@ def mail_kind(name, *, priority, category):
     return register
 
 
+PUT_BACK = object()  # _send_one's answer for a mail a limit put back: truthy, the run goes on
+
+
 class Later(Exception):
     """A builder's answer: the mail is still wanted but must wait (a limit). It is queued again, no attempt counted."""
 
@@ -546,8 +549,11 @@ def _send_one(row, relay, now):
         reply_to = variables.pop("reply_to", None)
         subject, body = render(row.kind, variables)
         msg = None if mode == "log" else _message(row, address, subject, body, attachments, reply_to)
-    except Later as later:
-        return _finish(row, now, status="queued", next_attempt_at=later.until, last_error=later.why)
+    except Later as later:  # never due again in this run (send_pending)
+        _finish(
+            row, now, status="queued", next_attempt_at=max(later.until, now + RETRY_DELAYS[0]), last_error=later.why
+        )
+        return PUT_BACK
     except Exception as exc:  # pylint: disable=broad-except  # a bug or a lost database: retried like a 4xx
         detail = f"bygget misslyckades: {_describe(exc)}"
         logger.error("Building mail %s failed: %s", row.id, _scrub(detail))  # no traceback: it may hold the address
@@ -605,7 +611,8 @@ def _smtp_error(row, now, relay, code, text, address, systemic=False):
 def send_pending(now=None):
     """
     One run of the scheduler's mail_send job: up to MAX_PER_RUN due rows, one claimed at a time, over one
-    SMTP connection. Returns the number of rows taken.
+    SMTP connection. A row a limit puts back (Later) costs no SMTP and is not counted. Returns the number of rows
+    taken.
     """
     settings.refuse_unsafe_mail_settings()  # not only at import: any other mode would fall through to a real send
     fixed = now
@@ -625,8 +632,10 @@ def send_pending(now=None):
             row = _claim(tick)
             if row is None:
                 break
-            taken += 1
-            if not _send_one(row, relay, tick):
+            outcome = _send_one(row, relay, tick)
+            if outcome is not PUT_BACK:
+                taken += 1
+            if not outcome:
                 break
     finally:
         relay.close()
@@ -879,7 +888,7 @@ def queue_member_added(person):
     membership's notices are spread over days, at most ADDED_A_DAY a day, and an address gets at most
     ADDED_TO_AN_ADDRESS_A_DAY a day (_member_added, when the mail goes).
     """
-    if person.role not in _ADDED_AS or not person.email or person.end_date is not None:
+    if person.role not in _ADDED_AS or person.end_date is not None:
         return None
     ref = ("membership", person.membership_id)
     # A day after the membership's tenth latest notice at the earliest: no day holds more than ADDED_A_DAY, and
@@ -898,17 +907,20 @@ def queue_member_added(person):
     not_before = max(_utcnow(), tenth.next_attempt_at + timedelta(days=1)) if tenth else _utcnow()
     key = f"medlemskap.tillagd:{person.id}"
     params = {"member_id": person.id}
-    queued = enqueue_mail(
-        "medlemskap.tillagd", "member", person.id, params, ref=ref, dedupe_key=key, not_before=not_before
+    queued = (
+        enqueue_mail("medlemskap.tillagd", "member", person.id, params, ref=ref, dedupe_key=key, not_before=not_before)
+        if person.email
+        else None
     )
     if queued is None:
-        # A row being sent loses its claim, so it does not go to the address replaced (_renew).
+        # A row being sent loses its claim, so it does not go to the address replaced or removed (_renew); a
+        # queued one is locked until the change commits, so the sender cannot read the old address meanwhile.
         MailMessage.update(
             status="queued", next_attempt_at=not_before, attempts=0, last_error=None, claim_token=None, claimed_at=None
         ).where(
             (MailMessage.dedupe_key == key)
             & (
-                MailMessage.status.in_(("failed", "bounced", "sending"))
+                MailMessage.status.in_(("queued", "sending", "failed", "bounced"))
                 | ((MailMessage.status == "cancelled") & (MailMessage.last_error == NO_ADDRESS))
             )
         ).execute()
