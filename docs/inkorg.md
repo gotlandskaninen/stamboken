@@ -351,7 +351,8 @@ för en post med `ref_type` `sale_proposal`, vars statusvy avgör förslaget, oc
 | `kopia_borttagen` | `{"document": 31}`; den maskade kopian togs bort (`…/kopia`) |
 | `matrikel_andrad` | `{"falt": ["konto", "epost"], "hoppade": ["telefon"], "submission_id": 12}`; en årsblankett ändrade uppgifter i matrikeln (`falt`) eller hoppade över dem, eftersom matrikeln ändrats efter blankettens datum (`hoppade`). Bara fältnamnen, aldrig värdena |
 
-När postens text gallras försvinner `text`, `note` och `not_saved` ur `detail`; händelsen står kvar.
+När postens text gallras försvinner `text`, `subject`, `note`, `not_saved` och `not_saved_reasons`
+ur `detail`. Händelsen står kvar.
 
 ## Ladda upp
 
@@ -1171,9 +1172,9 @@ text på en gammal post) och när posten senast markerades `ofullstandig`.
 | Originalet till ett intyg eller bevis (`doc_type` `intyg`, `bevis`) | `INLASNING_ORIGINAL_MANADER` månader (standard 12) efter postens gallringsstart (se nedan), i alla lägen |
 | Originalet till ett dokument med `purge_after` satt, av vilken typ som helst | när tidpunkten har passerat, också före månaderna. Årsrapporten sätter den på en årsblankett när blanketten matas in, eftersom fotot visar bankkonto och underskrift. Tolkningen och förslaget går med originalet |
 | Bevisets original | också när kaninen sålts vidare: en senare `TRANSFER` från köparens besättning som inte är makulerad. Försäljningens rad i besättningshistoriken står kvar |
-| Postens text: `message` och `text`, `note` och `not_saved` i händelserna | samtidigt som originalen, för en post som har dokument. Händelserna står kvar med typ, tid och person |
+| Postens `message` samt `text`, `subject`, `note`, `not_saved` och `not_saved_reasons` i händelserna | samtidigt som originalen, för en post som har dokument. Händelserna står kvar med typ, tid och person |
 | Händelsen `oppnad` | 13 månader efter händelsen |
-| Ett stängt meddelande (`kind: "meddelande"`) utan dokument | 13 månader efter stängningen |
+| En stängd post av typen `meddelande` eller `mail` utan dokument, även när mejlet bara hade en länkad bild eller avvisade bilagor | 13 månader efter stängningen |
 | En post i läget `skrap` | 30 dagar efter stängningen |
 | Ett foto från årsrapporten som hålls för ett köp eller en kanin (`ref_data` `syfte`) och inte har skickats, blivit en anmälans eller bundits till en kanin | ett dygn efter att det kom in, med sin fil, om inget har sparats från det i kön |
 | En post i läget `ofullstandig` | 12 månader efter postens gallringsstart; mejl när den markeras och efter 11 månader (se [Mejl](#mejl)) |
@@ -1214,7 +1215,12 @@ mejl eller den som skickade (`member`, också foton och köpanmälningar som ski
 årsrapporten) och poster som personens konto har laddat upp. En sådan post som inte har lagt något på
 en kanin raderas med sina filer. En post som har det står kvar utan original, text och
 `sender_address`, och mejl till avsändaren som ännu inte har gått stoppas (`cancelled`), och mejlkön
-glömmer adressen.
+glömmer adressen. På andras ärenden rensas fritexten i de svar som vid inläsningen kopplades till
+personen eller personens konto. Ämne, svarstext, avvisade filnamn och bilageskäl tas bort tillsammans
+med avsändarkopplingen. Händelsens tid och dokumentreferenser finns kvar.
+
+Avsändarkopplingen sparas från och med driftsättningen. Svar på andras ärenden som lästes in
+tidigare saknar kopplingen och rensas därför inte när avsändaren anonymiseras.
 
 ### `POST /api/v2/inkorg/{id}/dokument/{dok}/radera-original`
 

@@ -26,6 +26,7 @@ import requests
 from google.auth.exceptions import GoogleAuthError
 from peewee import InterfaceError, OperationalError, fn
 from PIL import Image
+from psycopg2.errors import LockNotAvailable
 
 import utils.inbox as inbox
 import utils.mail as mail
@@ -40,7 +41,6 @@ from utils.database import (
     InboxItem,
     MailMessage,
     Member,
-    User,
 )
 from utils.gmail import Gmail, HistoryTooOld
 from utils.log_masking import mask_cut, mask_tokens
@@ -68,6 +68,11 @@ _SPF = re.compile(r"spf=pass\s.*\bsmtp\.mailfrom=(\S+)", re.I | re.S)
 _DKIM = re.compile(r"dkim=pass\s+header\.[id]=@?([a-z0-9.-]+)(?:\s|$)", re.I)
 
 
+def _small_side(value):
+    pixels = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)(?:px)?", (value or "").strip(), re.I)
+    return bool(pixels and float(pixels[1]) < MIN_SIDE)
+
+
 class _HtmlText(HTMLParser):
     """
     An HTML-only mail as text, by the standard library's parser (linear, where regexes over tags were quadratic):
@@ -77,9 +82,12 @@ class _HtmlText(HTMLParser):
     HIDDEN = {"script", "style", "head"}
     BREAKS = {"p", "div", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6"}
 
-    def __init__(self):
+    def __init__(self, html):
         super().__init__(convert_charrefs=True)
         self.parts, self.hidden = [], 0
+        self.image_urls = set()
+        self.feed(html[:MAX_BODY])
+        self.close()
 
     def handle_starttag(self, tag, attrs):
         if tag in self.HIDDEN:
@@ -88,6 +96,13 @@ class _HtmlText(HTMLParser):
             self.hidden = 0  # a head left open hides nothing of the body
         elif tag == "br":
             self.parts.append("\n")
+        elif tag == "img" and not self.hidden:
+            attrs = dict(attrs)
+            src = (attrs.get("src") or "").strip()
+            if src.lower().startswith(("https://", "http://")) and not any(
+                _small_side(attrs.get(side)) for side in ("width", "height")
+            ):
+                self.image_urls.add(src)
 
     def handle_endtag(self, tag):
         if tag in self.HIDDEN:
@@ -177,7 +192,17 @@ def _handle(gmail, message_id):
             if _attempt(message_id) > FAILED_AFTER:  # the earlier runs died on it, as a PDF that kills the renderer
                 raise RuntimeError("earlier runs died while reading it")
             received = datetime.fromtimestamp(int(found["internalDate"]) / 1000, timezone.utc)
-            if read_message(message_id, found["raw"], received) == DEMO:
+            try:
+                result = read_message(message_id, found["raw"], received)
+            except (OperationalError, LockNotAvailable) as exc:
+                if not isinstance(getattr(exc, "orig", exc), LockNotAvailable):
+                    raise
+                # Keep the retry row after the history moves on, undoing only this attempt.
+                GmailProcessed.update(failures=GmailProcessed.failures - 1).where(
+                    (GmailProcessed.gmail_message_id == message_id) & (GmailProcessed.kind == RETRY)
+                ).execute()
+                return None
+            if result == DEMO:
                 GmailProcessed.delete().where(GmailProcessed.gmail_message_id == message_id).execute()  # no row for it
                 gmail.modify(message_id, add=[gmail.label(DEMO)])
                 return None
@@ -238,6 +263,8 @@ def read_message(gmail_id, raw, received_at=None):
     nothing here touches (no row either: it has no effects to guard).
     """
     msg = email.message_from_bytes(raw, policy=policy.default)
+    subject = " ".join(_no_nul(str(msg.get("Subject", ""))).split())
+    subject = mask_cut(_CASE.sub("", subject).strip(), MAX_TEXT)
     sender = _normalize(_no_nul(parseaddr(str(msg.get("From", "")))[1]))
     here = _hostname().lower()
     report = _delivery_report(msg)
@@ -249,7 +276,7 @@ def read_message(gmail_id, raw, received_at=None):
             if mail.record_bounce(original, diagnostic):
                 _processed(gmail_id, "bounce")
             else:  # a report on no mail of ours: a human has a look
-                item = _new_item(gmail_id, sender, text, received_at, verified=authenticated(msg, sender))
+                item = _new_item(gmail_id, sender, subject, text, received_at, verified=authenticated(msg, sender))
                 _processed(gmail_id, "item", item)
         return None
     if _auto_reply(msg):
@@ -259,19 +286,37 @@ def read_message(gmail_id, raw, received_at=None):
     replied_to = _hosts(msg.get("In-Reply-To"), msg.get("References"))
     if replied_to and here not in replied_to:
         return DEMO
-    text = _text(msg)
+    text, linked_image = _body(msg)
     stored, skipped = _store(_attachments(msg))
     try:
+        kind = "mail" if stored or skipped else "meddelande"
+        if linked_image:
+            skipped.append(
+                {
+                    "name": "Länkad bild",
+                    "reason": "Bilden finns bara som en extern länk. Be avsändaren bifoga bildfilen.",
+                }
+            )
         with DB_PROXY.atomic():
             replied = _replied_item(msg)
-            if replied is not None and _may_answer(msg, sender, replied):
-                _attach_reply(replied, text, stored, skipped)
+            reply_sender = _reply_sender(msg, sender, replied)
+            if reply_sender is not None:
+                _attach_reply(replied, reply_sender, subject, text, stored, skipped)
                 _processed(gmail_id, "reply", replied)
             else:
                 maybe = replied.id if replied is not None else None
                 verified = authenticated(msg, sender)
                 item = _new_item(
-                    gmail_id, sender, text, received_at, stored, skipped, maybe_item=maybe, verified=verified
+                    gmail_id,
+                    sender,
+                    subject,
+                    text,
+                    received_at,
+                    stored,
+                    skipped,
+                    kind=kind,
+                    maybe_item=maybe,
+                    verified=verified,
                 )
                 if stored and verified:  # never a receipt to an address the sender only typed
                     _receipt(item, len(stored))
@@ -307,19 +352,25 @@ def _content(part):
         return part.get_payload(decode=True).decode("utf-8", "replace")
 
 
-def _text(msg):
-    """The mail's own text: its plain text, or its HTML without the tags."""
-    part = msg.get_body(preferencelist=("plain", "html"))
-    if part is None:
-        return None
-    text = mask_tokens(_content(part))[:MAX_BODY]  # a reply may quote the invitation's link (FA3)
-    if part.get_content_subtype() == "html":
-        parser = _HtmlText()
-        parser.feed(text)
-        parser.close()
-        text = "\n".join(" ".join(line.split()) for line in "".join(parser.parts).splitlines() if line.strip())
+def _body(msg):
+    """The preferred text and whether the HTML refers to an image available only by URL."""
+    html = msg.get_body(preferencelist=("html",))
+    source = _content(html) if html is not None else ""
+    parser = _HtmlText(source)
+    plain = msg.get_body(preferencelist=("plain",))
+    if plain is not None:
+        text = mask_tokens(_content(plain))[:MAX_BODY]
+    else:
+        # Mask quoted links before the text is cut, but compare the original image URLs with the MIME parts.
+        masked = mask_tokens(source)
+        parts = parser.parts if masked == source else _HtmlText(masked).parts
+        text = "\n".join(" ".join(line.split()) for line in "".join(parts).splitlines() if line.strip())
+    if parser.image_urls:
+        parser.image_urls.difference_update(
+            part.get("Content-Location") for part in msg.walk() if part.get_content_maintype() == "image"
+        )
     # Last, on the finished text: decoding entities, dropping tags and NULs can rebuild a token masking saw in pieces.
-    return mask_cut(_no_nul(text).strip(), MAX_TEXT) or None
+    return mask_cut(_no_nul(text).strip(), MAX_TEXT) or None, bool(parser.image_urls)
 
 
 def _attachments(msg):
@@ -336,7 +387,7 @@ def _attachments(msg):
 def _store(attachments):
     """
     Each attachment through the upload's checks and conversion (at most MAX_FILES images in all, 10 MB a file,
-    re-saved as JPEG without EXIF): (stored (path, sha256, quality), names of the files not stored).
+    re-saved as JPEG without EXIF): (stored (path, sha256, quality), names and reasons for skipped files).
     """
     from blueprints.inbox import MAX_FILES, _each_image, _Refused  # the upload's; its refusals need an app context
 
@@ -353,11 +404,11 @@ def _store(attachments):
             small.clear()
             try:
                 _each_image(io.BytesIO(data), MAX_FILES - len(stored), keep)
-            except _Refused:
-                skipped.append(name)
+            except _Refused as refused:
+                skipped.append({"name": name, "reason": refused.response[0].get_json()["detail"]})
                 continue
             if small:
-                skipped.append(name)
+                skipped.append({"name": name, "reason": f"Bilden har en sida under {MIN_SIDE} pixlar."})
     except BaseException:
         inbox.remove_files(path for path, _, _ in stored)
         raise
@@ -371,11 +422,15 @@ def _documents(item, stored):
     ]
 
 
+def _active_sender(address):
+    return (fn.LOWER(fn.TRIM(Member.email)) == address) & Member.end_date.is_null(True)
+
+
 def _match(address):
     """The member, herd and genebank the sender's address gives in the member register: a hint, never a gate."""
     member = (
         Member.select()
-        .where((fn.LOWER(fn.TRIM(Member.email)) == address) & Member.end_date.is_null(True))
+        .where(_active_sender(address))
         .order_by((Member.role == "huvudmedlem").desc(), Member.id)
         .first()
         if address
@@ -424,7 +479,7 @@ def _replied_item(msg):
     """
     The item a reply is about, locked: by one of our mails about it in In-Reply-To (its Message-ID checked like
     a bounce's, host and HMAC), failing that by "(ärende <id>)" at the end of the subject. This only says which
-    item; whether the sender may answer there is _may_answer's.
+    item; whether the sender may answer there is _reply_sender's.
     """
     item_id = None
     for match in _OUR_ID.finditer(str(msg.get("In-Reply-To", ""))):
@@ -440,24 +495,35 @@ def _replied_item(msg):
     return InboxItem.select().where(InboxItem.id == item_id).for_update().first() if item_id else None
 
 
-def _may_answer(msg, sender, item):
-    """An answer goes on an open item only from an authenticated sender who is related to it."""
-    return item.state not in inbox.CLOSED_STATES and authenticated(msg, sender) and sender in _related(item)
-
-
-def _related(item):
-    """Whom a question on the item went to, its sender, and its herd's holder per the member register."""
+def _reply_sender(msg, sender, item):
+    """The sender to record for erasure, {} for an unmatched original sender, or None if the reply cannot attach."""
+    if item is None or item.state in inbox.CLOSED_STATES or not authenticated(msg, sender):
+        return None
     asked = MailMessage.select(MailMessage.recipient_id).where(
         (MailMessage.kind == "inlasning.fraga")
         & (MailMessage.recipient_kind == "member")
         & (MailMessage.ref_type == "inbox_item")
         & (MailMessage.ref_id == item.id)
     )
-    addresses = [m.email for m in Member.select(Member.email).where(Member.id.in_(asked))]
+    related = Member.id.in_(asked)
     holder = inbox.herd_holder(item.herd_id)
-    uploader = User.get_or_none(User.id == item.sender_user_id) if item.sender_user_id else None
-    addresses += [item.sender_address, holder and holder.email, uploader and uploader.email]
-    return {_normalize(address) for address in addresses} - {None}
+    if holder:
+        related |= Member.id == holder.id
+    original_sender = sender == _normalize(item.sender_address)
+    if original_sender:
+        related |= _active_sender(sender)
+    # Anonymization locks the person first. If it is underway, retry the mail after it commits.
+    members = (
+        Member.select(Member.id, Member.email).where(related).order_by((Member.role == "huvudmedlem").desc(), Member.id)
+    )
+    for member in members.for_update("FOR SHARE NOWAIT"):
+        if sender == _normalize(member.email):
+            return {"sender_member": member.id}
+    if item.sender_user_id and sender == _normalize(item.sender_user.email):
+        return {"sender_user": item.sender_user_id}
+    if original_sender:
+        return {"sender_member": item.member_id} if item.member_id else {}
+    return None
 
 
 def authenticated(msg, sender):
@@ -487,18 +553,21 @@ def authenticated(msg, sender):
     return False
 
 
-def _not_saved(skipped):
-    return {"not_saved": list(skipped)} if skipped else {}
+def _mail_detail(subject, skipped):
+    detail = {"subject": subject} if subject else {}
+    if skipped:
+        detail.update(not_saved=[s["name"] for s in skipped], not_saved_reasons=skipped)
+    return detail
 
 
-def _attach_reply(item, text, stored=(), skipped=()):
+def _attach_reply(item, reply_sender, subject, text, stored=(), skipped=()):
     """
     An answer on the item: an event with its text and new documents, a notice, and back to its handler if it
     waited for the answer or was incomplete (the mail about it asked the sender to reply with what is missing).
     """
     documents = _documents(item, stored)
-    detail = {"text": text, "documents": [document.id for document in documents], **_not_saved(skipped)}
-    InboxEvent.create(item=item, kind="svar", detail=detail)
+    detail = {"text": text, "documents": [document.id for document in documents], **_mail_detail(subject, skipped)}
+    InboxEvent.create(item=item, kind="svar", detail={**detail, **reply_sender})
     if item.state in ("vantar_uppfodare", "ofullstandig"):
         inbox._set_state(item, "tagen")  # pylint: disable=protected-access
         item.save()
@@ -510,7 +579,19 @@ def _attach_reply(item, text, stored=(), skipped=()):
         inbox.notify(handler, "svar", item)
 
 
-def _new_item(gmail_id, sender, text, received_at, stored=(), skipped=(), maybe_item=None, verified=False):
+def _new_item(
+    gmail_id,
+    sender,
+    subject,
+    text,
+    received_at,
+    stored=(),
+    skipped=(),
+    *,
+    kind="meddelande",
+    maybe_item=None,
+    verified=False,
+):
     """
     An item of kind mail (with attachments) or meddelande, its herd guessed from the sender; with no match the
     genebank is unknown and every queue worker is told. The files not stored and the case a reply may be about
@@ -519,7 +600,7 @@ def _new_item(gmail_id, sender, text, received_at, stored=(), skipped=(), maybe_
     """
     member, herd, genebank = _match(sender)
     item = InboxItem.create(
-        kind="mail" if stored or skipped else "meddelande",
+        kind=kind,
         genebank=genebank,
         herd=herd,
         member=member,
@@ -530,7 +611,9 @@ def _new_item(gmail_id, sender, text, received_at, stored=(), skipped=(), maybe_
         received_at=received_at or inbox.now(),
     )
     documents = _documents(item, stored)
-    detail = {"documents": len(documents), **_not_saved(skipped), **({"maybe_item": maybe_item} if maybe_item else {})}
+    detail = {"documents": len(documents), **_mail_detail(subject, skipped)}
+    if maybe_item:
+        detail["maybe_item"] = maybe_item
     InboxEvent.create(item=item, kind="inkommen", detail=detail)
     for worker in inbox.queue_workers(item.genebank_id):
         inbox.notify(worker, "ny_post", item)

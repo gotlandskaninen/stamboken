@@ -35,7 +35,8 @@ from utils.mail import forget_recipient
 logger = logging.getLogger("herdbook.inbox_purge")
 
 ORIGINAL_TYPES = ("intyg", "bevis")  # certificates and proofs; other photos are kept until decided
-FREE_TEXT = ["text", "note", "not_saved"]  # in inbox_event.detail: questions, answers, notes, attachment names
+# Reply sender IDs are only needed while there is text to erase.
+EVENT_TEXT_FIELDS = ["text", "subject", "note", "not_saved", "not_saved_reasons", "sender_member", "sender_user"]
 OPENED_MONTHS = 13
 MESSAGE_MONTHS = 13
 JUNK_AFTER = timedelta(days=30)
@@ -73,12 +74,15 @@ def _null_originals(where):
     return [path for _, path in rows]
 
 
+def _clear_event_text(where):
+    events = InboxEvent.update(detail=SQL("detail - %s::text[]", [EVENT_TEXT_FIELDS]))
+    return events.where(where & SQL("detail ?| %s::text[]", [EVENT_TEXT_FIELDS])).execute()
+
+
 def _clear_text(items):
     """The items' text: the message, and the free text in their events (the events, kinds, times and users stay)."""
     cleared = InboxItem.update(message=None).where(InboxItem.id.in_(items) & InboxItem.message.is_null(False))
-    events = InboxEvent.update(detail=SQL("detail - %s::text[]", [FREE_TEXT]))
-    events = events.where(InboxEvent.item.in_(items) & SQL("detail ?| %s::text[]", [FREE_TEXT]))
-    return cleared.execute() + events.execute()
+    return cleared.execute() + _clear_event_text(InboxEvent.item.in_(items))
 
 
 def remove_originals(paths, folder="inkorg/original"):
@@ -290,10 +294,10 @@ def purge_held(now):
 
 
 def purge_messages(now):
-    """A closed message ("meddelande") without documents 13 months after it closed."""
+    """A closed mail or message without documents 13 months after it closed."""
     no_documents = InboxItem.id.not_in(InboxDocument.select(InboxDocument.item))
     closed = InboxItem.state.in_(inbox.CLOSED_STATES) & (InboxItem.closed_at < now - inbox.months(MESSAGE_MONTHS))
-    return _delete_items((InboxItem.kind == "meddelande") & closed & no_documents)
+    return _delete_items(InboxItem.kind.in_(("meddelande", "mail")) & closed & no_documents)
 
 
 def purge_opened(now):
@@ -404,8 +408,11 @@ def erase_person_from_inbox(member, user_id=None):
     paths = _null_originals(shown)
     _clear_text(InboxDocument.select(InboxDocument.item).where(shown))
     sent = InboxItem.member == member.id
+    replies = InboxEvent.detail.contains({"sender_member": member.id})
     if user_id is not None:
         sent |= InboxItem.sender_user == user_id
+        replies |= InboxEvent.detail.contains({"sender_user": user_id})
+    _clear_event_text((InboxEvent.kind == "svar") & replies)
     ids = [item_id for (item_id,) in InboxItem.select(InboxItem.id).where(sent).tuples()]
     if not ids:
         return paths

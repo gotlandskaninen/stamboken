@@ -50,8 +50,8 @@ import { fmtDate } from "../../arsrapport/lib";
 import { RowActions } from "../QueueControls";
 import { AskBreeder } from "./AskBreeder";
 import { CertificateForm } from "./CertificateForm";
+import { MailFacts, MailThread, SenderUnconfirmed } from "./MailFacts";
 import { ReportPhotoCheck } from "./ReportPhotoCheck";
-import { MailFacts, SenderUnconfirmed } from "./MailFacts";
 import { PhotoViewer } from "./PhotoViewer";
 import { SalePanel } from "./SalePanel";
 import styles from "../inkorg.module.css";
@@ -69,7 +69,7 @@ const EVENT_LABEL: Record<string, string> = {
   original_visat: "Originalet visat",
   foralder_inlagd: "Förälder inlagd",
   fraga: "Fråga till uppfödaren",
-  svar: "Svar från uppfödaren",
+  svar: "Svar inkommet",
   tolka_igen: "Tolkas igen",
   kontrollerad: "Kontrollerat",
 };
@@ -82,12 +82,11 @@ function eventText(e: InboxEvent): string {
   if (e.kind === "sparad")
     return `${label}: ${d.individual}${d.action === "overlatelse" ? `, såld till ${d.herd}` : ""}`;
   if (e.kind === "foralder_inlagd") return `${label}: ${d.individual}`;
+  if (e.kind === "fraga" && d.text) return `${label}: ${d.text}`;
   if (e.kind === "kontrollerad")
     return `${label}: ${d.outcome === "rattat" ? "Rättat" : "Stämmer"}`;
   // The personal link has no account: the history names it instead (a purchase notice).
   if (e.kind === "inkommen" && d.via) return `${label} via ${d.via}`;
-  if (e.kind === "fraga" || e.kind === "svar")
-    return d.text ? `${label}: ${d.text}` : label;
   return label;
 }
 
@@ -212,6 +211,8 @@ export function WorkView({
   const fresh = doc?.status === "ny" || doc?.status === "vantar_foralder";
   // A purchase notice's photo is looked at and dismissed only: never read, so no type, format or Tolka igen.
   const purchase = item.ref_type === "kopanmalan";
+  const saleProposal = item.ref_type === "sale_proposal";
+  const purchaseUpload = item.kind === "upload" ? item.ref_data : null;
   // Also reset when the handler changes: a turn made before the item was taken
   // was never saved, and the masking must start from the stored rotation.
   const step = `${doc?.id}:${doc?.status}:${item.assigned_to?.id ?? ""}`;
@@ -341,34 +342,39 @@ export function WorkView({
           {notice} <Link href="/stamboken/inkorg">Till kön</Link>
         </p>
       )}
-      <div className={styles.work}>
+      <div className={styles.work} data-documents={!!doc}>
+        <MailThread item={item} />
         {/* Left: documents, the item and its actions */}
         <aside className={`sb-card ${styles.card}`} aria-label="Ärendet">
-          <h2 className={styles.cardTitle}>Dokument</h2>
-          <ul className={styles.docList}>
-            {docs.map((d, i) => (
-              <li key={d.id}>
-                <button
-                  type="button"
-                  className={styles.docButton}
-                  aria-current={d.id === selectedId}
-                  data-status={d.status}
-                  onClick={() => setSelectedId(d.id)}
-                >
-                  <span>
-                    {i + 1}. {DOC_TYPE_LABEL[d.doc_type] ?? d.doc_type}
-                    {d.individual ? ` ${d.individual}` : ""}
-                  </span>
-                  <span className={styles.docMeta}>
-                    {DOC_STATUS_LABEL[d.status] ?? d.status}
-                    {d.waiting_for?.length
-                      ? ` ${d.waiting_for.join(", ")}`
-                      : ""}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
+          {docs.length > 0 && (
+            <>
+              <h2 className={styles.cardTitle}>Dokument</h2>
+              <ul className={styles.docList}>
+                {docs.map((d, i) => (
+                  <li key={d.id}>
+                    <button
+                      type="button"
+                      className={styles.docButton}
+                      aria-current={d.id === selectedId}
+                      data-status={d.status}
+                      onClick={() => setSelectedId(d.id)}
+                    >
+                      <span>
+                        {i + 1}. {DOC_TYPE_LABEL[d.doc_type] ?? d.doc_type}
+                        {d.individual ? ` ${d.individual}` : ""}
+                      </span>
+                      <span className={styles.docMeta}>
+                        {DOC_STATUS_LABEL[d.status] ?? d.status}
+                        {d.waiting_for?.length
+                          ? ` ${d.waiting_for.join(", ")}`
+                          : ""}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
 
           <dl className={styles.facts}>
             <dt>Läge</dt>
@@ -403,12 +409,6 @@ export function WorkView({
                 </dd>
               </>
             )}
-            {item.message && (
-              <>
-                <dt>Meddelande</dt>
-                <dd>{item.message}</dd>
-              </>
-            )}
           </dl>
 
           {actions.length > 0 && (
@@ -417,7 +417,7 @@ export function WorkView({
                 <div key={a} className={styles.actions}>
                   <button
                     type="button"
-                    className={`sb-btn sb-btn-sm ${a === "ta" || a === "arbeta_vidare" ? "" : "sb-btn-secondary"}`}
+                    className={`sb-btn ${a === "ta" || a === "arbeta_vidare" ? "" : "sb-btn-secondary"}`}
                     disabled={pending}
                     aria-expanded={a in ASK ? asking === a : undefined}
                     onClick={() => (a in ASK ? toggleAsk(a) : doAction(a))}
@@ -498,6 +498,7 @@ export function WorkView({
               id={item.id}
               canTake={false}
               canAssign
+              compact={false}
               people={people}
             />
           )}
@@ -516,9 +517,13 @@ export function WorkView({
         </aside>
 
         {/* Middle: the photo */}
-        <section className={`sb-card ${styles.card}`} aria-label="Fotot">
+        <section
+          className={`sb-card ${styles.card}`}
+          aria-label="Fotot"
+          hidden={!doc && !(purchase && item.ref_data)}
+        >
           {purchase && item.ref_data && <PurchaseCard item={item} />}
-          {doc ? (
+          {doc && (
             <>
               <PhotoViewer
                 key={doc.id}
@@ -672,17 +677,16 @@ export function WorkView({
                 </div>
               )}
             </>
-          ) : purchase ? null : (
-            <p className={styles.muted}>Ärendet har inga dokument.</p>
           )}
         </section>
 
         {/* Right: what the document shows */}
         <section
-          className={`sb-card ${styles.card} ${styles.hideEmpty}`}
+          className={`sb-card ${styles.card} ${doc ? styles.registration : styles.hideEmpty}`}
           aria-label="Registrering"
+          hidden={purchase || !(doc || saleProposal || purchaseUpload)}
         >
-          {item.ref_type === "sale_proposal" && (
+          {saleProposal && (
             <p className={styles.note}>
               Avgörs i årsrapportens statusvy.
               {item.report_year && item.genebank_id && (
@@ -697,19 +701,19 @@ export function WorkView({
               )}
             </p>
           )}
-          {item.kind === "upload" && item.ref_data && (
+          {purchaseUpload && (
             // a bought rabbit Stamboken lacks (S7): register it in its birth herd, then transfer it to the buyer
             <p className={styles.note}>
-              Köpt av {item.herd}: {item.ref_data.number} från{" "}
-              {item.ref_data.from_herd}, {fmtDate(item.ref_data.date)}.
+              Köpt av {item.herd}: {purchaseUpload.number} från{" "}
+              {purchaseUpload.from_herd}, {fmtDate(purchaseUpload.date)}.
             </p>
           )}
           {doc &&
             !saving &&
             !checking &&
             !noRole &&
-            item.ref_type !== "sale_proposal" &&
-            item.ref_type !== "kopanmalan" && (
+            !saleProposal &&
+            !purchase && (
               <div className={styles.note}>
                 {CLOSED_STATES.includes(item.state)
                   ? "Ärendet är stängt."
@@ -726,7 +730,7 @@ export function WorkView({
                       <button
                         key={a}
                         type="button"
-                        className="sb-btn sb-btn-sm"
+                        className="sb-btn"
                         disabled={pending}
                         onClick={() => doAction(a)}
                       >
@@ -739,7 +743,7 @@ export function WorkView({
             )}
 
           {/* a purchase notice's photo is looked at; the purchase is registered on the rabbit's page */}
-          {!doc || item.ref_type === "kopanmalan" ? null : item.registered &&
+          {!doc || purchase ? null : item.registered &&
             doc.doc_type === "intyg" ? (
             <ReportPhotoCheck
               doc={doc}

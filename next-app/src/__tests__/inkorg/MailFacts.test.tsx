@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import {
   MailFacts,
+  MailThread,
   SenderUnconfirmed,
 } from "@/app/(app)/stamboken/(dashboard)/inkorg/[id]/MailFacts";
 import type { InboxDetail } from "@/app/(app)/stamboken/(dashboard)/inkorg/lib";
@@ -15,6 +16,37 @@ const item = (detail: Record<string, unknown>) =>
   }) as unknown as InboxDetail;
 
 describe("MailFacts", () => {
+  it("renders a response from an older API without the new mail fields", () => {
+    const mail = item({ not_saved: ["bilaga.txt"] });
+    mail.kind = "mail";
+    mail.message = "Se bilagan.";
+    render(
+      <>
+        <MailThread item={mail} />
+        <dl>
+          <MailFacts item={mail} />
+        </dl>
+      </>,
+    );
+    expect(screen.getByText("Se bilagan.")).toBeVisible();
+    expect(screen.getByText("bilaga.txt")).toBeVisible();
+    expect(screen.queryByText("Ämne")).toBeNull();
+    expect(screen.queryByText("Nämnda kaniner")).toBeNull();
+  });
+
+  it("links to the rabbits the reader may see", () => {
+    render(
+      <dl>
+        <MailFacts item={{ ...item({}), mentioned_individuals: ["G1-2112"] }} />
+      </dl>,
+    );
+    expect(screen.getByText("Nämnda kaniner")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "G1-2112" })).toHaveAttribute(
+      "href",
+      "/stamboken/individ/G1-2112",
+    );
+  });
+
   it("shows the case a reply may be about and the files not stored", () => {
     render(
       <dl>
@@ -32,8 +64,30 @@ describe("MailFacts", () => {
       "/stamboken/inkorg/12",
     );
     expect(screen.getByText("Sparades inte")).toBeInTheDocument();
-    expect(screen.getByText("brev.docx, stor.jpg")).toBeInTheDocument();
+    expect(screen.getByText("brev.docx")).toBeInTheDocument();
+    expect(screen.getByText("stor.jpg")).toBeInTheDocument();
   });
+
+  it.each(["inkommen", "svar"])(
+    "shows why a file in %s was skipped",
+    (kind) => {
+      const mail = item({
+        not_saved: ["logo.png"],
+        not_saved_reasons: [
+          { name: "logo.png", reason: "Bilden är för liten." },
+        ],
+      });
+      mail.events[0].kind = kind;
+      render(
+        <dl>
+          <MailFacts item={mail} />
+        </dl>,
+      );
+      expect(
+        screen.getByText("logo.png – Bilden är för liten."),
+      ).toBeInTheDocument();
+    },
+  );
 
   it("shows nothing for an upload", () => {
     const { container } = render(
@@ -42,6 +96,37 @@ describe("MailFacts", () => {
       </dl>,
     );
     expect(container.querySelector("dt")).toBeNull();
+  });
+});
+
+describe("MailThread", () => {
+  it("keeps each subject with its own message", () => {
+    const mail = item({ subject: "Första ämnet" });
+    mail.kind = "meddelande";
+    mail.message = "Första raden.\nAndra raden.";
+    mail.events.push({
+      id: 2,
+      kind: "svar",
+      at: "2026-11-24T10:00:00Z",
+      user: null,
+      detail: { subject: "Komplettering", text: "Svar på frågan." },
+    });
+    render(<MailThread item={mail} />);
+    const [first, reply] = screen.getAllByRole("article");
+    expect(first).toHaveTextContent("ÄmneFörsta ämnet");
+    expect(first.querySelector("p")?.textContent).toBe(mail.message);
+    expect(screen.getByRole("heading", { name: /^Svar · / })).toBeVisible();
+    expect(reply).toHaveTextContent("ÄmneKomplettering");
+    expect(reply).toHaveTextContent("Svar på frågan.");
+  });
+
+  it("shows a subject without a body and hides a purged message", () => {
+    const { rerender } = render(
+      <MailThread item={item({ subject: "Intyg" })} />,
+    );
+    expect(screen.getByText("Intyg")).toBeVisible();
+    rerender(<MailThread item={item({ documents: 1 })} />);
+    expect(screen.queryByRole("region")).toBeNull();
   });
 });
 

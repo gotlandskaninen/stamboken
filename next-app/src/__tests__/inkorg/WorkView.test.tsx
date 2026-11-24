@@ -102,6 +102,7 @@ const item = (changes: Partial<InboxDetail> = {}): InboxDetail => ({
   sender_authenticated: null,
   sender_address: null,
   message: null,
+  mentioned_individuals: [],
   documents: [doc()],
   documents_done: 0,
   events: [],
@@ -138,6 +139,62 @@ beforeEach(() => {
   actions.confirmMask.mockResolvedValue(ok(doc({ status: "klar" })));
 });
 afterEach(cleanup);
+
+describe("WorkView: mail", () => {
+  it.each([false, true])("shows the message with documents=%s", (hasDoc) => {
+    render(
+      view(
+        item({
+          kind: hasDoc ? "mail" : "meddelande",
+          state: "ny",
+          assigned_to: null,
+          sender_address: "inkorg@example.org",
+          message: "Här är intyget.",
+          events: [
+            {
+              id: 1,
+              kind: "inkommen",
+              at: "2026-11-24T10:00:00Z",
+              user: null,
+              detail: {
+                subject: "Intyg",
+                not_saved: ["bilaga_till_intyget_20260101.png"],
+              },
+            },
+            {
+              id: 2,
+              kind: "svar",
+              at: "2026-11-24T11:00:00Z",
+              user: null,
+              detail: { text: "Här är kompletteringen." },
+            },
+          ],
+          documents: hasDoc ? [doc()] : [],
+        }),
+        boss,
+      ),
+    );
+    const mail = screen.getByRole("region", { name: "Meddelande" });
+    expect(within(mail).getByText("Intyg")).toBeVisible();
+    expect(within(mail).getByText("Här är intyget.")).toBeVisible();
+    expect(within(mail).getByText("Här är kompletteringen.")).toBeVisible();
+    const facts = within(
+      screen.getByRole("complementary", { name: "Ärendet" }),
+    );
+    expect(facts.getByText("inkorg@example.org")).toBeVisible();
+    expect(facts.getByText("bilaga_till_intyget_20260101.png")).toBeVisible();
+    expect(facts.getByText(/· Svar inkommet$/)).toBeInTheDocument();
+    expect(facts.queryByText(/Här är kompletteringen/)).toBeNull();
+    for (const name of ["Jag tar den", "Tilldela"]) {
+      const button = facts.getByRole("button", { name });
+      expect(button).toHaveClass("sb-btn");
+      expect(button).not.toHaveClass("sb-btn-sm");
+    }
+    for (const name of ["Fotot", "Registrering"])
+      expect(!!screen.queryByRole("region", { name })).toBe(hasDoc);
+    expect(!!facts.queryByRole("heading", { name: "Dokument" })).toBe(hasDoc);
+  });
+});
 
 describe("WorkView: masking", () => {
   it("sends the rotation of the turned view with its rectangles in one call", async () => {
