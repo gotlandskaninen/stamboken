@@ -2701,7 +2701,7 @@ def submitted_body(sub: Submission) -> dict:
     return body
 
 
-def _lock_items(ids, form_id=None, report=None, kept=(), notices=()):
+def _lock_items(ids, form_id=None, report=None, kept=(), notices=(), reports=()):
     """
     The queue's items that may show the buyers of the rabbits' sales (buyer_items), the paper form's own item, the
     kontroll items of `report`'s pending sale proposals (K4) and the purchase `notices` an approval settles (Task 5),
@@ -2715,9 +2715,10 @@ def _lock_items(ids, form_id=None, report=None, kept=(), notices=()):
         (HerdTracking.individual.in_(ids) & ht_not_voided()) | HerdTracking.holder_contact.in_(sorted(kept))
     )
     proposed = set()
-    if report is not None:  # the report's lock keeps this set as read
+    report_ids = [report.id] if report is not None else reports
+    if report_ids:  # the reports' locks keep this set as read
         query = SaleProposal.select(SaleProposal.inbox_item_id).where(
-            SaleProposal.report == report.id,
+            SaleProposal.report.in_(report_ids),
             SaleProposal.state == "foreslagen",
             SaleProposal.inbox_item_id.is_null(False),
         )

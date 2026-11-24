@@ -22,6 +22,8 @@ from utils.database import (
     HerdTracking,
     Individual,
     MailMessage,
+    SaleProposal,
+    YearlyHerdReport,
     ht_order_desc,
     lock_individuals,
 )
@@ -210,6 +212,26 @@ def _same_buyer(contact_id):
     return ids | {contact_id}
 
 
+def _pending_proposals(contact_id):
+    from utils.herd_tracking import _buyer_name_key  # pylint: disable=import-outside-toplevel
+
+    contact = BuyerContact.get_or_none(BuyerContact.id == contact_id)
+    if contact is None or not (contact.email or contact.erased_email_hash):
+        return []
+    email = SaleProposal.buyer["email"]
+    pending = SaleProposal.select().where(SaleProposal.state == "foreslagen", email.is_null(False))
+    if contact.email:
+        pending = pending.where(fn.lower(fn.trim(email)) == contact.email.strip().lower())
+    # A proposal has not passed the shared-address check yet. Only erase the linked buyer's name and address.
+    name = _buyer_name_key(contact.name)
+    return [
+        p
+        for p in pending
+        if _buyer_name_key(p.buyer["name"]) == name
+        and (contact.email or address_hash(p.buyer["email"]) == contact.erased_email_hash)
+    ]
+
+
 def erase_by_link(token):
     """
     POST /api/v2/kopare/ta-bort: the buyer objects through the link in kopare.information, and every detail goes
@@ -222,7 +244,8 @@ def erase_by_link(token):
     contact_id = verify_link(ERASE_PURPOSE, token)
     if contact_id is None:
         return None
-    # Imported here: both import utils.herd_tracking, which imports this module.
+    # Imported here: the report and inbox modules import utils.herd_tracking, which imports this module.
+    from utils import arsrapport, sale_proposal  # pylint: disable=import-outside-toplevel
     from utils.herd_tracking import (  # pylint: disable=import-outside-toplevel
         QUEUE_CHANGED,
         HerdTrackingConflict,
@@ -239,14 +262,34 @@ def erase_by_link(token):
         # The locks a correction takes, in its order (the queue's items, then the rabbits), as
         # utils.buyer_contact.erase_buyer_contact: without them a correction that carries the buyer over to a new
         # row commits in between, and that row loses its buyer without the mark that one was removed.
-        holding = sales(_same_buyer(contact_id))
-        items = buyer_items(holding, lock=True)
-        rabbits = {row.individual_id for row in holding}
+        proposals = _pending_proposals(contact_id)
+        report_ids = {p.report_id for p in proposals}
+        reports = YearlyHerdReport.select().where(YearlyHerdReport.id.in_(report_ids))
+        for report in reports.order_by(YearlyHerdReport.round, YearlyHerdReport.herd):
+            arsrapport.lock_report(report.round, report.herd)
+        if report_ids:
+            list(reports.order_by(YearlyHerdReport.id).for_update())
+        ids = _same_buyer(contact_id)
+        holding = sales(ids)
+        proposed_rabbits = {p.individual_id for p in proposals}
+        # All reports before any items, then all rabbits in one pass, even across several reports and sales.
+        items = arsrapport._lock_items(proposed_rabbits, kept=ids, reports=report_ids)  # pylint: disable=protected-access
+        rabbits = {row.individual_id for row in holding} | proposed_rabbits
         lock_individuals(rabbits)
         ids = _same_buyer(contact_id)  # again, under the locks: a correction may have put a new contact in
         holding = sales(ids)
-        if not buyer_items(holding) <= items or not {row.individual_id for row in holding} <= rabbits:
+        pending = _pending_proposals(contact_id)
+        active = HerdTracking.select().where(
+            HerdTracking.individual.in_(proposed_rabbits), HerdTracking.voided_at.is_null()
+        )
+        if (
+            not {p.id for p in pending} <= {p.id for p in proposals}
+            or not buyer_items([*holding, *active]) <= items
+            or not {row.individual_id for row in holding} <= rabbits
+        ):
             raise HerdTrackingConflict(QUEUE_CHANGED)
+        for proposal in pending:
+            sale_proposal.clear_buyer(proposal, "invandning")
         # Before the delete: afterwards the sales no longer point at the buyers. Only this objection tells the
         # genebank; a manager's erasure and the purges do not. A repeated link finds no sales and so no notice.
         for genebank_id, individual in sorted({(r.herd.genebank_id, r.individual_id) for r in holding if r.herd_id}):

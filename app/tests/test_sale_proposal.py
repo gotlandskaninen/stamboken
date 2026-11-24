@@ -11,8 +11,11 @@ from unittest import mock
 
 import utils.arsrapport as arsrapport
 import utils.buyer_contact as buyer_contact
+import utils.buyer_mail as buyer_mail
 import utils.database as db
+import utils.mail as mail
 import utils.sale_proposal as sp
+import utils.settings as settings
 from utils.herd_tracking import HerdTrackingInvalid
 
 from tests.arsrapport_fixtures import ArsrapportTest
@@ -107,6 +110,24 @@ class ProposalTest(ArsrapportTest):
         row = sp.approve(proposal, self.manager, now=NOW)
         self.assertEqual((row.herd.herd, row.holder_contact), ("G9002", None))
         self.assertEqual(db.BuyerContact.select().count(), 0)
+
+    def test_erase_link_clears_the_same_buyer_on_a_pending_proposal(self):
+        buyer = {**BUYER, "email": "kopare@example.org", "contact_consent": True}
+        sale = sp.approve(self.propose(buyer=buyer), self.manager, now=NOW)
+        pending = self.propose(self.other, buyer={**buyer, "email": buyer["email"].upper()})
+        with mock.patch.object(settings.mail, "link_secret", "test-link-secret"):
+            token = mail.link_token(buyer_mail.ERASE_PURPOSE, sale.holder_contact_id)
+            self.assertEqual(buyer_mail.erase_by_link(token), "removed")
+        with self.assertRaises(arsrapport.ArsrapportError) as refused:
+            sp.approve(pending, self.manager, now=NOW)
+        self.assertEqual((refused.exception.status, refused.exception.detail), (409, sp.BUYER_GONE))
+        self.assertFalse(db.BuyerContact.select().exists())
+        self.assertEqual(rows(self.other, "TRANSFER"), [])
+        self.assertFalse(
+            db.MailMessage.select()
+            .where(db.MailMessage.recipient_kind == "buyer_contact", db.MailMessage.status == "queued")
+            .exists()
+        )
 
     def test_retract_is_idempotent_and_clears_buyer(self):
         proposal = self.propose()
