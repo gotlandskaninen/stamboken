@@ -258,7 +258,12 @@ def _read_rows(csv_path: str) -> tuple[list[dict], list[tuple[str, str]], list[t
         layout = None
         while True:
             start_line = reader.line_num + 1
-            cells = next(reader, None)
+            try:
+                cells = next(reader, None)
+            except (UnicodeDecodeError, csv.Error) as e:  # the raw message can carry bytes from the file
+                code = "ogiltig-teckenkodning" if isinstance(e, UnicodeDecodeError) else "ogiltig-csv"
+                file_errors.append((f"rad {start_line}: {e}", f"row {start_line}: {code}"))
+                return [], [], file_errors
             if cells is None:
                 break
             if fieldnames is None:
@@ -312,7 +317,7 @@ def _parse_row(raw: dict[str, str], layout: str) -> dict:
         nr = int(nr_raw)
     except ValueError as exc:
         raise _RowError("ogiltigt-nr", f"ogiltigt Nr: {nr_raw!r}") from exc
-    if nr < 0:
+    if not 0 <= nr <= 2**31 - 1:  # the member-number columns are 32-bit integers
         raise _RowError("ogiltigt-nr", f"ogiltigt Nr: {nr_raw!r}")
 
     if layout == SPLIT_LAYOUT:

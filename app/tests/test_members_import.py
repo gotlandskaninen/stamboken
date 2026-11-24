@@ -736,6 +736,29 @@ class TestMembersImport(DatabaseTest):
         self.assertIn("Error: row 2: ogiltig-adresslayout", result.stderr.splitlines())
         self.assertNotIn("Hemlig rubrik", result.stdout + result.stderr)
 
+    def test_counts_only_reports_bad_encoding_without_bytes(self):
+        with self.runner.isolated_filesystem():
+            with open("matrikel.csv", "wb") as f:
+                f.write((HEADER + _row(nr="6", name="Åsa Exempel")).encode("latin-1"))
+            result = self.runner.invoke(
+                members_cli, ["import", "matrikel.csv", "--counts-only"], obj=ScriptInfo(create_app=lambda: APP)
+            )
+        self.assertEqual(result.exit_code, 1, result.output)
+        self.assertTrue(any(line.endswith(": ogiltig-teckenkodning") for line in result.stderr.splitlines()))
+        self.assertNotIn("0xc5", result.stdout + result.stderr)
+        self.assertEqual(db.Membership.select().count(), 0)
+
+    def test_counts_only_reports_too_large_nr_with_the_other_row_errors(self):
+        before = self._counter()
+        csv = (
+            HEADER + _row(nr="7", name="Bo Exempel", postadress="ABC Visby") + _row(nr="2147483648", name="Ida Exempel")
+        )
+        result = self._run_import(csv, ["--counts-only"])
+        self.assertEqual(result.exit_code, 1, result.output)
+        self.assertIn("Error: row 3: ogiltigt-nr", result.stderr.splitlines())
+        self.assertNotIn("2147483648", result.stdout + result.stderr)
+        self.assertEqual(self._counter(), before)
+
     def test_import_never_auto_links_user(self):
         """Per design spec: import does not auto-link. OAuth login does."""
         # Real registration path — hand-rolled uuid strings are rejected by
