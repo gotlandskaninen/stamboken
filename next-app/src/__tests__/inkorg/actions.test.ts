@@ -16,6 +16,9 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return { ...actual, fetchApi: vi.fn() };
 });
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("next/headers", () => ({
+  cookies: async () => ({ get: () => ({ value: "prod" }) }),
+}));
 const revalidated = vi.mocked(revalidatePath);
 
 const api = vi.mocked(fetchApi);
@@ -59,6 +62,14 @@ describe("the queue's server actions", () => {
   it("pass only the document fields the UI changes", async () => {
     await updateDocument(12, 31, { rotation: 90, waiting_for: ["X"], foo: 1 });
     expect(body(0)).toEqual({ rotation: 90 });
+  });
+
+  it("refuse a document change made for the other environment", async () => {
+    const res = await updateDocument(12, 31, { dismissed: true }, "demo");
+    expect(res.ok).toBe(false);
+    expect(api).not.toHaveBeenCalled();
+    await updateDocument(12, 31, { dismissed: true }, "prod");
+    expect(body(0)).toEqual({ dismissed: true });
   });
 
   it("väntar på förälder: the number on the document first, then the state", async () => {

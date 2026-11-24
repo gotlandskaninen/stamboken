@@ -1,10 +1,12 @@
 import "@testing-library/jest-dom/vitest";
+import "@/i18n";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   cleanup,
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 
@@ -14,12 +16,16 @@ vi.mock("@/app/(app)/stamboken/(dashboard)/inkorg/actions", () => ({
 }));
 
 import { CertificateForm } from "@/app/(app)/stamboken/(dashboard)/inkorg/[id]/CertificateForm";
+import { saveCertificate } from "@/app/(app)/stamboken/(dashboard)/inkorg/actions";
 import type {
   InboxDocument,
   Proposal,
 } from "@/app/(app)/stamboken/(dashboard)/inkorg/lib";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.mocked(saveCertificate).mockReset();
+});
 
 // A synthetic reading: the number read, the mother one character off, the
 // father's branch against the registry, the birth date unreadable.
@@ -64,13 +70,13 @@ const doc = (changes: Partial<InboxDocument> = {}): InboxDocument => ({
   ...changes,
 });
 
-const form = (d: InboxDocument) => (
+const form = (d: InboxDocument, onSaved = () => undefined) => (
   <CertificateForm
     itemId={12}
     doc={d}
     colors={["viltgrå"]}
     canSave
-    onSaved={() => undefined}
+    onSaved={onSaved}
     onSkip={() => undefined}
   />
 );
@@ -87,6 +93,20 @@ describe("CertificateForm with the image reading's proposal", () => {
     expect(input(/^Mor/)).toHaveValue("G9001-2211");
     expect(input(/^Far(?!-)/)).toHaveValue("");
     expect(input(/^Födelsedatum/)).toHaveValue("");
+  });
+
+  it("keeps the queue's compact look: Kön a menu, not the member's choices", () => {
+    show(doc({ proposal: null, interpretation_status: "vantar" }));
+    const form = input(/^Namn/).closest("form")!;
+    expect(form.className).not.toContain("memberFields");
+    expect(screen.getByRole("combobox", { name: /^Kön/ })).toBeTruthy();
+    expect(screen.queryByRole("group", { name: "Kön" })).toBeNull();
+  });
+
+  it("keeps the queue's hint for the count at 6 weeks: the queue asks for it", () => {
+    show(doc({ proposal: null, interpretation_status: "vantar" }));
+    expect(screen.getByText("Står inte alltid på intyget.")).toBeTruthy();
+    expect(screen.queryByText(/lämna tomt/)).toBeNull();
   });
 
   it("colours each field by its source and shows what was read", () => {
@@ -166,5 +186,86 @@ describe("CertificateForm when the reading finishes while it is open", () => {
     rerender(form(doc()));
     expect(input(/^Individnummer på pappret/)).toHaveValue("G9001-2511");
     expect(screen.queryByText(/Det finns ett förslag/)).toBeNull();
+  });
+});
+
+// The form moved to RegisterFromCertificate (4b): the queue's save is unchanged.
+describe("CertificateForm saves as before the move", () => {
+  const fillRest = () => {
+    fireEvent.change(input(/^Intygsnummer/), { target: { value: "P-1" } });
+    fireEvent.change(input(/^Far(?!-)/), { target: { value: "g9002-2311" } });
+    fireEvent.change(input(/^Födelsedatum/), {
+      target: { value: "2025-05-10" },
+    });
+  };
+  const NEW_RABBIT = {
+    action: "ny_kanin",
+    paper_number: "G9001-2511",
+    paper_certificate: "P-1",
+    mother: "G9001-2211",
+    father: "G9002-2311",
+    birth_date: "2025-05-10",
+    rex: false, // main's rex choice, sent with every new rabbit
+  };
+
+  it("posts the item's document with the form's payload, and hands on the saved document", async () => {
+    const saved = doc({ individual: "G9001-2511" } as Partial<InboxDocument>);
+    vi.mocked(saveCertificate).mockResolvedValue({
+      ok: true,
+      data: { item: {} as never, document: saved },
+    });
+    const onSaved = vi.fn();
+    render(form(doc(), onSaved));
+    fillRest();
+    fireEvent.click(screen.getByRole("button", { name: "Spara och nästa" }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith(saved));
+    expect(saveCertificate).toHaveBeenCalledWith(12, 31, NEW_RABBIT);
+  });
+
+  it("a number conflict opens the dialog, and Pappret rättas sends Stamboken's number", async () => {
+    vi.mocked(saveCertificate)
+      .mockResolvedValueOnce({
+        ok: false,
+        problem: {
+          status: 409,
+          title: "number_conflict",
+          detail:
+            "Individnumret på pappersintyget stämmer inte med Stambokens.",
+          extensions: {
+            check_status: "conflict",
+            stamboken_number: "G9001-2511",
+            paper_number: "G9001-2521",
+            conflicts: [
+              { kind: "litter", paper: "2", stamboken: "1", holder: null },
+            ],
+            choices: ["use_stamboken_number", "paper_is_right"],
+            actions: [],
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: { item: {} as never, document: doc() },
+      });
+    show(doc());
+    fillRest();
+    fireEvent.click(screen.getByRole("button", { name: "Spara och nästa" }));
+    const corrected = await screen.findByRole("button", {
+      name: "Pappret rättas",
+    });
+    await waitFor(() => expect(corrected).toBeEnabled()); // the first save has finished
+    fireEvent.click(corrected);
+    await waitFor(() => expect(saveCertificate).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(saveCertificate).mock.calls[1][2]).toEqual({
+      ...NEW_RABBIT,
+      resolution: {
+        expected_number: "G9001-2511",
+        choice: "use_stamboken_number",
+      },
+    });
+    // the refusal stood next to the paper's number, with the queue's hint
+    expect(
+      screen.getByText("Stämmer pappret? Lämna ärendet till genbanksansvarig."),
+    ).toBeInTheDocument();
   });
 });

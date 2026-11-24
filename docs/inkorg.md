@@ -217,8 +217,9 @@ Kölistan och de flesta anrop som ändrar en post svarar med posten i listform:
 - `sender_authenticated`: för en mejlad post `true` när Gmail har godkänt avsändaradressens domän (SPF
   eller DKIM, samma kontroll som kvittot) och annars `false`; `null` för en uppladdning. Mejlen om posten
   (`inlasning.klar`, `inlasning.ofullstandig`, `inlasning.paminnelse`) går till en mejlad posts adress
-  bara när den är `true`, så att en förfalskad avsändare aldrig får kön att mejla någon annan. Visa till
-  exempel "Avsändaren är inte bekräftad" när den är `false`.
+  bara när den är `true`, så att en förfalskad avsändare aldrig får kön att mejla någon annan. Foton som
+  en länk skickat genom årsrapporten (en uppladdning utan konto) har länkens medlem som `member`, och
+  mejlen går dit. Visa till exempel "Avsändaren är inte bekräftad" när den är `false`.
 - `maybe_blurry`: något dokument har varningen `suddig` (kön visar "kan vara oskarp").
 - `documents` och `documents_done`: antal dokument och antal klara eller avfärdade.
 
@@ -230,6 +231,8 @@ Kölistan och de flesta anrop som ändrar en post svarar med posten i listform:
 {
   "message": "Tre intyg från i våras",
   "sender_address": null,
+  "report_year": null,
+  "ref_data": null,
   "documents": [ { "…": "dokument, se nedan" } ],
   "events": [
     {"id": 1, "at": "2026-11-14T08:01:02+00:00", "kind": "inkommen", "user": {"id": 4, "name": "Test Uppladdare"}, "detail": {"documents": 2}}
@@ -239,7 +242,10 @@ Kölistan och de flesta anrop som ändrar en post svarar med posten i listform:
 
 `message` är `null` när texten är gallrad (se [Gallring](#gallring)). `sender_address` är avsändarens
 adress för en mejlad post och `null` för uppladdningar. Den nollas när posten är stängd och inget mejl
-till avsändaren väntar, och senast 30 dagar efter stängningen.
+till avsändaren väntar, och senast 30 dagar efter stängningen. `report_year` är årsrapportrundans år
+för en post med `ref_type` `sale_proposal`, vars statusvy avgör förslaget, och för en köpanmälan
+(`kopanmalan`) som ett väntande förslag matchar; annars `null`. `ref_data` är en köpanmälans fält
+(`number`, `from_herd`, `date`, `individual_id`, se [arsrapport.md](arsrapport.md#köpanmälan)), annars `null`.
 
 ### Dokument
 
@@ -340,8 +346,10 @@ till avsändaren väntar, och senast 30 dagar efter stängningen.
 | `fraga` | `{"text": "Står det G1-2112?", "document": 31, "rotation": 0, "crop": {"x": 0, "y": 0, "w": 0.5, "h": 0.25}}`; de tre sista bara med utsnitt |
 | `svar` | `{"text": "Ja.", "documents": [33], "not_saved": ["brev.docx"]}`; `user` är `null`, `not_saved` bara när något inte sparades |
 | `tolka_igen` | `{"document": 31}`; handläggaren lade dokumentet i tolkningens kö igen |
+| `kontrollerad` | `{"document": 31, "outcome": "stammer" \| "rattat"}`; ett foto från årsrapporten är jämfört med kaninen (`…/kontrollerad`) |
 | `original_raderat` | `{"document": 31}`; originalet raderades på begäran (`…/radera-original`) |
 | `kopia_borttagen` | `{"document": 31}`; den maskade kopian togs bort (`…/kopia`) |
+| `matrikel_andrad` | `{"falt": ["konto", "epost"], "hoppade": ["telefon"], "submission_id": 12}`; en årsblankett ändrade uppgifter i matrikeln (`falt`) eller hoppade över dem, eftersom matrikeln ändrats efter blankettens datum (`hoppade`). Bara fältnamnen, aldrig värdena |
 
 När postens text gallras försvinner `text`, `subject`, `note`, `not_saved` och `not_saved_reasons`
 ur `detail`. Händelsen står kvar.
@@ -379,7 +387,9 @@ räknas sida för sida. En bild får ha högst 40 megapixlar.
 bildpunkter), `suddig`, `for_mork`, `for_ljus`. Gränserna är preliminära. Har någon bild en varning
 och saknas `accept_warnings` sparas ingenting, och svaret är 409 med varningarna. Visa till exempel
 "Bilden ser suddig ut. Ta om den?" med "Skicka ändå", som skickar samma filer igen med
-`accept_warnings=1`. Utan varningar sparas inskicket direkt.
+`accept_warnings=1`. Utan varningar sparas inskicket direkt, och postens `member` blir
+uppladdarens person i matrikeln, om kontot har en: årsrapportens ärendelista visar huvudmedlemmens
+inskick efter den.
 
 **Svar 201** (inskicket är sparat):
 
@@ -413,7 +423,8 @@ och saknas `accept_warnings` sparas ingenting, och svaret är 409 med varningarn
 `warnings` har en rad per bild, i samma form som `documents` i svaret 201 men utan `id`.
 
 Genbanksansvarig och hjälpare i besättningens genbank får notisen `ny_post`, utom uppladdaren
-själv.
+själv. Ett foto från årsrapporten ger notisen först när kaninen registrerats från det; ett foto som
+aldrig kopplas kan skrotas, och uppfödaren får då ladda upp det igen.
 
 **Fel:**
 
@@ -435,7 +446,8 @@ kräver att anroparen arbetar i kön (annars 403).
 
 ### `GET /api/v2/inkorg`
 
-Kölistan, äldst först (`received_at`).
+Kölistan, äldst först (`received_at`). Ett foto från årsrapporten som hålls (`ref_data` `syfte`)
+är inget arbete än och listas inte, och räknas inte i `counts`.
 
 | Parameter | |
 |---|---|
@@ -613,6 +625,27 @@ registreringen aldrig väntar på den; jobbet `inbox_wake` väcker varje timme d
 **Fel:** 404 när dokumentet inte hör till posten; 409 när anroparen inte är handläggare, när
 tolkningen är avstängd (`Bildtolkningen är avstängd.`), när dokumentet inte är ett intyg som
 inte sparats än (`Bara ett intyg som inte är sparat kan tolkas.`) eller när originalet är raderat.
+Ett foto från årsrapporten (`kind: "kontroll"`, `ref_type: "individual"`) tolkas också när kaninen
+redan är sparad, eftersom tolkningen jämförs med det uppfödaren registrerade.
+
+### `POST /api/v2/inkorg/{id}/dokument/{dok}/kontrollerad`
+
+Ett foto från årsrapporten är jämfört med kaninen som registrerades från det. Kroppen är
+`{"outcome": "stammer"}` eller `{"outcome": "rattat"}` (handläggaren har rättat kaninen efter
+intyget). Dokumentet blir klart, händelsen `kontrollerad` loggas och posten blir `klar` som när
+en vanlig posts sista dokument är klart. Postens detalj har då `registered`: kaninen som den
+registrerades, med samma nycklar som intygsformuläret. "Öppna igen" (`…/lage` till `tagen`) på ett
+sådant foto gör dokumentet oklart igen, så att det kontrolleras på nytt; att vrida det stänger inte
+posten.
+
+**Vem:** handläggaren (posten tagen). Admin, genbanksansvarig och genbankshjälpare i postens
+genbank kan ta posten, som andra poster.
+
+**Svar 200:** `{"item": <post i listform>, "document": <dokument>}`.
+
+**Fel:** 400 för ett annat `outcome`; 404 när dokumentet inte hör till posten; 409 när posten inte
+är ett foto från årsrapporten, när anroparen inte är handläggare eller posten inte är tagen, när
+posten och dokumentet inte pekar på samma registrerade kanin, eller när dokumentet redan är klart.
 
 ## Spara det intyget visar
 
@@ -1088,6 +1121,13 @@ bekräftade föräldrar hjälper registret: en förälder som hittats, eller upp
 ingen förälder gick att läsa, ger sina kullar. En enda kull född det lästa datumet fyller i mor och
 far som `härlett`; annars listas kullarna i `checks`.
 
+Ett foto från årsrapporten som tolkas efter att kaninen sparats jämförs med den kaninen, vilket
+nummer som än lästes. Varje fält i formuläret får ett värde: `läst` när det stämmer med det som
+registrerades, `avviker` med det registrerade värdet när det inte gör det, och `osäker` när det är
+överstruket eller inte går att läsa. Kontrollerna är desamma som för en kanin som redan finns.
+Tolkades fotot innan kaninen sparades, jämförs den sparade tolkningen med kaninen när fotot kopplas
+till den, utan någon ny tolkning.
+
 **Inställningar** (`.docker/api-variables.env`):
 
 | Variabel | Värde | Standard |
@@ -1136,9 +1176,11 @@ text på en gammal post) och när posten senast markerades `ofullstandig`.
 | Händelsen `oppnad` | 13 månader efter händelsen |
 | En stängd post av typen `meddelande` eller `mail` utan dokument, även när mejlet bara hade en länkad bild eller avvisade bilagor | 13 månader efter stängningen |
 | En post i läget `skrap` | 30 dagar efter stängningen |
+| Ett foto från årsrapporten som hålls för ett köp eller en kanin (`ref_data` `syfte`) och inte har skickats, blivit en anmälans eller bundits till en kanin | ett dygn efter att det kom in, med sin fil, om inget har sparats från det i kön |
 | En post i läget `ofullstandig` | 12 månader efter postens gallringsstart; mejl när den markeras och efter 11 månader (se [Mejl](#mejl)) |
 | `sender_address` på en stängd post | när inget mejl till avsändaren väntar, senast 30 dagar efter stängningen, också när Gmail-läsningen är avstängd |
 | `gmail_processed` | 60 dagar |
+| `member_change_request`, årsrapportens kontaktändringar (en e-poständring från blankett har den gamla och den nya adressen) | 30 dagar efter att raden bekräftats, förfallit eller återkallats |
 | Kopian på kaninen och spåret i `inbox_operation` | aldrig |
 
 - En post raderas med sina dokument, händelser, notiser och original, och mejlkön glömmer avsändarens
@@ -1169,7 +1211,8 @@ huvudmedlem i matrikeln. Finns en kopia är den det enda som blir kvar, med säl
 täckt.
 
 Det personen själv har skickat in raderas också: poster där personen är den matchade avsändaren av ett
-mejl (`member`) och poster som personens konto har laddat upp. En sådan post som inte har lagt något på
+mejl eller den som skickade (`member`, också foton och köpanmälningar som skickats genom
+årsrapporten) och poster som personens konto har laddat upp. En sådan post som inte har lagt något på
 en kanin raderas med sina filer. En post som har det står kvar utan original, text och
 `sender_address`, och mejl till avsändaren som ännu inte har gått stoppas (`cancelled`), och mejlkön
 glömmer adressen. På andras ärenden rensas fritexten i de svar som vid inläsningen kopplades till

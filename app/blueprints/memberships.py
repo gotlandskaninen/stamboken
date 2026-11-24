@@ -11,8 +11,8 @@ from datetime import date
 
 from flask import Blueprint, jsonify, request
 from flask_login import current_user
-from peewee import IntegrityError, fn
-from utils.database import BILLING_FIELDS, DB_PROXY, Herd, HerdAccessGrant, Member, Membership, User
+from peewee import IntegrityError, OperationalError, fn
+from utils.database import BILLING_FIELDS, DB_PROXY, Genebank, Herd, HerdAccessGrant, Member, Membership, User
 from utils.herd_contact import on_membership_active
 from utils.login_code import AddressTaken
 from utils.matrikel import (
@@ -27,6 +27,8 @@ from utils.matrikel import (
     grant_is_active,
     is_anonymized,
     link_member_user,
+    link_membership_herd,
+    membership_herd_candidates,
     parse_billing_fields,
     parse_postal_fields,
     raise_counter_to,
@@ -604,7 +606,16 @@ def anonymize_person_endpoint(person_id: int):
         return problem(404, "Hittades inte", f"Personen {person_id} finns inte")
     # The caller's pre-lock instance is stale after the scrub — serialise the
     # instance the operation re-read and wrote under its locks.
-    person = anonymize_person(person, current_user)
+    try:
+        person = anonymize_person(person, current_user)
+    except LinkError as err:
+        return problem(err.status, err.title, err.detail, **err.extensions)
+    except OperationalError as exc:
+        # The account's audit purge locks audit_log: another erasure or a long write held it (deadlock or
+        # lock_timeout), and the transaction rolled back whole.
+        if not any(getattr(e, "pgcode", None) in ("40P01", "55P03") for e in (exc, exc.__cause__, exc.__context__)):
+            raise
+        return problem(503, "Försök igen", "Anonymiseringen krockade med en annan ändring. Försök igen om en stund.")
     return jsonify(_person_to_dict(person))
 
 
@@ -629,6 +640,37 @@ def set_main_member(membership_id: int):
     except AddressTaken:
         return _address_taken()
     return jsonify(_membership_to_dict(ms))
+
+
+@memberships_bp.route("/v2/memberships/<int:membership_id>/herd-candidates", methods=["GET"])
+@json_login_required
+@matrikel_admin_required
+def list_herd_candidates(membership_id: int):
+    if not Membership.select().where(Membership.id == membership_id).exists():
+        return problem(404, "Hittades inte", f"Medlemskapet {membership_id} finns inte")
+    genebank_id = request.args.get("genebank_id", type=int)
+    if genebank_id is None or not Genebank.select().where(Genebank.id == genebank_id).exists():
+        return problem(400, "Ogiltig genbank", "Ange en befintlig genbank med genebank_id.")
+    return jsonify({"herds": membership_herd_candidates(membership_id, genebank_id)})
+
+
+@memberships_bp.route("/v2/memberships/<int:membership_id>/herds", methods=["POST"])
+@json_login_required
+@matrikel_admin_required
+def link_herd_endpoint(membership_id: int):
+    body = request.get_json(silent=True)
+    herd_id = body.get("herd_id") if isinstance(body, dict) else None
+    if isinstance(herd_id, bool) or not isinstance(herd_id, int):
+        return problem(400, "Ogiltig besättning", "herd_id måste vara ett heltal")
+    token = body.get("confirm_token")
+    if "confirm_token" in body and not isinstance(token, str):
+        return problem(400, "Ogiltigt fält", "confirm_token måste vara en sträng")
+    try:
+        herd = link_membership_herd(membership_id, herd_id, token, current_user)
+    except LinkError as err:
+        return problem(err.status, err.title, err.detail, **err.extensions)
+    auth_log.info("herd linked actor=%s membership=%s herd=%s", current_user.id, membership_id, herd_id)
+    return jsonify(herd), 201
 
 
 # [Next.js] Phase 19 — kontokoppling

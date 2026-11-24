@@ -15,6 +15,7 @@ Fält: `name`, `sex`, `color`, `color_note`, `eye_color`, `claw_color`, `belly_c
 | caretaker | ✓ | ✓ | – | – |
 | actor | – | – | – | – |
 | handlaggare | ✓ | ✓ | – | – |
+| rapport | – | – | – | – |
 
 ## RecordDeath
 
@@ -29,6 +30,7 @@ Fält: `death_date`, `death_note`, `butchered`
 | caretaker | ✓ | ✓ | – | – |
 | actor | – | – | – | – |
 | handlaggare | ✓ | ✓ | – | – |
+| rapport | ✓ | ✓ | – | – |
 
 ## ClearFields
 
@@ -43,6 +45,7 @@ Fält: `death_date`, `death_note`, `butchered`, `castration_date`
 | caretaker | ✓ | ✓ | – | – |
 | actor | – | – | – | – |
 | handlaggare | ✓ | ✓ | – | – |
+| rapport | – | – | – | – |
 
 ## SetMeasurements
 
@@ -57,6 +60,7 @@ Fält: `weights`, `bodyfat`
 | caretaker | ✓ | ✓ | – | – |
 | actor | – | – | – | – |
 | handlaggare | ✓ | ✓ | – | – |
+| rapport | ✓ | ✓ | – | – |
 
 ## RecordAttestation
 
@@ -71,6 +75,7 @@ Fält: `herd`, `yearly_report_date`
 | caretaker | ✓ | ✓ | – | – |
 | actor | – | – | – | – |
 | handlaggare | ✓ | ✓ | – | – |
+| rapport | ✓ | ✓ | – | – |
 
 ## TransferIndividual
 
@@ -85,6 +90,7 @@ Fält: `herd`, `selling_date`, `reason`
 | caretaker | – | – | – | – |
 | actor | – | – | – | – |
 | handlaggare | ✓ | ✓ | – | – |
+| rapport | – | – | – | – |
 
 ## AssignPaperCertificate
 
@@ -99,6 +105,7 @@ Fält: `certificate`
 | caretaker | ✓ | – | – | – |
 | actor | – | – | – | – |
 | handlaggare | ✓ | – | – | – |
+| rapport | – | – | – | – |
 
 ## RenameIndividual
 
@@ -113,6 +120,7 @@ Fält: `number`
 | caretaker | ✓ | – | – | – |
 | actor | – | – | – | – |
 | handlaggare | ✓ | – | – | – |
+| rapport | – | – | – | – |
 
 ## MoveToLitter
 
@@ -127,6 +135,7 @@ Fält: `breeding`
 | caretaker | ✓ | – | – | – |
 | actor | – | – | – | – |
 | handlaggare | ✓ | – | – | – |
+| rapport | – | – | – | – |
 
 ## ChangeOriginHerd
 
@@ -141,10 +150,12 @@ Fält: `origin_herd`, `reason`
 | caretaker | – | – | – | – |
 | actor | – | – | – | – |
 | handlaggare | – | – | – | – |
+| rapport | – | – | – | – |
 | manager_current + manager_origin | ✓ | ✓ | ✓ | ✓ |
 | manager_origin + owner | ✓ | ✓ | – | – |
 | manager_origin + caretaker | ✓ | ✓ | – | – |
 | manager_origin + handlaggare | ✓ | ✓ | – | – |
+| manager_origin + rapport | ✓ | ✓ | – | – |
 
 ## IssueDigitalCertificate
 
@@ -159,6 +170,7 @@ Fält: `digital_certificate`
 | caretaker | ✓ | ✓ | – | – |
 | actor | – | – | – | – |
 | handlaggare | ✓ | ✓ | – | – |
+| rapport | – | – | – | – |
 
 ## GenebankCorrection
 
@@ -173,6 +185,37 @@ Fält: `herd`, `origin_herd`, `reason`
 | caretaker | – | – | – | – |
 | actor | – | – | – | – |
 | handlaggare | – | – | – | – |
+| rapport | – | – | – | – |
+
+## RegisterLitter
+
+Fält: `litter`
+
+| Roll | ocertifierad | certifierad | ocertifierad, GX1/MX1 | certifierad, GX1/MX1 |
+|---|---|---|---|---|
+| admin | ✓ | ✓ | ✓ | ✓ |
+| manager_current | ✓ | ✓ | ✓ | ✓ |
+| manager_origin | – | – | – | – |
+| owner | ✓ | ✓ | – | – |
+| caretaker | ✓ | ✓ | – | – |
+| actor | – | – | – | – |
+| handlaggare | ✓ | ✓ | – | – |
+| rapport | ✓ | ✓ | – | – |
+
+## ConfirmLitterSize
+
+Fält: `litter_size6w`
+
+| Roll | ocertifierad | certifierad | ocertifierad, GX1/MX1 | certifierad, GX1/MX1 |
+|---|---|---|---|---|
+| admin | ✓ | ✓ | ✓ | ✓ |
+| manager_current | ✓ | ✓ | ✓ | ✓ |
+| manager_origin | – | – | – | – |
+| owner | ✓ | ✓ | – | – |
+| caretaker | ✓ | ✓ | – | – |
+| actor | – | – | – | – |
+| handlaggare | ✓ | ✓ | – | – |
+| rapport | ✓ | ✓ | – | – |
 
 ## Undo
 
@@ -187,6 +230,7 @@ Fält: `undo`
 | caretaker | – | – | – | – |
 | actor | – | – | – | – |
 | handlaggare | – | – | – | – |
+| rapport | ✓ | ✓ | – | – |
 | owner + actor | ✓ | ✓ | – | – |
 | caretaker + actor | ✓ | ✓ | – | – |
 | actor + handlaggare | ✓ | ✓ | – | – |

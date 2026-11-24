@@ -27,6 +27,7 @@ from utils.database import (
     InboxItem,
     InboxOperation,
     MailMessage,
+    MemberChangeRequest,
 )
 from utils.herd_tracking import sold_on
 from utils.mail import forget_recipient
@@ -40,8 +41,10 @@ OPENED_MONTHS = 13
 MESSAGE_MONTHS = 13
 JUNK_AFTER = timedelta(days=30)
 GMAIL_PROCESSED_AFTER = timedelta(days=60)
+CHANGE_REQUEST_AFTER = timedelta(days=30)  # the mail queue's limit (spec 6)
 STALLED_AFTER = timedelta(days=14)
 ORPHAN_AFTER = timedelta(days=1)  # an upload in progress has written its files but not committed its rows
+HELD_AFTER = timedelta(days=1)  # a report photo held for a purchase or a rabbit whose dialog was left
 VIEWS = ("oppnad", "original_visat")  # looking at an item is not something happening to it
 
 
@@ -269,6 +272,27 @@ def purge_junk(now):
     return _delete_items((InboxItem.state == "skrap") & (InboxItem.closed_at < now - JUNK_AFTER))
 
 
+def purge_held(now):
+    """
+    A report photo held for a purchase or a rabbit (`ref_data` inbox.PURPOSE) a day after it came in, with its file:
+    never sent (S7), taken by a notice or bound to a rabbit, so its dialog was left (Släng, a closed tab), and nothing
+    saved from it in the queue. Read again under the items' locks, so one sent or bound meanwhile stays as it is.
+    """
+    held = (
+        (InboxItem.kind == "kontroll")
+        & (InboxItem.ref_type == "individual")
+        & InboxItem.ref_id.is_null(True)
+        & InboxItem.ref_data.has_key(inbox.PURPOSE)
+        & (InboxItem.received_at < now - HELD_AFTER)
+        & InboxItem.id.not_in(_saved())
+    )
+    with DB_PROXY.atomic():
+        _lock(InboxItem.select(InboxItem.id).where(held))
+        gone, paths = _delete_rows(held)
+    remove_originals(paths)
+    return len(gone)
+
+
 def purge_messages(now):
     """A closed mail or message without documents 13 months after it closed."""
     no_documents = InboxItem.id.not_in(InboxDocument.select(InboxDocument.item))
@@ -313,6 +337,17 @@ def purge_gmail_processed(now):
     return GmailProcessed.delete().where(GmailProcessed.at < now - GMAIL_PROCESSED_AFTER).execute()
 
 
+def purge_change_requests(now):
+    """
+    The yearly report's member_change_request 30 days after it was confirmed, expired or revoked (spec 6): a paper
+    e-mail change holds the old and the new address. A mail still queued to it finds no address, as at an erasure.
+    """
+    since = now - CHANGE_REQUEST_AFTER
+    request = MemberChangeRequest
+    closed = (request.confirmed_at < since) | (request.expires_at < since) | (request.revoked_at < since)
+    return request.delete().where(closed).execute()
+
+
 def mark_stalled(now):
     """
     "Står still": an item "tagen" for 14 days with no event since (a view is none) gets the flag, and its genebank's
@@ -340,9 +375,11 @@ RULES = (
     purge_sold_proofs,
     purge_incomplete,
     purge_junk,
+    purge_held,
     purge_messages,
     purge_opened,
     purge_gmail_processed,
+    purge_change_requests,
     mark_stalled,
     remove_orphans,
 )

@@ -1,0 +1,1070 @@
+/* Report page. Borders on fields and unselected buttons are --sb-ink-3
+   (4,77:1); text is at least 16 px; every control is at least 48 px high. */
+.root {
+  --report-sticky-top: 56px;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 16px 16px 64px;
+  font-size: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+/* The module class cannot be named inside :global, so the root carries a data
+   attribute: with the dashboard shell (topbar and sticky row) and without it. */
+:global(html:has([data-report-root="shell"])) {
+  scroll-padding-top: 128px;
+}
+:global(html:has([data-report-root="bare"])) {
+  scroll-padding-top: 72px;
+}
+.title {
+  font-family: var(--sb-display);
+  font-size: 32px;
+  line-height: 1.15;
+  margin: 0;
+}
+.herdLine {
+  font-size: 18px;
+  margin: 4px 0 0;
+}
+.lead {
+  color: var(--sb-ink-2);
+  margin: 0;
+}
+
+/* The state card: four tones, all text in --sb-ink. */
+.status {
+  background: var(--sb-card);
+  border: 1px solid var(--sb-ink-3);
+  border-radius: 6px;
+  padding: 12px 16px;
+  color: var(--sb-ink);
+}
+.status p {
+  margin: 0;
+}
+.status p + p {
+  margin-top: 4px;
+}
+.info {
+  background: var(--sb-info-soft); /* the theme's semantic information colour */
+}
+/* An information notice, not a field: no outline, an icon in front of the text. */
+.notice {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  border-color: transparent;
+}
+.notice svg {
+  flex: none;
+  color: var(--sb-info);
+}
+.warning {
+  background: var(--sb-warning-soft);
+  border-color: var(--sb-warning);
+}
+.done {
+  background: var(--sb-success-soft);
+  border-color: var(--sb-skog);
+}
+
+.sticky {
+  position: sticky;
+  top: var(--report-sticky-top);
+  z-index: 5;
+  background: color-mix(in srgb, var(--sb-paper) 94%, transparent);
+  backdrop-filter: blur(6px);
+  border-bottom: 1px solid var(--sb-line-faint);
+  padding: 8px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.stickyRow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.stickyRow .field {
+  flex: 1;
+  min-width: 0;
+}
+.searchLabel {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-weight: 500;
+}
+.counter {
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.stickyStatus {
+  font-size: var(--sb-fs-sm);
+  color: var(--sb-ink-2);
+}
+.hints {
+  display: none;
+}
+.hull {
+  min-width: 0;
+}
+.progress {
+  width: 100%;
+  height: 6px;
+  accent-color: var(--sb-mossa);
+}
+
+.field {
+  min-height: 48px;
+  font-size: 16px;
+  padding: 0 12px;
+  border: 1px solid var(--sb-ink-3);
+  border-radius: 6px;
+  background: var(--sb-card);
+  color: var(--sb-ink);
+  font-family: var(--sb-body);
+  scroll-margin-top: var(--report-sticky-top);
+}
+textarea.field {
+  padding: 10px 12px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.weight {
+  width: 7ch;
+  box-sizing: content-box;
+  font-variant-numeric: tabular-nums;
+}
+.btn {
+  min-height: 48px;
+  font-size: 16px;
+}
+/* Specific enough to beat the global .sb-btn-secondary border (1,95:1). */
+button.secondary,
+a.secondary {
+  border-color: var(--sb-ink-3);
+}
+.root :global(.sb-btn) {
+  min-height: 48px;
+  font-size: 16px;
+}
+.root :global(.sb-btn-secondary) {
+  border-color: var(--sb-ink-3);
+}
+
+/* DOM order is the reading order: state, search and counter, filters, list,
+   then Skicka. From 980 px the first three go in a sticky top of the side
+   column and Skicka sticks to the bottom of it. */
+.layout {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.side {
+  display: contents;
+}
+.main {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.sideSend {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.danger {
+  color: var(--sb-danger);
+}
+/* The confirming button of a withdrawal: the danger tone, not the main green. */
+button.confirmDanger {
+  --bg: var(--sb-danger);
+  --bd: var(--sb-danger);
+  background: var(--sb-danger);
+  border-color: var(--sb-danger);
+  color: var(--sb-card);
+}
+button.confirmDanger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--sb-danger) 85%, black);
+  border-color: color-mix(in srgb, var(--sb-danger) 85%, black);
+}
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.filters button[aria-pressed="true"] {
+  background: var(--sb-skog-soft);
+  color: var(--sb-skog);
+  border-color: var(--sb-skog);
+  font-weight: 600;
+}
+
+.list {
+  background: var(--sb-card);
+  margin: 0 -16px;
+}
+.row {
+  border: 0;
+  border-bottom: 1px solid var(--sb-line-faint);
+  margin: 0;
+  padding: 16px;
+  min-width: 0;
+  scroll-margin-top: calc(var(--report-sticky-top) + 72px);
+}
+.row legend {
+  float: left;
+  width: 100%;
+  padding: 0;
+  font-size: 18px;
+}
+.row legend + * {
+  clear: both;
+}
+.num {
+  font-weight: 500;
+  margin-right: 4px;
+}
+.name {
+  font-family: var(--sb-display);
+}
+.klar {
+  float: right;
+  color: var(--sb-skog);
+  font-size: 16px;
+  font-weight: 500;
+}
+.meta {
+  margin: 4px 0 12px;
+  color: var(--sb-ink-3);
+  clear: both;
+}
+.quiet {
+  background: var(--sb-paper);
+  color: var(--sb-ink-2);
+}
+.rowError {
+  border: 1px solid var(--sb-danger);
+  background: color-mix(in srgb, var(--sb-danger-soft) 35%, var(--sb-card));
+}
+.errorText {
+  color: var(--sb-danger);
+  margin: 8px 0 0;
+}
+.choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.choice {
+  /* equal width and height whatever the length of the labels */
+  flex: 1 1 0;
+  min-width: 5.5em;
+  position: relative;
+  display: flex;
+}
+.choice input {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  cursor: pointer;
+}
+.choice span {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  box-sizing: border-box;
+  min-height: 56px;
+  padding: 4px 24px; /* room for the check mark on the right */
+  border: 1px solid var(--sb-ink-3);
+  border-radius: 6px;
+  background: var(--sb-card);
+  font-weight: 500;
+}
+.choice input:checked + span {
+  border-color: var(--sb-skog);
+  box-shadow: inset 0 0 0 1px var(--sb-skog);
+  background: var(--sb-skog-soft);
+  font-weight: 600;
+}
+.choice input:checked + span::after {
+  content: "✓";
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  color: var(--sb-skog);
+}
+.choice input:focus-visible + span {
+  outline: 2px solid var(--sb-skog);
+  outline-offset: 2px;
+}
+.choice input:disabled + span {
+  opacity: 0.55;
+}
+.choice input[aria-disabled="true"] + span {
+  border-style: dashed;
+  color: var(--sb-ink-2);
+}
+/* "Var är kaninen nu?" and Kön in Lägg till kanin: the row's choices, outside .root (a dialog), so sized here */
+.choiceSet {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+  font-size: 16px;
+}
+.choiceSet legend {
+  padding: 0;
+  margin-bottom: 6px;
+}
+/* Three choices fit 375 px: less room around the words, the check mark after them */
+.choiceSet .choice span {
+  padding: 4px 8px;
+  gap: 4px;
+}
+.choiceSet .choice input:checked + span::after {
+  position: static;
+}
+/* The member's form fields (the report's Lägg till kanin and the buyer of a sale) on MUI's TextField: the label
+   above at 16 px, a 48 px white field with 16 px text, a 1 px --sb-ink-3 border and the report's radius, and the
+   helper text at 15 px under it. Outside .root (a dialog), so sized here; deep enough to beat the theme's
+   overrides (theme/stamboken.ts: the label's transforms are three classes deep). */
+.memberFields {
+  font-size: 16px;
+}
+.memberFields
+  :global(.MuiFormControl-root .MuiInputLabel-root.MuiFormLabel-root) {
+  position: static;
+  display: block;
+  transform: none;
+  max-width: none;
+  overflow: visible;
+  white-space: normal;
+  pointer-events: auto;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--sb-ink-2);
+  margin-bottom: 6px;
+}
+.memberFields
+  :global(.MuiFormControl-root .MuiInputBase-root.MuiInputBase-formControl) {
+  min-height: 48px;
+  font-size: 16px;
+  background: #fff;
+  border-radius: 6px;
+}
+.memberFields :global(.MuiInputBase-root .MuiInputBase-input) {
+  padding-top: 12px;
+  padding-bottom: 12px;
+  padding-left: 12px;
+}
+.memberFields :global(.MuiInputBase-root .MuiOutlinedInput-notchedOutline) {
+  top: 0;
+  border-color: var(--sb-ink-3);
+  border-radius: 6px;
+}
+.memberFields :global(.MuiOutlinedInput-notchedOutline legend) {
+  display: none;
+}
+.memberFields
+  :global(.MuiInputBase-root.Mui-focused .MuiOutlinedInput-notchedOutline) {
+  border-color: var(--sb-skog);
+  border-width: 2px;
+}
+.memberFields
+  :global(.MuiInputBase-root.Mui-error .MuiOutlinedInput-notchedOutline) {
+  border-color: var(--sb-danger);
+}
+.memberFields :global(.MuiFormControl-root .MuiFormHelperText-root) {
+  font-size: 15px;
+  line-height: 1.4;
+  margin: 6px 0 0;
+  color: var(--sb-ink-2);
+}
+.memberFields :global(.MuiFormHelperText-root) span {
+  font-size: inherit;
+  color: inherit;
+}
+.memberFields :global(.MuiFormControl-root .MuiFormHelperText-root.Mui-error) {
+  color: var(--sb-danger);
+}
+
+/* Lägg till kanin: the photo of the certificate first, as large buttons; its thumbnail once uploaded */
+.photoPick {
+  flex: 1 1 12em;
+  justify-content: center;
+  cursor: pointer;
+  position: relative;
+}
+.photoPick:focus-within {
+  outline: 2px solid var(--sb-skog);
+  outline-offset: 2px;
+}
+.photoDone {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+}
+.photoThumb {
+  display: block;
+  max-width: 100%;
+  max-height: 200px;
+  border: 1px solid var(--sb-ink-3);
+  border-radius: 6px;
+}
+/* Choices with long labels, one to a line at every width (Jag avslutar min besättning) */
+.stacked .choice {
+  flex: 1 1 100%;
+}
+.stacked .choice span {
+  justify-content: flex-start;
+  text-align: left;
+  padding: 8px 40px 8px 16px;
+}
+.small {
+  min-height: 48px;
+  min-width: 44px;
+}
+.detail {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.label {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--sb-ink-2);
+}
+.grid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.note {
+  background: var(--sb-warning-soft);
+  color: var(--sb-ink);
+  border-radius: 6px;
+  padding: 8px 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.errorBox {
+  border: 2px solid var(--sb-danger);
+  border-radius: 6px;
+  padding: 12px 16px;
+  background: var(--sb-card);
+}
+.errorBox:focus {
+  outline: 2px solid var(--sb-danger);
+  outline-offset: 2px;
+}
+.errorBox h2 {
+  margin: 0 0 8px;
+  font-size: 20px;
+  color: var(--sb-danger);
+}
+.errorBox ul {
+  margin: 0 0 8px;
+  padding-left: 20px;
+}
+.errorBox li {
+  margin: 4px 0;
+}
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.table td {
+  padding: 6px 4px;
+  vertical-align: top;
+}
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  margin: 12px 0;
+}
+.statNum {
+  font-size: 28px;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--sb-display);
+}
+.statLabel {
+  color: var(--sb-ink-2);
+}
+.headline {
+  font-family: var(--sb-display);
+  font-size: 24px;
+  margin: 0;
+}
+.yes {
+  color: var(--sb-skog);
+}
+.no {
+  color: var(--sb-danger);
+  font-weight: 600;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.skeleton {
+  background: var(--sb-paper-2);
+  border-radius: 6px;
+  height: 120px;
+  margin-bottom: 8px;
+}
+.cardList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cardLink {
+  display: block;
+  padding: 16px;
+  background: var(--sb-card);
+  border: 1px solid var(--sb-ink-3);
+  border-radius: 6px;
+  color: inherit;
+  text-decoration: none;
+  min-height: 48px;
+}
+
+@media (min-width: 640px) {
+  .list {
+    margin: 0;
+    border: 1px solid var(--sb-ink-3);
+    border-radius: 6px;
+  }
+  .choice {
+    flex: 0 0 140px;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .status {
+    transition: background-color 160ms;
+  }
+}
+
+@media (min-width: 980px) {
+  .wide {
+    max-width: 1160px;
+  }
+  .layout {
+    display: grid;
+    grid-template-columns: minmax(0, 720px) 360px;
+    gap: 24px;
+    align-items: start;
+  }
+  .main {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .side {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    grid-column: 2;
+    grid-row: 1;
+    align-self: start;
+    position: sticky;
+    top: calc(var(--report-sticky-top) + 16px);
+    /* leaves room for Skicka below */
+    max-height: calc(100vh - var(--report-sticky-top) - 260px);
+    overflow-y: auto;
+  }
+  .sideSend {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: end;
+    position: sticky;
+    bottom: 16px;
+  }
+  .sticky {
+    position: static;
+    backdrop-filter: none;
+  }
+  .stickyStatus {
+    display: none;
+  }
+}
+
+/* Från blankett: the photo of the form beside the report form. */
+.paperPage {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.photoPane {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 16px;
+}
+.numberRow {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.prefixed {
+  display: flex;
+  align-items: center;
+  min-height: 48px;
+  border: 1px solid var(--sb-ink-3);
+  border-radius: 6px;
+  background: var(--sb-card);
+  padding: 0 12px;
+  gap: 2px;
+  font-size: 18px;
+}
+.prefixed span {
+  color: var(--sb-ink-2);
+}
+.prefixed input {
+  flex: 1;
+  min-width: 0;
+  min-height: 46px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: var(--sb-ink);
+}
+.prefixed:focus-within {
+  outline: 2px solid var(--sb-skog);
+  outline-offset: 2px;
+}
+.prefixed input:focus {
+  outline: none;
+}
+@media (min-width: 1100px) {
+  .paperPage {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: start;
+    gap: 24px;
+  }
+  .photoPane {
+    position: sticky;
+    top: calc(var(--report-sticky-top, 56px) + 16px);
+    height: calc(100vh - 120px);
+    overflow: auto;
+  }
+  button.photoToggle {
+    display: none;
+  }
+}
+/* In the right half the report form is one column: no side column. */
+/* A short window: the side column flows with the page instead of sticking. */
+@media (min-width: 980px) and (max-height: 559px) {
+  .main {
+    grid-row: 1 / span 2;
+  }
+  .side {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+  .sideSend {
+    position: static;
+    grid-row: 2;
+    align-self: start;
+  }
+}
+@media (min-width: 980px) {
+  .paperForm .layout {
+    display: flex;
+    flex-direction: column;
+  }
+  .paperForm .side {
+    display: contents;
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+  .paperForm .sideSend {
+    position: static;
+  }
+}
+
+/* Status view (Task 15): the table and filters are the queue's (inkorg.module.css). */
+.herdLink {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  font-weight: 600;
+  color: var(--sb-ink);
+}
+.callTone {
+  border-color: var(--sb-warning);
+  background: var(--sb-warning-soft);
+}
+.badgeInfo {
+  background: var(--sb-info-soft);
+  color: var(--sb-ink);
+}
+.badgeDone {
+  background: var(--sb-skog-soft);
+  color: var(--sb-skog);
+}
+.roundCard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  font-size: 16px;
+}
+.roundCard h2 {
+  margin: 0;
+  font-size: 20px;
+}
+.roundCard details summary {
+  min-height: 44px;
+  display: list-item; /* flex would drop the expand arrow */
+  padding: 10px 0;
+  box-sizing: border-box;
+  cursor: pointer;
+}
+.dates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+}
+.dates label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--sb-ink-2);
+  font-weight: 500;
+}
+.tableError {
+  color: var(--sb-danger);
+  font-size: 16px;
+  margin: 0;
+}
+.tableError:focus {
+  outline: 2px solid var(--sb-danger);
+  outline-offset: 2px;
+}
+
+/* The queue's table header is 10 px; the status table reads at the small label size. */
+table.statusTable th {
+  font-size: var(--sb-fs-xs);
+}
+
+/* A wide screen (issue 75): one row per rabbit, and the side column stacked as
+   counter, progress bar, search, filters, shortcuts and Skicka. Mobile keeps the
+   base rules above. Paper pages are not .wide and keep their own layout. */
+@media (min-width: 1000px) {
+  .wide {
+    max-width: 1280px;
+  }
+  .wide .layout {
+    grid-template-columns: minmax(0, 1fr) 300px;
+  }
+  .wide .main {
+    grid-row: 1 / span 2;
+  }
+  /* One sticky block in two grid items: the side column sticks at the top and
+     Skicka sticks right under it (--side-h is set by trackSideHeight). */
+  .wide .side {
+    grid-row: 1 / span 2;
+    max-height: max(160px, calc(100vh - var(--report-sticky-top) - 240px));
+  }
+  .wide .sideSend {
+    grid-row: 1 / span 2;
+    align-self: start;
+    margin-top: calc(var(--side-h, 360px) + 16px);
+    top: calc(var(--report-sticky-top) + 16px + var(--side-h, 360px) + 16px);
+    bottom: auto;
+  }
+  .wide .stickyRow {
+    display: contents;
+  }
+  .wide .counter {
+    order: 0;
+    font-size: 18px;
+  }
+  .wide .progress {
+    order: 1;
+  }
+  .wide .searchLabel {
+    order: 2;
+  }
+  .wide .hints {
+    display: block;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    color: var(--sb-ink-2);
+    font-size: var(--sb-fs-sm);
+  }
+  .wide .hints li + li {
+    margin-top: 4px;
+  }
+  .wide .hints kbd {
+    font-family: var(--sb-mono);
+    border: 1px solid var(--sb-ink-3);
+    border-radius: 4px;
+    background: var(--sb-card);
+    padding: 0 4px;
+  }
+
+  /* The row: name and facts, the three choices, then weight when Finns kvar is
+     chosen. flex-wrap lets the weight drop to a second line when it does not fit. */
+  .wide .row {
+    position: relative;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    column-gap: 12px;
+    row-gap: 8px;
+    padding: 8px 16px;
+    min-height: 64px;
+  }
+  .wide .row legend {
+    position: absolute;
+    top: 8px;
+    left: 16px;
+    width: 216px;
+    float: none;
+    font-size: 16px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .wide .row > .meta {
+    flex: 0 0 216px;
+    margin: 0;
+    padding-top: 24px;
+    font-size: 13px;
+    line-height: 1.25;
+  }
+  .wide .row > .meta + .meta,
+  .wide .row > .choices ~ .meta {
+    flex-basis: 100%;
+    padding-top: 0;
+    order: 5;
+  }
+  .wide .row > .choices {
+    flex-wrap: nowrap;
+  }
+  .wide .row > .choices .choice {
+    flex: 0 0 112px;
+    min-width: 0;
+  }
+  .wide .row > .choices .choice span {
+    padding: 4px 18px 4px 6px;
+  }
+  .wide .row .detail {
+    flex: 1 1 280px;
+    margin-top: 0;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: 16px;
+  }
+  .wide .row .detail > .note,
+  .wide .row .detail > .grid2 {
+    flex-basis: 100%;
+  }
+  .wide .row > .errorText,
+  .wide .row > p:not(.meta) {
+    flex-basis: 100%;
+    margin: 0;
+    order: 6;
+  }
+}
+
+/* 1280 px and up (issue 75): weight, Ej vägd and Hull fit on the choices line, so a
+   Finns kvar row stays about 70 px. Hull's visible label is shortened; its
+   accessible name stays "Hull (frivilligt)". */
+@media (min-width: 1280px) {
+  .wide .layout {
+    grid-template-columns: minmax(0, 1fr) 260px;
+  }
+  .wide .row legend {
+    width: 204px;
+  }
+  .wide .row > .meta {
+    flex-basis: 204px;
+  }
+  .wide .row > .choices .choice {
+    flex-basis: 90px;
+  }
+  .wide .row > .choices .choice span {
+    padding: 4px 16px 4px 4px;
+  }
+  .wide .row .detail {
+    flex: 1 1 360px;
+    column-gap: 12px;
+  }
+  .wide .row .detail .line {
+    flex: 0 0 auto;
+    gap: 6px;
+    flex-wrap: nowrap;
+  }
+  .wide .row .weight {
+    width: 5ch;
+  }
+  .wide .row .detail .line .secondary {
+    padding-inline: 10px;
+  }
+  .wide .row .hull {
+    width: 132px;
+    padding: 0 6px;
+  }
+  .wide .row .optional {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+/* A short window: the side column and Skicka flow with the page, so nothing sticks
+   over a focusable control (WCAG 2.4.11). */
+@media (min-width: 1000px) and (max-height: 559px) {
+  .wide .layout {
+    grid-template-rows: auto 1fr;
+  }
+  .wide .side {
+    grid-row: 1;
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+  .wide .sideSend {
+    grid-row: 2;
+    position: static;
+    margin-top: 0;
+  }
+}
+
+/* "Kullar under Y": a card per litter on a phone, a table from 640 px. */
+.litterSummary {
+  margin: 0 0 12px;
+  font-weight: 600;
+}
+.litterTable,
+.litterTable thead,
+.litterTable tbody,
+.litterTable tr,
+.litterTable td {
+  display: block;
+}
+.litterTable thead {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.litterTable tr {
+  padding: 12px;
+  margin-bottom: 8px;
+  background: var(--sb-card);
+  border: 1px solid var(--sb-ink-3);
+  border-radius: 6px;
+}
+.litterTable td {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+  padding: 4px 0;
+}
+.litterTable td::before {
+  content: attr(data-label) / "";
+  flex: 0 0 9em;
+  color: var(--sb-ink-2);
+}
+.addLitter {
+  margin-top: 24px;
+}
+@media (min-width: 640px) {
+  .litterTable {
+    display: table;
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .litterTable thead {
+    display: table-header-group;
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip-path: none;
+  }
+  .litterTable tbody {
+    display: table-row-group;
+  }
+  .litterTable tr {
+    display: table-row;
+    padding: 0;
+    margin: 0;
+    background: none;
+    border: 0;
+    border-radius: 0;
+  }
+  .litterTable td {
+    display: table-cell;
+    padding: 8px 6px;
+    border-top: 1px solid var(--sb-ink-3);
+    vertical-align: middle;
+  }
+  .litterTable td::before {
+    content: none;
+  }
+  .litterTable th {
+    text-align: left;
+    padding: 6px;
+    font-size: var(--sb-fs-xs);
+    color: var(--sb-ink-2);
+  }
+}
+.litterNote {
+  color: var(--sb-ink-2);
+}
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

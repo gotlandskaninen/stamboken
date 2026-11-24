@@ -8,6 +8,7 @@ import type { GenebankHerd } from "@/utils/saleRules";
 import {
   changeState,
   confirmMask,
+  checkReportPhoto,
   reinterpretDocument,
   takeItem,
   updateDocument,
@@ -22,6 +23,7 @@ import {
   turn,
 } from "../image";
 import {
+  accountOrLink,
   ACTION_LABEL,
   canEditDocuments,
   canSave,
@@ -44,10 +46,12 @@ import {
   type QueueUser,
   type Rect,
 } from "../lib";
+import { fmtDate } from "../../arsrapport/lib";
 import { RowActions } from "../QueueControls";
 import { AskBreeder } from "./AskBreeder";
 import { CertificateForm } from "./CertificateForm";
 import { MailFacts, MailThread, SenderUnconfirmed } from "./MailFacts";
+import { ReportPhotoCheck } from "./ReportPhotoCheck";
 import { PhotoViewer } from "./PhotoViewer";
 import { SalePanel } from "./SalePanel";
 import styles from "../inkorg.module.css";
@@ -67,6 +71,7 @@ const EVENT_LABEL: Record<string, string> = {
   fraga: "Fråga till uppfödaren",
   svar: "Svar inkommet",
   tolka_igen: "Tolkas igen",
+  kontrollerad: "Kontrollerat",
 };
 
 function eventText(e: InboxEvent): string {
@@ -78,7 +83,70 @@ function eventText(e: InboxEvent): string {
     return `${label}: ${d.individual}${d.action === "overlatelse" ? `, såld till ${d.herd}` : ""}`;
   if (e.kind === "foralder_inlagd") return `${label}: ${d.individual}`;
   if (e.kind === "fraga" && d.text) return `${label}: ${d.text}`;
+  if (e.kind === "kontrollerad")
+    return `${label}: ${d.outcome === "rattat" ? "Rättat" : "Stämmer"}`;
+  // The personal link has no account: the history names it instead (a purchase notice).
+  if (e.kind === "inkommen" && d.via) return `${label} via ${d.via}`;
   return label;
+}
+
+// Who sent the item: its account, else the link or the account its arrival names (a purchase notice has no
+// sender_user: a link's history says `via`, an account's is the event's user), else the mail's address.
+function senderText(item: InboxDetail): string {
+  const arrived = item.events.find((e) => e.kind === "inkommen");
+  const via = arrived?.detail?.via;
+  return (
+    item.sender?.name ??
+    (typeof via === "string" ? via : null) ??
+    arrived?.user?.name ??
+    accountOrLink(item) ??
+    item.sender_address ??
+    "–"
+  );
+}
+
+// A purchase notice (4a Task 5) in the main column: the rabbit, both herds and the date, and the way to register
+// the sale, filled in on the rabbit's page (?salj=1&till&datum), or to approve the seller's pending one.
+function PurchaseCard({ item }: { item: InboxDetail }) {
+  const data = item.ref_data!;
+  const pendingSale = !!(item.report_year && item.genebank_id);
+  const sale = new URLSearchParams({
+    salj: "1",
+    till: item.herd ?? "",
+    datum: data.date,
+  });
+  return (
+    <div className={styles.purchase}>
+      <h2 className={styles.cardTitle}>Anmält köp</h2>
+      <dl className={styles.purchaseFacts}>
+        <dt>Kanin</dt>
+        <dd className={styles.number}>{data.number}</dd>
+        <dt>Säljare</dt>
+        <dd>{data.from_herd}</dd>
+        <dt>Köpare</dt>
+        <dd>{item.herd ?? "–"}</dd>
+        <dt>Datum</dt>
+        <dd>{fmtDate(data.date)}</dd>
+      </dl>
+      {pendingSale ? (
+        <p>
+          Säljarens försäljning väntar. Godkänn den i årsrapportens statusvy.{" "}
+          <Link
+            href={`/stamboken/arsrapport/status/${item.report_year}?genebank_id=${item.genebank_id}`}
+          >
+            Öppna statusvyn
+          </Link>
+        </p>
+      ) : (
+        <Link
+          className="sb-btn"
+          href={`/stamboken/individ/${encodeURIComponent(data.number)}?${sale}`}
+        >
+          Registrera försäljningen
+        </Link>
+      )}
+    </div>
+  );
 }
 
 // What the asking actions ask for before they change the state.
@@ -96,8 +164,11 @@ export function WorkView({
   herds,
   people,
   noRole = false,
+  reportYear = null,
 }: {
   noRole?: boolean;
+  /** The year of the form entry link; null leaves it out. */
+  reportYear?: number | null;
   item: InboxDetail;
   user: QueueUser;
   colors: string[];
@@ -138,6 +209,10 @@ export function WorkView({
   const [noPersonalData, setNoPersonalData] = useState(false);
   // Nothing saved from it yet: its type can change and it can be dismissed.
   const fresh = doc?.status === "ny" || doc?.status === "vantar_foralder";
+  // A purchase notice's photo is looked at and dismissed only: never read, so no type, format or Tolka igen.
+  const purchase = item.ref_type === "kopanmalan";
+  const saleProposal = item.ref_type === "sale_proposal";
+  const purchaseUpload = item.kind === "upload" ? item.ref_data : null;
   // Also reset when the handler changes: a turn made before the item was taken
   // was never saved, and the masking must start from the stored rotation.
   const step = `${doc?.id}:${doc?.status}:${item.assigned_to?.id ?? ""}`;
@@ -240,6 +315,14 @@ export function WorkView({
   const takeButtons = actions.filter(
     (a) => a === "ta" || a === "ta_over" || a === "arbeta_vidare",
   );
+  // A report photo (4b) is the queue's own to close: taken, compared with its rabbit, closed
+  const reportPhoto =
+    item.kind === "kontroll" && item.ref_type === "individual";
+  const checking =
+    reportPhoto &&
+    !noRole &&
+    item.assigned_to?.id === user.id &&
+    item.state === "tagen";
 
   return (
     <div className={styles.container}>
@@ -300,7 +383,7 @@ export function WorkView({
             <dd>{item.assigned_to?.name ?? "ingen"}</dd>
             <dt>Inskickat av</dt>
             <dd>
-              {item.sender?.name ?? item.sender_address ?? "–"}
+              {senderText(item)}
               <SenderUnconfirmed item={item} />
             </dd>
             <MailFacts item={item} />
@@ -437,8 +520,9 @@ export function WorkView({
         <section
           className={`sb-card ${styles.card}`}
           aria-label="Fotot"
-          hidden={!doc}
+          hidden={!doc && !(purchase && item.ref_data)}
         >
+          {purchase && item.ref_data && <PurchaseCard item={item} />}
           {doc && (
             <>
               <PhotoViewer
@@ -491,49 +575,53 @@ export function WorkView({
               )}
               {editable && (
                 <div className={styles.filters}>
-                  <label>
-                    Typ
-                    <select
-                      className="sb-input"
-                      value={doc.doc_type}
-                      disabled={pending || !fresh}
-                      onChange={(e) =>
-                        run(() =>
-                          updateDocument(item.id, doc.id, {
-                            doc_type: e.target.value,
-                          }),
-                        )
-                      }
-                    >
-                      {Object.entries(DOC_TYPE_LABEL).map(([v, l]) => (
-                        <option key={v} value={v}>
-                          {l}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Format
-                    <select
-                      className="sb-input"
-                      value={doc.cert_format ?? ""}
-                      disabled={pending}
-                      onChange={(e) =>
-                        run(() =>
-                          updateDocument(item.id, doc.id, {
-                            cert_format: e.target.value || null,
-                          }),
-                        )
-                      }
-                    >
-                      <option value="">Inte angivet</option>
-                      {Object.entries(CERT_FORMAT_LABEL).map(([v, l]) => (
-                        <option key={v} value={v}>
-                          {l}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                  {!purchase && (
+                    <label>
+                      Typ
+                      <select
+                        className="sb-input"
+                        value={doc.doc_type}
+                        disabled={pending || !fresh}
+                        onChange={(e) =>
+                          run(() =>
+                            updateDocument(item.id, doc.id, {
+                              doc_type: e.target.value,
+                            }),
+                          )
+                        }
+                      >
+                        {Object.entries(DOC_TYPE_LABEL).map(([v, l]) => (
+                          <option key={v} value={v}>
+                            {l}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  {!purchase && (
+                    <label>
+                      Format
+                      <select
+                        className="sb-input"
+                        value={doc.cert_format ?? ""}
+                        disabled={pending}
+                        onChange={(e) =>
+                          run(() =>
+                            updateDocument(item.id, doc.id, {
+                              cert_format: e.target.value || null,
+                            }),
+                          )
+                        }
+                      >
+                        <option value="">Inte angivet</option>
+                        {Object.entries(CERT_FORMAT_LABEL).map(([v, l]) => (
+                          <option key={v} value={v}>
+                            {l}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
                   {fresh && (
                     <button
                       type="button"
@@ -553,6 +641,7 @@ export function WorkView({
                     </button>
                   )}
                   {fresh &&
+                    !purchase &&
                     doc.doc_type === "intyg" &&
                     doc.interpretation_status !== "av" && (
                       <button
@@ -593,40 +682,88 @@ export function WorkView({
 
         {/* Right: what the document shows */}
         <section
-          className={`sb-card ${styles.card} ${styles.registration}`}
+          className={`sb-card ${styles.card} ${doc ? styles.registration : styles.hideEmpty}`}
           aria-label="Registrering"
-          hidden={!doc}
+          hidden={purchase || !(doc || saleProposal || purchaseUpload)}
         >
-          {doc && !saving && !noRole && (
-            <div className={styles.note}>
-              {CLOSED_STATES.includes(item.state)
-                ? "Ärendet är stängt."
-                : item.ref_type
-                  ? `Ärendet gäller ${item.ref_type} ${item.ref_id ?? ""} och avgörs där, inte i kön.`
-                  : item.assigned_to?.id === user.id
-                    ? "Ärendet väntar. Arbeta vidare för att spara."
-                    : item.assigned_to
-                      ? `${item.assigned_to.name} har ärendet. Ta över det för att spara.`
-                      : "Ta ärendet för att spara."}
-              {!item.ref_type && takeButtons.length > 0 && (
-                <div className={styles.row} style={{ marginTop: 8 }}>
-                  {takeButtons.map((a) => (
-                    <button
-                      key={a}
-                      type="button"
-                      className="sb-btn"
-                      disabled={pending}
-                      onClick={() => doAction(a)}
-                    >
-                      {ACTION_LABEL[a]}
-                    </button>
-                  ))}
-                </div>
+          {saleProposal && (
+            <p className={styles.note}>
+              Avgörs i årsrapportens statusvy.
+              {item.report_year && item.genebank_id && (
+                <>
+                  {" "}
+                  <Link
+                    href={`/stamboken/arsrapport/status/${item.report_year}?genebank_id=${item.genebank_id}`}
+                  >
+                    Öppna statusvyn
+                  </Link>
+                </>
               )}
-            </div>
+            </p>
           )}
+          {purchaseUpload && (
+            // a bought rabbit Stamboken lacks (S7): register it in its birth herd, then transfer it to the buyer
+            <p className={styles.note}>
+              Köpt av {item.herd}: {purchaseUpload.number} från{" "}
+              {purchaseUpload.from_herd}, {fmtDate(purchaseUpload.date)}.
+            </p>
+          )}
+          {doc &&
+            !saving &&
+            !checking &&
+            !noRole &&
+            !saleProposal &&
+            !purchase && (
+              <div className={styles.note}>
+                {CLOSED_STATES.includes(item.state)
+                  ? "Ärendet är stängt."
+                  : item.ref_type && !reportPhoto
+                    ? `Ärendet gäller ${item.ref_type} ${item.ref_id ?? ""} och avgörs där, inte i kön.`
+                    : item.assigned_to?.id === user.id
+                      ? "Ärendet väntar. Arbeta vidare för att spara."
+                      : item.assigned_to
+                        ? `${item.assigned_to.name} har ärendet. Ta över det för att spara.`
+                        : "Ta ärendet för att spara."}
+                {(!item.ref_type || reportPhoto) && takeButtons.length > 0 && (
+                  <div className={styles.row} style={{ marginTop: 8 }}>
+                    {takeButtons.map((a) => (
+                      <button
+                        key={a}
+                        type="button"
+                        className="sb-btn"
+                        disabled={pending}
+                        onClick={() => doAction(a)}
+                      >
+                        {ACTION_LABEL[a]}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
-          {!doc ? null : (doc.status === "klar" || doc.status === "avfardad") &&
+          {/* a purchase notice's photo is looked at; the purchase is registered on the rabbit's page */}
+          {!doc || purchase ? null : item.registered &&
+            doc.doc_type === "intyg" ? (
+            <ReportPhotoCheck
+              doc={doc}
+              registered={item.registered}
+              canCheck={checking && doc.status === "sparad"}
+              pending={pending}
+              onCheck={(outcome) =>
+                run(
+                  () => checkReportPhoto(item.id, doc.id, outcome),
+                  () => setNotice("Ärendet är stängt."),
+                )
+              }
+              onReinterpret={() =>
+                run(
+                  () => reinterpretDocument(item.id, doc.id),
+                  () => setNotice("Fotot tolkas igen."),
+                )
+              }
+            />
+          ) : (doc.status === "klar" || doc.status === "avfardad") &&
             !masking ? (
             <div className={styles.card}>
               <h2 className={styles.cardTitle}>
@@ -795,6 +932,21 @@ export function WorkView({
               onDone={(d) => advance(d)}
               addressRequired={!manages(user, null)}
             />
+          ) : doc.doc_type === "arsblankett" &&
+            saving &&
+            item.herd &&
+            reportYear ? (
+            <div className={styles.card}>
+              <p className={styles.muted}>
+                Årsblanketten matas in på en egen sida, med fotot bredvid.
+              </p>
+              <Link
+                className="sb-btn"
+                href={`/stamboken/arsrapport/${item.herd}/${reportYear}?post=${item.id}`}
+              >
+                Mata in årsrapporten
+              </Link>
+            </div>
           ) : (
             <div className={styles.card}>
               <p className={styles.muted}>

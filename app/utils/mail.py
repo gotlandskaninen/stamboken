@@ -28,6 +28,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
+from peewee import fn
 
 import utils.settings as settings
 import utils.tyck_till as tyck_till
@@ -37,12 +38,13 @@ from utils.database import (
     MailAttempt,
     MailMessage,
     MailSender,
+    MatrikelAudit,
     Member,
     MemberApplication,
     MemberPreviousAddress,
     User,
 )
-from utils.log_masking import mask_tokens
+from utils.log_masking import mask_cut, mask_tokens
 
 logger = logging.getLogger("herdbook.mail")
 
@@ -65,25 +67,38 @@ RETRY_DELAYS = (
     timedelta(hours=12),
 )
 RETENTION = timedelta(days=396)
+NO_ADDRESS = "mottagaren saknar e-post"
 
-MailKind = namedtuple("MailKind", "priority category build")
+MailKind = namedtuple("MailKind", "priority category build login_address", defaults=[None])
 Recipient = namedtuple("Recipient", "address label")
 
 # kind -> MailKind; build(params) returns the template variables (plus an optional "attachments" list of
-# (filename, mime type, bytes)), or None when the mail is no longer relevant, which cancels it.
+# (filename, mime type, bytes)), or None when the mail is no longer relevant, which cancels it, or raises Later.
 MAIL_KINDS = {}
 # recipient_kind -> resolve(recipient_id) returning a Recipient, or None.
 RECIPIENT_KINDS = {}
 
 
-def mail_kind(name, *, priority, category):
-    """Registers the decorated `build(params)` as the builder of mail kind `name` (template `email/<name>.txt`)."""
+def mail_kind(name, *, priority, category, login_address=None):
+    """Registers a builder and, for personal links, how to find the member's login address from the mail's params."""
 
     def register(build):
-        MAIL_KINDS[name] = MailKind(priority, category, build)
+        MAIL_KINDS[name] = MailKind(priority, category, build, login_address)
         return build
 
     return register
+
+
+PUT_BACK = object()  # _send_one's answer for a mail a limit put back: truthy, the run goes on
+
+
+class Later(Exception):
+    """A builder's answer: the mail is still wanted but must wait (a limit). It is queued again, no attempt counted."""
+
+    def __init__(self, until, why):
+        super().__init__(why)
+        self.until = until
+        self.why = why
 
 
 def recipient_kind(name):
@@ -115,6 +130,7 @@ def enqueue_mail(
     dedupe_key=None,
     not_before=None,
     created_by=None,
+    priority=None,
 ):
     """
     Queues one mail in the caller's transaction and returns its id, or None when a row with `dedupe_key`
@@ -139,7 +155,7 @@ def enqueue_mail(
             ref_id=ref_id,
             herd=herd,
             genebank=genebank,
-            priority=spec.priority,
+            priority=spec.priority if priority is None else priority,  # a mail of the kind may be more urgent
             category=spec.category,
             dedupe_key=dedupe_key,
             next_attempt_at=not_before or _utcnow(),
@@ -161,9 +177,9 @@ def _mac(message):
     return hmac.new(secret.encode(), message.encode(), hashlib.sha256)
 
 
-def _link_mac(purpose, row_id):
+def _link_mac(purpose, row_id, host=None):
     # The hostname binds a link to its environment: the demo is a copy of production with the same row ids.
-    message = f"link:{_hostname()}:{purpose}:{row_id}"
+    message = f"link:{host or _hostname()}:{purpose}:{row_id}"
     return base64.urlsafe_b64encode(_mac(message).digest()[:16]).rstrip(b"=").decode()
 
 
@@ -184,7 +200,11 @@ def verify_link(purpose, token):
     if match is None or not settings.mail.link_secret:
         return None
     row_id = int(match.group(1))
-    return row_id if hmac.compare_digest(_link_mac(purpose, row_id), match.group(2)) else None
+    # A link made under an earlier host name still verifies while that name is in LINK_HOSTS (FA4).
+    hosts = [_hostname(), *settings.mail.link_hosts]
+    return (
+        row_id if any(hmac.compare_digest(_link_mac(purpose, row_id, host), match.group(2)) for host in hosts) else None
+    )
 
 
 def _hostname():
@@ -207,6 +227,15 @@ def address_hash(address):
     return _mac(f"addr:{_normalize(address) or ''}").hexdigest()
 
 
+def _delivery_hash(row, address):
+    """A member's bounce flag tracks their current mailbox. A link may have gone to a previous one."""
+    if row.recipient_kind == "member":
+        current = Member.select(Member.email).where(Member.id == row.recipient_id).scalar()
+        if address != _normalize(current):
+            return None
+    return address_hash(address)
+
+
 _ADDRESS = re.compile(r"[^@\s<>,;\"']+@[^@\s<>,;\"']+")
 _ADDRESS_LIKE = re.compile(r"<?[^\s<>@]*@[^\s<>]*>?")
 
@@ -218,8 +247,8 @@ def _normalize(raw):
 
 
 def _scrub(text):
-    """SMTP errors often quote the recipient: nothing that looks like an address is stored."""
-    return _ADDRESS_LIKE.sub("<adress>", text)[:1000] if text else text
+    """SMTP errors and bounces often quote the recipient or the link: no address and no token is stored."""
+    return mask_cut(_ADDRESS_LIKE.sub("<adress>", mask_tokens(text)), 1000)
 
 
 # --- Templates ---
@@ -407,13 +436,17 @@ def _claim(now):
         )
         RETURNING id
         """,
-        (now, str(uuid.uuid4()), now),
+        (now, str(token := uuid.uuid4()), now),
     )
     found = cursor.fetchone()
-    return MailMessage.get_by_id(found[0]) if found else None
+    if found is None:
+        return None
+    row = MailMessage.get_by_id(found[0])
+    row.claim_token = token  # ours, also if the claim was taken away before this read: _renew must not match NULL
+    return row
 
 
-def _renew(row):
+def _renew(row, login_address, address):
     """
     Restarts the claim's clock just before the mail goes, so the row cannot be reclaimed until long after
     SEND_DEADLINE. False when another sender has taken the row since (this one was slow) or the recipient has
@@ -422,7 +455,18 @@ def _renew(row):
     renewed = MailMessage.update(claimed_at=_utcnow()).where(
         (MailMessage.id == row.id) & (MailMessage.claim_token == row.claim_token)
     )
-    return renewed.execute() == 1
+    if renewed.execute() != 1:
+        return False
+    # Rendering attachments or opening SMTP may have outlasted a login address's validity. Rebuild for its successor.
+    if login_address is not None:
+        current = _normalize(login_address(row.params))
+        if current is None:
+            _finish(row, _utcnow(), status="cancelled", last_error="mejlet är inte längre aktuellt")
+            return False
+        if current != address:
+            _finish(row, _utcnow(), status="queued")
+            return False
+    return True
 
 
 def _finish(row, now, attempt=None, **fields):
@@ -451,7 +495,7 @@ def _failed(row, now, result, smtp_code, detail, address=None):
     else:
         fields = {"status": "failed"}
     if address and (smtp_code or "")[:4] in ("5.1.", "5.2.", "5.3."):
-        fields["address_hash"] = address_hash(address)  # the recipient's mailbox refused: the bounce flag
+        fields["address_hash"] = _delivery_hash(row, address)
     attempt = {"result": result, "smtp_code": smtp_code, "detail": detail}
     return _finish(row, now, attempt, attempts=attempts, last_error=detail, **fields)
 
@@ -519,11 +563,17 @@ def _send_one(row, relay, now):
     if resolve is None:
         return _finish(row, now, status="cancelled", last_error=f"okänd mottagartyp: {row.recipient_kind}")
     mode = settings.mail.mode
+    login_address = kind.login_address if row.recipient_kind in ("member", "member_previous_address") else None
     try:
-        recipient = resolve(row.recipient_id)
-        address = _normalize(recipient.address) if recipient else None
+        if login_address is not None:
+            address = _normalize(login_address(row.params))
+            if address is None:
+                return _finish(row, now, status="cancelled", last_error="mottagaren saknar en giltig inloggningsadress")
+        else:
+            recipient = resolve(row.recipient_id)
+            address = _normalize(recipient.address) if recipient else None
         if address is None:
-            return _finish(row, now, status="cancelled", last_error="mottagaren saknar e-post")
+            return _finish(row, now, status="cancelled", last_error=NO_ADDRESS)
         variables = kind.build(row.params)
         if variables is None:
             return _finish(row, now, status="cancelled", last_error="mejlet är inte längre aktuellt")
@@ -531,6 +581,11 @@ def _send_one(row, relay, now):
         reply_to = variables.pop("reply_to", None)
         subject, body = render(row.kind, variables)
         msg = None if mode == "log" else _message(row, address, subject, body, attachments, reply_to)
+    except Later as later:  # never due again in this run (send_pending)
+        _finish(
+            row, now, status="queued", next_attempt_at=max(later.until, now + RETRY_DELAYS[0]), last_error=later.why
+        )
+        return PUT_BACK
     except Exception as exc:  # pylint: disable=broad-except  # a bug or a lost database: retried like a 4xx
         detail = f"bygget misslyckades: {_describe(exc)}"
         logger.error("Building mail %s failed: %s", row.id, _scrub(detail))  # no traceback: it may hold the address
@@ -544,7 +599,7 @@ def _send_one(row, relay, now):
     if mode == "allowlist" and not _allowed(address):
         return _finish(row, now, status="blocked", last_error="spärrat: adressen finns inte i MAIL_ALLOWLIST")
     try:
-        relay.send(msg, address, lambda: _renew(row))
+        relay.send(msg, address, lambda: _renew(row, login_address, address))
     except _ClaimLost:
         logger.warning("Mail %s was reclaimed by another sender or lost its recipient; it is not sent", row.id)
         return True
@@ -570,7 +625,7 @@ def _send_one(row, relay, now):
         status="sent",
         sent_at=now,
         attempts=row.attempts + 1,
-        address_hash=address_hash(address),
+        address_hash=_delivery_hash(row, address),
         last_error=None,
     )
 
@@ -588,7 +643,8 @@ def _smtp_error(row, now, relay, code, text, address, systemic=False):
 def send_pending(now=None):
     """
     One run of the scheduler's mail_send job: up to MAX_PER_RUN due rows, one claimed at a time, over one
-    SMTP connection. Returns the number of rows taken.
+    SMTP connection. A row a limit puts back (Later) costs no SMTP and is not counted. Returns the number of rows
+    taken.
     """
     settings.refuse_unsafe_mail_settings()  # not only at import: any other mode would fall through to a real send
     fixed = now
@@ -608,8 +664,10 @@ def send_pending(now=None):
             row = _claim(tick)
             if row is None:
                 break
-            taken += 1
-            if not _send_one(row, relay, tick):
+            outcome = _send_one(row, relay, tick)
+            if outcome is not PUT_BACK:
+                taken += 1
+            if not outcome:
                 break
     finally:
         relay.close()
@@ -808,14 +866,28 @@ def _application_approved(params):
 _ADDED_AS = {"familjemedlem": "familjemedlem", "skotare": "skötare"}
 
 
+def was_main_member(person):
+    """She was made main member of her membership at some point (swap_main_member): she put people in herself."""
+    return (
+        MatrikelAudit.select()
+        .where(
+            (MatrikelAudit.membership == person.membership_id)
+            & (MatrikelAudit.action == "main_member_changed")
+            & (MatrikelAudit.payload["new_person_id"] == str(person.id))
+        )
+        .exists()
+    )
+
+
 @mail_kind("medlemskap.tillagd", priority=1, category="T")
 def _member_added(params):
     """To a person someone else put into a membership (GDPR art. 14); none once the person has left it."""
     person = Member.get_or_none((Member.id == params["member_id"]) & Member.end_date.is_null(True))
-    if person is None or person.role not in _ADDED_AS:  # left, or made main member since the mail was queued
+    if person is None or person.role not in _ADDED_AS or was_main_member(person):  # left, or main member
         return None
     # The limit per address is kept here, on the address the mail goes to now and on mails that have gone: it
-    # holds across memberships and after an address was changed, and a mail that was stopped uses none of it.
+    # holds across memberships and after an address was changed. Over it, the mail waits until the oldest of
+    # those mails is a day old, so the notices waiting go in order (#191).
     if settings.mail.link_secret:  # without it (log mode only) there is no HMAC, and nothing is sent to count
         gone = (
             (MailMessage.kind == "medlemskap.tillagd")
@@ -823,8 +895,11 @@ def _member_added(params):
             & (MailMessage.address_hash == address_hash(person.email))
             & (MailMessage.sent_at > _utcnow() - timedelta(days=1))
         )
-        if MailMessage.select().where(gone).count() >= ADDED_TO_AN_ADDRESS_A_DAY:
-            return None
+        count, first = (
+            MailMessage.select(fn.COUNT(MailMessage.id), fn.MIN(MailMessage.sent_at)).where(gone).scalar(as_tuple=True)
+        )
+        if count >= ADDED_TO_AN_ADDRESS_A_DAY:
+            raise Later(first + timedelta(days=1), "uppskjutet: adressens gräns per dygn")
     main = Member.get_or_none(
         (Member.membership == person.membership_id) & (Member.role == "huvudmedlem") & Member.end_date.is_null(True)
     )
@@ -848,28 +923,61 @@ ADDED_TO_AN_ADDRESS_A_DAY = 3  # and one address can get: a family may share one
 
 def queue_member_added(person):
     """
-    medlemskap.tillagd in the transaction that adds `person` (the caller holds the membership's row lock): only
-    someone put in by another (never a main member, who applied or was written in from the register) and only
-    with an e-mail. A main member chooses the address, so the association's mail must not become a way to flood
-    one: a membership causes at most ADDED_A_DAY a day, and an address gets at most ADDED_TO_AN_ADDRESS_A_DAY
-    (_member_added, when the mail goes).
+    medlemskap.tillagd in the transaction that adds `person` or gives it an address (the caller holds the
+    membership's row lock): only someone put in by another (never a main member, who applied or was written in
+    from the register) and only with an e-mail. The person's one row (its dedupe_key) is the record that the
+    notice went: a row that never reached the person (refused, stopped for want of an address, or
+    being sent to the address just replaced) is queued again; one that went, or that someone stopped, is not.
+
+    A main member chooses the addresses, so the association's mail must not become a way to flood them: a
+    membership's notices are spread over days, at most ADDED_A_DAY a day, and an address gets at most
+    ADDED_TO_AN_ADDRESS_A_DAY a day (_member_added, when the mail goes).
     """
-    if person.role not in _ADDED_AS or not person.email:
+    if person.role not in _ADDED_AS or person.end_date is not None:
         return None
     ref = ("membership", person.membership_id)
-    today = (
-        (MailMessage.kind == "medlemskap.tillagd")
-        & (MailMessage.ref_type == ref[0])
-        & (MailMessage.ref_id == ref[1])
-        & (MailMessage.created_at > _utcnow() - timedelta(days=1))
+    # A day after the membership's tenth latest notice at the earliest: no day holds more than ADDED_A_DAY, and
+    # older notices go first.
+    tenth = (
+        MailMessage.select(MailMessage.next_attempt_at)
+        .where(
+            (MailMessage.kind == "medlemskap.tillagd")
+            & (MailMessage.ref_type == ref[0])
+            & (MailMessage.ref_id == ref[1])
+        )
+        .order_by(MailMessage.next_attempt_at.desc())
+        .offset(ADDED_A_DAY - 1)
+        .first()
     )
-    if MailMessage.select().where(today).count() >= ADDED_A_DAY:
-        logger.warning("Membership %s has added %s people with mail today: no more mails", ref[1], ADDED_A_DAY)
-        return None
+    not_before = max(_utcnow(), tenth.next_attempt_at + timedelta(days=1)) if tenth else _utcnow()
+    key = f"medlemskap.tillagd:{person.id}"
     params = {"member_id": person.id}
-    return enqueue_mail(
-        "medlemskap.tillagd", "member", person.id, params, ref=ref, dedupe_key=f"medlemskap.tillagd:{person.id}"
+    MailMessage.select().where(MailMessage.dedupe_key == key).for_update().first()  # not purged while we look
+    queued = (
+        enqueue_mail("medlemskap.tillagd", "member", person.id, params, ref=ref, dedupe_key=key, not_before=not_before)
+        if person.email
+        else None
     )
+    if queued is None:
+        # A row being sent loses its claim, so before _renew it does not go to the address replaced or removed; a
+        # queued one is locked until the change commits, so the sender cannot read the old address meanwhile. Not
+        # a bounced one: a delay report counts as a bounce too (status view, "Försök igen").
+        MailMessage.update(
+            status="queued",
+            next_attempt_at=not_before,
+            attempts=0,
+            last_error=None,
+            claim_token=None,
+            claimed_at=None,
+            created_at=_utcnow(),
+        ).where(
+            (MailMessage.dedupe_key == key)
+            & (
+                MailMessage.status.in_(("queued", "sending", "failed"))
+                | ((MailMessage.status == "cancelled") & (MailMessage.last_error == NO_ADDRESS))
+            )
+        ).execute()
+    return queued
 
 
 def cancel_member_added(member_ids):

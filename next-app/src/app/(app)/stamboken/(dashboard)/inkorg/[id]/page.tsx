@@ -15,9 +15,11 @@ import type { GenebankHerd } from "@/utils/saleRules";
 import {
   colorNamesFor,
   lacksRole,
+  reportYear,
   STATE_LABEL,
   type InboxDetail,
   type QueueList,
+  type RoundRow,
 } from "../lib";
 import { WorkView } from "./WorkView";
 
@@ -42,24 +44,29 @@ export default async function InkorgItemPage({
     if (e instanceof ApiError && e.status === 404) notFound();
     throw e;
   }
-  const [colors, genebanks, herds, handlers, myGenebanks] = await Promise.all([
-    fetchApi<Record<string, ColorOption[]>>("/colors").catch(() => null),
-    fetchApi<{ genebanks: { id: number; name: string }[] }>("/genebanks")
-      .then((r) => r.genebanks)
-      .catch(() => []),
-    item.genebank_id
-      ? fetchApi<{ herds: GenebankHerd[] }>(
-          `/v2/genebank/${item.genebank_id}/herds`,
-        )
-          .then((r) => r.herds)
-          .catch(() => [])
-      : Promise.resolve([]),
-    fetchHandlers(),
-    // The cheapest place for the user's genebanks: the list answers with them.
-    fetchApi<QueueList>("/v2/inkorg?limit=1")
-      .then((r) => r.my_genebanks ?? null)
-      .catch(() => null),
-  ]);
+  const [colors, genebanks, herds, handlers, myGenebanks, rounds] =
+    await Promise.all([
+      fetchApi<Record<string, ColorOption[]>>("/colors").catch(() => null),
+      fetchApi<{ genebanks: { id: number; name: string }[] }>("/genebanks")
+        .then((r) => r.genebanks)
+        .catch(() => []),
+      item.genebank_id
+        ? fetchApi<{ herds: GenebankHerd[] }>(
+            `/v2/genebank/${item.genebank_id}/herds`,
+          )
+            .then((r) => r.herds)
+            .catch(() => [])
+        : Promise.resolve([]),
+      fetchHandlers(),
+      // The cheapest place for the user's genebanks: the list answers with them.
+      fetchApi<QueueList>("/v2/inkorg?limit=1")
+        .then((r) => r.my_genebanks ?? null)
+        .catch(() => null),
+      // For "Mata in årsrapporten"; without the rounds the link is left out.
+      fetchApi<{ rounds: RoundRow[] }>("/v2/arsrapport/rundor")
+        .then((r) => r.rounds)
+        .catch(() => null),
+    ]);
   // The colour list of the item's genebank, not of its herd: it may have none.
   const colorNames = colorNamesFor(
     colors,
@@ -97,6 +104,7 @@ export default async function InkorgItemPage({
         colors={colorNames}
         herds={herds}
         people={handlers}
+        reportYear={reportYear(rounds, item.genebank_id)}
       />
     </>
   );

@@ -165,9 +165,10 @@ docker exec "$CONTAINER" psql -U "$DB_USER" -d postgres -v ON_ERROR_STOP=1 -c \
 # through the load, and its sender must never see production's mail queue or
 # intake items, not even for a moment. A pattern that matches no table (an
 # older schema) is fine; notice_setting, a user preference, is copied. Login
-# codes and previous addresses stay too: unconfirmed and abandoned addresses
+# codes and previous addresses are excluded too: unconfirmed and abandoned addresses
 # have no place in the test environment.
-SKIP_QUEUE_DATA="--exclude-table-data='mail_*' --exclude-table-data='inbox_*' --exclude-table-data=notice --exclude-table-data='gmail_*' --exclude-table-data=login_code --exclude-table-data=member_previous_address"
+# The yearly report's drafts, change requests and sale proposals hold unsent text or buyer data.
+SKIP_QUEUE_DATA="--exclude-table-data='mail_*' --exclude-table-data='inbox_*' --exclude-table-data=notice --exclude-table-data='gmail_*' --exclude-table-data=login_code --exclude-table-data=member_previous_address --exclude-table-data=yearly_report_draft --exclude-table-data=member_change_request --exclude-table-data=sale_proposal"
 echo "Syncing $SOURCE_DB -> $STAGING_DB via pg_dump..."
 # ON_ERROR_STOP=1 aborts psql on the first SQL error; the
 # outer set -Eeo pipefail then fires the ERR trap so the failure telemetry row
@@ -187,8 +188,13 @@ docker exec "$CONTAINER" bash -c "
 # and the load's foreign key would fail. One statement, so one transaction: the
 # FK (ON DELETE SET NULL) nulls herd_tracking.holder_contact_id and the sales
 # stay. An older schema without the table is skipped.
-DROP_BUYERS_SQL="DO \$\$ BEGIN IF to_regclass('buyer_contact') IS NOT NULL THEN UPDATE herd_tracking SET buyer_removed = true WHERE holder_contact_id IS NOT NULL; DELETE FROM buyer_contact; END IF; END \$\$;"
-echo "Deleting the buyers outside the association in $STAGING_DB..."
+# The same statement closes the yearly report's links (step 3): the codes stay,
+# because submissions and commands point at them, but are revoked, and the
+# activations are marked sent, so the demo never sends an invitation and its
+# round is not closed (FA10). A sale proposal can carry a buyer's name; the
+# dump already leaves its rows out, and this deletes any that came anyway.
+DROP_BUYERS_SQL="DO \$\$ BEGIN IF to_regclass('buyer_contact') IS NOT NULL THEN UPDATE herd_tracking SET buyer_removed = true WHERE holder_contact_id IS NOT NULL; DELETE FROM buyer_contact; END IF; IF to_regclass('sale_proposal') IS NOT NULL THEN DELETE FROM sale_proposal; END IF; IF to_regclass('report_access_code') IS NOT NULL THEN UPDATE report_access_code SET revoked_at = now() WHERE revoked_at IS NULL; END IF; IF to_regclass('yearly_report_round_genebank') IS NOT NULL THEN UPDATE yearly_report_round_genebank SET sent_at = now() WHERE sent_at IS NULL; END IF; END \$\$;"
+echo "Deleting the buyers and closing the report links in $STAGING_DB..."
 docker exec "$CONTAINER" psql -U "$DB_USER" -d "$STAGING_DB" -v ON_ERROR_STOP=1 -q -c "$DROP_BUYERS_SQL"
 
 if [ -n "$MAIL_SEQ" ]; then

@@ -109,6 +109,20 @@
   border-bottom: 1px solid var(--sb-line);
   vertical-align: top;
 }
+/* The report photo's check (ReportPhotoCheck): the field names at reading size, a differing row marked */
+.photoCheck th {
+  font-family: var(--sb-body);
+  font-size: 14px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--sb-ink-2);
+}
+.photoCheck tr[data-differs] {
+  background: var(--sb-warning-soft);
+}
+.photoCheck tr[data-differs] > th {
+  border-left: 4px solid var(--sb-warning);
+}
 .caseLink {
   font-weight: 600;
   color: var(--sb-ink);
@@ -469,6 +483,36 @@
 .submitRow > :first-child {
   flex: 1;
   justify-content: center;
+}
+/* A column with nothing to show (a purchase notice's right column): no empty card */
+.hideEmpty:empty {
+  display: none;
+}
+/* A purchase notice in the main column: its facts at reading size, the number unbroken */
+.purchase {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: flex-start;
+  font-size: 16px;
+}
+.purchase p {
+  margin: 0;
+}
+.purchaseFacts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 16px;
+  margin: 0;
+}
+.purchaseFacts dt {
+  color: var(--sb-ink-2);
+}
+.purchaseFacts dd {
+  margin: 0;
+}
+.number {
+  white-space: nowrap;
 }
 .note {
   font-size: 13px;

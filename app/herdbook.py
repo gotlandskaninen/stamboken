@@ -20,6 +20,7 @@ import threading
 import time
 import uuid
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 import apscheduler.schedulers.background
 import click
@@ -76,6 +77,7 @@ from utils import login_code  # isort:skip
 from utils.matrikel import purge_previous_addresses  # isort:skip
 from utils import inbox  # isort:skip
 from utils.inbox import queue_digests  # isort:skip
+from utils.arsrapport_invite import send_due_invitations  # isort:skip
 from utils import inbox_gmail  # isort:skip
 from utils import inbox_purge  # isort:skip
 from utils import buyer_contact  # isort:skip
@@ -336,6 +338,28 @@ def _expire_login_codes():
         APP.logger.exception("Expiring login codes failed")
     finally:
         genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _send_arsrapport_invitations():
+    """Leader job at 07:00 (step 3, FA9), built as _send_mail: it closes its thread's connection."""
+    try:
+        APP.logger.info(
+            "Queued %s yearly report invitations", send_due_invitations(datetime.datetime.now(datetime.timezone.utc))
+        )
+    except Exception:  # pylint: disable=broad-except
+        APP.logger.exception("Queueing the yearly report invitations failed")
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _catch_up_arsrapport_invitations(now=None):
+    """
+    At startup: a restart across 07:00 leaves the day's cron run to tomorrow, so run the job once now if it is past
+    07:00 (FA9). send_due_invitations only does what is due and unsent, so a second run changes nothing.
+    """
+    now = now or datetime.datetime.now(ZoneInfo("Europe/Stockholm"))
+    if now.astimezone(ZoneInfo("Europe/Stockholm")).hour >= 7:
+        _send_arsrapport_invitations()
 
 
 def _queue_notice_digests():
@@ -892,6 +916,10 @@ def user_profile():
     elif request.method == "PATCH":
         # Handle profile updates (profile picture and settings)
         profile_picture_url = None
+        # Before the upload: a file saved for an account that is gone would stay with no row naming it.
+        user = da.fetch_user_info(session.get("user_id", None))
+        if not user:
+            return jsonify({"status": "error", "message": "User not found"}), 404
 
         # Handle file upload for profile pictures
         if "profile_picture" in request.files:
@@ -908,6 +936,7 @@ def user_profile():
                     APP.logger.info("Profile picture uploaded")
                 except Exception as e:
                     APP.logger.error("Error uploading file: %s", type(e).__name__)  # e carries the path
+                    da.remove_profile_picture(unique_filename)  # a partly written file, which no row names
                     return jsonify({"status": "error", "message": "Failed to upload image"})
 
         # Get settings from JSON or form data
@@ -915,11 +944,6 @@ def user_profile():
             settings = request.form.to_dict()
         else:
             settings = request.json or {}
-
-        # Update profile
-        user = da.fetch_user_info(session.get("user_id", None))
-        if not user:
-            return jsonify({"status": "error", "message": "User not found"}), 404
 
         try:
             # Update profile picture if uploaded
@@ -930,13 +954,23 @@ def user_profile():
             if "use_google_picture" in settings:
                 user.use_google_picture = bool(settings["use_google_picture"])
 
-            # Only the profile columns: a full-row save of this unlocked read
-            # would write back a stale is_active/_privileges.
-            user.save(only=[db.User.profile_picture, db.User.use_google_picture])
+            # Only the profile columns, and only on an active account: a full-row save of this unlocked read would
+            # write back a stale is_active/_privileges, and an erasure (#190) committed since must stay erased.
+            saved = (
+                db.User.update(profile_picture=user.profile_picture, use_google_picture=user.use_google_picture)
+                .where((db.User.id == user.id) & (db.User.is_active == True))  # noqa: E712
+                .execute()
+            )
+            if not saved:
+                if profile_picture_url:
+                    da.remove_profile_picture(profile_picture_url)
+                return jsonify({"status": "error", "message": "User not found"}), 404
             return jsonify({"status": "updated", "message": "Profile updated successfully"})
 
         except Exception as e:
             APP.logger.error("Error updating profile: %s", type(e).__name__)
+            if profile_picture_url:
+                da.remove_profile_picture(profile_picture_url)
             return jsonify({"status": "error", "message": "Failed to update profile"})
 
 
@@ -1237,15 +1271,21 @@ def get_herd_for_admin(h_ref):
 
     Auth: admin OR manager(gb) of the herd's genebank.
     """
-    user = current_user
-    herd = _resolve_admin_herd(h_ref)
-    if herd is None:
-        return problem(404, "Besättning saknas", f"Ingen besättning med id {h_ref}.", type="herd-not-found")
-    if not user.is_admin:
-        err = check_genebank_manager_access(user, herd.genebank_id)
+    # Both the session's user and the row in the herd's snapshot must pass: the first misses a role revoked
+    # since the session check, the second could see a role granted after update_role revoked this session.
+    with db.snapshot_read():
+        user = da.fetch_user_info(current_user.uuid)
+        if user is None:
+            return unauthorized()
+        herd = _resolve_admin_herd(h_ref)
+        if herd is None:
+            return problem(404, "Besättning saknas", f"Ingen besättning med id {h_ref}.", type="herd-not-found")
+        err = check_genebank_manager_access(current_user, herd.genebank_id) or check_genebank_manager_access(
+            user, herd.genebank_id
+        )
         if err is not None:
             return err
-    return jsonify(da.get_herd_for_admin(user, herd)), 200
+        return jsonify(da.get_herd_for_admin(user, herd)), 200
 
 
 @APP.route("/api/manage/herd/<h_ref>", methods=["PATCH"])
@@ -1533,11 +1573,16 @@ def login_handler():
     return get_user()
 
 
-# The Google profile columns the login routes refresh. They save only these: the
-# user row was read without a lock, so a full-row save would write back a stale
-# is_active/_privileges and undo a concurrent deactivation or role change.
-# google_email is no profile column: da.google_login_generation writes it under the row lock.
-_GOOGLE_PROFILE_COLUMNS = [db.User.google_picture, db.User.google_name]
+def _save_google_profile(user):
+    """
+    The Google profile columns the login routes refresh, and only these: the user row was read without a lock, so a
+    full-row save would write back a stale is_active/_privileges and undo a concurrent deactivation or role change.
+    Only on an active account: a login racing an erasure (#190) never writes them back. google_email is no profile
+    column: da.google_login_generation writes it under the row lock.
+    """
+    db.User.update(google_picture=user.google_picture, google_name=user.google_name).where(
+        (db.User.id == user.id) & (db.User.is_active == True)  # noqa: E712
+    ).execute()
 
 
 def _storable_google_email(verified_email):
@@ -1637,7 +1682,7 @@ def google_token_login():
         if user and not user.validated:
             if _should_auto_validate_users():
                 user.validated = True
-                user.save(only=[db.User.validated])  # see _GOOGLE_PROFILE_COLUMNS
+                user.save(only=[db.User.validated])  # see _save_google_profile
             elif settings.service.access_rules != "enforce":
                 # The course belongs to the legacy frontend, and the access rules
                 # keep an unvalidated account out of it and off production; without
@@ -1653,7 +1698,7 @@ def google_token_login():
             # Update user with Google profile data in database
             user.google_picture = picture
             user.google_name = name
-            user.save(only=_GOOGLE_PROFILE_COLUMNS)
+            _save_google_profile(user)
 
             # After the save: a save that raises must not leave a session that
             # carries user_id without flask-login's _user_id.
@@ -1715,7 +1760,7 @@ def external_login_handler(service):
         if _should_auto_validate_users():
             # Auto-validate user since this environment opted in via env var
             user.validated = True
-            user.save(only=[db.User.validated])  # see _GOOGLE_PROFILE_COLUMNS
+            user.save(only=[db.User.validated])  # see _save_google_profile
         else:
             return _not_validated_response()
 
@@ -1744,7 +1789,7 @@ def external_login_handler(service):
         _link_member_if_any(user, verified_email)
         # Reload unfiltered: fetch_user_info hides an account deactivated mid-login (the
         # provider calls above can take long), and the profile save below writes only
-        # _GOOGLE_PROFILE_COLUMNS, so it cannot undo that deactivation.
+        # the profile columns of an active account (_save_google_profile).
         user = db.User.get_by_id(user.id)
 
         # Save Google profile data (picture, name)
@@ -1754,7 +1799,7 @@ def external_login_handler(service):
             if userinfo:
                 user.google_picture = userinfo.get("picture") or user.google_picture
                 user.google_name = userinfo.get("name") or user.google_name
-                user.save(only=_GOOGLE_PROFILE_COLUMNS)
+                _save_google_profile(user)
             else:
                 # Fallback to id_token if userinfo fails
                 idtoken = utils.external_auth.google_idtoken()
@@ -1763,7 +1808,7 @@ def external_login_handler(service):
                         user.google_picture = idtoken["picture"]
                     if idtoken.get("name"):
                         user.google_name = idtoken["name"]
-                    user.save(only=_GOOGLE_PROFILE_COLUMNS)
+                    _save_google_profile(user)
 
         # Check for saved return_to URL from before OAuth
         return_to = session.pop("return_to_after_oauth", None)
@@ -3170,6 +3215,24 @@ def initialize_app():
             id="mail_send",
             max_instances=1,
             coalesce=True,
+        )
+
+        # The yearly report's invitations on each genebank's send day, when someone is awake to see them (FA9).
+        scheduler.add_job(
+            _send_arsrapport_invitations,
+            "cron",
+            hour=7,
+            id="arsrapport_invitations",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+        )
+
+        scheduler.add_job(
+            _catch_up_arsrapport_invitations,
+            trigger="date",
+            id="arsrapport_invitations_catch_up",
+            misfire_grace_time=None,
         )
 
         scheduler.add_job(
