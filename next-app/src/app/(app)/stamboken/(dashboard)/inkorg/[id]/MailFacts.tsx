@@ -43,6 +43,20 @@ export function MailFacts({ item }: { item: InboxDetail }) {
   return (
     <>
       <MailSubject subject={arrived.subject} />
+      {item.mentioned_individuals.length > 0 && (
+        <>
+          <dt>Nämnda kaniner</dt>
+          <dd>
+            {item.mentioned_individuals.map((number) => (
+              <div key={number}>
+                <Link href={`/stamboken/individ/${encodeURIComponent(number)}`}>
+                  {number}
+                </Link>
+              </div>
+            ))}
+          </dd>
+        </>
+      )}
       {maybe !== null && (
         <>
           <dt>Gäller kanske</dt>

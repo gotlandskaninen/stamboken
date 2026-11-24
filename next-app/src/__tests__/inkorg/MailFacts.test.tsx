@@ -11,10 +11,24 @@ afterEach(cleanup);
 
 const item = (detail: Record<string, unknown>) =>
   ({
+    mentioned_individuals: [],
     events: [{ id: 1, at: "", kind: "inkommen", user: null, detail }],
   }) as unknown as InboxDetail;
 
 describe("MailFacts", () => {
+  it("links to the rabbits the reader may see", () => {
+    render(
+      <dl>
+        <MailFacts item={{ ...item({}), mentioned_individuals: ["G1-2112"] }} />
+      </dl>,
+    );
+    expect(screen.getByText("Nämnda kaniner")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "G1-2112" })).toHaveAttribute(
+      "href",
+      "/stamboken/individ/G1-2112",
+    );
+  });
+
   it("shows the case a reply may be about and the files not stored", () => {
     render(
       <dl>

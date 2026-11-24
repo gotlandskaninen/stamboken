@@ -9,6 +9,7 @@ import hashlib
 import io
 import math
 import os
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -32,8 +33,9 @@ from utils.database import (
     Notice,
     NoticeSetting,
     User,
+    not_voided,
 )
-from utils.individual_number_v2 import parse_number
+from utils.individual_number_v2 import NUMBER_PATTERN, parse_number
 from utils.individual_policy import Role
 from utils.mail import enqueue_mail, forget_recipient, mail_kind
 
@@ -741,7 +743,28 @@ def documents_json(documents):
     ]
 
 
-def item_detail(item):
+_MENTION = re.compile(rf"\b{NUMBER_PATTERN.pattern}\b")
+
+
+def _rabbit_numbers(item, events, user):
+    """Numbers mentioned in incoming mail that this reader can open, as in get_individual."""
+    texts = [item.message] if item.kind in ("mail", "meddelande") else []
+    for event in events:
+        detail = event.detail or {}
+        if event.kind in ("inkommen", "svar"):
+            texts.append(detail.get("subject"))
+        if event.kind == "svar":
+            texts.append(detail.get("text"))
+    mentions = _MENTION.finditer(" ".join(text for text in texts if text))
+    numbers = {match[0].upper() for match in mentions if parse_number(match[0])}
+    if not numbers:
+        return []
+    accessible = user.accessible_genebanks
+    rabbits = Individual.select().where(Individual.number.in_(numbers), not_voided())
+    return sorted(r.number for r in rabbits if r.current_herd.genebank_id in accessible)
+
+
+def item_detail(item, user):
     """GET …/<id>: the list form plus the message, the documents and the history."""
     documents = list(item.documents.order_by(InboxDocument.id))
     events = list(item.events.order_by(InboxEvent.at, InboxEvent.id))
@@ -749,6 +772,7 @@ def item_detail(item):
     return {
         **items_json([item])[0],
         "message": item.message,
+        "mentioned_individuals": _rabbit_numbers(item, events, user),
         "sender_address": item.sender_address,
         "documents": documents_json(documents),
         "events": [

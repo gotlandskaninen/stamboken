@@ -352,7 +352,7 @@ def item_detail(item_id):
         return problem(404, "Hittades inte", "Posten finns inte.")
     with DB_PROXY.atomic():
         inbox.open_item(item, current_user)
-    return jsonify(inbox.item_detail(item))
+    return jsonify(inbox.item_detail(item, current_user))
 
 
 # [Next.js] The rabbit's active sales, for the sale panel: does the proof show a sale already registered, and

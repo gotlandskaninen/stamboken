@@ -100,6 +100,7 @@ const item = (changes: Partial<InboxDetail> = {}): InboxDetail => ({
   sender_authenticated: null,
   sender_address: null,
   message: null,
+  mentioned_individuals: [],
   documents: [doc()],
   documents_done: 0,
   events: [],
