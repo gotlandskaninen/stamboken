@@ -1239,11 +1239,18 @@ class TestDatabaseMigration(DatabaseTest):
                 self.assertEqual(self._max_schema_version(), 51)
                 self.doCleanups()
 
-        # main's 51 with its tables replays to 52
-        rewind_migrations(52)
-        db.SchemaHistory.update(comment="Bootstrapped").where(db.SchemaHistory.version == 51).execute()
-        db.check_migrations()
-        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+        # main's 51 with its tables replays to 52, also when one report table is missing (verify() restores it)
+        for drop_one in (False, True):
+            with self.subTest(drop_one=drop_one):
+                self.addCleanup(db.check_migrations)
+                self.addCleanup(rewind_migrations, 51)
+                rewind_migrations(52)
+                db.SchemaHistory.update(comment="Bootstrapped").where(db.SchemaHistory.version == 51).execute()
+                if drop_one:
+                    db.DATABASE.drop_tables([db.SaleProposal], cascade=True)
+                db.check_migrations()
+                self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+                self.doCleanups()
 
     def test_replay_49_to_50_keeps_contact_values_out_of_audit(self):
         """After the migration an UPDATE of herd.email is listed in changed_fields without its value."""
