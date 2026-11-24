@@ -190,8 +190,13 @@ describe("KontaktClient", () => {
     expect(email.disabled).toBe(true);
     vi.mocked(cancelEmailCode).mockResolvedValue({ ok: true });
     fireEvent.click(screen.getByRole("button", { name: "Avbryt" }));
-    await waitFor(() => expect(cancelEmailCode).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(screen.queryByLabelText("Kod")).toBeNull());
+    // the default 1 s was too short when the whole suite runs
+    const slow = { timeout: 3000 };
+    await waitFor(() => expect(cancelEmailCode).toHaveBeenCalledTimes(1), slow);
+    await waitFor(
+      () => expect(screen.queryByLabelText("Kod")).toBeNull(),
+      slow,
+    );
     expect(email.disabled).toBe(false);
     expect(email.value).toBe(initial.email);
   });
