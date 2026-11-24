@@ -448,7 +448,9 @@ textarea.input {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
+  /* 44 px: the smallest tap target (ADR-0010, e2e/touch-targets.spec.ts). */
+  width: 44px;
+  min-height: 44px;
   padding: 14px 0;
   border: 0;
   border-radius: var(--sb-r-3) 0 0 var(--sb-r-3);
@@ -459,14 +461,13 @@ textarea.input {
   letter-spacing: 0.02em;
   writing-mode: vertical-rl;
   cursor: pointer;
-  transition: width var(--sb-dur-fast) var(--sb-ease);
+  transition: background-color var(--sb-dur-fast) var(--sb-ease);
 }
 .sidetab span {
   transform: rotate(180deg);
 }
 .sidetab:hover {
   background: var(--sb-skog-deep);
-  width: 40px;
 }
 .sidetab:focus-visible {
   outline: 2px solid var(--sb-lera);
@@ -474,13 +475,6 @@ textarea.input {
 }
 :global(body[data-tyck-pointing]) .sidetab {
   display: none;
-}
-@media (max-width: 480px) {
-  .sidetab {
-    width: 30px;
-    padding: 12px 0;
-    font-size: 13px;
-  }
 }
 @media print {
   .sidetab {

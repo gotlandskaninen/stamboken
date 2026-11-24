@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { usePathname } from "next/navigation";
 import { useOptionalUser } from "@/lib/user-context";
@@ -57,6 +57,9 @@ function Sheet({
   onFinished: () => void;
 }) {
   const pathname = usePathname();
+  // Each entry (menu, footer, tab) has its own sheet: ids must differ between them.
+  const uid = useId();
+  const id = (name: string) => `${uid}${name}`;
   const user = useOptionalUser();
   const loggedIn = user !== null;
   const dlgRef = useRef<HTMLDialogElement>(null);
@@ -303,7 +306,7 @@ function Sheet({
         email: "tt-email",
         file: "tt-attach",
       }[first];
-      document.getElementById(target)?.focus();
+      document.getElementById(id(target))?.focus();
       return;
     }
 
@@ -410,7 +413,7 @@ function Sheet({
       <dialog
         ref={dlgRef}
         className={styles.sheet}
-        aria-labelledby={done ? "tt-done-title" : "tt-title"}
+        aria-labelledby={id(done ? "tt-done-title" : "tt-title")}
         onClose={() => {
           if (pointingRef.current) return;
           onClose();
@@ -420,7 +423,7 @@ function Sheet({
         {done ? (
           <div className={styles.done}>
             <div className={styles.head}>
-              <h2 id="tt-done-title" ref={doneTitleRef} tabIndex={-1}>
+              <h2 id={id("tt-done-title")} ref={doneTitleRef} tabIndex={-1}>
                 Tack! Vi har fått din synpunkt.
               </h2>
               {closeButton}
@@ -462,7 +465,7 @@ function Sheet({
             onSubmit={submit}
           >
             <div className={styles.head}>
-              <h2 id="tt-title">Tyck till om Stamboken</h2>
+              <h2 id={id("tt-title")}>Tyck till om Stamboken</h2>
               {closeButton}
             </div>
             <div className={styles.body}>
@@ -472,7 +475,7 @@ function Sheet({
 
               <fieldset
                 className={`${styles.field} ${errors.typ ? styles.invalid : ""}`}
-                aria-describedby="tt-err-typ"
+                aria-describedby={id("tt-err-typ")}
               >
                 <legend>Vad gäller det?</legend>
                 <div className={styles.choice2}>
@@ -481,7 +484,7 @@ function Sheet({
                       type="radio"
                       name="typ"
                       value="fel"
-                      id="typ-fel"
+                      id={id("typ-fel")}
                       checked={typ === "fel"}
                       onChange={() => {
                         setTyp("fel");
@@ -505,44 +508,44 @@ function Sheet({
                   </label>
                 </div>
                 {errors.typ && (
-                  <p className={styles.err} id="tt-err-typ">
+                  <p className={styles.err} id={id("tt-err-typ")}>
                     {errors.typ}
                   </p>
                 )}
               </fieldset>
 
               <div className={styles.field}>
-                <label htmlFor="tt-text">Beskriv med egna ord</label>
-                <p className={styles.hint} id="tt-text-hint">
+                <label htmlFor={id("tt-text")}>Beskriv med egna ord</label>
+                <p className={styles.hint} id={id("tt-text-hint")}>
                   {HINT[typ || "fel"]}
                 </p>
                 <textarea
                   className={styles.input}
-                  id="tt-text"
+                  id={id("tt-text")}
                   name="text"
                   rows={5}
                   maxLength={5000}
-                  aria-describedby="tt-text-hint tt-err-text"
+                  aria-describedby={`${id("tt-text-hint")} ${id("tt-err-text")}`}
                   aria-invalid={errors.text ? true : undefined}
                   onInput={(e) =>
                     e.currentTarget.value.trim() && clearError("text")
                   }
                 />
                 {errors.text && (
-                  <p className={styles.err} id="tt-err-text">
+                  <p className={styles.err} id={id("tt-err-text")}>
                     {errors.text}
                   </p>
                 )}
               </div>
 
               <div className={styles.field}>
-                <span className={styles.label} id="tt-bild-label">
+                <span className={styles.label} id={id("tt-bild-label")}>
                   Bild, om du vill
                 </span>
                 <div
                   className={styles.imgBtns}
                   role="group"
-                  aria-labelledby="tt-bild-label"
+                  aria-labelledby={id("tt-bild-label")}
                 >
                   <button
                     type="button"
@@ -558,7 +561,7 @@ function Sheet({
                   </button>
                   <button
                     type="button"
-                    id="tt-attach"
+                    id={id("tt-attach")}
                     className="sb-btn sb-btn-secondary"
                     disabled={full}
                     onClick={() => fileRef.current?.click()}
@@ -672,25 +675,25 @@ function Sheet({
                 </>
               ) : (
                 <div className={styles.field}>
-                  <label htmlFor="tt-email">Din e-postadress</label>
-                  <p className={styles.hint} id="tt-email-hint">
+                  <label htmlFor={id("tt-email")}>Din e-postadress</label>
+                  <p className={styles.hint} id={id("tt-email-hint")}>
                     Vi använder den bara för att svara dig.
                   </p>
                   <input
                     className={styles.input}
                     type="email"
-                    id="tt-email"
+                    id={id("tt-email")}
                     name="email"
                     autoComplete="email"
                     inputMode="email"
-                    aria-describedby="tt-email-hint tt-err-email"
+                    aria-describedby={`${id("tt-email-hint")} ${id("tt-err-email")}`}
                     aria-invalid={errors.email ? true : undefined}
                     onInput={(e) =>
                       e.currentTarget.checkValidity() && clearError("email")
                     }
                   />
                   {errors.email && (
-                    <p className={styles.err} id="tt-err-email">
+                    <p className={styles.err} id={id("tt-err-email")}>
                       {errors.email}
                     </p>
                   )}
