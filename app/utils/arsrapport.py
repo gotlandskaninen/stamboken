@@ -49,6 +49,7 @@ from utils.database import (
     PublicationConsentChange,
     ReportAccessCode,
     SaleProposal,
+    User,
     Weight,
     YearlyHerdReport,
     YearlyReportDraft,
@@ -2893,10 +2894,10 @@ def _written(rabbit, exc):
     return _denied(rabbit, exc.detail if isinstance(exc, HerdTrackingError) else None)
 
 
-def _mail(kind, herd, user, params, ref):
+def _mail(kind, herd, user, params, ref, *, other_actor_only=False):
     """Å7–Å9 to the herd's main member, in the caller's transaction; none without an e-mail address."""
     member = inbox.herd_holder(herd.id)
-    if member is not None and member.email:
+    if member is not None and member.email and not (other_actor_only and member.user_id == user.id):
         enqueue_mail(
             kind,
             "member",
@@ -3407,11 +3408,17 @@ def _kvitto(params):
     report = YearlyHerdReport.get_by_id(submission.report_id)
     received = submission.data.get("received_on") if submission.source == "paper" else None
     # Late import: arsrapport_pdf imports this module.
-    from utils.arsrapport_pdf import receipt_pdf  # pylint: disable=import-outside-toplevel,cyclic-import
+    from utils.arsrapport_pdf import (  # pylint: disable=import-outside-toplevel,cyclic-import
+        receipt_context,
+        render_pdf,
+        render_text,
+    )
 
+    shown = receipt_context(report, submission)  # one read for the mail text and the attachment
     return {
-        "attachments": [("kvittens.pdf", "application/pdf", receipt_pdf(report, submission))],
+        "attachments": [("kvittens.pdf", "application/pdf", render_pdf(shown))],
         "herd": report.herd.herd,
+        "kvittens": render_text(shown),
         "datum": received or f"{submission.created_at.astimezone(STOCKHOLM):%Y-%m-%d}",
         **receipt(submission)["summary"],
         "kullar": [
@@ -3619,13 +3626,13 @@ def _litter_write(herd, round_, access, user, write):
             raise _litter_refused(exc) from exc
 
 
-def add_litter(herd, round_, access, user, body):
+def add_litter(herd, round_, access, actor, body, *, account):
     """POST kull: a litter without a certificate in the herd; the new litter's id and the year's litters."""
     fields = _litter_body(body, new=True)
 
     def write(grant):
         litter = register_litter(
-            user,
+            actor,
             fields["mother_id"],
             fields["father_id"],
             fields["birth_date"],
@@ -3635,22 +3642,61 @@ def add_litter(herd, round_, access, user, body):
             year=round_.report_year,
             grant=grant,
         )
-        mail_added(herd, user, "breeding", litter.id)
+        mail_added(herd, access, account, "breeding", litter.id)
         return litter
 
-    litter = _litter_write(herd, round_, access, user, write)
+    litter = _litter_write(herd, round_, access, actor, write)
     return {"id": litter.id, "litters": report_litters(herd, round_.report_year)}
 
 
 ADDED_KINDS = {"breeding": "arsrapport.ny_kull", "individual": "arsrapport.ny_kanin"}
 
 
-def mail_added(herd, user, ref_type, ref_id):
-    """
-    Spec 5.8: the receipt of a litter or a rabbit added through the report, whoever added it, to the herd's main member
-    as the report's own receipts go, in the addition's transaction and once per addition.
-    """
-    _mail(ADDED_KINDS[ref_type], herd, user, {f"{ref_type}_id": ref_id}, (ref_type, ref_id))
+ADDED_ROLES = {
+    "admin": "Stambokens administratör",
+    "manager": "Genbanksansvarig",
+    "helper": "En genbankshjälpare",
+    "caretaker": "En skötare",
+}
+
+
+def mail_added(herd, access, account, ref_type, ref_id):
+    """Tell the main member when someone else added a litter or a rabbit."""
+    if not account.is_authenticated:
+        return
+    # A legacy owner grant can belong to someone other than the main member.
+    role = "caretaker" if access.role == "owner" else access.role
+    if access.role == "code":  # admins and this genebank's managers use their own access
+        role = "helper" if herd.genebank_id in (account.is_helper or ()) else "caretaker"
+    params = {f"{ref_type}_id": ref_id, "actor_id": account.id, role: True}
+    _mail(ADDED_KINDS[ref_type], herd, account, params, (ref_type, ref_id), other_actor_only=True)
+
+
+def _added_by(params, ref_type):
+    """Resolve the account name at send time. The queue only stores ids and role flags."""
+    if "actor_id" in params:
+        user = User.get_or_none(User.id == params["actor_id"])
+        role = next(role for role in ADDED_ROLES if params.get(role))
+    else:
+        # Older queued receipts have only the reference and the queue row's creator.
+        ref_id = params[f"{ref_type}_id"]
+        key = f"{ADDED_KINDS[ref_type]}:{ref_id}"
+        row = MailMessage.get_or_none(MailMessage.dedupe_key == key)
+        if row is None or row.created_by_id is None:
+            return None
+        if Member.select().where(Member.id == row.recipient_id, Member.user == row.created_by_id).exists():
+            return None
+        user = row.created_by
+        role = "caretaker"
+        if user.is_admin:
+            role = "admin"
+        elif row.genebank_id in (user.is_manager or ()):
+            role = "manager"
+        elif row.genebank_id in (user.is_helper or ()):
+            role = "helper"
+    if user is None:
+        return ADDED_ROLES[role]
+    return (user.google_name or "").strip() or (user.fullname or "").strip() or ADDED_ROLES[role]
 
 
 @mail_kind("arsrapport.ny_kull", priority=0, category="T")
@@ -3659,7 +3705,11 @@ def _ny_kull(params):
     litter = Breeding.get_or_none(Breeding.id == params["breeding_id"])
     if litter is None or litter.mother_id is None or litter.birth_date is None:
         return None
+    name = _added_by(params, "breeding")
+    if name is None:
+        return None
     return {
+        "namn": name,
         "herd": litter.breeding_herd_id.herd,
         "mother": litter.mother.number,
         "birth_date": litter.birth_date.isoformat(),
@@ -3672,7 +3722,10 @@ def _ny_kanin(params):
     rabbit = Individual.get_or_none(Individual.id == params["individual_id"])
     if rabbit is None or rabbit.voided:
         return None
-    return {"herd": rabbit.origin_herd.herd, "number": rabbit.number}
+    name = _added_by(params, "individual")
+    if name is None:
+        return None
+    return {"namn": name, "herd": rabbit.origin_herd.herd, "number": rabbit.number}
 
 
 def change_litter(herd, round_, access, user, breeding_id, body):

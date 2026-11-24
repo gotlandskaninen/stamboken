@@ -213,7 +213,7 @@ test("6. The test mail's link #prov opens nothing", async ({ browser }) => {
   await page.goto("/rapport#prov");
   await expect(
     page.getByText(
-      "Provlänken fungerar. I det riktiga mejlet öppnar länken besättningens årsrapport.",
+      "Det här var ett provmejl. Länken fungerar. I medlemmarnas mejl öppnar den deras årsrapport.",
     ),
   ).toBeVisible();
   expect(page.url()).not.toContain("#");

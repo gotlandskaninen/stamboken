@@ -168,9 +168,14 @@ class RapportLinkTest(ArsrapportTest):
         self.addCleanup(setattr, limiter, "enabled", False)
         limiter.reset()
         self.addCleanup(limiter.reset)
-        statuses = [self.exchange().status_code for _ in range(21)]
-        self.assertEqual(statuses[:20], [200] * 20)
-        self.assertEqual(statuses[20], 429)
+        statuses = [self.exchange().status_code for _ in range(20)]
+        refused = self.exchange()
+        self.assertEqual(statuses, [200] * 20)
+        self.assertEqual(refused.status_code, 429)
+        self.assertEqual(
+            refused.get_json()["detail"],
+            "Du har öppnat länken för många gånger på kort tid. Vänta en minut och försök igen.",
+        )
 
     def test_user_session_survives_exchange(self):
         self.login("owner")

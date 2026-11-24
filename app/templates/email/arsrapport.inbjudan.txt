@@ -13,7 +13,9 @@ Kaninerna som står registrerade på din besättning är redan ifyllda. Välj f�
 
 Sista dag för stödet är {{ deadline }}. Länken gäller till och med {{ end_date }}.
 
-I bilagan finns registerutdraget: det Stamboken har om din besättning. Det är bara för kontroll och skickas inte in.
+I bilagan finns registerutdraget: det Stamboken har om din besättning. Det är bara för kontroll och skickas inte in. Samma uppgifter står här:
+
+{{ utdrag }}
 
 Länken gäller bara din besättning. Ge den bara till någon som ska rapportera åt dig.
 

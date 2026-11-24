@@ -36,6 +36,7 @@ function summaryOf(view: ReportView): Summary {
 export function Receipt({
   view,
   receipt,
+  receivedOn,
   hasDraft,
   busy,
   onChange,
@@ -45,10 +46,11 @@ export function Receipt({
 }: {
   view: ReportView;
   receipt: ReceiptData | null;
+  receivedOn?: string;
   hasDraft: boolean;
   busy: boolean;
   onChange: () => void;
-  onWithdraw: (reason?: string) => Promise<string | null>;
+  onWithdraw: (reason?: string) => Promise<React.ReactNode>;
   focusOnMount?: boolean; // right after a Skicka: show the receipt and read it out
   // the view has been fetched again since the receipt came: it alone says what waits
   refreshed?: boolean;
@@ -57,7 +59,7 @@ export function Receipt({
   const editor = view.access === "manager" || view.access === "admin";
   const [asking, setAsking] = React.useState(false);
   const [reason, setReason] = React.useState("");
-  const [error, setError] = React.useState<string | null>(null);
+  const [error, setError] = React.useState<React.ReactNode>(null);
   const headRef = React.useRef<HTMLHeadingElement>(null);
   React.useEffect(() => {
     if (!focusOnMount) return;
@@ -74,7 +76,11 @@ export function Receipt({
       ? !!receipt.summary.vantar
       : view.forslag.some((p) => p.state === "foreslagen");
   const at = report?.received_at ?? receipt?.created_at ?? "";
-  const when = `${fmtDate(at)} kl. ${fmtTime(at)}`;
+  const source = receipt && !refreshed ? receipt.source : report?.source;
+  const when =
+    source === "paper"
+      ? fmtDate(receivedOn ?? report?.submitted?.received_on ?? at)
+      : `${fmtDate(at)} kl. ${fmtTime(at)}`;
   const changed =
     report &&
     report.report_date.slice(0, 10) !== report.received_at.slice(0, 10)

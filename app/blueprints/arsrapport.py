@@ -368,7 +368,8 @@ def withdraw(herd, year):
 @report_actor_required
 def add_litter(herd, year):
     herd, round_, access = _report_target(herd, year)
-    return jsonify(arsrapport.add_litter(herd, round_, access, _actor(access), _submission_body())), 201
+    litter = arsrapport.add_litter(herd, round_, access, _actor(access), _submission_body(), account=current_user)
+    return jsonify(litter), 201
 
 
 # [Next.js] A litter's counts, confirmed (the 6-week count) or changed; the dialog's "Ja, ändra den" after samma_kull.
@@ -489,9 +490,15 @@ def new_link(herd, year):
 # that photo, which only then becomes the queue's work.
 
 PHOTO_LIMIT = parse_limit("60 per hour")  # per code or per user, every request with access, refused or not (mitt val)
-PHOTO_LIMITED = "Du har laddat upp många foton den senaste timmen. Fortsätt efter kl. {at}. Det du skrivit är sparat."
+PHOTO_LIMITED = (
+    f"Du har laddat upp {PHOTO_LIMIT.amount} foton den senaste timmen. Det är gränsen, ett skydd mot missbruk. "
+    "Du kan fortsätta efter kl. {at}. Det du skrivit är sparat."
+)
 SEND_LIMIT = parse_limit("20 per hour")  # per actor, as the queue's upload; sends only
-SEND_LIMITED = "Du har skickat många köp den senaste timmen. Fortsätt efter kl. {at}. Det du skrivit är sparat."
+SEND_LIMITED = (
+    f"Du har skickat {SEND_LIMIT.amount} köpanmälningar den senaste timmen. Det är gränsen, ett skydd mot missbruk. "
+    "Du kan fortsätta efter kl. {at}. Det du skrivit är sparat."
+)
 PHOTOS_KEPT = 60  # the session's own uploads a registration may bind (FC1): an hour's worth
 PHOTO_FIRST = "Ladda upp ett foto av intyget först."
 ONE_PAGE = "Ladda upp ett intyg i taget. PDF:en har fler än en sida."
@@ -642,7 +649,7 @@ def add_rabbit(herd, year):
 
         def bind(individual):  # in the registration's transaction: the photo, the rabbit and its receipt together
             inbox.bind_report_photo(item, document, None if access.code else actor, individual)
-            arsrapport.mail_added(herd, actor, "individual", individual.id)
+            arsrapport.mail_added(herd, access, current_user, "individual", individual.id)
             created.append(individual)
 
         return register_individual_as(actor, herd, form, bind)

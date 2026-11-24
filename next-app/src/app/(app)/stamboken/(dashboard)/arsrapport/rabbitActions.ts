@@ -31,16 +31,23 @@ async function call<T>(
   url: string | null,
   init: { method: string; body?: BodyInit; timeout?: number },
 ): Promise<ActionResult<T>> {
-  const refused = (detail: string): ActionResult<never> => ({
+  const refused = (title: string, detail: string): ActionResult<never> => ({
     ok: false,
-    problem: { status: 400, title: "Ogiltig begäran", detail },
+    problem: { status: 400, title, detail },
   });
-  if (url === null) return refused("Ogiltig besättning eller år.");
+  if (url === null)
+    return refused(
+      "Fel i adressen",
+      "Besättningen eller året i adressen stämmer inte. Öppna rapporten från länken i mejlet eller från Min besättning.",
+    );
   if (
     env !== undefined &&
     parseMode((await cookies()).get(MODE_COOKIE)?.value) !== env
   )
-    return refused("Miljön har bytts. Ladda om sidan.");
+    return refused(
+      "Sidan behöver laddas om",
+      "Du har bytt mellan Stamboken och testmiljön i en annan flik. Ladda om sidan, så sparas det på rätt ställe.",
+    );
   try {
     const data = await fetchApi<T>(url, {
       ...init,
