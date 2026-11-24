@@ -14,10 +14,13 @@ relies on it to find the rows whose PII must be redacted on GDPR
 anonymization — mutation endpoints must follow the convention.
 """
 
+import hashlib
+import json
 import logging
+import re
 from datetime import date, datetime, timedelta, timezone
 
-from peewee import Case, IntegrityError, fn
+from peewee import JOIN, Case, IntegrityError, fn
 
 from utils.cache_invalidation import trigger_invalidation
 from utils.data_access import erase_account, new_generation, purge_user_audit_pii, remove_profile_picture
@@ -27,6 +30,7 @@ from utils.data_access import erase_account, new_generation, purge_user_audit_pi
 from utils.database import (
     BILLING_FIELDS,
     DB_PROXY,
+    OUTSIDE_GENEBANK_HERDS,
     Herd,
     HerdAccessGrant,
     LoginCode,
@@ -38,7 +42,15 @@ from utils.database import (
     Membership,
     User,
 )
-from utils.herd_contact import on_household_erased, on_person_anonymizing, on_person_leaving, snapshot_before_leaving
+from utils.herd_contact import (
+    compare_with_register,
+    is_matrikel_reader,
+    link_herd,
+    on_household_erased,
+    on_person_anonymizing,
+    on_person_leaving,
+    snapshot_before_leaving,
+)
 from utils.inbox_purge import erase_person_from_inbox, remove_originals
 from utils.login_code import (
     AddressTaken,
@@ -1268,3 +1280,234 @@ def unlink_member_user(person_id, *, actor, mode="admin"):
         )
     _invalidate_genebanks(lost_genebanks)
     return person, lost_genebanks
+
+
+def legacy_owner_index(*fields) -> tuple[dict[int, dict[int, User]], set[int]]:
+    """Herd id -> {user id: user} with role owner, and the users with an incomplete owner role."""
+    owners: dict[int, dict[int, User]] = {}
+    incomplete: set[int] = set()
+    for user in User.select(*fields).order_by(User.id):
+        for role in user.privileges:
+            if not isinstance(role, dict) or "level" not in role:
+                incomplete.add(user.id)  # link_access_delta reads role["level"]
+                continue
+            if role["level"] != "owner":
+                continue
+            herd_id = role.get("herd")
+            if isinstance(herd_id, str) and re.fullmatch(r"[0-9]+", herd_id):
+                herd_id = int(herd_id)  # Match historical ids for the listing only.
+            if isinstance(herd_id, bool) or not isinstance(herd_id, int):
+                incomplete.add(user.id)
+                continue
+            owners.setdefault(herd_id, {})[user.id] = user
+    return owners, incomplete
+
+
+_DUPLICATE_HERD_CODE = "koden finns i flera genbanker"
+
+
+def _other_genebank_codes(genebank_id: int):
+    return Herd.select(Herd.herd).where(Herd.genebank != genebank_id)
+
+
+def membership_herd_candidates(membership_id: int, genebank_id: int) -> list[dict]:
+    rows = (
+        Herd.select(
+            Herd.id,
+            Herd.herd,
+            Herd.herd_name,
+            Herd.is_active,
+            Herd.membership,
+            Membership.id,
+            Membership.member_number,
+            Herd.herd.in_(_other_genebank_codes(genebank_id)).alias("duplicate_code"),
+        )
+        .join(Membership, JOIN.LEFT_OUTER)
+        .where(Herd.genebank == genebank_id, Herd.herd.not_in(OUTSIDE_GENEBANK_HERDS))
+    )
+    result = []
+    for herd in sorted(rows, key=lambda h: (int(re.sub(r"\D", "", h.herd) or 0), h.herd, h.id)):
+        link = "ingen"
+        if herd.membership_id is not None:
+            link = "detta" if herd.membership_id == membership_id else "annat"
+        result.append(
+            {
+                **_link_herd_summary(herd),
+                "link": link,
+                "unavailable_reason": _DUPLICATE_HERD_CODE if herd.duplicate_code else None,
+                "member_number": herd.membership.member_number if link == "annat" else None,
+            }
+        )
+    return result
+
+
+def _link_herd_summary(herd: Herd) -> dict:
+    return {"id": herd.id, "herd": herd.herd, "herd_name": herd.herd_name, "is_active": bool(herd.is_active)}
+
+
+_CONTACT_LABELS = {"name": "Namn", "email": "E-post", "mobile_phone": "Mobil", "physical_address": "Adress"}
+_CONTACT_EFFECTS = {
+    "person": "Besättningens kopia av namnet töms.",
+    "fritext": "Besättningens namn behålls och väntar på val av kontaktperson.",
+    "lika": "Besättningens kopia töms. Uppgiften hämtas från matrikeln.",
+    "olika": "Uppgifterna skiljer sig. Besättningens värde behålls i väntan på val.",
+    "bara_besattningen": "Besättningens egen uppgift behålls.",
+    "bara_matrikeln": "Uppgiften hämtas från matrikeln. Raden visas inte förrän någon väljer.",
+    "bada_tomma": "Uppgiften saknas på båda ställena. Raden visas inte förrän någon väljer.",
+}
+
+
+def _account_summary(user: User) -> dict:
+    return {"id": user.id, "username": user.username}
+
+
+def _contact_link_preview(herd: Herd) -> tuple[list[dict], dict]:
+    changes, cases = compare_with_register(herd)
+    rows = []
+    for field, case in cases.items():
+        effect = _CONTACT_EFFECTS[case]
+        if field == "name" and "contact_member" in changes:
+            person = (
+                Member.select(Member.first_name, Member.last_name).where(Member.id == changes["contact_member"]).get()
+            )
+            effect = f"{person.first_name} {person.last_name} blir kontaktperson. {effect}"
+        rows.append({"field": field, "label": _CONTACT_LABELS[field], "case": case, "effect": effect})
+    return rows, changes
+
+
+def _herd_link_preview(
+    herd: Herd, membership: Membership, main: User | None, accounts: dict[int, User]
+) -> tuple[dict, dict]:
+    active = membership.membership_status == Status.ACTIVE
+    owners, _ = legacy_owner_index(User.id, User.username, User._privileges, User.is_active)
+    legacy_owners = [
+        {**_account_summary(u), "in_membership": uid in accounts, "gains_household_grants": active and u == main}
+        for uid, u in owners.get(herd.id, {}).items()
+        if u.is_active
+    ]
+    grant_holders = (
+        User.select(User.id, User.username)
+        .join(Member)
+        .join(Membership)
+        .switch(Member)
+        .join(HerdAccessGrant)
+        .where(
+            User.is_active,
+            Member.end_date.is_null(True),
+            Membership.membership_status == Status.ACTIVE,
+            HerdAccessGrant.herd == herd,
+            HerdAccessGrant.revoked_at.is_null(True),
+            HerdAccessGrant.valid_until.is_null(True) | (HerdAccessGrant.valid_until >= date.today()),
+        )
+        .distinct()
+        .order_by(User.id)
+    )
+    new_access, new_readers, contact_rows, contact_changes = None, [], None, {}
+    try:
+        if main is not None and main.is_active and (not active or herd.id not in main.transfer_herd_ids()):
+            new_access = {
+                **_account_summary(main),
+                # integer ids, as the write policies compare; no SQL on stored role values
+                "already_edits": herd.id in main.effective_herd_ids(),
+                "already_manages": main.is_admin or herd.genebank_id in (main.is_manager or []),
+            }
+        if active:
+            potential_readers = [u for u in accounts.values() if u.is_active and not is_matrikel_reader(u, herd)]
+            herd.membership = membership  # in memory only; link_herd re-reads the locked row
+            new_readers = [_account_summary(u) for u in potential_readers if is_matrikel_reader(u, herd)]
+    except (KeyError, TypeError) as err:
+        raise LinkError("Åtkomsten kan inte beräknas", "Ett konto i medlemskapet har en ofullständig roll.") from err
+    if active:
+        contact_rows, contact_changes = _contact_link_preview(herd)
+    return {
+        "herd": {**_link_herd_summary(herd), "genebank_id": herd.genebank_id, "genebank_name": herd.genebank.name},
+        "membership": {
+            "id": membership.id,
+            "member_number": membership.member_number,
+            "membership_status": membership.membership_status,
+        },
+        "new_access": new_access,
+        "inactive_main_account": _account_summary(main) if main is not None and not main.is_active else None,
+        "new_readers": new_readers,
+        "legacy_owners": legacy_owners,
+        "grant_holders": [_account_summary(u) for u in grant_holders],
+        "contact_rows": contact_rows,
+    }, contact_changes
+
+
+def link_membership_herd(membership_id: int, herd_id: int, confirm_token: str | None, actor: User) -> dict:
+    """Preview under link_herd's locks, or commit the exact preview the administrator confirmed."""
+    with DB_PROXY.atomic():
+        membership = Membership.select().where(Membership.id == membership_id).for_update().first()
+        if membership is None:
+            raise LinkError("Hittades inte", f"Medlemskapet {membership_id} finns inte", status=404)
+        main_member = (
+            Member.select(Member.id, Member.user)
+            .where(Member.membership == membership, Member.role == "huvudmedlem", Member.end_date.is_null(True))
+            .first()
+        )
+        if main_member is None:  # RETIRED or HEADLESS, regardless of the stored status.
+            raise LinkError(
+                "Medlemskapet saknar aktiv huvudmedlem",
+                "Medlemskapet saknar aktiv huvudmedlem och kan därför inte få en besättning.",
+            )
+        # Role and account changes lock users independently of the membership. Lock the
+        # household accounts by id before the herd, in the same order as anonymization.
+        accounts = {
+            u.id: u
+            for u in User.select(User.id, User.username, User._privileges, User.is_active)
+            .join(Member)
+            .where(Member.membership == membership, Member.end_date.is_null(True))
+            .order_by(User.id)
+            .for_update("FOR SHARE")
+        }
+        herd = Herd.select().where(Herd.id == herd_id).for_update().first()
+        if herd is None:
+            raise LinkError("Hittades inte", f"Besättningen {herd_id} finns inte", status=404)
+        if herd.herd in OUTSIDE_GENEBANK_HERDS:
+            raise LinkError(
+                "Besättningen kan inte kopplas",
+                "Besättningen samlar kaniner sålda utanför genbanken.",
+                type="herd-unavailable",
+            )
+        if _other_genebank_codes(herd.genebank_id).where(Herd.herd == herd.herd).exists():
+            raise LinkError(
+                "Besättningen kan inte kopplas",
+                f"Besättningen kan inte kopplas eftersom {_DUPLICATE_HERD_CODE}.",
+                type="herd-unavailable",
+            )
+        if herd.membership_id is not None:
+            target = "detta medlemskap"
+            if herd.membership_id != membership_id:
+                number = herd.membership.member_number
+                target = f"medlemskap nr {number}" if number is not None else "ett annat medlemskap utan nummer"
+            raise LinkError(
+                "Besättningen är redan kopplad",
+                f"Besättningen är redan kopplad till {target}.",
+                type="herd-unavailable",
+            )
+
+        preview, changes = _herd_link_preview(herd, membership, accounts.get(main_member.user_id), accounts)
+        confirmation = (preview, changes, main_member.id, main_member.user_id)
+        token = hashlib.sha256(json.dumps(confirmation, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        if confirm_token != token:
+            raise LinkError(
+                "Bekräfta kopplingen",
+                "Granska vad kopplingen ger och bekräfta.",
+                type="confirm-required",
+                preview=preview,
+                confirm_token=token,
+            )
+        cases = link_herd(herd.id, membership.id, herd_code=herd.herd, genebank_id=herd.genebank_id)
+        if cases is None:
+            raise LinkError(
+                "Besättningen har ändrats", "Försök igen för att granska besättningen på nytt.", type="stale"
+            )
+        write_matrikel_audit(
+            actor,
+            "herd_membership_linked",
+            membership,
+            {"herd_id": herd.id, "main_member_id": main_member.id, "source": "matrikel"},
+        )
+    _invalidate_genebanks([herd.genebank_id])
+    return {**preview["herd"], "membership_id": membership_id}
