@@ -39,6 +39,7 @@ from utils.database import (
     Membership,
     User,
 )
+from utils.herd_contact import on_household_erased, on_person_anonymizing, on_person_leaving, snapshot_before_leaving
 from utils.inbox_purge import erase_person_from_inbox, remove_originals
 from utils.login_code import AddressTaken, lock_addresses, reserve_holder, reserve_login_address, void
 from utils.mail import cancel_member_added, enqueue_mail, forget_recipient, queue_member_added
@@ -343,8 +344,10 @@ def soft_delete_person(member, actor):
         if member.role == "huvudmedlem" and member.end_date is None:
             raise ValueError("Medlemskapets aktiva huvudmedlem kan inte tas bort — byt huvudmedlem först")
         if member.end_date is None:
+            contacts = snapshot_before_leaving(member)
             member.end_date = date.today()
             member.save()
+            on_person_leaving(member, contacts)
         cancel_member_added([member.id])
         now = datetime.now()
         revoked = (
@@ -471,6 +474,9 @@ def anonymize_person(member, actor, deferred_originals=None):
         # current user_id under the membership lock, never the caller's stale copy
         person, user = _lock_for_detach(member.id)
         membership = person.membership
+        erased_before = is_anonymized(person)  # read under the lock: a repeated erasure is no transition
+        contacts = snapshot_before_leaving(person)  # the herds' contact, with her values still in it
+        on_person_anonymizing(person)
         before = user.effective_herd_ids() if user is not None else set()
         if user is not None:  # her name leaves the public certificate check page too (stamboken #6)
             User.update(name_on_check_page=False).where(User.id == user.id).execute()
@@ -497,6 +503,11 @@ def anonymize_person(member, actor, deferred_originals=None):
         if person.end_date is None:
             person.end_date = date.today()
         person.save()
+        on_person_leaving(person, contacts)
+        # this call erases the last person, not only ends her (the address below): ended persons' farm rows wait
+        # until then, and rows added after that erasure stay
+        if not erased_before and all(map(is_anonymized, Member.select().where(Member.membership == membership))):
+            on_household_erased(membership.id)
         if not Member.select().where(Member.membership == membership, Member.end_date.is_null(True)).exists():
             # Last active person gone: the household address, the billing
             # address and the free-text notes were theirs, on the row and in the
@@ -782,7 +793,9 @@ def set_membership_status(membership, new_status, actor):
 
     Call inside the caller's transaction with the membership row locked FOR UPDATE. Raises
     TransitionRefused (nothing written) when the table has none, e.g. for a retired membership.
-    Sets the attribute only: the caller saves it with the rest of its columns.
+    Sets the attribute only: the caller saves it with the rest of its columns. Returns whether the membership
+    becomes active: then the caller calls herd_contact.on_membership_active after its save, in the same
+    transaction, so that the herds linked meanwhile are compared with all of the saved membership (#117).
     """
     new_status = Status(new_status).value
     has_main = (
@@ -798,7 +811,9 @@ def set_membership_status(membership, new_status, actor):
         # Nested {"before": {field: ...}, "after": {...}} shape, like the other membership mutations.
         {"before": {"membership_status": membership.membership_status}, "after": {"membership_status": new_status}},
     )
+    activated = new_status == Status.ACTIVE and membership.membership_status != Status.ACTIVE
     membership.membership_status = new_status
+    return activated
 
 
 def create_membership(data, actor):
@@ -855,6 +870,7 @@ def retire_membership(membership, actor):
     with DB_PROXY.atomic():
         Membership.select().where(Membership.id == membership.id).for_update().get()
         persons = list(Member.select().where(Member.membership == membership, Member.end_date.is_null(True)))
+        contacts = snapshot_before_leaving(persons[0]) if persons else None
         for person in persons:
             HerdAccessGrant.update(revoked_at=now, updated_at=now).where(
                 HerdAccessGrant.member == person,
@@ -868,6 +884,8 @@ def retire_membership(membership, actor):
         # overwrite a notes/address PATCH that committed while we waited for the
         # lock. Write only the column this operation owns (T5a deferred minor).
         membership.save(only=[Membership.membership_status, Membership.updated_at])
+        if persons:  # one pass covers everyone who left
+            on_person_leaving(persons[0], contacts)
         write_matrikel_audit(
             actor,
             "membership_retired",

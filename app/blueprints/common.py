@@ -120,6 +120,15 @@ def problem(status, title, detail, **extra):
     return jsonify(body), status, {"Content-Type": "application/problem+json"}
 
 
+def contact_problem(err):
+    """A refused contact patch (#117, utils.herd_contact): 409 contact-changed or 403 contact-forbidden."""
+    from utils.herd_contact import ContactConflict  # pylint: disable=import-outside-toplevel
+
+    if isinstance(err, ContactConflict):
+        return problem(409, "Kontaktuppgifterna har ändrats", str(err), type="contact-changed")
+    return problem(403, "Åtkomst nekad", str(err), type="contact-forbidden")
+
+
 REX_MUST_BE_BOOLEAN = "rex must be true or false"
 
 

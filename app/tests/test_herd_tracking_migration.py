@@ -184,7 +184,7 @@ class TestHerdTrackingMigration(DatabaseTest):
         self._to_v29_shape()
         db._apply_herd_tracking_v30()
         db._create_buyer_contact_guards()  # migration 44
-        db._create_arsrapport_schema()  # migration 50
+        db._create_arsrapport_schema()  # migration 51
         self.assertEqual(self._snapshot(), bootstrapped)
 
     def test_helper_is_idempotent_on_final_schema(self):

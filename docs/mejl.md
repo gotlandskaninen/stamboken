@@ -103,7 +103,8 @@ mejlet går då till den adress som är aktuell just då.
 mejl, 2 för massutskick. **Kategori:** `T` (transaktion) eller `N` (notis).
 
 **Bilagor:** byggfunktionen kan returnera nyckeln `attachments` med en lista
-av `(filnamn, mime-typ, bytes)`. Bilagan byggs när mejlet skickas.
+av `(filnamn, mime-typ, bytes)`. Bilagan byggs när mejlet skickas. Nyckeln
+`reply_to` sätter `Reply-To` till en annan adress än avsändarens.
 
 ## Mejltyper om medlemskap
 
@@ -195,14 +196,26 @@ Koden finns i `app/utils/login_code.py` och `set_member_email` i
   och avslutar kontots sessioner. Raderna i `member_previous_address` raderas
   två dygn efter att adressen slutat gälla, och vid anonymisering.
 
+## Mejltypen om Tyck till
+
+`tyck_till.inskick` går till föreningens funktionsadress (mottagartypen
+`tyck_till`, adressen ur `TYCK_TILL_MOTTAGARE`) när någon har skickat en
+synpunkt med knappen "Tyck till" ([tyck-till.md](tyck-till.md)). Raden
+har bara heltal (inskickets UUID som `UUID.int`, issuens nummer, vilket repo och
+om issuen hamnade på tavlan). Texten, sidan, bilderna och kontaktuppgifterna
+läses ur inskickets mapp när mejlet byggs, och finns mappen inte längre blir
+mejlet `cancelled`. Bilderna är bilagor, och `Reply-To` är den adress medlemmen
+vill ha svar till.
+
 ## Mottagare
 
 `recipient_kind` säger var adressen finns. Inbyggda: `member`
 (`Member.email`), `user` (`hbuser.email`), `application` (ansökan om
 medlemskap), `inbox_sender` (avsändaren av en mejlad post i
 inläsningskön, [inkorg-gmail.md](inkorg-gmail.md)), `login_code` (adressen en
-kod går till, ingen när koden är använd, ogiltig eller för gammal) och
-`member_previous_address` (en tidigare adress). En ny sort registreras med
+kod går till, ingen när koden är använd, ogiltig eller för gammal),
+`member_previous_address` (en tidigare adress) och `tyck_till`
+(funktionsadressen för Tyck till, alltid samma). En ny sort registreras med
 `@recipient_kind("<namn>")` och en funktion som tar id:t och returnerar
 `Recipient(address, label)` eller `None`. `label` är det statusvyn visar, ett
 namn, aldrig adressen. Saknas mottagaren, adressen eller

@@ -126,6 +126,8 @@ EXEMPT_ENDPOINTS = frozenset(
         # read and withdraw it in production, also once her production access is gone.
         ("certificates_v2.check_page_name", "GET"),
         ("certificates_v2.check_page_name", "PUT"),
+        # Tyck till: anyone may send feedback, logged in or not, and from the demo too.
+        ("tyck_till.send", "POST"),
         ("health_check", "GET"),
         # No data: the SPA shell, which also answers every unknown GET with 404.
         ("main", "GET"),

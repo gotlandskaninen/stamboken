@@ -13,6 +13,7 @@ from flask import Blueprint, jsonify, request
 from flask_login import current_user
 from peewee import IntegrityError, fn
 from utils.database import BILLING_FIELDS, DB_PROXY, Herd, HerdAccessGrant, Member, Membership, User
+from utils.herd_contact import on_membership_active
 from utils.login_code import AddressTaken
 from utils.matrikel import (
     VALID_PERSON_ROLES,
@@ -366,11 +367,14 @@ def patch_membership(membership_id: int):
                         "after": {"member_number": after["member_number"]},
                     },
                 )
+            activated = False
             if "membership_status" in after:
-                set_membership_status(ms, after["membership_status"], current_user)
+                activated = set_membership_status(ms, after["membership_status"], current_user)
             # ...and UPDATE only the changed columns: a full-row save would push
             # every attribute the instance carries, changed or not.
             ms.save(only=[getattr(Membership, field) for field in after] + [Membership.updated_at])
+            if activated:  # after the save: the comparison reads the new address too (#117)
+                on_membership_active(ms.id)
             other_before = {k: v for k, v in before.items() if k not in ("member_number", "membership_status")}
             other_after = {k: v for k, v in after.items() if k not in ("member_number", "membership_status")}
             if other_after:

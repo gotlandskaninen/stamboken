@@ -1,0 +1,17 @@
+{% block subject %}[Tyck till] {{ repo }}#{{ number }} {{ ref }}{% endblock %}
+
+{% block body %}
+{% if not tavla %}Inte på tavlan, lägg till den.
+
+{% endif %}{{ "Något fungerar inte" if kind == "fel" else "Önskemål" }}: {{ url }}
+
+{{ text }}
+
+Sida: {{ path }}
+{% if pekat %}Pekade på: {{ pekat }}
+{% endif %}Version: {{ version }}, {{ device if device in ("mobil", "dator") else "okänd enhet" }}
+{% if user_id %}Konto: {{ user_id }}
+{% endif %}{% if email %}Svar önskas till: {{ (name + " ") if name else "" }}{{ email }}
+{% endif %}{% if images %}Bilder: {{ images }} bifogade.
+{% endif %}Referens: {{ ref }}
+{% endblock %}

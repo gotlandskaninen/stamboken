@@ -47,9 +47,12 @@ from utils.database import ACTIVE_WINDOW_DAYS  # isort: skip
 from utils.database import AUDIT_LOG_NO_UPDATE_RULE  # isort: skip
 from utils.database import OUTSIDE_GENEBANK_HERDS  # isort: skip
 from utils.database import ACCOUNT_MASK, BANK_PRIVACY_FIELDS, PRIVACY_LEVELS, account_end  # isort: skip
+from utils.database import HERD_CONTACT_COLUMNS  # isort: skip
 from utils.database import ht_not_voided  # isort: skip
 from utils.database import ht_order_desc  # isort: skip
 from utils.database import latest_ht_per_individual  # isort: skip
+from utils.herd_contact import ContactConflict, apply_contact_patch, check_flat_fields, check_place_shown  # isort: skip
+from utils.herd_contact import contact_field, herd_contact, herd_contacts, legacy_contact_form, lock_herd  # isort: skip
 from utils.database import lock_individuals  # isort: skip
 from utils.database import not_voided  # isort: skip
 from utils.database import validate_date  # isort: skip
@@ -1354,6 +1357,8 @@ HERD_EDITABLE_FIELDS = {
     "wire_phone",
     "www",
     "is_active",
+    "contact",  # the contact rows of a compared herd (#117): apply_contact_patch
+    "place_shown",  # what the form showed of wire_phone, www and location (#117): check_place_shown
 }
 
 
@@ -1398,6 +1403,12 @@ def list_all_herds(user, *, genebank_id=None, active=None, has_owner=None, searc
     # Materialise before slicing: herd is a small table (~1200 rows) and
     # the owner/search filters can only run Python-side (TEXT JSON).
     herds = list(q)
+    contacts = herd_contacts(herds)
+
+    def contact_name(h):  # the resolved name; an own name stays exactly as stored
+        row = contacts[h.id].rows["name"]
+        return h.name if row.source == "egen" else row.value
+
     # Natural sort: G2 before G10 before G1274 (lexicographic herd-code
     # sort would interleave them).
     herds.sort(key=lambda h: (h.genebank_id, int(re.sub(r"\D", "", h.herd) or 0), h.herd))
@@ -1411,7 +1422,7 @@ def list_all_herds(user, *, genebank_id=None, active=None, has_owner=None, searc
             for h in herds
             if needle in (h.herd or "").lower()
             or needle in (h.herd_name or "").lower()
-            or needle in (h.name or "").lower()
+            or needle in (contact_name(h) or "").lower()
         ]
     total = len(herds)
     page = max(page, 1)
@@ -1425,7 +1436,7 @@ def list_all_herds(user, *, genebank_id=None, active=None, has_owner=None, searc
                 "id": h.id,
                 "herd": h.herd,
                 "herd_name": h.herd_name,
-                "name": h.name,
+                "name": contact_name(h),
                 "is_active": bool(h.is_active),
                 "genebank_id": h.genebank_id,
                 "genebank_name": h.genebank.name,
@@ -1441,21 +1452,24 @@ def get_herd_for_admin(user, herd):
     caller is admin or manager(gb).
     """
     herd_owners = _herd_owner_map().get(herd.id, [])
+    contact = herd_contact(herd)
+    value = {f: getattr(herd, f) if row.source == "egen" else row.value for f, row in contact.rows.items()}
     return {
         "id": herd.id,
         "herd": herd.herd,
         "herd_name": herd.herd_name,
-        "name": herd.name,
+        "name": value["name"],
         "name_privacy": herd.name_privacy,
-        "physical_address": herd.physical_address,
-        "email": herd.email,
-        "mobile_phone": herd.mobile_phone,
+        "physical_address": value["physical_address"],
+        "email": value["email"],
+        "mobile_phone": value["mobile_phone"],
         "wire_phone": herd.wire_phone,
         "www": herd.www,
         "is_active": bool(herd.is_active),
         "genebank_id": herd.genebank_id,
         "genebank_name": herd.genebank.name,
         "owners": [{"id": o.id, "username": o.username or o.email, "fullname": o.fullname} for o in herd_owners],
+        "contact": contact_field(user, herd, contact, reader=True, private_access=True),
     }
 
 
@@ -1469,23 +1483,36 @@ def edit_herd(herd, fields, actor):
     bad = invalid_privacy_field(fields)
     if bad:
         raise ValueError(f"Fältet {bad} måste vara public, authenticated, private eller null.")
-    # Only write fields whose value actually changed, and skip the UPDATE
-    # entirely when nothing did — avoids a redundant full-row write. No explicit
-    # type cast is needed: every HERD_EDITABLE_FIELDS value
-    # already arrives correctly typed from the RSC action (JSON bool for
-    # is_active, strings for the rest), so payload and column types match.
-    changed = []
-    for key, value in fields.items():
-        if getattr(herd, key) != value:
-            setattr(herd, key, value)
-            changed.append(key)
-    if changed:
-        # only= : a full-row save would write the stale ownership columns back
-        # over a membership/genebank change committed since the row was loaded.
-        with DATABASE.atomic():
+    contact, place_shown = fields.get("contact"), fields.get("place_shown")
+    fields = {k: v for k, v in fields.items() if k not in ("contact", "place_shown")}
+    with DATABASE.atomic():
+        # One transaction, decided on the row under the membership and herd locks (#117); ContactConflict,
+        # ContactForbidden and ValueError roll back the whole call.
+        herd = lock_herd(herd.id)
+        # Both the herd's genebank and the actor's roles may have changed since the route checked them.
+        actor = User.get_or_none(User.id == actor.id)
+        if actor is None or not actor.is_active or not (actor.is_admin or herd.genebank_id in (actor.is_manager or [])):
+            raise PermissionError(f"Kräver manager(gb={herd.genebank_id}) eller admin.")
+        check_flat_fields(herd, fields, contact)
+        check_place_shown(herd, fields, place_shown, with_privacy=False)  # the admin form shows no privacy
+        if contact is not None:
+            apply_contact_patch(herd.id, contact, actor)
+        # Only write fields whose value actually changed, and skip the UPDATE
+        # entirely when nothing did — avoids a redundant full-row write. No explicit
+        # type cast is needed: every HERD_EDITABLE_FIELDS value
+        # already arrives correctly typed from the RSC action (JSON bool for
+        # is_active, strings for the rest), so payload and column types match.
+        changed = []
+        for key, value in fields.items():
+            if getattr(herd, key) != value:
+                setattr(herd, key, value)
+                changed.append(key)
+        if changed:
+            # only= : a full-row save would write the stale ownership columns back
+            # over a membership/genebank change committed since the row was loaded.
             herd.save(only=changed)
-    logger.info(f"User:{actor.id} edited herd {herd.id} via adminpanel")
-    return get_herd_for_admin(actor, herd)
+        logger.info(f"User:{actor.id} edited herd {herd.id} via adminpanel")
+        return get_herd_for_admin(actor, Herd.get_by_id(herd.id))  # read under the locks it was decided on
 
 
 # Genebank functions
@@ -1677,8 +1704,8 @@ def add_herd(form, user_uuid):
         if bad:
             return {"status": "error", "message": f"Invalid value for {bad}"}
         # Real columns only: Herd(**form) also took _pk, genebank_id and __data__, which let a
-        # manager overwrite another genebank's herd. membership is admin-only, as in update_herd.
-        locked = {"id"} | (set() if user.is_admin else {"membership"})
+        # manager overwrite another genebank's herd. membership and the contact columns have their own paths (#117).
+        locked = {"id", "contact_member", "contact_pending", "membership"}
         herd = Herd(**{k: v for k, v in form.items() if k in Herd._meta.fields and k not in locked})
         try:
             herd.save(force_insert=True)
@@ -1808,17 +1835,23 @@ def save_yearly_report(herd_id, form_data, user):
         return {"status": "error", "message": "Failed to save report"}
 
 
-def update_herd(form, user_uuid):
+def update_herd(form, user_uuid, *, legacy=False):
     """
     Updates a herd, identified by `form.id`, by the values in `form`, if the
     given `user` has sufficient permissions to do so.
+
+    One transaction, decided on the row under the membership and herd locks (#117); membership is never written.
+    `legacy` is the old app's route: legacy_contact_form keeps a linked herd's contact fields. Otherwise (v2)
+    `contact` goes to apply_contact_patch, flat contact fields are refused on a compared herd and a place field
+    needs `place_shown` (check_place_shown);
+    ContactConflict and ContactForbidden are raised for the route to answer, after the rollback.
     """
     user = fetch_user_info(user_uuid)
     if user is None:
         return {"status": "error", "message": "Not logged in"}
     try:
         with DATABASE.atomic():
-            herd = Herd.get(form["id"])
+            herd = lock_herd(form["id"])
 
             if not user.can_edit(herd.herd):
                 return {"status": "error", "message": "Forbidden"}
@@ -1843,11 +1876,22 @@ def update_herd(form, user_uuid):
             bad = invalid_privacy_field(form)
             if bad:
                 return {"status": "error", "message": f"Invalid value for {bad}"}
+            if legacy:
+                form = legacy_contact_form(herd, form, user)
+            else:
+                contact = form.get("contact")
+                check_flat_fields(herd, form, contact)
+                check_place_shown(herd, form, form.get("place_shown"))
+                if contact is not None:
+                    apply_contact_patch(herd.id, contact, user)
 
             # Real columns only (hasattr also matches genebank_id, membership_id and
-            # methods such as save). Identity/ownership columns are admin-only; the
-            # legacy SPA echoes the whole herd object, so locked keys are dropped, not refused.
-            locked = set() if user.is_admin else {"id", "herd", "genebank", "membership"}
+            # methods such as save). Identity columns are admin-only; the legacy SPA
+            # echoes the whole herd object, so locked keys are dropped, not refused.
+            # The contact and membership columns are written only by their own paths, never by a general call.
+            locked = {"id", "contact_member", "contact_pending", "membership"} | (
+                set() if user.is_admin else {"herd", "genebank"}
+            )
             written = [key for key in form if key in Herd._meta.fields and key not in locked]
             for key in written:
                 setattr(herd, key, form[key])
@@ -1859,6 +1903,12 @@ def update_herd(form, user_uuid):
         return {"status": "updated"}
     except DoesNotExist:
         return {"status": "error", "message": "Unknown herd"}
+    except ValueError as err:
+        return {"status": "error", "message": str(err)}
+    except ContactConflict as err:  # on the old app's route only lock_herd's (a herd linked meanwhile)
+        if legacy:
+            return {"status": "error", "message": str(err)}
+        raise
 
 
 # Individual functions
@@ -4214,9 +4264,18 @@ _AUDIT_UNDO_SKIP = {
 }
 
 
-# A herd's identity and ownership are admin-only, as in update_herd (the primary key herd_id is
-# never written by undo). Its *_privacy columns hold None or one of the levels update_herd accepts.
-_AUDIT_HERD_ADMIN_COLUMNS = {"herd", "genebank_id", "membership_id"}
+# A herd's identity and ownership are admin-only (the primary key herd_id is never written by
+# undo). Its *_privacy columns hold None or one of the levels update_herd accepts.
+_AUDIT_HERD_ADMIN_COLUMNS = {"herd", "genebank_id"}
+# #117, spec Granskningsloggen: the contact changes only where its rules run (link_herd, the contact
+# patch, the lifecycle), not by undo, not even by admin. The history keeps no contact values, so an
+# old privacy written back would apply to a newer value.
+_AUDIT_HERD_CONTACT_COLUMNS = {
+    "membership_id",
+    "contact_member_id",
+    "contact_pending",
+    *(f"{column}_privacy" for column in HERD_CONTACT_COLUMNS),
+}
 _AUDIT_PRIVACY_LEVELS = ("public", "authenticated", "private")
 
 
@@ -4230,8 +4289,8 @@ def _audit_invalid_privacy_field(fields):
 def _audit_undo_locked(table_name, is_admin):
     """The columns of `table_name` that an audit revert/restore by this user must not write."""
     locked = _AUDIT_UNDO_SKIP.get(table_name, set())
-    if table_name == "herd" and not is_admin:
-        return locked | _AUDIT_HERD_ADMIN_COLUMNS
+    if table_name == "herd":
+        return locked | _AUDIT_HERD_CONTACT_COLUMNS | (set() if is_admin else _AUDIT_HERD_ADMIN_COLUMNS)
     return locked
 
 
@@ -4240,7 +4299,10 @@ def _audit_undo_refusal(table_name, values, is_admin):
     Why an audit revert/restore that writes `values` (column -> value) to `table_name` is refused,
     or None. A restore leaves the locked columns out of `values` first: it skips them.
     """
-    held = ", ".join(sorted(set(values) & _audit_undo_locked(table_name, is_admin)))
+    held = set(values) & _audit_undo_locked(table_name, is_admin)
+    if contact := ", ".join(sorted(held & _AUDIT_HERD_CONTACT_COLUMNS)):  # only a herd's locked set holds them
+        return f"{contact} kan inte ångras eller återställas här. Ändra besättningens kontakt i stället."
+    held = ", ".join(sorted(held))
     if held and table_name == "herd":
         return f"Bara admin kan ändra {held} på en besättning."
     if held:
@@ -4297,6 +4359,15 @@ def _audit_pedigree_cycle_error(table_name, record_id, values):
 # logs, imported once at cutover by a script in the ops repo) hold partial
 # snapshots in v1's value format.
 IMPORTED_AUDIT_MESSAGE = "Historik från gamla Stamboken kan inte ångras"
+# the herd's contact columns as the admin history names them (auditLabels.ts)
+_HERD_CONTACT_LABELS = {
+    "name": "Namn",
+    "email": "E-post",
+    "mobile_phone": "Mobiltelefon",
+    "wire_phone": "Fast telefon",
+    "physical_address": "Adress",
+    "www": "Hemsida",
+}
 
 
 def revert_audit_entry(audit_id, fields=None, is_admin=False):
@@ -4337,6 +4408,7 @@ def revert_audit_entry(audit_id, fields=None, is_admin=False):
     params = []
     values = {}
     bank_ignored = False
+    skipped = []  # #117: the history keeps no herd contact values, so they cannot be written back
     for field in fields:
         if table_name == "herd" and field in BANK_PRIVACY_FIELDS:  # fixed 'private' (#33): ignored, not an error
             bank_ignored = True
@@ -4349,13 +4421,22 @@ def revert_audit_entry(audit_id, fields=None, is_admin=False):
             set_clauses.append(f'"{field}" = %s')
             params.append(entry.old_data[field])
             values[field] = entry.old_data[field]
+        elif table_name == "herd" and field in HERD_CONTACT_COLUMNS:
+            skipped.append(field)
+    skipped_labels = ", ".join(_HERD_CONTACT_LABELS[f] for f in HERD_CONTACT_COLUMNS if f in skipped)
+    done = "Ändring ångrad"
+    if skipped:
+        done += f" utom {skipped_labels}: historiken sparar inte de värdena."
 
     if refusal := _audit_undo_refusal(table_name, values, is_admin):
         return {"status": "error", "message": refusal}, 409
 
     if not set_clauses:
         if bank_ignored:  # only bank privacy was selected (e.g. a migration 40 entry): nothing to write
-            return {"status": "success", "message": "Ändring ångrad"}, 200
+            return {"status": "success", "message": done}, 200
+        if skipped:
+            message = f"Inga fält att ångra: historiken sparar inte värdena för {skipped_labels}."
+            return {"status": "error", "message": message}, 400
         return {"status": "error", "message": "Inga fält att ångra"}, 400
 
     params.append(entry.record_id)
@@ -4373,7 +4454,7 @@ def revert_audit_entry(audit_id, fields=None, is_admin=False):
     except Exception as e:
         return {"status": "error", "message": f"Ångra misslyckades: {e}"}, 409
 
-    return {"status": "success", "message": "Ändring ångrad"}, 200
+    return {"status": "success", "message": done}, 200
 
 
 def restore_record(table_name, record_id, audit_id, is_admin=False):
@@ -4443,7 +4524,11 @@ def restore_record(table_name, record_id, audit_id, is_admin=False):
         return {"status": "error", "message": f"Återställning misslyckades: {e}"}, 409
 
     if skipped:
-        why = "bara admin kan ändra dem" if table_name == "herd" else "de ändras via kaninen, kullen eller kullplatsen"
+        why = (
+            "de ändras bara av admin eller i besättningens kontakt"
+            if table_name == "herd"
+            else "de ändras via kaninen, kullen eller kullplatsen"
+        )
         return {"status": "success", "message": f"Post återställd utom {', '.join(skipped)}: {why}."}, 200
     return {"status": "success", "message": "Post återställd"}, 200
 
