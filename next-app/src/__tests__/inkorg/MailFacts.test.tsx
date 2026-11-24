@@ -12,11 +12,28 @@ afterEach(cleanup);
 
 const item = (detail: Record<string, unknown>) =>
   ({
-    mentioned_individuals: [],
     events: [{ id: 1, at: "", kind: "inkommen", user: null, detail }],
   }) as unknown as InboxDetail;
 
 describe("MailFacts", () => {
+  it("renders a response from an older API without the new mail fields", () => {
+    const mail = item({ not_saved: ["bilaga.txt"] });
+    mail.kind = "mail";
+    mail.message = "Se bilagan.";
+    render(
+      <>
+        <MailThread item={mail} />
+        <dl>
+          <MailFacts item={mail} />
+        </dl>
+      </>,
+    );
+    expect(screen.getByText("Se bilagan.")).toBeVisible();
+    expect(screen.getByText("bilaga.txt")).toBeVisible();
+    expect(screen.queryByText("Ämne")).toBeNull();
+    expect(screen.queryByText("Nämnda kaniner")).toBeNull();
+  });
+
   it("links to the rabbits the reader may see", () => {
     render(
       <dl>

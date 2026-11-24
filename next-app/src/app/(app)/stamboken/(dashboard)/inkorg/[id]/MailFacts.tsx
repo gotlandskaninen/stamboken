@@ -64,6 +64,7 @@ export function SenderUnconfirmed({ item }: { item: InboxDetail }) {
  * reply from someone else may be about, and the files that were not stored.
  */
 export function MailFacts({ item }: { item: InboxDetail }) {
+  const mentioned = item.mentioned_individuals ?? [];
   const arrived = item.events.find((e) => e.kind === "inkommen")?.detail ?? {};
   const maybe =
     typeof arrived.maybe_item === "number" ? arrived.maybe_item : null;
@@ -77,11 +78,11 @@ export function MailFacts({ item }: { item: InboxDetail }) {
   });
   return (
     <>
-      {item.mentioned_individuals.length > 0 && (
+      {mentioned.length > 0 && (
         <>
           <dt>Nämnda kaniner</dt>
           <dd>
-            {item.mentioned_individuals.map((number) => (
+            {mentioned.map((number) => (
               <div key={number}>
                 <Link href={`/stamboken/individ/${encodeURIComponent(number)}`}>
                   {number}
