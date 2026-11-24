@@ -133,7 +133,7 @@ class TestMembersImport(DatabaseTest):
         for body in (
             {"phone": "070-1234567"},
             # what the person form sends: the unchanged names and role too
-            {"first_name": "", "last_name": "Testbiblioteket", "role": "huvudmedlem", "phone": "070-1234567"},
+            {"first_name": "", "last_name": "Testbiblioteket", "role": "huvudmedlem", "phone": "070-7654321"},
         ):
             with self.subTest(body=body):
                 response = client.patch(f"/api/v2/persons/{person.id}", json=body)
@@ -141,7 +141,7 @@ class TestMembersImport(DatabaseTest):
                 self.assertEqual(response.status_code, 200, response.data)
                 stored = db.Member.get_by_id(person.id)
                 self.assertEqual(
-                    (stored.first_name, stored.last_name, stored.phone), ("", "Testbiblioteket", "070-1234567")
+                    (stored.first_name, stored.last_name, stored.phone), ("", "Testbiblioteket", body["phone"])
                 )
 
     def test_two_friexemplar_can_share_an_email(self):

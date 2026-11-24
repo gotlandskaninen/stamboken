@@ -171,11 +171,47 @@ describe("PersonsCard — organisationens kontaktperson", () => {
     const save = dialog.getByRole("button", { name: "Spara" });
     expect(firstName).toBeRequired();
     expect(lastName).toBeRequired();
-    expect(save).toBeDisabled();
+    // unchanged names: other fields can be saved, as the API allows
+    expect(save).toBeEnabled();
     fireEvent.change(firstName, { target: { value: "Lo" } });
     expect(save).toBeDisabled();
     fireEvent.change(lastName, { target: { value: "Exempel" } });
     expect(save).toBeEnabled();
+  });
+});
+
+describe("PersonsCard — importerad rad utan förnamn", () => {
+  it("saves a phone change without asking for a first name", async () => {
+    vi.mocked(updatePerson).mockResolvedValue({ ok: true });
+    const imported = person({
+      id: 21,
+      first_name: "",
+      last_name: "Testbiblioteket",
+      role: "huvudmedlem",
+    });
+    render(
+      <PersonsCard
+        membership={{ ...MEMBERSHIP, persons: [imported] }}
+        canEdit
+      />,
+    );
+    fireEvent.click(
+      within(row(/Testbiblioteket/)).getByRole("button", { name: "Redigera" }),
+    );
+    const dialog = within(screen.getByRole("dialog"));
+    fireEvent.change(dialog.getByLabelText("Telefon"), {
+      target: { value: "070-1234567" },
+    });
+    const save = dialog.getByRole("button", { name: "Spara" });
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
+    await waitFor(() =>
+      expect(updatePerson).toHaveBeenCalledWith(
+        1,
+        21,
+        expect.objectContaining({ phone: "070-1234567" }),
+      ),
+    );
   });
 });
 

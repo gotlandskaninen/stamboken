@@ -93,14 +93,18 @@ export function PersonsCard({
   const [personOpen, setPersonOpen] = useState(false);
   const [editPersonId, setEditPersonId] = useState<number | null>(null);
   const [personForm, setPersonForm] = useState(EMPTY_PERSON_FORM);
+  const editedPerson = membership.persons.find((p) => p.id === editPersonId);
   const editingContact =
     Boolean(membership.organization_name) &&
-    membership.persons.some(
-      (p) =>
-        p.id === editPersonId &&
-        p.role === "huvudmedlem" &&
-        p.end_date === null,
-    );
+    editedPerson?.role === "huvudmedlem" &&
+    editedPerson.end_date === null;
+  // As the API: the name rule applies only when a name or the role changes,
+  // so an imported row without a first name can still get its phone fixed.
+  const namesAndRoleUnchanged =
+    editedPerson !== undefined &&
+    personForm.first_name.trim() === editedPerson.first_name.trim() &&
+    personForm.last_name.trim() === editedPerson.last_name.trim() &&
+    personForm.role === editedPerson.role;
 
   // Grant dialog
   const [grantPerson, setGrantPerson] = useState<Person | null>(null);
@@ -528,6 +532,7 @@ export function PersonsCard({
             disabled={
               pending ||
               (!editingContact &&
+                !namesAndRoleUnchanged &&
                 (!personForm.first_name.trim() || !personForm.last_name.trim()))
             }
           >
