@@ -129,6 +129,9 @@ def issue(person, purpose, browser, address, replaces=None):
         logger.warning("No code for member %s: %s codes today", person.id, A_PERSON_A_DAY)
         return None
     if LoginCode.select().where(LoginCode.created_at > now - timedelta(hours=1)).count() >= AN_HOUR:
+        MailSender.insert(id=1, code_limit_at=now).on_conflict(
+            conflict_target=[MailSender.id], preserve=[MailSender.code_limit_at]
+        ).execute()
         logger.warning("No code for member %s: %s codes in the last hour", person.id, AN_HOUR)
         return None
     return LoginCode.create(
@@ -451,6 +454,8 @@ def alarms(now=None):
     since = now - timedelta(hours=1)
     found = []
     sender = MailSender.get_or_none(MailSender.id == 1)
+    if sender and sender.code_limit_at and sender.code_limit_at > since:
+        found.append({"code": "kodinloggning_timtak", "message": f"Timtaket på {AN_HOUR} koder har stoppat utskick"})
     if sender and sum(at > since for at in sender.code_queue_errors or []) >= 3:
         found.append(
             {"code": "kodinloggning_kofel", "message": "Flera förfrågningar om inloggningskod har misslyckats"}

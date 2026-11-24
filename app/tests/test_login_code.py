@@ -206,9 +206,19 @@ class TestLimits(LoginCodeTest):
         people = [self.person_row(f"P{n}", f"p{n}@example.org") for n in range(25)]
         for n in range(120):
             self.assertIsNotNone(self.issue(person=people[n % 25], browser=f"w{n}"), n)
+
+        def cap_alarm():
+            return "kodinloggning_timtak" in [a["code"] for a in mail.sender_alarms(self.now)["alarms"]]
+
+        self.assertFalse(cap_alarm())
+        self.now += timedelta(minutes=30)
         self.assertIsNone(self.issue(person=self.person, browser="w120"))
-        self.now += timedelta(hours=1, seconds=1)
+        self.assertTrue(cap_alarm())
+        self.now += timedelta(minutes=31)
         self.assertIsNotNone(self.issue(person=self.person, browser="w121"))
+        self.assertTrue(cap_alarm())
+        self.now += timedelta(minutes=29)
+        self.assertFalse(cap_alarm())
 
     def test_fifty_wrong_codes_close_code_login_and_light_the_alarm(self):
         people = [self.person_row(f"P{n}", f"p{n}@example.org") for n in range(17)]
