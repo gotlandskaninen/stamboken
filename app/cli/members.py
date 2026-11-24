@@ -252,6 +252,12 @@ def _read_rows(csv_path: str) -> tuple[list[dict], list[tuple[str, str]], list[t
     without a name still errors — that is corruption, not filler.
     """
     rows, errors, file_errors = [], [], []
+    with open(csv_path, "rb") as fb:  # find a bad byte by its physical line; the text reader buffers ahead
+        for line_num, line in enumerate(fb, 1):
+            try:
+                line.decode("utf-8")
+            except UnicodeDecodeError as e:  # the message carries the byte: only the detail keeps it
+                return [], [], [(f"rad {line_num}: {e}", f"row {line_num}: ogiltig-teckenkodning")]
     with open(csv_path, encoding="utf-8-sig", newline="") as f:
         reader = csv.reader(f)
         fieldnames = None
@@ -260,9 +266,8 @@ def _read_rows(csv_path: str) -> tuple[list[dict], list[tuple[str, str]], list[t
             start_line = reader.line_num + 1
             try:
                 cells = next(reader, None)
-            except (UnicodeDecodeError, csv.Error) as e:  # the raw message can carry bytes from the file
-                code = "ogiltig-teckenkodning" if isinstance(e, UnicodeDecodeError) else "ogiltig-csv"
-                file_errors.append((f"rad {start_line}: {e}", f"row {start_line}: {code}"))
+            except csv.Error as e:  # the raw message can carry text from the file
+                file_errors.append((f"rad {start_line}: {e}", f"row {start_line}: ogiltig-csv"))
                 return [], [], file_errors
             if cells is None:
                 break
@@ -317,7 +322,7 @@ def _parse_row(raw: dict[str, str], layout: str) -> dict:
         nr = int(nr_raw)
     except ValueError as exc:
         raise _RowError("ogiltigt-nr", f"ogiltigt Nr: {nr_raw!r}") from exc
-    if not 0 <= nr <= 2**31 - 1:  # the member-number columns are 32-bit integers
+    if not 0 <= nr <= 999_999:  # member numbers have four digits; a huge one would exhaust the 32-bit counter
         raise _RowError("ogiltigt-nr", f"ogiltigt Nr: {nr_raw!r}")
 
     if layout == SPLIT_LAYOUT:

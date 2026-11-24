@@ -744,19 +744,17 @@ class TestMembersImport(DatabaseTest):
                 members_cli, ["import", "matrikel.csv", "--counts-only"], obj=ScriptInfo(create_app=lambda: APP)
             )
         self.assertEqual(result.exit_code, 1, result.output)
-        self.assertTrue(any(line.endswith(": ogiltig-teckenkodning") for line in result.stderr.splitlines()))
+        self.assertIn("Error: row 2: ogiltig-teckenkodning", result.stderr.splitlines())
         self.assertNotIn("0xc5", result.stdout + result.stderr)
         self.assertEqual(db.Membership.select().count(), 0)
 
     def test_counts_only_reports_too_large_nr_with_the_other_row_errors(self):
         before = self._counter()
-        csv = (
-            HEADER + _row(nr="7", name="Bo Exempel", postadress="ABC Visby") + _row(nr="2147483648", name="Ida Exempel")
-        )
+        csv = HEADER + _row(nr="7", name="Bo Exempel", postadress="ABC Visby") + _row(nr="1000000", name="Ida Exempel")
         result = self._run_import(csv, ["--counts-only"])
         self.assertEqual(result.exit_code, 1, result.output)
         self.assertIn("Error: row 3: ogiltigt-nr", result.stderr.splitlines())
-        self.assertNotIn("2147483648", result.stdout + result.stderr)
+        self.assertNotIn("1000000", result.stdout + result.stderr)
         self.assertEqual(self._counter(), before)
 
     def test_import_never_auto_links_user(self):
