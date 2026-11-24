@@ -183,7 +183,7 @@ def _membership_mail(params):
     if settings.mail.link_secret:  # without it (log mode only) there is no HMAC, and nothing is sent to find
         gone = (
             (MailMessage.kind == "kopare.medlemskap")
-            & (MailMessage.status == "sent")
+            & MailMessage.status.in_(("sent", "bounced"))
             & (MailMessage.address_hash == address_hash(contact.email))
         )
         if MailMessage.select().where(gone).exists():

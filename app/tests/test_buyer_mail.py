@@ -144,6 +144,16 @@ class TestInformationQueued(BuyerMailTest):
         self.assertEqual(len(subjects), 3)  # a notice for each sale
         self.assertEqual(sorted(row.status for row in self.mails("kopare.medlemskap")), ["cancelled", "sent"])
 
+    def test_a_bounced_invitation_counts_when_another_rabbit_is_sold_to_the_address(self):
+        optin = {**WITH_EMAIL, "membership_optin": True}
+        self._sale(optin)
+        _, invitation = self.send()
+        self.assertTrue(mail.record_bounce(invitation["Message-ID"], "5.1.1"))
+        record_herd_tracking(self.individuals[1], self.gx1, SALE_DATE, "TRANSFER", self.manager, buyer=optin)
+        (notice,) = self.send()
+        self.assertTrue(notice["Subject"].startswith("Din kanin"))
+        self.assertEqual([row.status for row in self.mails("kopare.medlemskap")], ["bounced", "cancelled"])
+
     def test_one_buyer_going_leaves_the_other_sales_invitation(self):
         optin = {**WITH_EMAIL, "membership_optin": True}
         first = self._sale(optin)

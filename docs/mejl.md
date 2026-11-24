@@ -256,7 +256,8 @@ mejlen köas en gång per köpare (`<typ>:<köparens id>`), och en köpare är e
 post per försäljning. Den som har köpt flera kaniner får alltså ett
 `kopare.information` per försäljning. `kopare.medlemskap` går en gång per
 adress: när mejlet ska gå och ett `kopare.medlemskap` redan är skickat till
-samma adress blir det `cancelled`. Varje köpare har sin egen inbjudan i kön,
+samma adress blir det `cancelled`, även om den första inbjudan studsade.
+Varje köpare har sin egen inbjudan i kön,
 så att en köpare som raderas aldrig tar med sig en annan köpares. En köpare
 som skrivs in på nytt i en rättning är en ny köpare och får båda mejlen
 igen. Är köparen raderad när mejlet ska gå blir det `cancelled`.
