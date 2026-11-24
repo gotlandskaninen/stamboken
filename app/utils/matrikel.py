@@ -705,7 +705,9 @@ def set_member_email(person, address, actor, *, by):
     address in between count, nor one that has stopped. Changing back to it ends the wait. The address replaced,
     and during a wait the first previous one, hear of the change (kontakt.epost_besked); an address that does not
     count gets a row with login_until NULL for it. The account's sessions end (new_generation). Every change voids
-    the person's unused codes. Opens its own transaction; returns the person as written.
+    the person's unused codes. A family member or keeper someone put in (add_person) and not yet told gets
+    medlemskap.tillagd (queue_member_added).
+    Opens its own transaction; returns the person as written.
     """
     if by not in SET_BY:
         raise ValueError(f"unknown change {by!r}")
@@ -738,6 +740,8 @@ def set_member_email(person, address, actor, *, by):
         Member.update(email=address, email_login_from=login_from, updated_at=datetime.now()).where(
             Member.id == person.id
         ).execute()
+        if address and _added_by_another(person):  # the address came later, or the notice never reached her
+            queue_member_added(Member.get_by_id(person.id))
         void(person.id)
         for row in told:
             params = {"previous_id": row.id, "by_self": by == "self", "by_matrikel": by == "matrikel"}
@@ -746,6 +750,20 @@ def set_member_email(person, address, actor, *, by):
         if holder and user is not None:
             new_generation(user.uuid)
     return Member.get_by_id(person.id)
+
+
+def _added_by_another(person):
+    """add_person put her in as family member or keeper: not the register import, nor a main member made one."""
+    return (
+        MatrikelAudit.select()
+        .where(
+            (MatrikelAudit.membership == person.membership_id)
+            & (MatrikelAudit.action == "person_added")
+            & (MatrikelAudit.payload["person_id"] == str(person.id))
+            & MatrikelAudit.payload["role"].in_(("familjemedlem", "skotare"))
+        )
+        .exists()
+    )
 
 
 def _keep_previous(person, address, actor, by, now):
