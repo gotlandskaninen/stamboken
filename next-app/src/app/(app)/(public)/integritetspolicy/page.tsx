@@ -202,15 +202,16 @@ export default function IntegritetspolicyPage() {
             </p>
             <p>
               Ber du själv om tidningen får du den här informationen då. Har vi
-              lagt in dig på eget initiativ skriver vi till dig innan tidningen
-              skickas första gången. Uppgifterna sparas så länge du får
-              tidningen, och vi går igenom listan en gång om året.
+              fått din adress från någon annan berättar vi varifrån och hur vi
+              använder den, senast en månad efter att vi fick den och innan den
+              går till tryckeriet. Uppgifterna sparas så länge du får tidningen,
+              och vi går igenom listan en gång om året.
             </p>
             <p>
               Du kan när som helst säga att du inte vill ha tidningen längre,
-              till exempel till {contactLink}. Då slutar vi skicka den, och dina
-              uppgifter tas bort eller anonymiseras inom 12 månader, som för den
-              som går ur föreningen.
+              till exempel till {contactLink}. Då stryker vi dig direkt från
+              utskickslistan och tar bort eller anonymiserar dina uppgifter utan
+              onödigt dröjsmål.
             </p>
           </Section>
 
