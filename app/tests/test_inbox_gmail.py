@@ -288,6 +288,126 @@ class TestSorting(GmailTest):
         self.assertIn("kom inte fram", item.message)
         self.assertTrue(self.done(gmail_id))
 
+    def quoted_link(self):
+        """A link as an invitation carries it, and its mac."""
+        token = mail.link_token("rapport", 12)
+        return f"https://{HOST}/rapport#{token}", token.split(".")[1]
+
+    def test_a_reply_quoting_the_link_stores_no_token(self):  # FA3
+        link, mac = self.quoted_link()
+        self.holder(self.herds[0])
+        item = self.waiting()
+        self.fake.deliver(
+            message(
+                subject=f"Re: Fråga (ärende {item.id})",
+                body=f"Tack!\n\n> Rapportera här:\n> {link}\n",
+                In_Reply_To=self.our_mail(item),
+            )
+        )
+        self.fake.deliver(message(subject="Re: Årsrapporten", body=f"Hej\n> {link}\n"))
+        self.read()
+        (event,) = item.events.where(db.InboxEvent.kind == "svar")
+        self.assertNotIn(mac, str(event.detail))
+        self.assertIn("Tack!", event.detail["text"])
+        (new,) = [i for i in self.items() if i.id != item.id]
+        self.assertNotIn(mac, new.message)
+
+    def test_a_link_rebuilt_by_normalizing_is_masked_on_both_paths(self):  # FA3
+        link, mac = self.quoted_link()
+        row, secret = link.rpartition("#")[2].split(".")
+        html = lambda inner: f"<p>Tack</p><p>{inner}</p>"  # noqa: E731
+        variants = {
+            "entity": html(f"{HOST}/rapport#{row}&#46;{secret}"),
+            "wbr": html(f"{HOST}/rapport#{row}.{secret[:10]}<wbr>{secret[10:]}"),
+            "nul": f"Tack {row}.{secret[:10]}\x00{secret[10:]}",
+        }
+        self.holder(self.herds[0])
+        for name, body in variants.items():
+            with self.subTest(name=name):
+                item = self.waiting()
+                known = {i.id for i in self.items()}
+                reply, plain = (
+                    message(In_Reply_To=self.our_mail(item), subject=f"Re: Fråga (ärende {item.id})"),
+                    message(),
+                )
+                for msg in (reply, plain):
+                    msg.set_content(body, subtype="plain" if name == "nul" else "html")
+                    self.fake.deliver(msg)
+                self.read()
+                (event,) = item.events.where(db.InboxEvent.kind == "svar").order_by(db.InboxEvent.id.desc()).limit(1)
+                self.assertNotIn(mac, str(event.detail))
+                (new,) = [i for i in self.items() if i.id not in known and i.id != item.id]
+                self.assertNotIn(mac, new.message)
+
+    def test_a_token_ending_at_the_cut_is_masked(self):  # FA3
+        link, mac = self.quoted_link()
+        url = f"{HOST}/rapport#{link.rpartition('#')[2]}"
+        body = "a" * (inbox_gmail.MAX_TEXT - len(url)) + url + "X"
+        self.holder(self.herds[0])
+        item = self.waiting()
+        self.fake.deliver(message(body=body, subject=f"Re: Fråga (ärende {item.id})", In_Reply_To=self.our_mail(item)))
+        self.fake.deliver(message(body=body))
+        sentence = (
+            "Mejlet till mottagare@example.org kom inte fram: "  # the report's own first line, as the text starts
+        )
+        text = sentence + "a" * (inbox_gmail.MAX_TEXT - len(sentence) - len(url)) + url + "X"
+        self.assertEqual(text.index(url) + len(url), inbox_gmail.MAX_TEXT)  # the token ends exactly at the cut
+        self.fake.deliver(
+            report("<CAsomething@mail.example.org>").replace(
+                b"Mejlet till mottagare@example.org kom inte fram.", text.encode()
+            )
+        )
+        self.read()
+        (event,) = item.events.where(db.InboxEvent.kind == "svar")
+        self.assertNotIn(mac, str(event.detail))
+        others = [i for i in self.items() if i.id != item.id]
+        self.assertEqual(len(others), 2)
+        for other in others:
+            self.assertNotIn(mac, other.message)
+
+    def test_no_token_from_file_names_notes_or_questions(self):  # FA3
+        link, mac = self.quoted_link()
+        token = link.rpartition("#")[2]
+        self.holder(self.herds[0])
+        item = self.waiting()
+        self.fake.deliver(
+            message(
+                subject=f"Re: Fråga (ärende {item.id})",
+                files=[(f"{token}.txt", "text/plain", b"x")],
+                In_Reply_To=self.our_mail(item),
+            )
+        )
+        self.fake.deliver(message(files=[(f"{token}.txt", "text/plain", b"x")]))
+        self.read()
+        (event,) = item.events.where(db.InboxEvent.kind == "svar")
+        self.assertNotIn(mac, str(event.detail))
+        (new,) = [i for i in self.items() if i.id != item.id]
+        self.assertNotIn(mac, str(list(new.events.dicts())))
+        upload, _ = inbox.create_upload(self.owner, self.herds[0], f"Se {link}", [])
+        self.assertNotIn(mac, db.InboxItem.get_by_id(upload.id).message)
+        taken = self.item(0)
+        inbox.take(taken, self.helper, over=False)
+        inbox.change_state(taken, self.helper, "ofullstandig", note=f"Saknas, se {link}")
+        self.assertNotIn(mac, str(list(taken.events.dicts())))
+        asked = self.item(0)
+        inbox.take(asked, self.helper, over=False)
+        inbox_gmail.ask_breeder(asked, self.helper, f"Är det din länk? {link}")
+        self.assertNotIn(mac, str(list(asked.events.dicts())))
+
+    def test_a_delivery_report_quoting_the_link_stores_no_token(self):  # FA3
+        link, mac = self.quoted_link()
+        row, secret = link.rpartition("#")[2].split(".")
+        split = f"{row}.{secret[:10]}\x00{secret[10:]}"  # removing the NUL after masking would rebuild the token
+        for quoted in (link, split):
+            raw = report("<CAsomething@mail.example.org>").replace(
+                b"kom inte fram.", f"kom inte fram: {quoted}".encode()
+            )
+            self.fake.deliver(raw)
+        self.read()
+        for item in self.items():
+            self.assertIn("kom inte fram", item.message)
+            self.assertNotIn(mac, item.message)
+
     def test_an_automatic_answer_is_ignored(self):
         for header in ({"Auto-Submitted": "auto-replied"}, {"X-Autoreply": "yes"}, {"Precedence": "auto_reply"}):
             with self.subTest(header=header):

@@ -3,6 +3,7 @@ Flask CLI for member registry operations.
 
 Usage:
     flask members import <csv_path> [--dry-run | --counts-only]
+    flask members billing-proposals --out <file> | --apply <file> --actor-user-id <id>
     flask members link-by-herd [--apply --actor-user-id <id> --plan <value>]
     flask members link-same-number [--apply --actor-user-id <id> --plan <value>]
 
@@ -61,6 +62,7 @@ cases are listed for the register manager. Plan only unless --apply.
 
 import csv
 import hashlib
+import json
 import logging
 import re
 import unicodedata
@@ -68,8 +70,8 @@ from collections import Counter
 
 import click
 from flask.cli import AppGroup
-from peewee import IntegrityError, fn
-from utils.database import DB_PROXY, Genebank, Herd, Member, Membership, User
+from peewee import DatabaseError, IntegrityError, fn
+from utils.database import BILLING_FIELDS, DB_PROXY, Genebank, Herd, Member, Membership, User
 from utils.herd_contact import link_herd
 from utils.login_code import reserve_login_address
 from utils.matrikel import (
@@ -77,16 +79,21 @@ from utils.matrikel import (
     ANONYMIZED_LAST_NAME,
     ConfirmRequired,
     LinkError,
+    legacy_owner_index,
     link_access_delta,
     link_member_user,
     new_membership,
     normalize_postal_code,
+    parse_billing_fields,
     raise_counter_to,
     split_postal_address,
     write_matrikel_audit,
 )
 from utils.members import WORKSPACE_DOMAIN
 from utils.membership_lifecycle import Status
+
+from cli.billing_notes import parse_billing_note
+from cli.proposal_file import proposal_cell, read_decisions, write_proposals
 
 logger = logging.getLogger(__name__)
 
@@ -561,7 +568,7 @@ def _import_membership_group(nr: int, group: list[dict], dry_run: bool, report: 
                 for key, value in fields.items():
                     if value is not None and getattr(membership, key) != value:
                         changed[key] = value
-                _save_importer_fields(membership, changed)
+                _save_membership_fields(membership, changed)
         else:
             report["memberships_created"] += 1
             report["persons_created"] += 1
@@ -588,8 +595,8 @@ def _locked_membership_by_number(nr: int) -> Membership | None:
     return Membership.select().where(Membership.member_number == nr).for_update().get_or_none()
 
 
-def _save_importer_fields(membership, changed: dict) -> None:
-    """UPDATE only the columns the importer owns AND actually changed.
+def _save_membership_fields(membership, changed: dict) -> None:
+    """UPDATE only the membership columns the caller changed.
 
     The row lock serialises the write, but a full-row save would still push
     every attribute the instance carries — including membership_status and
@@ -610,7 +617,7 @@ def _fill_empty_fields(membership, fields: dict) -> None:
     """Reconciliation: set only membership fields that are currently NULL/empty
     from the CSV — never overwrite a non-empty stored value."""
     changed = {key: value for key, value in fields.items() if value is not None and not getattr(membership, key)}
-    _save_importer_fields(membership, changed)
+    _save_membership_fields(membership, changed)
 
 
 def _ensure_main_person(membership, main: dict) -> None:
@@ -893,6 +900,177 @@ def _count_lines(report: dict) -> list[str]:
     ]
 
 
+BILLING_PROPOSAL_HEADER = (
+    "membership_id",
+    "member_number",
+    *(f"current_{field}" for field in BILLING_FIELDS),
+    *(f"proposed_{field}" for field in BILLING_FIELDS),
+    "anteckning",
+    "beslut",
+    *(f"exporterat_{field}" for field in BILLING_FIELDS),
+    "underlag",
+)
+
+
+def _require_matrikel_actor(actor_user_id: int | str | None) -> User:
+    if actor_user_id is None:
+        raise click.UsageError("--apply kräver --actor-user-id <id> (auditloggens aktör)")
+    try:
+        actor_user_id = int(actor_user_id)
+    except ValueError:
+        raise click.UsageError("--actor-user-id måste vara ett heltal") from None
+    actor = User.get_or_none(User.id == actor_user_id)
+    if actor is None or not actor.is_active or not (actor.is_admin or actor.is_matrikel_admin):
+        raise click.UsageError("--actor-user-id måste vara ett aktivt konto med rollen admin eller matrikel_admin")
+    return actor
+
+
+def _validated_billing(values: dict) -> dict:
+    from blueprints.common import EMAIL_RE  # Load blueprints after CLI registration.
+
+    fields = parse_billing_fields(values)
+    if fields.get("billing_email") and not EMAIL_RE.fullmatch(fields["billing_email"]):
+        raise ValueError("Ogiltig e-post för faktura")
+    if any("\0" in value for value in fields.values() if value):
+        raise ValueError("Ogiltigt textfält")
+    return fields
+
+
+def _billing_source(ms: Membership) -> dict:
+    return {
+        "membership_id": ms.id,
+        "member_number": ms.member_number,
+        "anteckning": ms.notes,
+        **{f"current_{key}": getattr(ms, key) for key in BILLING_FIELDS},
+    }
+
+
+def _billing_proof(source: dict, exported: dict) -> str:
+    return hashlib.sha256(json.dumps([source, exported], sort_keys=True).encode()).hexdigest()
+
+
+def _memberships_with_current_persons():
+    return _active_main_members().select(Member.membership)
+
+
+def _export_billing_proposals(path: str) -> None:
+    rows = []
+    with_notes = 0
+    query = Membership.select().where(Membership.notes != "", Membership.id.in_(_memberships_with_current_persons()))
+    for ms in query.order_by(Membership.id).iterator():
+        if not ms.notes.strip():
+            continue
+        with_notes += 1
+        # The full note must fit in a CSV field when the reviewed file is read back.
+        if len(ms.notes) > 100_000:
+            continue
+        proposal = parse_billing_note(ms.notes)
+        if proposal is None:
+            continue
+        fields, _ = proposal
+        try:
+            fields = _validated_billing(fields)
+        except ValueError:
+            continue
+        if all(value == getattr(ms, key) for key, value in fields.items()):
+            continue
+        source = _billing_source(ms)
+        exported = {key: fields.get(key, getattr(ms, key)) for key in BILLING_FIELDS}
+        rows.append(
+            {
+                **source,
+                **{f"proposed_{k}": v for k, v in exported.items()},
+                **{f"exporterat_{k}": v for k, v in exported.items()},
+                "underlag": _billing_proof(source, {k: proposal_cell(v) for k, v in exported.items()}),
+            }
+        )
+
+    try:
+        write_proposals(path, BILLING_PROPOSAL_HEADER, rows)
+    except FileExistsError:
+        raise click.ClickException("Förslagsfilen finns redan") from None
+    except OSError:
+        raise click.ClickException("Förslagsfilen kunde inte skapas") from None
+    click.echo(f"Med anteckning: {with_notes}, med förslag: {len(rows)}, utan förslag: {with_notes - len(rows)}")
+
+
+def _apply_billing_row(row: dict, actor: User) -> str:
+    if row["beslut"] == "hoppa över":
+        return "hoppa över (beslut)"
+    try:
+        membership_id = int(row["membership_id"])
+    except ValueError:
+        return "ogiltiga värden"
+    with DB_PROXY.atomic():
+        try:
+            ms = _locked_membership(membership_id)
+        except Membership.DoesNotExist:
+            return "underlaget har ändrats"
+        source = _billing_source(ms)
+        exported = {key: row[f"exporterat_{key}"] for key in BILLING_FIELDS}
+        if (
+            _billing_proof(source, exported) != row["underlag"]
+            or any(row[k] != proposal_cell(v) for k, v in source.items())
+            or not _memberships_with_current_persons().where(Member.membership == ms).exists()
+        ):
+            return "underlaget har ändrats"
+        proposed = {key: row[f"proposed_{key}"] for key in BILLING_FIELDS}
+        if row["beslut"] == "godkänn" and proposed != exported:
+            return "ändrad rad utan beslutet ändra"
+        try:
+            desired = _validated_billing(proposed)
+        except ValueError:
+            return "ogiltiga värden"
+        changed = {key: v for key, v in desired.items() if v != getattr(ms, key)}
+        if not changed:
+            return "oförändrade"
+        before = {key: getattr(ms, key) for key in changed}
+        _save_membership_fields(ms, changed)
+        write_matrikel_audit(actor, "membership_updated", ms, {"before": before, "after": changed})
+    return "Skrivna"
+
+
+@members_cli.command("billing-proposals")
+@click.option("--out", metavar="FIL", help="Skapa en ny förslagsfil för granskning.")
+@click.option("--apply", "apply_file", metavar="FIL", help="Verkställ godkända och ändrade rader i förslagsfilen.")
+@click.option("--actor-user-id", metavar="ID", help="Aktiv admin eller matrikel_admin (krävs med --apply).")
+def billing_proposals_cmd(out: str | None, apply_file: str | None, actor_user_id: str | None) -> None:
+    """Föreslå fakturaadresser ur anteckningarna eller verkställ en granskad fil.
+
+    Ange godkänn, ändra eller hoppa över i kolumnen beslut. Tomt beslut hoppar
+    över raden. Välj ändra om du rättar något i kolumnerna proposed_*.
+    """
+    if (out is None) == (apply_file is None):
+        raise click.UsageError("Ange antingen --out FIL eller --apply FIL")
+    counts = {
+        "Skrivna": 0,
+        "hoppa över (beslut)": 0,
+        "underlaget har ändrats": 0,
+        "ändrad rad utan beslutet ändra": 0,
+        "ogiltiga värden": 0,
+        "oförändrade": 0,
+    }
+    try:
+        if out is not None:
+            _export_billing_proposals(out)
+            return
+        actor = _require_matrikel_actor(actor_user_id)
+        try:
+            rows = read_decisions(apply_file, BILLING_PROPOSAL_HEADER, raw_cells=True)
+        except (OSError, UnicodeError, csv.Error):
+            raise click.ClickException("Förslagsfilen kunde inte läsas") from None
+        except ValueError as err:
+            raise click.ClickException(str(err)) from None
+        for row in rows:
+            counts[_apply_billing_row(row, actor)] += 1
+    except DatabaseError:
+        # PostgreSQL diagnostics can include the row or the rejected value.
+        if apply_file is not None:
+            click.echo(f"Skrivna: {counts['Skrivna']}", err=True)
+        raise click.ClickException("Databasfel vid hantering av fakturaförslag") from None
+    click.echo(", ".join(f"{reason}: {count}" for reason, count in counts.items()))
+
+
 _apply_option = click.option(
     "--apply", "apply_links", is_flag=True, help="Write the links (default prints the plan only)."
 )
@@ -913,12 +1091,7 @@ def _link_actor(apply_links, actor_user_id, plan_value):
         raise click.UsageError("--apply kräver --actor-user-id <id> (auditloggens aktör)")
     if plan_value is None:
         raise click.UsageError("--apply kräver --plan <kontrollvärde> från planen du har läst")
-    actor = User.get_or_none(User.id == actor_user_id)
-    if actor is None or not actor.is_active or not (actor.is_admin or actor.is_matrikel_admin):
-        raise click.UsageError(
-            f"--actor-user-id {actor_user_id}: måste vara ett aktivt konto med rollen admin eller matrikel_admin"
-        )
-    return actor
+    return _require_matrikel_actor(actor_user_id)
 
 
 def _plan_checksum(lines) -> str:
@@ -1057,30 +1230,9 @@ def _pair_detail(main, user) -> str:
     )
 
 
-def _owner_index() -> tuple[dict[int, dict[int, User]], set[int]]:
-    """Herd id -> {user id: user} with role owner, and the users with an incomplete owner role."""
-    owners: dict[int, dict[int, User]] = {}
-    incomplete: set[int] = set()
-    for user in User.select().order_by(User.id):
-        for role in user.privileges:
-            if not isinstance(role, dict) or "level" not in role:
-                incomplete.add(user.id)  # link_access_delta reads role["level"]
-                continue
-            if role["level"] != "owner":
-                continue
-            herd_id = role.get("herd")
-            if isinstance(herd_id, str) and re.fullmatch(r"[0-9]+", herd_id):
-                herd_id = int(herd_id)  # older rows may store the id as a string
-            if isinstance(herd_id, bool) or not isinstance(herd_id, int):
-                incomplete.add(user.id)
-                continue
-            owners.setdefault(herd_id, {})[user.id] = user
-    return owners, incomplete
-
-
 def _plan_herd_links() -> tuple[list, list, int]:
     """Decide every link first: returns (to_link [(main, user, codes, reason)], listed [(codes, reason)], already)."""
-    owners, incomplete = _owner_index()
+    owners, incomplete = legacy_owner_index()
     memberships = {m.member_number: m for m in Membership.select().where(Membership.member_number.is_null(False))}
     herds_by_code: dict[str, list] = {}
     for herd in Herd.select(Herd, Genebank).join(Genebank):
@@ -1208,7 +1360,7 @@ def _active_main_members():
 
 def _plan_same_number_links() -> tuple[list, list[str]]:
     banks = {prefix: _flag_genebank_ids(prefix) for prefix in "GM"}
-    owners, incomplete = _owner_index()
+    owners, incomplete = legacy_owner_index()
     membership_by_user = dict(
         Member.select(Member.user, Member.membership)
         .where(Member.user.is_null(False), Member.end_date.is_null())

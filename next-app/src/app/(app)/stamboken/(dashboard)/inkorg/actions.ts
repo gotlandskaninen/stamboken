@@ -1,6 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
+import { MODE_COOKIE, parseMode, type Mode } from "@/lib/mode";
 import type { SaleBuyer } from "@/components/individual/BuyerFields";
 import { fetchApi, ApiError } from "@/lib/api";
 import type {
@@ -173,8 +175,13 @@ export async function updateDocument(
   id: number,
   doc: number,
   changes: Record<string, unknown>,
+  // A caller that lives on after an environment switch (paper entry) says which
+  // environment it expects; the cookie must agree.
+  env?: Mode,
 ) {
   if (!isId(id) || !isId(doc)) return refused("Ogiltigt dokument.");
+  if (env && parseMode((await cookies()).get(MODE_COOKIE)?.value) !== env)
+    return refused("Miljön har bytts. Ladda om sidan.");
   const body = Object.fromEntries(
     Object.entries(changes ?? {}).filter(([k]) => DOCUMENT_FIELDS.includes(k)),
   );
@@ -212,6 +219,20 @@ export async function saveCertificate(
 ) {
   if (!isId(id) || !isId(doc)) return refused("Ogiltigt dokument.");
   return call<DocResult>(id, `/${id}/dokument/${doc}/spara`, "POST", payload);
+}
+
+/** A report photo compared with its rabbit: "Stämmer", or "Rättat" when the rabbit was corrected; it closes. */
+export async function checkReportPhoto(
+  id: number,
+  doc: number,
+  outcome: "stammer" | "rattat",
+) {
+  if (!isId(id) || !isId(doc)) return refused("Ogiltigt dokument.");
+  if (outcome !== "stammer" && outcome !== "rattat")
+    return refused("Välj Stämmer eller Rättat.");
+  return call<DocResult>(id, `/${id}/dokument/${doc}/kontrollerad`, "POST", {
+    outcome,
+  });
 }
 
 export async function registerSale(

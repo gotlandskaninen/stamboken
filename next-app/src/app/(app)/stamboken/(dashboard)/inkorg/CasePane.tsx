@@ -20,6 +20,7 @@ import {
   queueStatus,
   queueSubject,
   queueWait,
+  senderText,
   type InboxDetail,
   type QueueUser,
 } from "./lib";
@@ -147,9 +148,7 @@ export function CasePane({
         <dl className={styles.caseFacts}>
           <dt>{t("queueDetail.sender")}</dt>
           <dd>
-            {item.sender?.name ||
-              item.sender_address ||
-              t("queue.unknownSender")}
+            {senderText(item) || t("queue.unknownSender")}
             <SenderUnconfirmed item={item} paneT={t} />
           </dd>
           <dt>{t("queueDetail.kind")}</dt>

@@ -14,6 +14,14 @@ def mask_tokens(text):
     return _TOKEN.sub(r"\1.***", text) if text else text
 
 
+def mask_cut(text, limit):
+    """
+    Text kept to `limit` characters with no token in it. Masked before the cut, so a token over the edge is not left
+    half there, and after, because cutting can end a token the first pass rejected for the character that followed.
+    """
+    return mask_tokens(mask_tokens(text)[:limit]) if text else text
+
+
 class TokenMaskFilter(logging.Filter):
     """Masks tokens in the finished message and in the exception text, so arguments and tracebacks are covered."""
 

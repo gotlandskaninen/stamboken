@@ -1,0 +1,13 @@
+{% block subject %}Försäljningen av {{ number }} är inte godkänd{% endblock %}
+
+{% block body %}
+Hej!
+
+Genbanksansvarig har inte godkänt försäljningen av {{ number }}{% if name %} {{ name }}{% endif %} i årsrapporten för {{ herd }}.
+
+Orsak: {{ reason }}
+
+{% if kvar %}Kaninen räknas som kvar i din besättning den 31 december {{ year }}.{% else %}Öppna årsrapporten och välj igen för kaninen.{% endif %}
+
+Har du frågor? Svara på det här mejlet.
+{% endblock %}

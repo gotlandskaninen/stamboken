@@ -18,6 +18,7 @@ import {
   retireMembership,
   revokeGrant,
   setMainMember,
+  linkMembershipHerd,
   linkPersonUser,
   unlinkPersonUser,
   updateMembership,
@@ -175,6 +176,34 @@ describe("matrikel server actions", () => {
   });
 });
 
+it("forwards the herd preview and only revalidates after confirmation", async () => {
+  const confirmation = { preview: { herd: { id: 3 } }, confirm_token: "hash" };
+  fetchApiMock.mockRejectedValueOnce({
+    status: 409,
+    type: "confirm-required",
+    extensions: confirmation,
+  });
+  expect(await linkMembershipHerd(5, 3)).toEqual({
+    ok: false,
+    confirmRequired: confirmation,
+  });
+  const request = {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  };
+  expect(fetchApiMock).toHaveBeenCalledWith("/v2/memberships/5/herds", {
+    ...request,
+    body: JSON.stringify({ herd_id: 3 }),
+  });
+  expect(revalidatePathMock).not.toHaveBeenCalled();
+  expect(await linkMembershipHerd(5, 3, "hash")).toEqual({ ok: true });
+  expect(fetchApiMock).toHaveBeenLastCalledWith("/v2/memberships/5/herds", {
+    ...request,
+    body: JSON.stringify({ herd_id: 3, confirm_token: "hash" }),
+  });
+  expect(revalidatePathMock).toHaveBeenCalledWith("/medlem/matrikel/5");
+});
+
 describe("kontokoppling server actions", () => {
   it("linkPersonUser maps a confirm-required 409 to confirmRequired with the herd list", async () => {
     const err = Object.assign(new Error("D"), {
@@ -246,3 +275,22 @@ describe("kontokoppling server actions", () => {
     expect(revalidatePathMock).toHaveBeenCalledWith("/medlem/matrikel");
   });
 });
+
+it.each([
+  [404, "about:blank", true],
+  [409, "herd-unavailable", true],
+  [409, "about:blank", false],
+  [409, "stale", false],
+  [503, "about:blank", false],
+] as const)(
+  "classifies herd link error %i %s",
+  async (status, type, resetSelection) => {
+    fetchApiMock.mockRejectedValueOnce({ status, type, detail: "Testfel" });
+    expect(await linkMembershipHerd(5, 3)).toEqual({
+      ok: false,
+      error: "Testfel",
+      resetSelection,
+    });
+    expect(revalidatePathMock).not.toHaveBeenCalled();
+  },
+);

@@ -14,32 +14,52 @@ relies on it to find the rows whose PII must be redacted on GDPR
 anonymization — mutation endpoints must follow the convention.
 """
 
+import hashlib
+import json
 import logging
+import re
 from datetime import date, datetime, timedelta, timezone
 
-from peewee import Case, IntegrityError, fn
+from peewee import JOIN, Case, IntegrityError, fn
 
 from utils.cache_invalidation import trigger_invalidation
-from utils.data_access import new_generation
+from utils.data_access import (
+    erase_account,
+    new_generation,
+    profile_pictures_of,
+    purge_user_audit_pii,
+    remove_profile_picture,
+)
 
 # DB_PROXY is the runtime proxy that data_access.py uses; importing the
 # module-level DATABASE symbol directly would be None at call time.
 from utils.database import (
     BILLING_FIELDS,
     DB_PROXY,
+    OUTSIDE_GENEBANK_HERDS,
     Herd,
     HerdAccessGrant,
     LoginCode,
     MatrikelAudit,
     Member,
     MemberApplication,
+    MemberChangeRequest,
     MemberNumberCounter,
     MemberPreviousAddress,
     Membership,
     User,
 )
-from utils.herd_contact import on_household_erased, on_person_anonymizing, on_person_leaving, snapshot_before_leaving
+from utils.herd_contact import (
+    compare_with_register,
+    is_matrikel_reader,
+    link_herd,
+    on_household_erased,
+    on_person_anonymizing,
+    on_person_leaving,
+    snapshot_before_leaving,
+)
 from utils.inbox_purge import erase_person_from_inbox, remove_originals
+from utils.individual_commands import purge_command_free_text
 from utils.login_code import (
     AddressTaken,
     lock_addresses,
@@ -48,7 +68,7 @@ from utils.login_code import (
     reserve_on_leaving_friexemplar,
     void,
 )
-from utils.mail import cancel_member_added, enqueue_mail, forget_recipient, queue_member_added
+from utils.mail import cancel_member_added, enqueue_mail, forget_recipient, queue_member_added, was_main_member
 from utils.membership_lifecycle import Event, Status, next_state, state_of
 from utils.postal import (  # noqa: F401 — public helpers
     format_postal_address,
@@ -446,7 +466,7 @@ def _applications_of(person):
     return where
 
 
-def anonymize_person(member, actor, deferred_originals=None):
+def anonymize_person(member, actor, deferred_originals=None, deferred_accounts=None):
     """GDPR erasure: anonymize the person row, keep membership history.
 
     Placeholder names (columns are NOT NULL), nulls contact fields +
@@ -471,14 +491,22 @@ def anonymize_person(member, actor, deferred_originals=None):
     access the account loses. Erases the intake queue's originals and texts
     that show the person as seller or buyer, and what they sent
     (erase_person_from_inbox). Takes the person's previous addresses and codes,
-    with the queue's trace of where their mails went. A caller inside its own
-    transaction passes `deferred_originals` and removes those files after its commit.
+    with the queue's trace of where their mails went. Empties the account
+    (erase_account) and purges its old values from audit_log
+    (purge_user_audit_pii, last in the transaction); an account with a role
+    in RETENTION_HOLD_LEVELS refuses the erasure (LinkError) before any write.
+    A caller inside its own transaction passes `deferred_originals` and
+    `deferred_accounts`, purges those accounts last in it, and after its commit
+    removes those files and the accounts' profile pictures (profile_pictures_of,
+    read before the purge).
     Returns the scrubbed person: the caller's pre-lock instance is stale
     afterwards.
     """
     with DB_PROXY.atomic():
         # current user_id under the membership lock, never the caller's stale copy
         person, user = _lock_for_detach(member.id)
+        if user is not None and any(p["level"] in RETENTION_HOLD_LEVELS for p in user.privileges or []):
+            raise LinkError("Kontot har en roll", "Ta bort kontots roller innan personen anonymiseras")
         membership = person.membership
         erased_before = is_anonymized(person)  # read under the lock: a repeated erasure is no transition
         contacts = snapshot_before_leaving(person)  # the herds' contact, with her values still in it
@@ -487,6 +515,8 @@ def anonymize_person(member, actor, deferred_originals=None):
         if user is not None:  # her name leaves the public certificate check page too (stamboken #6)
             User.update(name_on_check_page=False).where(User.id == user.id).execute()
         redact_person_from_audits(person)
+        # the old and new e-mail of each change (Fable 8); a queued mail to one finds no address and is cancelled
+        MemberChangeRequest.delete().where(MemberChangeRequest.member == person.id).execute()
         now = datetime.now()
         HerdAccessGrant.update(revoked_at=now, updated_at=now).where(
             HerdAccessGrant.member == person,
@@ -546,6 +576,8 @@ def anonymize_person(member, actor, deferred_originals=None):
         ]
         applications_redacted = len(application_ids)
         forget_recipient("member", person.id)  # the queue keeps no address hash or dedupe key of the erased
+        if user is not None:
+            forget_recipient("user", user.id)  # nor of the account's mail (notices, applications, the intake queue)
         for previous in (
             MemberPreviousAddress.delete()
             .where(MemberPreviousAddress.member == person.id)
@@ -562,16 +594,26 @@ def anonymize_person(member, actor, deferred_originals=None):
             membership,
             {"person_id": person.id, "applications_redacted": applications_redacted},
         )
+        if user is not None:
+            erase_account(user)  # `user` keeps the values read under the lock
         lost = before - User.get_by_id(user.id).effective_herd_ids() if user is not None else set()
         lost_genebanks = (
             {h.genebank_id for h in Herd.select(Herd.genebank).where(Herd.id.in_(list(lost)))} if lost else set()
         )
         # the intake queue's photos that show the person, and what they sent (their account read before the detach)
         originals = erase_person_from_inbox(person, user.id if user is not None else None)
+        pictures = set()
+        if user is not None and deferred_accounts is None:
+            pictures = profile_pictures_of(user)  # before the purge takes their names
+            purge_user_audit_pii(user.id, user.username, user.email)  # last: it locks audit_log until the commit
     if deferred_originals is None:
         remove_originals(originals)  # only after the commit: a row never names a removed file
     else:
         deferred_originals.extend(originals)
+    for name in pictures:
+        remove_profile_picture(name)
+    if user is not None and deferred_accounts is not None:
+        deferred_accounts.append(user)
     _invalidate_genebanks(lost_genebanks)
     return person
 
@@ -650,7 +692,7 @@ def anonymize_ended_persons(now):
     ).fetchone()[0]
     done, failed, held = 0, 0, []
     for membership in _memberships_with_ended_persons(cutoff):
-        originals = []
+        originals, erased, pictures = [], [], set()
         try:
             with DB_PROXY.atomic():
                 Membership.select().where(Membership.id == membership.id).for_update("FOR NO KEY UPDATE").get()
@@ -662,13 +704,24 @@ def anonymize_ended_persons(now):
                 herds = Herd.select(Herd.id).where((Herd.membership == membership) | Herd.id.in_(owned))
                 list(herds.order_by(Herd.id).for_update("FOR NO KEY UPDATE"))
                 due, membership_held = _due_in(membership, cutoff)
-                for person in due:  # an ended person conveys no herd: its cache invalidation inside this tx is empty
-                    anonymize_person(person, None, deferred_originals=originals)
+                # An ended person conveys no herd, and the owner entries erase_account drops are on inactive herds (an
+                # active one holds): an invalidation inside this tx only schedules a rebuild of an unchanged genebank.
+                for person in due:
+                    anonymize_person(person, None, deferred_originals=originals, deferred_accounts=erased)
+                # Every account's command rows before the first purge's DROP RULE: an Undo that holds one of them
+                # writes audit_log, which that purge locks until the commit.
+                for account in erased:
+                    purge_command_free_text(datetime.now(timezone.utc), actor_id=account.id)
+                    pictures |= profile_pictures_of(account)  # before the purge takes their names
+                for account in erased:  # last: the purge locks audit_log until the commit
+                    purge_user_audit_pii(account.id, account.username, account.email)
         except Exception:  # pylint: disable=broad-exception-caught
             logger.exception("Automatic anonymization failed for membership=%s", membership.id)
             failed += 1
             continue
         remove_originals(originals)  # after this membership's commit, as anonymize_person does after its own
+        for name in pictures:
+            remove_profile_picture(name)
         done += len(due)
         held += membership_held
     return done, failed, held
@@ -705,7 +758,9 @@ def set_member_email(person, address, actor, *, by):
     address in between count, nor one that has stopped. Changing back to it ends the wait. The address replaced,
     and during a wait the first previous one, hear of the change (kontakt.epost_besked); an address that does not
     count gets a row with login_until NULL for it. The account's sessions end (new_generation). Every change voids
-    the person's unused codes. Opens its own transaction; returns the person as written.
+    the person's unused codes. A family member or keeper someone put in (add_person) and not yet told gets
+    medlemskap.tillagd (queue_member_added).
+    Opens its own transaction; returns the person as written.
     """
     if by not in SET_BY:
         raise ValueError(f"unknown change {by!r}")
@@ -738,6 +793,8 @@ def set_member_email(person, address, actor, *, by):
         Member.update(email=address, email_login_from=login_from, updated_at=datetime.now()).where(
             Member.id == person.id
         ).execute()
+        if _added_by_another(person):  # the address came later or changed, or the notice never reached her
+            queue_member_added(Member.get_by_id(person.id))
         void(person.id)
         for row in told:
             params = {"previous_id": row.id, "by_self": by == "self", "by_matrikel": by == "matrikel"}
@@ -746,6 +803,17 @@ def set_member_email(person, address, actor, *, by):
         if holder and user is not None:
             new_generation(user.uuid)
     return Member.get_by_id(person.id)
+
+
+def _added_by_another(person):
+    """add_person put her in as family member or keeper, and she was never main member: not the register import."""
+    added = MatrikelAudit.select().where(
+        (MatrikelAudit.membership == person.membership_id)
+        & (MatrikelAudit.action == "person_added")
+        & (MatrikelAudit.payload["person_id"] == str(person.id))
+        & MatrikelAudit.payload["role"].in_(("familjemedlem", "skotare"))
+    )
+    return added.exists() and not was_main_member(person)
 
 
 def _keep_previous(person, address, actor, by, now):
@@ -1247,3 +1315,234 @@ def unlink_member_user(person_id, *, actor, mode="admin"):
         )
     _invalidate_genebanks(lost_genebanks)
     return person, lost_genebanks
+
+
+def legacy_owner_index(*fields) -> tuple[dict[int, dict[int, User]], set[int]]:
+    """Herd id -> {user id: user} with role owner, and the users with an incomplete owner role."""
+    owners: dict[int, dict[int, User]] = {}
+    incomplete: set[int] = set()
+    for user in User.select(*fields).order_by(User.id):
+        for role in user.privileges:
+            if not isinstance(role, dict) or "level" not in role:
+                incomplete.add(user.id)  # link_access_delta reads role["level"]
+                continue
+            if role["level"] != "owner":
+                continue
+            herd_id = role.get("herd")
+            if isinstance(herd_id, str) and re.fullmatch(r"[0-9]+", herd_id):
+                herd_id = int(herd_id)  # Match historical ids for the listing only.
+            if isinstance(herd_id, bool) or not isinstance(herd_id, int):
+                incomplete.add(user.id)
+                continue
+            owners.setdefault(herd_id, {})[user.id] = user
+    return owners, incomplete
+
+
+_DUPLICATE_HERD_CODE = "koden finns i flera genbanker"
+
+
+def _other_genebank_codes(genebank_id: int):
+    return Herd.select(Herd.herd).where(Herd.genebank != genebank_id)
+
+
+def membership_herd_candidates(membership_id: int, genebank_id: int) -> list[dict]:
+    rows = (
+        Herd.select(
+            Herd.id,
+            Herd.herd,
+            Herd.herd_name,
+            Herd.is_active,
+            Herd.membership,
+            Membership.id,
+            Membership.member_number,
+            Herd.herd.in_(_other_genebank_codes(genebank_id)).alias("duplicate_code"),
+        )
+        .join(Membership, JOIN.LEFT_OUTER)
+        .where(Herd.genebank == genebank_id, Herd.herd.not_in(OUTSIDE_GENEBANK_HERDS))
+    )
+    result = []
+    for herd in sorted(rows, key=lambda h: (int(re.sub(r"\D", "", h.herd) or 0), h.herd, h.id)):
+        link = "ingen"
+        if herd.membership_id is not None:
+            link = "detta" if herd.membership_id == membership_id else "annat"
+        result.append(
+            {
+                **_link_herd_summary(herd),
+                "link": link,
+                "unavailable_reason": _DUPLICATE_HERD_CODE if herd.duplicate_code else None,
+                "member_number": herd.membership.member_number if link == "annat" else None,
+            }
+        )
+    return result
+
+
+def _link_herd_summary(herd: Herd) -> dict:
+    return {"id": herd.id, "herd": herd.herd, "herd_name": herd.herd_name, "is_active": bool(herd.is_active)}
+
+
+_CONTACT_LABELS = {"name": "Namn", "email": "E-post", "mobile_phone": "Mobil", "physical_address": "Adress"}
+_CONTACT_EFFECTS = {
+    "person": "Besättningens kopia av namnet töms.",
+    "fritext": "Besättningens namn behålls och väntar på val av kontaktperson.",
+    "lika": "Besättningens kopia töms. Uppgiften hämtas från matrikeln.",
+    "olika": "Uppgifterna skiljer sig. Besättningens värde behålls i väntan på val.",
+    "bara_besattningen": "Besättningens egen uppgift behålls.",
+    "bara_matrikeln": "Uppgiften hämtas från matrikeln. Raden visas inte förrän någon väljer.",
+    "bada_tomma": "Uppgiften saknas på båda ställena. Raden visas inte förrän någon väljer.",
+}
+
+
+def _account_summary(user: User) -> dict:
+    return {"id": user.id, "username": user.username}
+
+
+def _contact_link_preview(herd: Herd) -> tuple[list[dict], dict]:
+    changes, cases = compare_with_register(herd)
+    rows = []
+    for field, case in cases.items():
+        effect = _CONTACT_EFFECTS[case]
+        if field == "name" and "contact_member" in changes:
+            person = (
+                Member.select(Member.first_name, Member.last_name).where(Member.id == changes["contact_member"]).get()
+            )
+            effect = f"{person.first_name} {person.last_name} blir kontaktperson. {effect}"
+        rows.append({"field": field, "label": _CONTACT_LABELS[field], "case": case, "effect": effect})
+    return rows, changes
+
+
+def _herd_link_preview(
+    herd: Herd, membership: Membership, main: User | None, accounts: dict[int, User]
+) -> tuple[dict, dict]:
+    active = membership.membership_status == Status.ACTIVE
+    owners, _ = legacy_owner_index(User.id, User.username, User._privileges, User.is_active)
+    legacy_owners = [
+        {**_account_summary(u), "in_membership": uid in accounts, "gains_household_grants": active and u == main}
+        for uid, u in owners.get(herd.id, {}).items()
+        if u.is_active
+    ]
+    grant_holders = (
+        User.select(User.id, User.username)
+        .join(Member)
+        .join(Membership)
+        .switch(Member)
+        .join(HerdAccessGrant)
+        .where(
+            User.is_active,
+            Member.end_date.is_null(True),
+            Membership.membership_status == Status.ACTIVE,
+            HerdAccessGrant.herd == herd,
+            HerdAccessGrant.revoked_at.is_null(True),
+            HerdAccessGrant.valid_until.is_null(True) | (HerdAccessGrant.valid_until >= date.today()),
+        )
+        .distinct()
+        .order_by(User.id)
+    )
+    new_access, new_readers, contact_rows, contact_changes = None, [], None, {}
+    try:
+        if main is not None and main.is_active and (not active or herd.id not in main.transfer_herd_ids()):
+            new_access = {
+                **_account_summary(main),
+                # integer ids, as the write policies compare; no SQL on stored role values
+                "already_edits": herd.id in main.effective_herd_ids(),
+                "already_manages": main.is_admin or herd.genebank_id in (main.is_manager or []),
+            }
+        if active:
+            potential_readers = [u for u in accounts.values() if u.is_active and not is_matrikel_reader(u, herd)]
+            herd.membership = membership  # in memory only; link_herd re-reads the locked row
+            new_readers = [_account_summary(u) for u in potential_readers if is_matrikel_reader(u, herd)]
+    except (KeyError, TypeError) as err:
+        raise LinkError("Åtkomsten kan inte beräknas", "Ett konto i medlemskapet har en ofullständig roll.") from err
+    if active:
+        contact_rows, contact_changes = _contact_link_preview(herd)
+    return {
+        "herd": {**_link_herd_summary(herd), "genebank_id": herd.genebank_id, "genebank_name": herd.genebank.name},
+        "membership": {
+            "id": membership.id,
+            "member_number": membership.member_number,
+            "membership_status": membership.membership_status,
+        },
+        "new_access": new_access,
+        "inactive_main_account": _account_summary(main) if main is not None and not main.is_active else None,
+        "new_readers": new_readers,
+        "legacy_owners": legacy_owners,
+        "grant_holders": [_account_summary(u) for u in grant_holders],
+        "contact_rows": contact_rows,
+    }, contact_changes
+
+
+def link_membership_herd(membership_id: int, herd_id: int, confirm_token: str | None, actor: User) -> dict:
+    """Preview under link_herd's locks, or commit the exact preview the administrator confirmed."""
+    with DB_PROXY.atomic():
+        membership = Membership.select().where(Membership.id == membership_id).for_update().first()
+        if membership is None:
+            raise LinkError("Hittades inte", f"Medlemskapet {membership_id} finns inte", status=404)
+        main_member = (
+            Member.select(Member.id, Member.user)
+            .where(Member.membership == membership, Member.role == "huvudmedlem", Member.end_date.is_null(True))
+            .first()
+        )
+        if main_member is None:  # RETIRED or HEADLESS, regardless of the stored status.
+            raise LinkError(
+                "Medlemskapet saknar aktiv huvudmedlem",
+                "Medlemskapet saknar aktiv huvudmedlem och kan därför inte få en besättning.",
+            )
+        # Role and account changes lock users independently of the membership. Lock the
+        # household accounts by id before the herd, in the same order as anonymization.
+        accounts = {
+            u.id: u
+            for u in User.select(User.id, User.username, User._privileges, User.is_active)
+            .join(Member)
+            .where(Member.membership == membership, Member.end_date.is_null(True))
+            .order_by(User.id)
+            .for_update("FOR SHARE")
+        }
+        herd = Herd.select().where(Herd.id == herd_id).for_update().first()
+        if herd is None:
+            raise LinkError("Hittades inte", f"Besättningen {herd_id} finns inte", status=404)
+        if herd.herd in OUTSIDE_GENEBANK_HERDS:
+            raise LinkError(
+                "Besättningen kan inte kopplas",
+                "Besättningen samlar kaniner sålda utanför genbanken.",
+                type="herd-unavailable",
+            )
+        if _other_genebank_codes(herd.genebank_id).where(Herd.herd == herd.herd).exists():
+            raise LinkError(
+                "Besättningen kan inte kopplas",
+                f"Besättningen kan inte kopplas eftersom {_DUPLICATE_HERD_CODE}.",
+                type="herd-unavailable",
+            )
+        if herd.membership_id is not None:
+            target = "detta medlemskap"
+            if herd.membership_id != membership_id:
+                number = herd.membership.member_number
+                target = f"medlemskap nr {number}" if number is not None else "ett annat medlemskap utan nummer"
+            raise LinkError(
+                "Besättningen är redan kopplad",
+                f"Besättningen är redan kopplad till {target}.",
+                type="herd-unavailable",
+            )
+
+        preview, changes = _herd_link_preview(herd, membership, accounts.get(main_member.user_id), accounts)
+        confirmation = (preview, changes, main_member.id, main_member.user_id)
+        token = hashlib.sha256(json.dumps(confirmation, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        if confirm_token != token:
+            raise LinkError(
+                "Bekräfta kopplingen",
+                "Granska vad kopplingen ger och bekräfta.",
+                type="confirm-required",
+                preview=preview,
+                confirm_token=token,
+            )
+        cases = link_herd(herd.id, membership.id, herd_code=herd.herd, genebank_id=herd.genebank_id)
+        if cases is None:
+            raise LinkError(
+                "Besättningen har ändrats", "Försök igen för att granska besättningen på nytt.", type="stale"
+            )
+        write_matrikel_audit(
+            actor,
+            "herd_membership_linked",
+            membership,
+            {"herd_id": herd.id, "main_member_id": main_member.id, "source": "matrikel"},
+        )
+    _invalidate_genebanks([herd.genebank_id])
+    return {**preview["herd"], "membership_id": membership_id}

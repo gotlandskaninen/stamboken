@@ -21,6 +21,9 @@ export const BUYER_PRIVACY_HELP =
   "Skriv inte köparens namn eller kontaktuppgifter.";
 export const GENETICS_INFO =
   "Historisk genetikstatistik räknas inte om när en äldre händelse ångras.";
+// The server's UNDO_REASON: what a void stores for a seller when the rabbit
+// holds a buyer outside the genebank (row.reason_replaced), so none is asked.
+export const SYSTEM_REASON = "Ångrad av den som registrerade den";
 
 // The server rejects e-mail/phone with the help text; do not repeat it verbatim.
 const PRIVACY_REJECTED =
@@ -81,7 +84,8 @@ function VoidDialogContent({
   const [reason, setReason] = React.useState("");
   // One operation per dialog opening: retries and double clicks are idempotent.
   const [operationId] = React.useState(newOperationId);
-  const trimmed = reason.trim();
+  const replaced = !!row?.reason_replaced;
+  const trimmed = replaced ? SYSTEM_REASON : reason.trim();
   return (
     <Dialog
       open={open}
@@ -96,20 +100,24 @@ function VoidDialogContent({
             {row.date} · {KIND_LABELS[row.kind]} · {row.herd.label}
           </p>
         )}
-        <label className="sb-label" htmlFor="ht-void-reason">
-          Anledning
-        </label>
-        <textarea
-          id="ht-void-reason"
-          className="sb-input"
-          rows={3}
-          value={reason}
-          aria-describedby="ht-void-help"
-          onChange={(e) => setReason(e.target.value)}
-        />
-        <p id="ht-void-help" className="sb-meta">
-          {BUYER_PRIVACY_HELP}
-        </p>
+        {!replaced && (
+          <>
+            <label className="sb-label" htmlFor="ht-void-reason">
+              Anledning
+            </label>
+            <textarea
+              id="ht-void-reason"
+              className="sb-input"
+              rows={3}
+              value={reason}
+              aria-describedby="ht-void-help"
+              onChange={(e) => setReason(e.target.value)}
+            />
+            <p id="ht-void-help" className="sb-meta">
+              {BUYER_PRIVACY_HELP}
+            </p>
+          </>
+        )}
         {row && isBeforeLatestSnapshot(row.date) && (
           <p className="sb-meta" role="note">
             {GENETICS_INFO}

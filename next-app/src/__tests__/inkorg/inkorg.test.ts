@@ -102,6 +102,13 @@ describe("nav visibility and badge", () => {
     expect(keys(false)).not.toContain("inkorg");
   });
 
+  it("shows Årsrapport to everyone", () => {
+    expect(keys(false)).toContain("arsrapport");
+    expect(navItemsFor(false).find((i) => i.key === "arsrapport")?.href).toBe(
+      "/stamboken/arsrapport",
+    );
+  });
+
   it("shows Inkorg to queue workers", () => {
     expect(keys(true)).toContain("inskick");
     expect(navItemsFor(true).find((i) => i.key === "inkorg")?.href).toBe(

@@ -22,6 +22,8 @@ class Role(StrEnum):
     CARETAKER = "caretaker"  # current herd in effective_herd_ids() - transfer_herd_ids()
     ACTOR = "actor"  # ran the logged command; derived only by Undo (actor_role), never by roles_for
     HANDLAGGARE = "handlaggare"  # a genebank helper through an inbox item they hold; only a grant gives it
+    # the yearly report's right holder for the report's own writes, and a link's only role; only ReportGrant gives it
+    RAPPORT = "rapport"
 
 
 @dataclass(frozen=True)
@@ -56,6 +58,7 @@ EDIT_LIKE = (
     "RecordAttestation",
     "IssueDigitalCertificate",
 )
+LITTER_COMMANDS = ("RegisterLitter", "ConfirmLitterSize")
 CERT_GUARDED = ("AssignPaperCertificate", "RenameIndividual", "MoveToLitter")  # IR-18, IR-19
 
 POLICY: tuple[Allow, ...] = (
@@ -72,6 +75,15 @@ POLICY: tuple[Allow, ...] = (
     Allow("GenebankCorrection", Role.ADMIN),
     # Entry applies too, so an actor who sold the rabbit or lost the right to edit it is denied (ADR-0017).
     *[Allow("Undo", r) for r in (Role.ACTOR, *EDITORS)],
+    # Only the report's own operations (Undo's report_ops); Entry applies too, and so does the undone command's row.
+    Allow("Undo", Role.RAPPORT),
+    # The report link (step 3) has no account: ReportGrant gives RAPPORT for a rabbit in the code's own herd, and
+    # these rows are what a report writes (FA1). Never GX1/MX1, and no other command.
+    Allow("Entry", Role.RAPPORT, outside_genebank=False),
+    *[Allow(c, Role.RAPPORT) for c in ("RecordAttestation", "RecordDeath", "SetMeasurements")],
+    # A litter added without a certificate (spec 5.8): the holders, the editors and the report's link; HANDLAGGARE
+    # follows OWNER below. The commands ask it for the litter's herd, which may not be the mother's now (L2).
+    *[Allow(c, r) for c in LITTER_COMMANDS for r in (*EDITORS, *HOLDERS, Role.RAPPORT)],
 )
 # The inbox handler (utils.inbox.InboxGrant) may do what the owner may. That leaves out the corrections, which
 # are a manager's or an admin's (ADR-0017 level 2), and any rabbit in GX1/MX1, which Entry keeps out.
@@ -110,6 +122,8 @@ COMMAND_FIELDS: Mapping[str, tuple[str, ...]] = {
     "ChangeOriginHerd": ("origin_herd", "reason"),
     "IssueDigitalCertificate": ("digital_certificate",),
     "GenebankCorrection": ("herd", "origin_herd", "reason"),
+    "RegisterLitter": ("litter",),
+    "ConfirmLitterSize": ("litter_size6w",),
     "Undo": ("undo",),
 }
 

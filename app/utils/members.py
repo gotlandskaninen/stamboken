@@ -14,13 +14,20 @@ membership → user → person FOR UPDATE itself. Callers pass ids only.
 """
 
 import logging
+from datetime import datetime, timezone
 
-from utils.database import Member, User
+from utils.database import Member, Membership, PublicationConsentChange, User
 from utils.matrikel import ConfirmRequired, LinkError, link_member_user
 
 logger = logging.getLogger(__name__)
 
 CONSENT_KEYS = ("name", "phone", "email", "address")
+# the blankett's wording: one consent, one purpose (fråga 33). Bumped 2026-11-16: the question now says Koharen is the
+# paper magazine for members only, so the answer covers a narrower scope than "2026-11" did. Bumped 2026-11-18: the
+# question says "besättning" where it said "genbank" (same scope), on the form v5 and in the report alike.
+# Bumped 2026-11-20: the Ja answer now asks per item that MAY appear (it asked which must not), same stored keys.
+CONSENT_TEXT_VERSION = "2026-11-20"
+PROFILE_CONSENT_TEXT_VERSION = "profil-2025"  # the profile's text ("Medlemsmatrikeln trycks i Koharen") for now
 
 # Only Phase 9-provisioned Workspace addresses may auto-link. The
 # /api/auth/google flow enforces this domain, but the flask-dance
@@ -63,6 +70,34 @@ def consent_answered(row) -> bool:
     """
     raw = stored_consent(row)
     return any(key in raw for key in CONSENT_KEYS)
+
+
+def consent_from_answer(ja: bool, utom: list[str]) -> dict[str, bool]:
+    """The form's answer as the four keys (5.11): Nej is all False, Ja is `name` and every key not in `utom`."""
+    return {key: ja and key not in utom for key in CONSENT_KEYS}
+
+
+def set_consent(membership, value, *, source, text_version, user=None, report=None, submission=None, at=None) -> bool:
+    """
+    Writes `value` as the membership's publication consent, with one publication_consent_change row (D9, art. 7.1),
+    when it differs from the stored value, `{}` included. Consent only: never the whole row. A report's write names its
+    `report` and `submission` ids. The caller holds the membership's lock. Returns whether it wrote.
+    """
+    if value == stored_consent(membership):
+        return False
+    membership.publication_consent = value
+    membership.save(only=[Membership.publication_consent, Membership.updated_at])
+    PublicationConsentChange.create(
+        membership=membership.id,
+        at=at or datetime.now(timezone.utc),
+        value=value,
+        text_version=text_version,
+        source=source,
+        user=user,
+        report=report,
+        submission_id=submission,
+    )
+    return True
 
 
 def try_auto_link_member(member: Member, user: User) -> bool:

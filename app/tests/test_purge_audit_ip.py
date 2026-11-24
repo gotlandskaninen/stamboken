@@ -11,13 +11,12 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
-from peewee import OperationalError
-
 import herdbook
 import utils.data_access as da
 import utils.database as db
+from peewee import OperationalError
 
-from tests.database_test import DatabaseTest
+from tests.database_test import DatabaseTest, rewind_migrations
 
 _USE_POSTGRES = bool(os.getenv("POSTGRES_HOST")) and bool(os.getenv("POSTGRES_DB"))
 
@@ -94,7 +93,9 @@ class TestPurgeAuditIp(DatabaseTest):
     def test_plain_update_is_still_refused_after_a_purge(self):
         row_id = _seed(NOW - timedelta(days=400))
         da.purge_audit_ip(NOW)
-        db.DATABASE.execute_sql("UPDATE audit_log SET ip_address = '192.0.2.99', changed_by = 'x' WHERE id = %s", (row_id,))
+        db.DATABASE.execute_sql(
+            "UPDATE audit_log SET ip_address = '192.0.2.99', changed_by = 'x' WHERE id = %s", (row_id,)
+        )
         row = _row(row_id)
         self.assertIsNone(row["ip_address"])
         self.assertEqual(row["changed_by"], "editor")
@@ -163,7 +164,7 @@ class TestPurgeAuditIp(DatabaseTest):
     def test_migration_creates_the_partial_index(self):
         self.addCleanup(db.check_migrations)
         db.DATABASE.execute_sql("DROP INDEX IF EXISTS idx_audit_log_ip_retention")
-        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 39).execute()
+        rewind_migrations(39)
         db.check_migrations()
         indexdef = db.DATABASE.execute_sql(
             "SELECT indexdef FROM pg_indexes WHERE indexname = 'idx_audit_log_ip_retention'"

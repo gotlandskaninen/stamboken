@@ -42,6 +42,29 @@
   border-color: #e3cf9c;
 }
 
+.counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.count {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--sb-line);
+  border-radius: var(--sb-r-2);
+  background: var(--sb-card);
+  color: var(--sb-ink);
+  text-decoration: none;
+  font-size: 14px;
+}
+.count[aria-current="page"] {
+  border-color: var(--sb-skog);
+  background: var(--sb-skog-soft);
+  font-weight: 600;
+}
 .filters {
   display: flex;
   flex-wrap: wrap;
@@ -64,6 +87,40 @@
 .filters .check input {
   width: 20px;
   height: 20px;
+}
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.table th {
+  text-align: left;
+  font-family: var(--sb-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--sb-ink-3);
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--sb-line);
+}
+.table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--sb-line);
+  vertical-align: top;
+}
+/* The report photo's check (ReportPhotoCheck): the field names at reading size, a differing row marked */
+.photoCheck th {
+  font-family: var(--sb-body);
+  font-size: 14px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--sb-ink-2);
+}
+.photoCheck tr[data-differs] {
+  background: var(--sb-warning-soft);
+}
+.photoCheck tr[data-differs] > th {
+  border-left: 4px solid var(--sb-warning);
 }
 .badges {
   display: flex;
@@ -386,6 +443,36 @@
 .submitRow > :first-child {
   flex: 1;
   justify-content: center;
+}
+/* A column with nothing to show (a purchase notice's right column): no empty card */
+.hideEmpty:empty {
+  display: none;
+}
+/* A purchase notice in the main column: its facts at reading size, the number unbroken */
+.purchase {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: flex-start;
+  font-size: 16px;
+}
+.purchase p {
+  margin: 0;
+}
+.purchaseFacts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 16px;
+  margin: 0;
+}
+.purchaseFacts dt {
+  color: var(--sb-ink-2);
+}
+.purchaseFacts dd {
+  margin: 0;
+}
+.number {
+  white-space: nowrap;
 }
 .note {
   font-size: 13px;

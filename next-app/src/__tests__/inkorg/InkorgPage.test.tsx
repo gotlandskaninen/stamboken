@@ -186,6 +186,29 @@ describe("Inkorg", () => {
       expect(within(item).getByText(flag)).toBeVisible();
   });
 
+  it("names the report link in the list and in the selected case", async () => {
+    const photo = {
+      ...row,
+      kind: "kontroll",
+      sender: null,
+      sender_address: null,
+    };
+    fetchApi.mockImplementation(async (path: string) =>
+      path === "/v2/inkorg/14"
+        ? { ...photo, documents: [], events: [] }
+        : { ...queue, items: [photo] },
+    );
+    await show({ arende: "14" });
+    expect(screen.getByRole("link", { name: /#14/ })).toHaveTextContent(
+      "Länken för besättning G12",
+    );
+    expect(
+      within(screen.getByRole("article")).getByText(
+        "Länken för besättning G12",
+      ),
+    ).toBeVisible();
+  });
+
   it("moves focus without opening either adjacent item on a wide screen", async () => {
     wideScreen = true;
     await show({ scope: "alla" });

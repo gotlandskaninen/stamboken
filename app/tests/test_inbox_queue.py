@@ -393,6 +393,9 @@ class TestTakeAndAssign(InboxTest):
 
     def test_assign_all_open_items_of_a_herd(self):
         first, second, closed, other = self.item(0), self.item(0), self.item(0), self.item(1)
+        held = self.item(0)
+        held.ref_data = {inbox.PURPOSE: inbox.HELD_RABBIT}
+        held.save()
         inbox.take(closed, self.helper, over=False)
         inbox.change_state(closed, self.helper, "skrap")
         self.login("man")
@@ -400,10 +403,12 @@ class TestTakeAndAssign(InboxTest):
         self.assertEqual(refused.status_code, 400)
         self.assertIn("revision", refused.get_json()["detail"])
         self.assertIsNone(self.reload(first).assigned_to_id)
-        revision = self.client.get("/api/v2/inkorg/tilldela?herd=G1").get_json()["revision"]
-        resp = self.post("/tilldela", herd="G1", user_id=self.helper.id, revision=revision)
+        preview = self.client.get("/api/v2/inkorg/tilldela?herd=G1").get_json()
+        self.assertEqual(preview["total"], 2)
+        resp = self.post("/tilldela", herd="G1", user_id=self.helper.id, revision=preview["revision"])
         self.assertEqual(resp.status_code, 200, resp.get_json())
         self.assertEqual(resp.get_json()["assigned"], [first.id, second.id])
+        self.assertIsNone(self.reload(held).assigned_to_id)
         self.assertIsNone(self.reload(other).assigned_to_id)
         self.assertEqual(self.reload(closed).state, "skrap")
         self.login("hjalp")
@@ -620,6 +625,16 @@ class TestUploaderAndNotices(InboxTest):
         )
         self.assertNotIn(other.id, [i["id"] for i in resp.get_json()["items"]])
         self.assertNotIn("assigned_to", resp.get_json()["items"][0])
+
+    def test_my_uploads_leave_out_a_held_photo_of_every_purpose(self):
+        sent = self.item(0)
+        held = [self.item(0) for _ in (*inbox.PURPOSES, inbox.HELD_RABBIT)]
+        for item, purpose in zip(held, (*inbox.PURPOSES, inbox.HELD_RABBIT), strict=True):
+            item.ref_data = {inbox.PURPOSE: purpose}
+            item.save()
+        self.login("owner")
+        ids = [i["id"] for i in self.client.get("/api/v2/inkorg/mina-inskick").get_json()["items"]]
+        self.assertEqual(ids, [sent.id])
 
     def test_the_list_reads_no_notice_and_the_page_marks_them_seen(self):
         mine = self.item(0)

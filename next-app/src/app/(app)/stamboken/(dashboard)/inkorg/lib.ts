@@ -119,6 +119,17 @@ export interface InboxDetail extends Omit<InboxItem, "documents"> {
   sender_authenticated: boolean | null;
   documents: InboxDocument[];
   events: InboxEvent[];
+  /** A report photo (kontroll, individual): the rabbit as the member registered it, keyed as CertForm; else null. */
+  registered?: Partial<Record<keyof CertForm, string | number | null>> | null;
+  /** A sale proposal's round year, or that of the proposal a purchase notice matches. Null for other items. */
+  report_year?: number | null;
+  /** A purchase notice's fields (ref_type "kopanmalan"), or a bought rabbit's sent photos (an upload, S7). */
+  ref_data?: {
+    number: string;
+    from_herd: string;
+    date: string;
+    individual_id?: number; // a notice's only: sent photos are of a rabbit Stamboken lacks
+  } | null;
 }
 
 export interface QueueList {
@@ -250,6 +261,32 @@ export function queueWait(from: string, now: number, t: TFunction) {
   if (minutes < 1440)
     return t("queue.hours", { count: Math.round(minutes / 60) });
   return t("queue.days", { count: Math.round(minutes / 1440) });
+}
+
+// Who sent an item with an account; the report's photo through a member's personal link has none, so the
+// link is named by the herd of its report code (old items too: no event is read).
+export const accountOrLink = (item: {
+  kind: string;
+  herd: string | null;
+  sender: Person | null;
+}): string | null =>
+  item.sender?.name ??
+  (item.kind === "kontroll" && item.herd
+    ? `Länken för besättning ${item.herd}`
+    : null);
+
+// Who sent the item: its account, else the link or the account its arrival names (a purchase notice has no
+// sender_user: a link's history says `via`, an account's is the event's user), else the mail's address.
+export function senderText(item: InboxDetail): string | null {
+  const arrived = item.events.find((e) => e.kind === "inkommen");
+  const via = arrived?.detail?.via;
+  return (
+    item.sender?.name ??
+    (typeof via === "string" ? via : null) ??
+    arrived?.user?.name ??
+    accountOrLink(item) ??
+    item.sender_address
+  );
 }
 
 /** Time since `from`, in plain words. */
@@ -660,3 +697,24 @@ export function queueHref(
   const search = params.toString();
   return "/stamboken/inkorg" + (search ? `?${search}` : "");
 }
+
+/** A round as /v2/arsrapport/rundor lists it (newest year first). */
+export type RoundRow = {
+  year: number;
+  genebanks: { genebank_id: number }[];
+};
+
+/**
+ * The year of the form entry link: the latest round the item's genebank has
+ * activated. It stays after end_date, when paper entry is still allowed (D11).
+ */
+export const reportYear = (
+  rounds: RoundRow[] | null,
+  genebankId: number | null,
+): number | null =>
+  genebankId === null
+    ? null
+    : ([...(rounds ?? [])]
+        .sort((a, b) => b.year - a.year)
+        .find((r) => r.genebanks.some((g) => g.genebank_id === genebankId))
+        ?.year ?? null);

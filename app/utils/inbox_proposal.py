@@ -17,6 +17,7 @@ genebank, since rabbits never change genebank.
 """
 
 import difflib
+import operator
 import re
 import unicodedata
 from datetime import date, timedelta
@@ -32,7 +33,17 @@ _PARENTS = {
     "father": ("far", "farfar", "farmor", ("male", "eunuch"), "Far"),
 }
 # The kinds of number_check conflict that say the paper's number is not the one its litter gives.
-_NUMBER_CONFLICTS = {"prefix", "year", "litter", "litter_missing", "litter_order", "position", "number_taken"}
+_NUMBER_CONFLICTS = {
+    "prefix",
+    "year",
+    "litter",
+    "litter_missing",
+    "litter_order",
+    "litter_number_taken",
+    "litter_number_invalid",
+    "position",
+    "number_taken",
+}
 SAME_LITTER_DAYS = 35  # a litter of the same parents this close is the certificate's, registered on another date
 MAX_LISTED = 5  # litters listed for the handler when nothing read picks one
 _DIGIT_FOR = str.maketrans({"S": "5", "s": "5", "O": "0", "o": "0", "l": "1", "I": "1", "|": "1"})
@@ -500,17 +511,82 @@ def _existing(registry, raw, struck, rabbit, own_text, swapped):
     return {"fields": fields, "checks": checks}
 
 
-def build_proposal(raw, genebank_id, herd_id=None):
+def _registered(registry, raw, struck, rabbit):
+    """
+    A certificate photo from the yearly report, read after the member registered `rabbit` from it (4b, G5): every
+    field of the form beside the rabbit as registered, whatever number was read. A field read as registered is läst
+    (härlett for a number read with letters as digits or one character off), one read otherwise avviker with the
+    registered value as `registry`, and one struck through or not readable osäker. The checks are those of a
+    certificate of a rabbit in Stamboken.
+    """
+    own_text = _number_text(raw)
+    own = None if {"genbanksnr", "ar_kull_individ"} & struck else _parse_number(raw, registry.letter)
+    checks = _existing(registry, raw, struck, rabbit, own_text, bool(own and own[2]))["checks"]
+    litter = Breeding.get_or_none(Breeding.id == rabbit.breeding_id)
+    fields = {}
+
+    def number(key, text, parsed, theirs):
+        how = registry.compare(parsed, theirs)
+        if how in (READ, DERIVED):
+            fields[key] = _field(how, theirs.number, read=text)
+        elif how == "differs":
+            fields[key] = _field(DEVIATES, read=text, registry=theirs.number)
+        elif text:
+            fields[key] = _field(UNSURE, read=text)
+
+    number("paper_number", own_text, own, rabbit)
+    for role in ("mother", "father"):
+        key = _PARENTS[role][0]
+        entry = _entry(raw, key)
+        parsed = None if key in struck else _parse_number(entry, registry.letter)
+        number(role, _number_text(entry), parsed, litter and getattr(litter, role))
+
+    def iso(day):
+        return day.isoformat() if day else None
+
+    for key, raw_key, parse, theirs in (
+        ("birth_date", "fodelsedatum", lambda text: iso(_date(text)), iso(litter and litter.birth_date)),
+        ("litter_size", "fodda_i_kullen", _count, litter and litter.litter_size),
+        ("litter_size6w", "levande_efter_6_veckor", _count, litter and litter.litter_size6w),
+    ):
+        text = _text(raw.get(raw_key))
+        value = None if raw_key in struck else parse(text)
+        if not value:  # a litter has at least one, as registration requires
+            if text:
+                fields[key] = _field(UNSURE, read=text)
+        elif theirs is None or value == theirs:
+            fields[key] = _field(READ, value, read=text)
+        else:
+            fields[key] = _field(DEVIATES, read=text, registry=theirs)
+
+    _certificate(raw, struck, rabbit, fields, [])  # its checks are among _existing's
+    _plain_fields(registry, raw, struck, fields)
+    for key, theirs, same in (
+        ("paper_certificate", rabbit.certificate, operator.eq),
+        ("name", rabbit.name, _same_name),
+        ("sex", rabbit.sex, lambda read, sex: read == _sex(sex)),
+        ("color", rabbit.color.name if rabbit.color_id else None, operator.eq),
+    ):
+        field = fields.get(key)
+        if field and field["value"] is not None and theirs and not same(field["value"], theirs):
+            fields[key] = _field(DEVIATES, read=field.get("read"), registry=theirs)
+    return {"fields": fields, "checks": checks}
+
+
+def build_proposal(raw, genebank_id, herd_id=None, registered=None):
     """
     The proposal for a certificate in an item of `genebank_id` (sent in for the herd `herd_id`), from the
     interpreter's answer `raw` (inbox_interpreter.SCHEMA, untrusted): {"fields": {key: {value, source, read?,
     registry?}}, "checks": [{ok, text}]}. The keys are the registration form's (docs/inkorg.md, "Spara det intyget
-    visar") and the grandparents': farfar, farmor, morfar, mormor.
+    visar") and the grandparents': farfar, farmor, morfar, mormor. A report photo's rabbit, once registered from it
+    (`registered`), is what every field is set beside.
     """
     raw = raw if isinstance(raw, dict) else {}
     struck = raw.get("overstruket")
     struck = {key for key in struck if isinstance(key, str)} if isinstance(struck, list) else set()
     registry = _Registry(genebank_id)
+    if registered is not None:
+        return _registered(registry, raw, struck, registered)
     fields, checks = {}, []
     own_text = _number_text(raw)
     own = None if {"genbanksnr", "ar_kull_individ"} & struck else _parse_number(raw, registry.letter)

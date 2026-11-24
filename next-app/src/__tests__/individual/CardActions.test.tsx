@@ -86,4 +86,31 @@ describe("CardActions", () => {
       screen.queryByRole("menuitem", { name: "Ångra försäljning" }),
     ).toBeNull();
   });
+
+  it("links a death the yearly report wrote to the report instead of 'Ångra dödsrapportering'", () => {
+    render(
+      <ThemeProvider theme={createTheme()}>
+        <CardActions
+          canEdit
+          isEditing={false}
+          onToggleEdit={noop}
+          isAlive={false}
+          onReportDeath={noop}
+          onUndoDeath={noop}
+          canSell={false}
+          onSell={noop}
+          testMateHref={null}
+          onUndoSale={null}
+          deathReportHref="/stamboken/arsrapport/G1/2025"
+        />
+      </ThemeProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Fler åtgärder" }));
+    expect(
+      screen
+        .getByRole("menuitem", { name: "Ändra i årsrapporten" })
+        .getAttribute("href"),
+    ).toBe("/stamboken/arsrapport/G1/2025");
+    expect(screen.queryByText("Ångra dödsrapportering")).toBeNull();
+  });
 });
