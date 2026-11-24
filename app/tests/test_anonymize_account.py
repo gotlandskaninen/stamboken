@@ -17,7 +17,6 @@ from datetime import date, datetime, timezone
 from unittest import mock
 
 import peewee
-
 import utils.data_access as da
 import utils.database as db
 import utils.mail as mail
@@ -73,7 +72,9 @@ class TestAnonymizeEmptiesTheAccount(DatabaseTest):
 
     def _account(self, tag):
         """An account with every personal field set, a password, a Google identity and an uploaded picture."""
-        user = da.register_user(f"konto{tag}@example.invalid", "losen", username=f"anvandare{tag}", fullname=f"Namn{tag}")
+        user = da.register_user(
+            f"konto{tag}@example.invalid", "losen", username=f"anvandare{tag}", fullname=f"Namn{tag}"
+        )
         db.User.update(
             google_email=f"google{tag}@example.invalid",
             google_name=f"Googlenamn{tag}",
@@ -354,8 +355,13 @@ class TestAnonymizeEmptiesTheAccount(DatabaseTest):
         stale = db.User.get_by_id(user.id)  # what the admin's open form shows
         matrikel.anonymize_person(self._person(db.Membership.create(member_number=400), user), self.admin)
         result = da.update_user(
-            {"id": user.id, "email": stale.email, "username": stale.username, "fullname": stale.fullname,
-             "validated": True},
+            {
+                "id": user.id,
+                "email": stale.email,
+                "username": stale.username,
+                "fullname": stale.fullname,
+                "validated": True,
+            },
             self.admin.uuid,
         )
         self.assertEqual(result, {"status": "error", "message": "unknown user"})
@@ -376,7 +382,9 @@ class TestAnonymizeEmptiesTheAccount(DatabaseTest):
             return row
 
         with mock.patch.object(da.User, "get_by_id", side_effect=get_then_erase):
-            result = da.update_user({"id": user.id, "email": "ny-g@example.invalid", "validated": True}, self.admin.uuid)
+            result = da.update_user(
+                {"id": user.id, "email": "ny-g@example.invalid", "validated": True}, self.admin.uuid
+            )
         self.assertEqual(result, {"status": "error", "message": "unknown user"})
         self.assertEqual(db.User.get_by_id(user.id).email, f"raderad-{user.id}")
         self.assertNotEqual(stale.email, f"raderad-{user.id}")
@@ -460,7 +468,7 @@ class TestAnonymizeEmptiesTheAccount(DatabaseTest):
         self.assertEqual((row.email, row.username), (f"raderad-{user.id}", None))
 
     def test_a_failed_upload_leaves_no_partial_file(self):
-        user = self._account("y")
+        self._account("y")
         client = APP.test_client(use_cookies=True)
         client.post("/api/login", json={"username": "anvandarey", "password": "losen"})
 

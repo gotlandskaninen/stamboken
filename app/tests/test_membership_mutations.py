@@ -104,7 +104,9 @@ class TestMatrikelDomainFunctions(DatabaseTest):
         matrikel.anonymize_person(self.family, self.admin)
         self.assertFalse(db.User.get_by_id(user.id).name_on_check_page)  # off the public check page (#6)
         # ...and no audit row of the account keeps its name or e-mail (#190)
-        for row in db.AuditLog.select().where(db.AuditLog.table_name == "hbuser", db.AuditLog.record_id == str(user.id)):
+        for row in db.AuditLog.select().where(
+            db.AuditLog.table_name == "hbuser", db.AuditLog.record_id == str(user.id)
+        ):
             self.assertNotIn("fam", f"{row.old_data} {row.new_data} {row.changed_by}")
         person = db.Member.get_by_id(self.family.id)
         self.assertEqual(person.first_name, "Borttagen")
