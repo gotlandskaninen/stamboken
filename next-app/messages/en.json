@@ -29,7 +29,7 @@
     "newest": "Newest first",
     "count_one": "{{count}} case",
     "count_other": "{{count}} cases",
-    "keys": "Use the up and down arrows to change case",
+    "keys": "Use the up and down arrows to move through the list. Press Enter to open a case.",
     "empty": "No cases here.",
     "reset": "Show all open cases",
     "pages": "Case list pages",

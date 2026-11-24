@@ -154,35 +154,10 @@ export function QueueBrowser({
       document.getElementById(`case-row-${last.selected}`)?.focus();
     }
   }, [selected, query]);
-  const lastOpened = useRef<number | null>(null);
   const first = data.items[0]?.id;
   const tabStop = data.items.some((item) => item.id === selected)
     ? selected
     : first;
-
-  // Opening a detail marks it read. Only the wide layout selects automatically.
-  // Keep the previously opened case when it is still visible after filtering.
-  useEffect(() => {
-    if (selected !== null) {
-      lastOpened.current = selected;
-      return;
-    }
-    if (first === undefined) return;
-    const id = data.items.some((item) => item.id === lastOpened.current)
-      ? lastOpened.current
-      : first;
-    const wide = window.matchMedia(WIDE_LAYOUT);
-    const openVisible = () => {
-      const typing =
-        input.current === document.activeElement &&
-        input.current?.value.trim().toUpperCase() !== herd;
-      if (wide.matches && !typing)
-        router.replace(queueHref(query, { arende: id }), { scroll: false });
-    };
-    openVisible();
-    wide.addEventListener("change", openVisible);
-    return () => wide.removeEventListener("change", openVisible);
-  }, [data.items, first, query, router, selected, herd]);
 
   useEffect(() => {
     if (input.current !== document.activeElement) setSearchText(herd);
@@ -231,8 +206,6 @@ export function QueueBrowser({
     if (next) {
       next.focus({ preventScroll: true });
       next.scrollIntoView?.({ block: "nearest" });
-      if (window.matchMedia(WIDE_LAYOUT).matches)
-        router.replace(next.getAttribute("href")!, { scroll: false });
     }
   }
 

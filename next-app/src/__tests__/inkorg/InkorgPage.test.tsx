@@ -175,7 +175,7 @@ describe("Inkorg", () => {
       expect(within(item).getByText(flag)).toBeVisible();
   });
 
-  it("moves focus and opens the adjacent item with the arrow keys on a wide screen", async () => {
+  it("moves focus without opening either adjacent item on a wide screen", async () => {
     wideScreen = true;
     await show({ scope: "alla" });
     const first = screen.getByRole("link", { name: /#14/ });
@@ -185,16 +185,12 @@ describe("Inkorg", () => {
     first.focus();
     fireEvent.keyDown(first, { key: "ArrowDown" });
     expect(second).toHaveFocus();
-    expect(replace).toHaveBeenLastCalledWith(
-      "/stamboken/inkorg?scope=alla&arende=15",
-      { scroll: false },
-    );
     fireEvent.keyDown(second, { key: "ArrowUp" });
     expect(first).toHaveFocus();
-    expect(replace).toHaveBeenLastCalledWith(
-      "/stamboken/inkorg?scope=alla&arende=14",
-      { scroll: false },
-    );
+    expect(replace).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+    expect(fetchApi).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/Upp- och nedpil.*Enter/)).toBeVisible();
   });
 
   it("keeps the narrow list open through two arrow presses", async () => {
@@ -215,12 +211,13 @@ describe("Inkorg", () => {
     expect(push).not.toHaveBeenCalled();
   });
 
-  it("opens the first item by URL on a wide screen", async () => {
+  it("waits for an explicit selection on a wide screen", async () => {
     wideScreen = true;
     await show();
-    expect(replace).toHaveBeenCalledWith("/stamboken/inkorg?arende=14", {
-      scroll: false,
-    });
+    expect(screen.getByText("Välj ett ärende i listan.")).toBeVisible();
+    expect(replace).not.toHaveBeenCalled();
+    expect(fetchApi).toHaveBeenCalledTimes(1);
+    expect(document.querySelector("img")).toBeNull();
   });
 
   it("resets an empty filtered list and keeps its scope", async () => {

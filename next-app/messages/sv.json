@@ -29,7 +29,7 @@
     "newest": "Nyast först",
     "count_one": "{{count}} ärende",
     "count_other": "{{count}} ärenden",
-    "keys": "Upp- och nedpil byter ärende",
+    "keys": "Upp- och nedpil flyttar markeringen. Enter öppnar ärendet.",
     "empty": "Inga ärenden här.",
     "reset": "Visa alla öppna",
     "pages": "Sidor i ärendelistan",

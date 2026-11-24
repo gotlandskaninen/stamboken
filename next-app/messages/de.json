@@ -29,7 +29,7 @@
     "newest": "Neueste zuerst",
     "count_one": "{{count}} Vorgang",
     "count_other": "{{count}} Vorgänge",
-    "keys": "Pfeiltasten wechseln den Vorgang",
+    "keys": "Mit den Pfeiltasten durch die Liste gehen. Eingabe öffnet den Vorgang.",
     "empty": "Keine Vorgänge vorhanden.",
     "reset": "Alle offenen Vorgänge anzeigen",
     "pages": "Seiten der Vorgangsliste",
