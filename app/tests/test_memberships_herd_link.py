@@ -278,9 +278,19 @@ class TestMembershipHerdLink(LinkApiBase):
         preview = self.preview()["preview"]
         self.assertNotIn(self.herd.id, self.account.transfer_herd_ids())
         self.assertIn(self.herd.herd, self.account.is_owner)
-        self.assertTrue(preview["new_access"]["already_edits"])
+        # the rabbit write policies compare integer ids: the link adds that right
+        self.assertFalse(preview["new_access"]["already_edits"])
         self.assertEqual([u["id"] for u in preview["legacy_owners"]], [self.account.id])
         self.assertTrue(preview["legacy_owners"][0]["gains_household_grants"])
+
+    def test_preview_with_legacy_code_in_owner_role_on_another_herd(self):
+        self.account.privileges = [{"level": "owner", "herd": "G12"}]
+        self.account.save()
+        self.main.user = self.account
+        self.main.save()
+        preview = self.preview()["preview"]
+        self.assertEqual(preview["new_access"]["id"], self.account.id)
+        self.assertFalse(preview["new_access"]["already_edits"])
 
     def test_user_endpoint_after_link_with_string_owner_role_on_another_herd(self):
         legacy_herd = self.herds[0]

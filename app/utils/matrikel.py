@@ -1386,7 +1386,8 @@ def _herd_link_preview(
         if main is not None and main.is_active and (not active or herd.id not in main.transfer_herd_ids()):
             new_access = {
                 **_account_summary(main),
-                "already_edits": herd.herd in (main.is_owner or []),
+                # integer ids, as the write policies compare; no SQL on stored role values
+                "already_edits": herd.id in main.effective_herd_ids(),
                 "already_manages": main.is_admin or herd.genebank_id in (main.is_manager or []),
             }
         if active:
