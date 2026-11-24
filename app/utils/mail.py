@@ -65,6 +65,7 @@ RETRY_DELAYS = (
     timedelta(hours=12),
 )
 RETENTION = timedelta(days=396)
+MAIL_NO_LONGER_RELEVANT = "mejlet är inte längre aktuellt"
 
 MailKind = namedtuple("MailKind", "priority category build")
 Recipient = namedtuple("Recipient", "address label")
@@ -526,7 +527,7 @@ def _send_one(row, relay, now):
             return _finish(row, now, status="cancelled", last_error="mottagaren saknar e-post")
         variables = kind.build(row.params)
         if variables is None:
-            return _finish(row, now, status="cancelled", last_error="mejlet är inte längre aktuellt")
+            return _finish(row, now, status="cancelled", last_error=MAIL_NO_LONGER_RELEVANT)
         attachments = variables.pop("attachments", [])
         reply_to = variables.pop("reply_to", None)
         subject, body = render(row.kind, variables)

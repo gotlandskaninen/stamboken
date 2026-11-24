@@ -39,7 +39,7 @@ from utils.database import (
 )
 from utils.individual_number_v2 import NUMBER_PATTERN, parse_number
 from utils.individual_policy import Role
-from utils.mail import enqueue_mail, forget_recipient, mail_kind
+from utils.mail import MAIL_NO_LONGER_RELEVANT, enqueue_mail, forget_recipient, mail_kind
 
 OPEN_STATES = ("ny", "tagen", "vantar_uppfodare", "vantar_foralder", "hos_genbanksansvarig", "ofullstandig")
 CLOSED_STATES = ("klar", "dubblett", "skrap")
@@ -498,6 +498,36 @@ def record_assignment(item, change):
     }
 
 
+def _restore_attachment_request(item):
+    event_id = (
+        item.events.select(InboxEvent.id)
+        .where(InboxEvent.kind == "lage", InboxEvent.detail.contains({"to": "ofullstandig"}))
+        .order_by(InboxEvent.id.desc())
+        .scalar()
+    )
+    # Hold the original row until the restored item state commits. The sender skips locked rows.
+    message = (
+        MailMessage.select()
+        .where(
+            MailMessage.ref_type == "inbox_item",
+            MailMessage.ref_id == item.id,
+            MailMessage.kind == "inlasning.ofullstandig",
+            MailMessage.params.contains({"event_id": event_id}),
+        )
+        .for_update()
+        .first()
+    )
+    if message is None:
+        return
+    if message.status == "sending":
+        raise InboxError(409, "Utskicket pågår. Det går inte att ångra medan mejlet behandlas.")
+    if message.status == "cancelled":
+        if message.last_error != MAIL_NO_LONGER_RELEVANT:
+            raise InboxError(409, "Begäran om bilaga har makulerats och kan inte skickas igen.")
+        message.status, message.last_error = "queued", None
+        message.save(only=[MailMessage.status, MailMessage.last_error])
+
+
 def undo_assignments(receipts, user):
     """Restore the entire signed operation, or roll it all back. GETs may have logged reads in between."""
     for receipt in receipts:  # signed in ascending item id, the same lock order as assignment
@@ -514,6 +544,8 @@ def undo_assignments(receipts, user):
         if event.kind == "tilldelad" and not manages(user, item.genebank_id):
             raise InboxError(403, "Du får inte längre tilldela ärendet.")
         before = receipt["before"]
+        if before["state"] == "ofullstandig" and item.state != "ofullstandig":
+            _restore_attachment_request(item)
         if before["assigned_to"] is not None:
             previous = User.get_or_none(User.id == before["assigned_to"])
             if previous is None or not can_handle(previous, item.genebank_id):
