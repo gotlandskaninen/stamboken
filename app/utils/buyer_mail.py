@@ -153,29 +153,22 @@ def _membership_mail(params):
 
 
 def _same_buyer(contact_id):
-    """
-    The ids of the buyers with the address of buyer `contact_id`, that one included: a buyer of several rabbits
-    is one contact per sale. A purge may have taken the linked contact's own e-mail (the rabbit was sold on)
-    while a mail to it still holds the address's HMAC; the others are then found from that.
-    """
-    ids = {contact_id}
+    """All contacts with the linked buyer's address, including contacts whose e-mail has been purged."""
     contact = BuyerContact.get_or_none(BuyerContact.id == contact_id)
     if contact is None:
-        return ids
+        return {contact_id}
     email = (contact.email or "").strip().lower()
+    key = address_hash(email) if email else contact.erased_email_hash
+    if key is None:
+        return {contact_id}
+    same = BuyerContact.erased_email_hash == key
     if email:
-        same = BuyerContact.select(BuyerContact.id).where(fn.lower(fn.trim(BuyerContact.email)) == email)
-        return ids | {row.id for row in same}
-    sent_to = (
-        (MailMessage.recipient_kind == "buyer_contact")
-        & (MailMessage.recipient_id == contact_id)
-        & MailMessage.address_hash.is_null(False)
-    )
-    hashes = {row.address_hash for row in MailMessage.select(MailMessage.address_hash).where(sent_to)}
-    if hashes and settings.mail.link_secret:
-        others = BuyerContact.select(BuyerContact.id, BuyerContact.email).where(BuyerContact.email.is_null(False))
-        ids |= {other.id for other in others if address_hash(other.email) in hashes}
-    return ids
+        same |= fn.lower(fn.trim(BuyerContact.email)) == email
+    ids = {row.id for row in BuyerContact.select(BuyerContact.id).where(same)}
+    if not email:  # only the HMAC remains to compare with the addresses that are still held
+        live = BuyerContact.select(BuyerContact.id, BuyerContact.email).where(BuyerContact.email.is_null(False))
+        ids.update(row.id for row in live if address_hash(row.email) == key)
+    return ids | {contact_id}
 
 
 def erase_by_link(token):

@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 from peewee import Case, fn
 
+from utils import settings
 from utils.database import DB_PROXY, AuditLog, BuyerContact, HerdTracking, Individual, ht_sort_key, lock_individuals
 from utils.herd_tracking import (
     QUEUE_CHANGED,
@@ -25,7 +26,7 @@ from utils.herd_tracking import (
     sold_on,
 )
 from utils.inbox_purge import remove_originals
-from utils.mail import forget_recipient
+from utils.mail import address_hash, forget_recipient, is_address
 
 logger = logging.getLogger("herdbook.buyer_contact")
 
@@ -193,6 +194,11 @@ def _null_fields(where, changes, action):
             gone = [name for name in columns if before[contact_id][name] is not None and after[name] is None]
             log_buyer_contact(contact_id, "UPDATE", action, fields=gone)
             if "email" in gone:
+                email = before[contact_id]["email"]
+                if settings.mail.link_secret and is_address(email):
+                    BuyerContact.update(erased_email_hash=address_hash(email)).where(
+                        BuyerContact.id == contact_id
+                    ).execute()
                 forget_recipient("buyer_contact", contact_id)
     return len(changed)
 

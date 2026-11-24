@@ -1671,6 +1671,7 @@ class BuyerContact(BaseModel):
     town = TextField()
     postal_address = TextField(null=True)
     email = TextField(null=True)
+    erased_email_hash = TextField(null=True)  # lets the erase link find this contact after its e-mail is purged
     phone = TextField(null=True)
     contact_consent_at = TimestampTZField(null=True)  # may keep e-mail and phone while the buyer has it
     membership_optin_at = TimestampTZField(null=True)  # may be contacted about membership
@@ -4319,10 +4320,11 @@ def migrate_49_to_50():
             "ALTER TABLE notice ADD COLUMN IF NOT EXISTS individual_id INTEGER "
             "REFERENCES individual (individual_id) ON DELETE CASCADE"
         )
+        DATABASE.execute_sql("ALTER TABLE buyer_contact ADD COLUMN IF NOT EXISTS erased_email_hash TEXT")
         # The index a fresh bootstrap gives the foreign key: the cascade looks the notices up by rabbit.
         DATABASE.execute_sql("CREATE INDEX IF NOT EXISTS notice_individual_id ON notice (individual_id)")
         SchemaHistory.insert(  # pylint: disable=E1120
-            version=50, comment="notice.individual", applied=datetime.now()
+            version=50, comment="notice.individual, buyer_contact.erased_email_hash", applied=datetime.now()
         ).execute()
 
 

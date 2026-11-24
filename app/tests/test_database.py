@@ -1646,7 +1646,8 @@ class TestDatabaseMigration(DatabaseTest):
             columns = {(c.name, c.null) for c in db.DATABASE.get_columns("notice")}
             keys = {(k.column, k.dest_table, k.dest_column) for k in db.DATABASE.get_foreign_keys("notice")}
             indexes = {(i.name, tuple(i.columns), i.unique) for i in db.DATABASE.get_indexes("notice")}
-            return columns, keys, indexes
+            buyer_columns = {(c.name, c.null) for c in db.DATABASE.get_columns("buyer_contact")}
+            return columns, keys, indexes, buyer_columns
 
         fresh = shape()
         version = self._migration_version("notice.individual")
@@ -1656,6 +1657,7 @@ class TestDatabaseMigration(DatabaseTest):
                 version=version - 1, comment="test seed", applied=datetime.now()
             ).execute()
         db.DATABASE.execute_sql("ALTER TABLE notice DROP COLUMN individual_id")
+        db.DATABASE.execute_sql("ALTER TABLE buyer_contact DROP COLUMN erased_email_hash")
 
         db.check_migrations()
 
@@ -1664,6 +1666,7 @@ class TestDatabaseMigration(DatabaseTest):
         self.assertIn(("individual_id", True), fresh[0])
         self.assertIn(("individual_id", "individual", "individual_id"), fresh[1])
         self.assertIn(("notice_individual_id", ("individual_id",), False), fresh[2])
+        self.assertIn(("erased_email_hash", True), fresh[3])
 
     @staticmethod
     def _migration_version(marker):

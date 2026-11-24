@@ -553,7 +553,7 @@ class TestEraseLink(PurgeTest):
         self.assertEqual([row.id for row in db.BuyerContact.select()], [other])
 
     def test_the_link_finds_the_other_contacts_after_its_own_address_was_purged(self):
-        """The rabbit was sold on, so purge_sold_on took the linked contact's e-mail; the sent mail knows it."""
+        """The real purge forgets the sent mail's hash, while the link still covers the other sale."""
         consent = {"contact_consent_at": datetime.now(timezone.utc), "created_by_user": self.manager}
         purge_at = db.BuyerContact.purge_at_for(date.today())
         same = db.BuyerContact.create(name="Zelda", town="Visby", email=EMAIL, purge_at=purge_at, **consent).id
@@ -561,7 +561,10 @@ class TestEraseLink(PurgeTest):
             name="Per", town="Visby", email="per@example.org", purge_at=purge_at, **consent
         ).id
         db.MailMessage.update(address_hash=mail.address_hash(EMAIL)).execute()
-        db.BuyerContact.update(email=None).where(db.BuyerContact.id == self.contact_id).execute()
+        record_herd_tracking(self.sale.individual, self.herds[0], "2026-01-03", "TRANSFER", self.manager)
+        self.assertEqual(buyer_contact.purge_sold_on(datetime.now(timezone.utc)), 1)
+        self.assertIsNone(db.BuyerContact.get_by_id(self.contact_id).email)
+        self.assertIsNone(db.MailMessage.get(db.MailMessage.recipient_id == self.contact_id).address_hash)
         self.assertEqual(self.erase(self.token).get_json(), {"result": "removed"})
         self.assertEqual([row.id for row in db.BuyerContact.select()], [other])
         self.assertEqual(sorted(row[0] for row in self.deletions()), sorted([str(self.contact_id), str(same)]))
