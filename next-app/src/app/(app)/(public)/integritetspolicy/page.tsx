@@ -380,21 +380,21 @@ export default function IntegritetspolicyPage() {
 
           <Section title="När du tycker till om Stamboken">
             <p>
-              Med knappen Tyck till i Stamboken Online kan du berätta vad som
-              inte fungerar eller vad du önskar. Det du skriver blir ett ärende
-              på GitHub, där vi samlar arbetet med Stamboken. Du väljer själv
-              vem som får läsa det. Väljer du Alla läggs hela texten ut öppet,
-              precis som du skrev den, men utan ditt namn. Väljer du Bara
-              föreningen, eller skickar du utan att vara inloggad, kan bara de
-              som utvecklar Stamboken läsa den.
+              Med Tyck till, i kanten på webbplatsen och i Stamboken Online, kan
+              du berätta vad som inte fungerar eller vad du önskar. Det du
+              skriver blir ett ärende på GitHub, där vi samlar arbetet med
+              Stamboken. Du väljer själv vem som får läsa det. Väljer du Alla
+              läggs hela texten ut öppet, precis som du skrev den, men utan ditt
+              namn. Väljer du Bara föreningen, eller skickar du utan att vara
+              inloggad, kan bara de som utvecklar Stamboken läsa den.
             </p>
             <p>
               Bilder och ditt konto-id hamnar aldrig på GitHub, och inte heller
               ditt namn och din e-postadress när du vill ha svar. De mejlas till
               föreningen, så att vi kan se vilket konto som hade problemet och
               svara dig. Mejlet sparas i tolv månader efter att vi har svarat
-              eller avslutat ärendet, och kopian på vår server tas bort efter
-              30 dagar. Ärendena på GitHub sparas som en del av Stambokens
+              eller avslutat ärendet, och kopian på vår server tas bort efter 30
+              dagar. Ärendena på GitHub sparas som en del av Stambokens
               historik. Vi gör detta för att kunna rätta fel och förbättra
               Stamboken (berättigat intresse).
             </p>
@@ -422,10 +422,10 @@ export default function IntegritetspolicyPage() {
               </li>
               <li>
                 GitHub, där föreningens kod och ärenden om driften ligger,
-                liksom synpunkter som skickats med Tyck till. Där finns namn
-                och roller för funktionärer, men inga medlemsregister. Överföringen till USA stöds av EU-kommissionens
-                beslut om att skyddet där är tillräckligt och av EU:s
-                standardavtal.
+                liksom synpunkter som skickats med Tyck till. Där finns namn och
+                roller för funktionärer, men inga medlemsregister. Överföringen
+                till USA stöds av EU-kommissionens beslut om att skyddet där är
+                tillräckligt och av EU:s standardavtal.
               </li>
               <li>
                 Tryckeriet som trycker och skickar ut Koharen. Det får
@@ -489,7 +489,7 @@ export default function IntegritetspolicyPage() {
 
           <p>
             Styrelsen antog integritetspolicyn den 22 november 2026. Texten
-            ändrades senast den 23 november 2026.
+            ändrades senast den 24 november 2026.
           </p>
         </Box>
       </Box>

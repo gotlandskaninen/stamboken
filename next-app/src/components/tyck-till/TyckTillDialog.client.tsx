@@ -778,9 +778,11 @@ export function TyckTillDialog({
 /** A link-style button that owns its sheet. */
 export function TyckTillLink({
   className,
+  label,
   children = "Tyck till",
 }: {
   className?: string;
+  label?: string;
   children?: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -789,11 +791,21 @@ export function TyckTillLink({
       <button
         type="button"
         className={className ?? styles.link}
+        aria-label={label}
         onClick={() => setOpen(true)}
       >
         {children}
       </button>
       <TyckTillDialog open={open} onClose={() => setOpen(false)} />
     </>
+  );
+}
+
+// Always at the right edge of every page (Jonas 2026-11-24), as the old site's feedback tab.
+export function TyckTillTab() {
+  return (
+    <TyckTillLink className={styles.sidetab} label="Tyck till om sidan">
+      <span>Tyck till</span>
+    </TyckTillLink>
   );
 }

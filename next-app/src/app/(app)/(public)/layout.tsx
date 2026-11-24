@@ -3,6 +3,7 @@ import { Box } from "@mui/material";
 import { StambokenThemeProvider } from "@/components/public/StambokenThemeProvider";
 import { PublicNav } from "@/components/public/PublicNav";
 import { PublicFooter } from "@/components/public/PublicFooter";
+import { TyckTillTab } from "@/components/tyck-till/TyckTillDialog.client";
 
 export const dynamic = "force-dynamic";
 
@@ -45,6 +46,7 @@ export default function PublicLayout({ children }: { children: ReactNode }) {
             {children}
           </Box>
           <PublicFooter />
+          <TyckTillTab />
         </Box>
       </StambokenThemeProvider>
     </Box>
