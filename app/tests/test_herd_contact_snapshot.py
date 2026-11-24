@@ -8,6 +8,7 @@ import psycopg2
 import utils.data_access as da
 import utils.database as db
 import utils.herd_contact as contact
+from herdbook import APP
 from peewee import DataError
 
 from tests.database_test import _USE_POSTGRES
@@ -59,7 +60,7 @@ class TestHerdContactSnapshot(HerdContactTest):
 @unittest.skipUnless(_USE_POSTGRES, "transaction isolation needs PostgreSQL")
 class TestHerdContactReadPaths(HerdContactReadTest):
     @contextmanager
-    def assert_repeatable_read(self, module, name):
+    def assert_repeatable_read(self, module, name, calls=1):
         original = getattr(module, name)
         levels = []
 
@@ -69,7 +70,7 @@ class TestHerdContactReadPaths(HerdContactReadTest):
 
         with patch.object(module, name, record_isolation):
             yield
-        self.assertEqual(levels, ["repeatable read"], name)
+        self.assertEqual(levels, ["repeatable read"] * calls, name)
 
     def test_get_herd(self):
         with self.assert_repeatable_read(da, "fetch_user_info"), self.assert_repeatable_read(contact, "herd_contacts"):
@@ -86,8 +87,28 @@ class TestHerdContactReadPaths(HerdContactReadTest):
 
         with (
             self.assert_repeatable_read(herdbook, "_resolve_admin_herd"),
-            self.assert_repeatable_read(herdbook, "check_genebank_manager_access"),
+            # the session's user and the snapshot's row are both checked
+            self.assert_repeatable_read(herdbook, "check_genebank_manager_access", calls=2),
             self.assert_repeatable_read(contact, "herd_contacts"),
         ):
             herd = self._get(self.manager, f"/api/manage/herd/{self.herd.herd}")
         self.assertEqual(herd["email"], self.main.email)
+
+    def test_admin_get_herd_needs_the_role_in_session_and_snapshot(self):
+        """A manager role revoked after the session check is refused: the snapshot re-reads the user."""
+        original = da.fetch_user_info
+
+        def revoke_then_fetch(uuid):
+            if db.DB_PROXY.in_transaction():  # the read in the snapshot, not load_user's
+                with closing(psycopg2.connect(dbname=db.DATABASE.database, **db.DATABASE.connect_params)) as writer:
+                    with writer.cursor() as cursor:
+                        cursor.execute("UPDATE hbuser SET privileges = '[]' WHERE user_id = %s", (self.manager.id,))
+                    writer.commit()
+            return original(uuid)
+
+        with APP.test_client(use_cookies=True) as client:
+            client.post("/api/login", json={"username": self.manager.email, "password": "pass"})
+            with patch.object(da, "fetch_user_info", revoke_then_fetch):
+                response = client.get(f"/api/manage/herd/{self.herd.herd}")
+        self.assertEqual(response.status_code, 403)
+        self.assertNotIn(self.main.email, response.get_data(as_text=True))

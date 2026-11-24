@@ -1237,14 +1237,18 @@ def get_herd_for_admin(h_ref):
 
     Auth: admin OR manager(gb) of the herd's genebank.
     """
-    # The roles are the ones Flask-Login checked with the session; a re-read could see a role granted after
-    # update_role revoked this session. The herd, the check and the contact share one snapshot.
-    user = current_user
+    # Both the session's user and the row in the herd's snapshot must pass: the first misses a role revoked
+    # since the session check, the second could see a role granted after update_role revoked this session.
     with db.snapshot_read():
+        user = da.fetch_user_info(current_user.uuid)
+        if user is None:
+            return unauthorized()
         herd = _resolve_admin_herd(h_ref)
         if herd is None:
             return problem(404, "Besättning saknas", f"Ingen besättning med id {h_ref}.", type="herd-not-found")
-        err = check_genebank_manager_access(user, herd.genebank_id)
+        err = check_genebank_manager_access(current_user, herd.genebank_id) or check_genebank_manager_access(
+            user, herd.genebank_id
+        )
         if err is not None:
             return err
         return jsonify(da.get_herd_for_admin(user, herd)), 200
