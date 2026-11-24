@@ -68,7 +68,11 @@ ger 403 (admin undantagen). `GET /api/v2/inkorg/notiser/antal` svarar
 Intyg som laddas upp i testmiljön stannar i testmiljöns kö. Där syns de under Mina inskick
 tills testmiljön skrivs över nästa natt. Om testmiljön är otillgänglig stoppas uppladdningen.
 
-Uppladdning till den riktiga kön kräver produktionsbehörighet (`v2_prod_access` eller admin).
+Årsrapportens personliga länk går till produktionen. För köp (`/kop`), inskick av köpebilder
+(`/kop/inskick`), själva årsrapporten (`/skicka`) och fotot av intyget (`/foto`) prövas
+länkens kod för besättningen och året. Det gäller även när medlemmen är inloggad i demoläge.
+
+Vanlig uppladdning till den riktiga kön kräver produktionsbehörighet (`v2_prod_access` eller admin).
 Mina inskick och `GET /api/v2/inkorg/notiser/antal` är öppna för inloggade användare även utan
 produktionsbehörighet. Resten av kön, notislistan och originalen kräver produktionsbehörighet
 i riktiga Stamboken.

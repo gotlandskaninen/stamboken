@@ -16,3 +16,10 @@ def test_queue_contract():
     assert "subject" in example["items"][0]
     for event in ("slappt", "angrad"):
         assert f"| `{event}` |" in doc
+
+
+def test_personal_report_link_contract():
+    doc = (Path(__file__).resolve().parents[2] / "docs/inkorg.md").read_text()
+    paragraph = next((part for part in doc.split("\n\n") if "Årsrapportens personliga länk" in part), "")
+    for term in ("`/kop`", "`/skicka`", "`/foto`", "produktion", "länkens kod", "demoläge"):
+        assert term in paragraph
