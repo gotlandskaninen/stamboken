@@ -211,9 +211,8 @@ Konkret:
 
 ## Mer information
 
-Delarna om köparens uppgifter väntar på styrelsens beslut per capsulam.
-Säger styrelsen nej faller de tillbaka till samtycke som tidigare, medan
-flytt dag 0 med avvisa står kvar. Det enda styrelsen beslutat tidigare i
+Köparens uppgifter sparas med berättigat intresse som rättslig grund,
+vilket bekräftades 2026-11-24. Det enda styrelsen beslutat tidigare i
 frågan är att föreningen har digitala intyg.
 
 Relaterade beslut: [ADR-0014](0014-authorization-model.md)
