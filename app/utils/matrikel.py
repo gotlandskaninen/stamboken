@@ -847,7 +847,8 @@ def set_member_email(person, address, actor, *, by):
     with DB_PROXY.atomic():
         person, user = _lock_for_detach(person.id)  # membership → user → person
         friexemplar = person.membership.membership_status == Status.FRIEXEMPLAR
-        if friexemplar and person.email != address:
+        # An ended person holds no address, but her previous ones must not wake up if she is reactivated and linked.
+        if (friexemplar or person.end_date is not None) and person.email != address:
             _expire_previous_addresses([person.id])
         if _same(person.email, address):
             if person.email != address:  # the same address, spelled otherwise

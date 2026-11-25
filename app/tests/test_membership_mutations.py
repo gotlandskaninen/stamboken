@@ -1,7 +1,7 @@
 """Tests for /api/v2/memberships and /api/v2/persons mutations (Member Model v2)."""
 
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from unittest.mock import patch
 
 import utils.data_access as da  # noqa: E402
@@ -111,6 +111,22 @@ class TestMatrikelDomainFunctions(DatabaseTest):
         audit = db.MatrikelAudit.get(db.MatrikelAudit.action == "person_reactivated")
         self.assertEqual(audit.payload["before"], {"end_date": "2024-03-01"})
         self.assertEqual(audit.payload["after"], {"end_date": None})
+
+    def test_matrikel_email_correction_of_ended_person_ends_previous_addresses(self):
+        user = da.register_user("fam@example.com", "pass", username="fam")
+        self.family.user = user
+        self.family.save()
+        matrikel.set_member_email(self.family, "frank.ny@example.com", self.admin, by="self")
+        prev = db.MemberPreviousAddress.select().where(db.MemberPreviousAddress.member == self.family.id)
+        self.assertTrue(any(r.login_until > datetime.now(timezone.utc) for r in prev))  # seven days of grace
+        matrikel.soft_delete_person(self.family, self.admin)
+        matrikel.unlink_member_user(self.family.id, actor=self.admin)
+        matrikel.set_member_email(self.family, "frank.ratt@example.com", self.admin, by="matrikel")
+        matrikel.reactivate_person(self.family, self.admin)
+        now = datetime.now(timezone.utc)
+        live = [r.address for r in prev if r.login_until is not None and r.login_until > now]
+        self.assertEqual(live, [])
+        self.assertEqual(db.Member.get_by_id(self.family.id).email, "frank.ratt@example.com")
 
     def test_reactivate_person_refuses_anonymized_and_active(self):
         with self.assertRaises(ValueError):
