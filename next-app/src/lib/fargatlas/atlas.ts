@@ -1,3 +1,5 @@
+import type { Nyckel } from "./nyckel";
+
 // GET /api/v2/fargatlas: the colours from the database, with the atlas package's texts and photos.
 export interface AtlasFoto {
   id: string;
@@ -21,13 +23,8 @@ export interface Grupp {
   nummer: number[];
 }
 
-/** The determination key, from the atlas package (never from the repo). The page reads its groups. */
-export interface AtlasNyckel {
-  version?: string;
-  start: string;
-  fragor: Record<string, unknown>;
-  grupper: Grupp[];
-}
+/** The determination key, from the atlas package (never from the repo); the page reads its groups. */
+export type AtlasNyckel = Nyckel;
 
 export interface Fargatlas {
   version: string | null;
