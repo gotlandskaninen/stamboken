@@ -36,10 +36,10 @@ type Photo = {
   docType?: "bevis" | "intyg"; // what the photo shows, chosen once it is uploaded
 };
 const EMPTY: Photo = { status: "tom" };
-const PHOTO_TYPE_TEXT = "Välj om fotot visar överlåtelsebeviset eller intyget.";
+const PHOTO_TYPE_TEXT = "Välj om fotot visar försäljningsbeviset eller intyget.";
 // S7: a number Stamboken lacks. The buyer sends the photos; the genebank manager registers the rabbit.
 export const NOT_IN_STAMBOKEN_TEXT =
-  "Kaninen finns inte i Stamboken än. Skicka foto av intyget, och av överlåtelsebeviset om du har det. Genbanksansvarig registrerar kaninen och för över den till dig.";
+  "Kaninen finns inte i Stamboken än. Skicka foto av intyget, och av försäljningsbeviset om du har det. Genbanksansvarig registrerar kaninen och för över den till dig.";
 export const PHOTOS_SENT_TEXT =
   "Fotona är skickade till genbanksansvarig. Kaninen kommer in i din besättning när den är registrerad och överförd.";
 const PHOTO_REQUIRED_TEXT = "Ladda upp ett foto av intyget.";
@@ -158,7 +158,7 @@ function PhotoField({
                   checked={photo.docType === "bevis"}
                   onChange={() => onChange({ ...photo, docType: "bevis" })}
                 />
-                <span>Överlåtelsebevis</span>
+                <span>Försäljningsbevis</span>
               </label>
               <label className={styles.choice}>
                 <input
@@ -434,7 +434,7 @@ function Body({
               <PhotoField
                 label={
                   allowBevis
-                    ? "Foto av överlåtelsebeviset eller intyget (om du har)"
+                    ? "Foto av försäljningsbeviset eller intyget (om du har)"
                     : "Foto av intyget (om du har)"
                 }
                 typeLabel={allowBevis ? "Vad visar fotot?" : undefined}

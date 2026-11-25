@@ -197,7 +197,7 @@ describe("PurchaseDialog", () => {
     expect((upload.mock.calls[0] as unknown[])[1]).toBe("inskick");
     sendThem();
     expect(screen.getByRole("alert").textContent).toBe(
-      "Välj om fotot visar överlåtelsebeviset eller intyget.",
+      "Välj om fotot visar försäljningsbeviset eller intyget.",
     );
     fireEvent.click(
       within(
@@ -211,7 +211,7 @@ describe("PurchaseDialog", () => {
     fireEvent.click(
       within(
         screen.getByRole("radiogroup", { name: "Vad visar foto 2?" }),
-      ).getByLabelText("Överlåtelsebevis"),
+      ).getByLabelText("Försäljningsbevis"),
     );
     sendThem();
     await waitFor(() =>
@@ -265,7 +265,7 @@ describe("PurchaseDialog", () => {
       },
     });
     await screen.findByText("Fotot är uppladdat.");
-    expect(screen.queryByLabelText("Överlåtelsebevis")).toBeNull();
+    expect(screen.queryByLabelText("Försäljningsbevis")).toBeNull();
     expect(
       screen.queryByRole("radiogroup", { name: "Vad visar fotot?" }),
     ).toBeNull();
@@ -325,7 +325,7 @@ describe("PurchaseDialog", () => {
     expect(onClose).toHaveBeenCalledTimes(1); // no photo: closes at once
     fireEvent.change(
       screen.getByLabelText(
-        "Foto av överlåtelsebeviset eller intyget (om du har)",
+        "Foto av försäljningsbeviset eller intyget (om du har)",
       ),
       { target: { files: [new File(["x"], "b.jpg", { type: "image/jpeg" })] } },
     );
@@ -376,7 +376,7 @@ describe("PurchaseDialog", () => {
     const file = new File(["x"], "bevis.jpg", { type: "image/jpeg" });
     fireEvent.change(
       screen.getByLabelText(
-        "Foto av överlåtelsebeviset eller intyget (om du har)",
+        "Foto av försäljningsbeviset eller intyget (om du har)",
       ),
       { target: { files: [file] } },
     );
@@ -395,7 +395,7 @@ describe("PurchaseDialog", () => {
     );
     click();
     expect(screen.getByRole("alert").textContent).toBe(
-      "Välj om fotot visar överlåtelsebeviset eller intyget.",
+      "Välj om fotot visar försäljningsbeviset eller intyget.",
     );
     expect(send).not.toHaveBeenCalled();
     fireEvent.click(screen.getByLabelText("Intyg"));
@@ -430,7 +430,7 @@ describe("PurchaseDialog", () => {
     fill("Datum för köpet", "2027-05-14");
     fireEvent.change(
       screen.getByLabelText(
-        "Foto av överlåtelsebeviset eller intyget (om du har)",
+        "Foto av försäljningsbeviset eller intyget (om du har)",
       ),
       {
         target: {
@@ -439,12 +439,12 @@ describe("PurchaseDialog", () => {
       },
     );
     await screen.findByText("Fotot är uppladdat.");
-    fireEvent.click(screen.getByLabelText("Överlåtelsebevis"));
+    fireEvent.click(screen.getByLabelText("Försäljningsbevis"));
     click();
     expect((await screen.findByRole("alert")).textContent).toBe(
       "Fotot kan inte användas längre. Ladda upp det igen.",
     );
-    expect(screen.queryByLabelText("Överlåtelsebevis")).toBeNull();
+    expect(screen.queryByLabelText("Försäljningsbevis")).toBeNull();
     expect(send.mock.calls[0][0]).toMatchObject({
       document_id: 31,
       doc_type: "bevis",

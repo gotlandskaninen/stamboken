@@ -32,7 +32,7 @@ export function BuyerEmailReview({ buyer }: { buyer: ReviewBuyer }) {
       <fieldset className={styles.cardBody} disabled={pending}>
         <legend>Köparuppgifter</legend>
         <p>
-          Kontrollera mot överlåtelsebeviset. Rätta uppgifterna eller bekräfta
+          Kontrollera mot försäljningsbeviset. Rätta uppgifterna eller bekräfta
           att adressen tillhör samma person vid båda köpen.
         </p>
         <label className={styles.field}>
