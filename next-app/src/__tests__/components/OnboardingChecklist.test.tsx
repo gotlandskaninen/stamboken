@@ -69,7 +69,9 @@ describe("OnboardingChecklist", () => {
     renderList({});
     const step = screen.getAllByRole("listitem")[3];
     expect(step).toHaveTextContent("Prova i testmiljön");
-    expect(step).toHaveTextContent("Byt till testmiljön i menyn.");
+    expect(step).toHaveTextContent(
+      "Byt till testmiljön i menyn under din bild.",
+    );
     expect(step).not.toHaveTextContent("Klart");
     expect(screen.getByRole("link", { name: "Om testmiljön" })).toHaveAttribute(
       "href",

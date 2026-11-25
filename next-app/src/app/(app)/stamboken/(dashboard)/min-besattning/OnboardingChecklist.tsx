@@ -67,7 +67,7 @@ export function onboardingSteps(
     ...steps,
     {
       title: "Prova i testmiljön",
-      text: "Vill du prova utan att ändra något på riktigt? Byt till testmiljön i menyn. Där kan du klicka runt fritt, och allt återställs varje natt.",
+      text: "Vill du prova utan att ändra något på riktigt? Byt till testmiljön i menyn under din bild. Där kan du klicka runt fritt, och allt återställs varje natt.",
       done: triedDemo,
       manual: "#testmiljön-och-riktiga-stamboken",
       more: "Om testmiljön",
