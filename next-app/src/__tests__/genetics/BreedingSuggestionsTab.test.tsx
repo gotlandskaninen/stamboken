@@ -113,3 +113,50 @@ describe("BreedingSuggestionsTab", () => {
     ).toBeTruthy();
   });
 });
+
+describe("BreedingSuggestionsTab errors", () => {
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  const renderWithError = (error: object) => {
+    const refetch = vi.fn();
+    metricsQuery.mockReturnValue({ data: { expected_offspring_f: 0.03 } });
+    suggestionsQuery.mockImplementation((params: unknown) =>
+      typeof params === "object"
+        ? {
+            data: undefined,
+            isLoading: false,
+            isFetching: false,
+            error,
+            refetch,
+          }
+        : { data: undefined, isLoading: false, isFetching: false, refetch },
+    );
+    render(
+      <ThemeProvider theme={theme}>
+        <BreedingSuggestionsTab genebankId={1} />
+      </ThemeProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Beräkna" }));
+    return refetch;
+  };
+
+  it("names a missing access, not the sexes, for 403", () => {
+    renderWithError({ status: 403 });
+    expect(screen.getByText(/inte behörighet/)).toBeTruthy();
+    expect(screen.queryByText(/könsdata|hanar eller honor/)).toBeNull();
+  });
+
+  it("offers a retry for a failed computation", () => {
+    const refetch = renderWithError({ status: 500 });
+    expect(
+      screen.getByText(
+        "Beräkningen gick inte att hämta. Försök igen om en stund.",
+      ),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Försök igen" }));
+    expect(refetch).toHaveBeenCalled();
+  });
+});

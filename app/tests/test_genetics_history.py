@@ -498,13 +498,14 @@ class TestTrendsAndScheduling(HistoryTest):
 
     def test_trends_keys_year_mapping_and_filtering(self):
         self._fresh_state(timedelta(hours=1))
+        self._round(2025, date(2026, 3, 30))  # closed; 2023 and 2024 have no round and are closed too
+        self._row(2023, date(2024, 4, 1))
         self._row(2024, date(2025, 4, 1))
         self._row(2025, date(2026, 3, 31))
-        self._row(2026, date(2027, 4, 1))
 
         rows = gs.get_genetics_trends(self.gb.id)
 
-        self.assertEqual([r["year"] for r in rows], [2024, 2025, 2026])
+        self.assertEqual([r["year"] for r in rows], [2023, 2024, 2025])
         self.assertEqual(
             set(rows[0]),
             {
@@ -513,10 +514,32 @@ class TestTrendsAndScheduling(HistoryTest):
                 "definition_version",
             },
         )  # fmt: skip
-        self.assertEqual(rows[1]["snapshot_date"], "2026-03-31")
-        self.assertEqual(rows[1]["definition_version"], 3)
-        self.assertEqual([r["year"] for r in gs.get_genetics_trends(self.gb.id, end_year=2025)], [2024, 2025])
-        self.assertEqual([r["year"] for r in gs.get_genetics_trends(self.gb.id, start_year=2025)], [2025, 2026])
+        self.assertEqual(rows[2]["snapshot_date"], "2026-03-31")
+        self.assertEqual(rows[2]["definition_version"], 3)
+        self.assertEqual([r["year"] for r in gs.get_genetics_trends(self.gb.id, end_year=2024)], [2023, 2024])
+        self.assertEqual([r["year"] for r in gs.get_genetics_trends(self.gb.id, start_year=2024)], [2024, 2025])
+
+    def test_a_reopened_round_drops_its_year_at_once_and_reconciles(self):
+        """Right after a reopen, with a fresh history check, the year is gone and a reconcile is queued."""
+        self._fresh_state(timedelta(hours=1))
+        self._row(2023, date(2024, 4, 1))
+        self._row(2024, date(2025, 4, 1))
+        self._round(2024, None)  # reopened after the last reconcile
+        with (
+            patch.object(gs, "reconcile_history", return_value="replaced") as reconcile,
+            patch.object(gs.ps, "_close_db_connection"),
+        ):
+            years = [r["year"] for r in gs.get_genetics_trends(self.gb.id)]
+            gs._reconcile_executor.submit(lambda: None).result(WAIT)
+        self.assertEqual(years, [2023])
+        reconcile.assert_called_once_with(self.gb.id)
+
+    def test_closed_years_reads_the_rounds_once(self):
+        self._round(2023, date(2024, 3, 30))
+        self._round(2024, None)
+        with patch.object(rp.YearlyReportRound, "get_or_none", side_effect=AssertionError("one query per year")):
+            closed = rp.closed_years([2022, 2023, 2024, 2030], date(2026, 11, 25))
+        self.assertEqual(closed, {2022, 2023})  # 2022: no round, closed 1 April 2023; 2030 not yet
 
     def test_stale_burst_starts_exactly_one_reconcile(self):
         self._fresh_state(timedelta(hours=30))

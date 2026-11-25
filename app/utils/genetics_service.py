@@ -53,7 +53,7 @@ from utils.pedigree_math import band_for, mk_to_reference
 from utils.reference_population import (
     CURRENT_DEFINITION,
     live_members,
-    live_start,  # noqa: F401 — the population-metrics endpoint reports it
+    live_start,
     reference_population_start,  # noqa: F401 — re-exported for existing callers
 )
 from utils.reference_population import members as population_members
@@ -141,7 +141,7 @@ def recovery_eligible_numbers(genebank_id: int, today: date) -> set[str]:
 
 
 def _read_snapshot_inputs(genebank_id):
-    """Version, membership, pedigree and carrier eligibility from one REPEATABLE READ snapshot.
+    """Version, membership, its window's first day, pedigree and carrier eligibility from one REPEATABLE READ snapshot.
 
     Starts its own transaction: SET TRANSACTION has to be its first statement.
     """
@@ -149,9 +149,10 @@ def _read_snapshot_inputs(genebank_id):
         DATABASE.execute_sql("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         key = _snapshot_key(genebank_id)
         members = live_members(genebank_id, key[1])
+        start = live_start(key[1])  # the same rounds the members were read with
         rows = fetch_pedigree_rows(genebank_id)
         eligible = recovery_eligible_numbers(genebank_id, today=key[1])  # the key's day
-    return key, rows, members, frozenset(eligible)
+    return key, rows, members, frozenset(eligible), start
 
 
 # Builds run on ps's executor threads, never inside a caller's transaction,
@@ -757,11 +758,12 @@ def _reconcile_quietly(genebank_id):
         ps._close_db_connection()
 
 
-def maybe_reconcile_in_background(genebank_id):
-    """Queue a history reconcile when the last check is older than HISTORY_STALE_AFTER or used an older formula."""
+def maybe_reconcile_in_background(genebank_id, force=False):
+    """Queue a history reconcile: forced, last check older than HISTORY_STALE_AFTER, or an older formula."""
     state = GeneticsHistoryState.get_or_none(GeneticsHistoryState.genebank == genebank_id)
     if (
-        state is not None
+        not force
+        and state is not None
         and state.algorithm_version >= ALGORITHM_VERSION
         and datetime.now(timezone.utc) - state.checked_at < HISTORY_STALE_AFTER
     ):
@@ -774,9 +776,10 @@ def maybe_reconcile_in_background(genebank_id):
 
 
 def get_genetics_trends(genebank_id: int, start_year: int | None = None, end_year: int | None = None) -> list[dict]:
-    """Stored trend data per report year."""
-    maybe_reconcile_in_background(genebank_id)
+    """Stored trend data per report year, only for years closed today.
 
+    A round reopened since the last reconcile drops its year at once, and starts a reconcile.
+    """
     query = (
         GeneticMetricsHistory.select()
         .where(GeneticMetricsHistory.genebank == genebank_id)
@@ -786,6 +789,9 @@ def get_genetics_trends(genebank_id: int, start_year: int | None = None, end_yea
         query = query.where(GeneticMetricsHistory.report_year >= start_year)
     if end_year:
         query = query.where(GeneticMetricsHistory.report_year <= end_year)
+    stored = list(query)
+    closed = rp.closed_years((row.report_year for row in stored), date.today())
+    maybe_reconcile_in_background(genebank_id, force=len(closed) < len(stored))
 
     return [
         {
@@ -802,7 +808,8 @@ def get_genetics_trends(genebank_id: int, start_year: int | None = None, end_yea
             "data_quality": row.data_quality,
             "definition_version": row.definition_version,
         }
-        for row in query
+        for row in stored
+        if row.report_year in closed
     ]
 
 

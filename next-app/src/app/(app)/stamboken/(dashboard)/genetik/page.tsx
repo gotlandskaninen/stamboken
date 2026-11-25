@@ -129,7 +129,8 @@ function GenetikPage() {
           </Tabs>
 
           <TabPanel value={activeTab} index="oversikt">
-            <OverviewTab genebankId={genebankId} />
+            {/* keyed so no number from the previous genebank survives a switch */}
+            <OverviewTab key={genebankId} genebankId={genebankId} />
           </TabPanel>
 
           <TabPanel value={activeTab} index="prioriteringar">

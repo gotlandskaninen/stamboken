@@ -1,13 +1,22 @@
 import React, { useState } from "react";
 import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Card,
   CardContent,
   Typography,
   Skeleton,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
   ToggleButton,
   ToggleButtonGroup,
   Box,
 } from "@mui/material";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import dynamic from "next/dynamic";
 import { useTheme } from "@mui/material/styles";
 
@@ -198,11 +207,13 @@ const TrendChart = ({ genebankId }: TrendChartProps) => {
             height={300}
           />
         ) : (
-          // No year at all: most likely a history not yet recomputed after an update
-          // (the API cannot tell that apart from a genebank where no year has a value).
           <Typography variant="body2" color="textSecondary">
-            Inga värden för {metric.name} de här åren ännu. Efter en uppdatering
-            räknas de fram i bakgrunden, så ladda om sidan om en stund.
+            {metricKey !== "ne"
+              ? `Inga värden för ${metric.name} de här åren.`
+              : // ne_n is null only on rows stored before Ne was: they are not recomputed yet.
+                data.every((d) => d.ne_n == null)
+                ? "Inga värden för Ne de här åren ännu. Efter en uppdatering räknas de fram i bakgrunden, så ladda om sidan om en stund."
+                : "Ne kan inte skattas för de här åren: för få kaniner med känd stamtavla i de här åren."}
           </Typography>
         )}
 
@@ -237,6 +248,52 @@ const TrendChart = ({ genebankId }: TrendChartProps) => {
             uppskattas det från dödsorsaken eller kaninens högsta ålder.
           </Typography>
         )}
+
+        {/* The same values for keyboard and screen readers; the chart's tooltip needs a mouse. */}
+        <Accordion
+          disableGutters
+          sx={{ mt: 2, "&::before": { display: "none" } }}
+        >
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Typography variant="subtitle2">Visa som tabell</Typography>
+          </AccordionSummary>
+          <AccordionDetails sx={{ pt: 0 }}>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>År</TableCell>
+                  <TableCell align="right">{metric.name}</TableCell>
+                  {metricKey === "ne" && (
+                    <>
+                      <TableCell align="right">Osäkerhet (±)</TableCell>
+                      <TableCell align="right">Antal kaniner</TableCell>
+                    </>
+                  )}
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {data.map((d, i) => (
+                  <TableRow key={d.year}>
+                    <TableCell>{d.year}</TableCell>
+                    <TableCell align="right">
+                      {values[i] == null ? "–" : metric.format(values[i])}
+                    </TableCell>
+                    {metricKey === "ne" && (
+                      <>
+                        <TableCell align="right">
+                          {d.ne_se == null ? "–" : decimal(d.ne_se)}
+                        </TableCell>
+                        <TableCell align="right">
+                          {d.ne_n == null ? "–" : decimal(d.ne_n)}
+                        </TableCell>
+                      </>
+                    )}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </AccordionDetails>
+        </Accordion>
       </CardContent>
     </Card>
   );

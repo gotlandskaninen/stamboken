@@ -2505,7 +2505,7 @@ def population_metrics(g_id):
     - mean_equiv_gen: Average equivalent complete generations
     - mean_full_gen: Average full generations
     - mean_max_gen: Average maximum generations
-    - reference_start: ISO date from which life signs count for the reference population
+    - reference_start: ISO date the snapshot's reference population counts life signs from
     """
     try:
         genebank_id = int(g_id)
@@ -2515,10 +2515,13 @@ def population_metrics(g_id):
         if not user or not (user.is_admin or genebank_id in (user.is_manager or [])):
             return jsonify({"status": "error", "message": "Åtkomst nekad"}), 403
 
-        metrics = get_population_metrics(genebank_id)
-        # Outside the memo: the start moves with the date (a round closing), not with the pedigree.
-        start = genetics.live_start(datetime.date.today())
-        return jsonify({**metrics, "reference_start": start.isoformat()})
+        # One pinned snapshot for the numbers and their date. The date is added after the memo,
+        # so it is right whatever the memo is keyed on; the cached dict is copied, never changed.
+        with _pinned_snapshot(genebank_id) as snap:
+            metrics = dict(get_population_metrics(genebank_id))
+        start = snap.reference_start if snap is not None else None
+        metrics["reference_start"] = start.isoformat() if start else None
+        return jsonify(metrics)
     except Exception as ex:
         APP.logger.error(f"Could not calculate population metrics: {ex}")
         return jsonify({"error": "Error calculating population metrics"}), 500
