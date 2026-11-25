@@ -167,6 +167,8 @@ def _har_form(nyckel):
         and all(map(grupp, nyckel["grupper"]))
         and isinstance(nyckel.get("efter_numret", []), list)
         and all(map(efter, nyckel.get("efter_numret", [])))
+        # each question after the number keeps its own answer by id
+        and len({e["id"] for e in nyckel.get("efter_numret", [])}) == len(nyckel.get("efter_numret", []))
     )
 
 

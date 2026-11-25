@@ -162,6 +162,7 @@ class FargatlasTest(DatabaseTest):
             {**hel, "fragor": {"q1": {**fragor["q1"], "svar": [{"id": "q1-ja", "text": "Ja", "till": None}]}}},
             {**hel, "fragor": {"q1": {**fragor["q1"], "svar": [None]}}},
             {**hel, "efter_numret": {}},
+            {**hel, "efter_numret": [{"id": "a", "text": "Testfråga?", "ja": "Testsvar."}] * 2},  # one id twice
             {**hel, "fragor": {"q1": {**fragor["q1"], "hjalp": {"text": "fel"}}}},
             {  # two answers with one id
                 **hel,
