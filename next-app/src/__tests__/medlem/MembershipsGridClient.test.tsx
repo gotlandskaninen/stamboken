@@ -56,7 +56,11 @@ const rows: MembershipRow[] = [
     postal_code: "623 55",
     city: "Visby",
     postal_address: "623 55 Visby",
-    active_herds: ["G9001", "G9003", "M9002"],
+    active_herds: [
+      { herd: "G9001", genebank: "G" },
+      { herd: "G9003", genebank: "G" },
+      { herd: "m9002", genebank: "M" },
+    ],
     persons: [
       {
         id: 1,
@@ -185,7 +189,7 @@ describe("MembershipsGridClient", () => {
     expect(screen.getByRole("columnheader", { name: "G" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "M" })).toBeInTheDocument();
     expect(screen.getByText("G9001, G9003")).toBeInTheDocument();
-    expect(screen.getByText("M9002")).toBeInTheDocument();
+    expect(screen.getByText("m9002")).toBeInTheDocument();
   });
 
   it("navigates to the membership detail page on row click", () => {

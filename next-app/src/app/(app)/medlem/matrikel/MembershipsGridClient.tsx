@@ -38,7 +38,7 @@ const columns: GridColDef<MembershipRow>[] = [
     width: 120,
     valueGetter: (_value, row) => statusLabel(row.membership_status),
   },
-  // G and M as in the paper matrikel: the membership has an active herd in that genebank.
+  // G and M as in the paper matrikel: the membership has an active herd in that genebank (by genebank, not code letter).
   ...(["G", "M"] as const).map(
     (letter): GridColDef<MembershipRow> => ({
       field: `herds_${letter}`,
@@ -46,7 +46,10 @@ const columns: GridColDef<MembershipRow>[] = [
       width: 90,
       cellClassName: ds["ad-cell-mono"],
       valueGetter: (_value, row) =>
-        row.active_herds.filter((h) => h.startsWith(letter)).join(", ") || "—",
+        row.active_herds
+          .filter((h) => h.genebank === letter)
+          .map((h) => h.herd)
+          .join(", ") || "—",
     }),
   ),
   {

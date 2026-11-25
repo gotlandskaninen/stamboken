@@ -32,8 +32,8 @@ export type MembershipRow = Organization & {
   city: string | null;
   postal_address: string | null;
   persons: MembershipListPerson[];
-  /** Codes of the membership's active herds; G/M columns split them by letter. */
-  active_herds: string[];
+  /** The membership's active herds and the initial of each one's genebank (G/M). */
+  active_herds: { herd: string; genebank: string }[];
 };
 
 export type Grant = {

@@ -19,7 +19,17 @@ from flask_login import current_user
 from peewee import IntegrityError
 from utils.csv_safe import csv_safe
 from utils.data_access import session_holds
-from utils.database import BILLING_FIELDS, DB_PROXY, AuditLog, Herd, HerdAccessGrant, Member, Membership, User
+from utils.database import (
+    BILLING_FIELDS,
+    DB_PROXY,
+    AuditLog,
+    Genebank,
+    Herd,
+    HerdAccessGrant,
+    Member,
+    Membership,
+    User,
+)
 from utils.herd_contact import on_membership_active
 from utils.login_code import (
     AddressTaken,
@@ -162,13 +172,15 @@ def list_members():
     if status:
         q = q.where(Membership.membership_status == status)
 
-    # G/M as in the MATR paper list (export_members: the herd code's letter), but only active herds.
+    # G/M as in the paper matrikel: an active herd in that genebank, named by its initial
+    # (data_access._genebank_letters, cli/members.py).
     active_herd = request.args.get("active_herd")
     if active_herd:
         if active_herd not in ("G", "M"):
             return problem(400, "Ogiltig frågeparameter", "active_herd måste vara G eller M")
+        genebanks = [gb.id for gb in Genebank.select(Genebank.id, Genebank.name) if gb.name[:1].upper() == active_herd]
         q = q.where(
-            Membership.id.in_(Herd.select(Herd.membership).where(Herd.is_active & Herd.herd.startswith(active_herd)))
+            Membership.id.in_(Herd.select(Herd.membership).where(Herd.is_active & Herd.genebank.in_(genebanks)))
         )
 
     try:
@@ -184,15 +196,20 @@ def list_members():
     # re-queries the persons of every membership on the page (per_page
     # extra round trips on the busiest matrikel endpoint).
     persons_by_membership: dict[int, list[Member]] = {}
-    active_herds: dict[int, list[str]] = {}
+    active_herds: dict[int, list[dict]] = {}
     if items:
         ids = [ms.id for ms in items]
         for person in Member.select().where(Member.membership.in_(ids)).order_by(Member.id):
             persons_by_membership.setdefault(person.membership_id, []).append(person)
         for herd in (
-            Herd.select(Herd.membership, Herd.herd).where(Herd.membership.in_(ids) & Herd.is_active).order_by(Herd.herd)
+            Herd.select(Herd.membership, Herd.herd, Genebank.name)
+            .join(Genebank)
+            .where(Herd.membership.in_(ids) & Herd.is_active)
+            .order_by(Herd.herd)
         ):
-            active_herds.setdefault(herd.membership_id, []).append(herd.herd)
+            active_herds.setdefault(herd.membership_id, []).append(
+                {"herd": herd.herd, "genebank": herd.genebank.name[:1].upper()}
+            )
 
     return jsonify(
         {
