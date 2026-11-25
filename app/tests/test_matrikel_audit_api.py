@@ -1,7 +1,9 @@
 """GET /api/v2/members/audit — the matrikel's change log (#244)."""
 
 import json
+import threading
 from datetime import date, datetime, timedelta
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import utils.data_access as da
@@ -222,3 +224,42 @@ class TestMatrikelAudit(MatrikelApiTest):
         self.assertEqual(self.get("from=2025-01-10&to=2025-01-10").get_json()["total"], 1)
         self.assertEqual(self.get("to=2025-01-09").get_json()["total"], 0)
         self.assertEqual(self.get("from=2025-01-11").get_json()["total"], 0)
+
+    def test_one_snapshot_for_the_whole_page(self):
+        """Codex #248 r2: an erasure that commits between the account lookup and the page must not show in half."""
+        account = da.register_user("tova-konto@example.com", "pass")
+        matrikel.link_member_user(self.person.id, account.id, actor=self.matrikel_user, mode="admin")
+        matrikel.write_matrikel_audit(
+            account, "kontakt_andrad", self.ms, {"person_id": self.person.id, "fields": ["phone"], "source": "profil"}
+        )
+        matrikel.unlink_member_user(self.person.id, actor=self.matrikel_user)  # the account keeps its name
+        errors = []
+
+        def erase_in_another_transaction():
+            try:
+                matrikel.anonymize_person(db.Member.get_by_id(self.person.id), self.matrikel_user)
+            except Exception as exc:  # reported below, not swallowed
+                errors.append(exc)
+            finally:
+                db.DB_PROXY.close()
+
+        real = matrikel._erased_accounts
+
+        def erased_accounts_then_erase():
+            found = real()
+            worker = threading.Thread(target=erase_in_another_transaction)
+            worker.start()
+            worker.join()
+            return found
+
+        with patch.object(matrikel, "_erased_accounts", erased_accounts_then_erase):
+            during = matrikel.query_matrikel_audit(full_access=True, membership_id=self.ms.id)
+        self.assertEqual(errors, [])
+        self.assertTrue(db.MatrikelAudit.select().where(db.MatrikelAudit.action == "person_anonymized").exists())
+        row = next(r for r in during["rows"] if r["action"] == "kontakt_andrad")
+        # the state before the erasure, whole: her name and her account, never "Borttagen person" beside the account
+        self.assertEqual((row["person"]["name"], row["actor"]["name"]), ("Tova Testsson", "tova-konto@example.com"))
+        self.assertNotIn("person_anonymized", [r["action"] for r in during["rows"]])
+        after = matrikel.query_matrikel_audit(full_access=True, membership_id=self.ms.id)
+        row = next(r for r in after["rows"] if r["action"] == "kontakt_andrad")
+        self.assertEqual(row["actor"], {"id": None, "name": matrikel.REDACTED_VALUE})

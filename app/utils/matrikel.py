@@ -49,6 +49,7 @@ from utils.database import (
     MemberPreviousAddress,
     Membership,
     User,
+    snapshot_read,
 )
 from utils.herd_contact import (
     compare_with_register,
@@ -386,6 +387,7 @@ def _household_erasures(membership_ids) -> dict[int, datetime]:
     return {r.membership_id: r.erased_at for r in rows}
 
 
+@snapshot_read()  # one snapshot: an erasure committing mid-read must not pair her old account with "Borttagen person"
 def query_matrikel_audit(
     *,
     full_access,
