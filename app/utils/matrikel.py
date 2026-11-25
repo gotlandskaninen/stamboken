@@ -397,6 +397,12 @@ def _masked_actor_rows():
     return None if condition is None else fn.COALESCE(condition & self_service, False)
 
 
+# Masked in every log row of a membership where someone was anonymised: the household's values, the payment note
+# (kept on the row for the books, its old texts may name a payer) and every person's contact values, since one may
+# have carried hers (a family member added with her e-mail). The names of the others stay.
+ANONYMISED_MEMBERSHIP_KEYS = HOUSEHOLD_PII_KEYS | {"payment_note"} | (PII_PAYLOAD_KEYS - {"first_name", "last_name"})
+
+
 def _memberships_with_anonymised(membership_ids) -> set[int]:
     """The memberships where any person has been anonymised. Their household values in the log may name her (a former
     billing recipient, an address she shared), and the log cannot tell whose they were."""
@@ -428,8 +434,8 @@ def query_matrikel_audit(
     person's notes. A row about an anonymised person is redacted again on read, should a stored payload have escaped
     the erasure, user_id included. An anonymised person's former account is shown as REDACTED_VALUE as actor on the
     rows _masked_actor_rows() names, and the actor filter skips those rows. A membership where any person has been
-    anonymised has the values of HOUSEHOLD_PII_KEYS and payment_note masked in all its rows, for every role: the keys
-    stay, so the change shows, and today's values are on the membership page.
+    anonymised has the values of ANONYMISED_MEMBERSHIP_KEYS masked in all its rows, for every role: the keys stay, so
+    the change shows, and today's values are on the membership page.
     """
     masked = _masked_actor_rows()
     q = (
@@ -476,9 +482,9 @@ def query_matrikel_audit(
         person = persons.get(person_of(payload))
         if person is not None and is_anonymized(person):  # user_id too: her account, as in person_user_linked
             payload, _ = _redact_node(payload, PII_PAYLOAD_KEYS | {"user_id"})
-        # shortcut: masks the new household's values too, for good; refine only if someone needs that history
-        if a.membership_id in erased:  # payment_note too: kept on the row for the books, its old texts may name a payer
-            payload, _ = _redact_node(payload, HOUSEHOLD_PII_KEYS | {"payment_note"})
+        # shortcut: masks the others' and a new household's values too, for good; refine only if someone needs them
+        if a.membership_id in erased:
+            payload, _ = _redact_node(payload, ANONYMISED_MEMBERSHIP_KEYS)
         if not full_access:
             payload = _drop_keys(payload, {"organization_number"} | ({"notes"} if "person_id" in payload else set()))
         rows.append(

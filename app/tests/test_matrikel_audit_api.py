@@ -248,6 +248,38 @@ class TestMatrikelAudit(MatrikelApiTest):
                 for value in ("Tova", "tova.faktura", "Vera Testsson", "vera@example.com"):
                     self.assertNotIn(value, text)
 
+    def test_contact_values_of_all_persons_are_masked_once_someone_is_anonymised(self):
+        """Codex #248 r8: a family member added with her e-mail, who then got an own one; then she is anonymised."""
+        self.login("matrikel")
+        resp = self.client.post(
+            f"/api/v2/memberships/{self.ms.id}/persons",
+            data=json.dumps(
+                {"first_name": "Vera", "last_name": "Testsson", "email": "tova@example.com", "role": "familjemedlem"}
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 201, resp.data)
+        family = resp.get_json()["id"]
+        resp = self.client.patch(
+            f"/api/v2/persons/{family}",
+            data=json.dumps({"email": "vera.egen@example.com", "phone": "0703333333"}),
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        matrikel.anonymize_person(db.Member.get_by_id(self.person.id), self.matrikel_user)
+        for username in ("man", "admin"):
+            with self.subTest(username=username):
+                self.client.get("/api/logout")
+                self.login(username)
+                resp = self.get(f"membership_id={self.ms.id}")
+                text = resp.get_data(as_text=True)
+                for value in ("tova@example.com", "vera.egen", "0703333333", "0701111111"):
+                    self.assertNotIn(value, text)
+                added = next(r for r in resp.get_json()["rows"] if r["action"] == "person_added")
+                self.assertEqual(
+                    (added["payload"]["first_name"], added["payload"]["email"]), ("Vera", matrikel.REDACTED_VALUE)
+                )  # the others' names stay
+
     def test_membership_without_anonymised_person_is_not_masked(self):
         self._billing_row()
         _mk_person(self.ms, "Vera", "Testsson", role="familjemedlem")
