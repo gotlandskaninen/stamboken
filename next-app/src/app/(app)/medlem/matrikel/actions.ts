@@ -124,7 +124,7 @@ export async function addPerson(
 export async function updatePerson(
   membershipId: number,
   personId: number,
-  patch: PersonInput,
+  patch: Partial<PersonInput>,
 ): Promise<ActionResult> {
   try {
     await fetchApi(`/v2/persons/${personId}`, {

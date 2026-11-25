@@ -150,10 +150,7 @@ describe("PersonsCard — organisationens kontaktperson", () => {
     fireEvent.click(dialog.getByRole("button", { name: "Spara" }));
     await waitFor(() =>
       expect(updatePerson).toHaveBeenCalledWith(1, 11, {
-        first_name: "",
-        last_name: "",
         email: "kontakt@example.com",
-        phone: null,
       }),
     );
   });
@@ -218,11 +215,9 @@ describe("PersonsCard — importerad rad utan förnamn", () => {
     expect(save).toBeEnabled();
     fireEvent.click(save);
     await waitFor(() =>
-      expect(updatePerson).toHaveBeenCalledWith(
-        1,
-        21,
-        expect.objectContaining({ phone: "070-1234567" }),
-      ),
+      expect(updatePerson).toHaveBeenCalledWith(1, 21, {
+        phone: "070-1234567",
+      }),
     );
   });
 });
@@ -294,15 +289,11 @@ describe("PersonsCard — rollval vid redigering", () => {
     fireEvent.click(screen.getByRole("option", { name: "Skötare" }));
     fireEvent.click(dialog.getByRole("button", { name: "Spara" }));
     await waitFor(() =>
-      expect(updatePerson).toHaveBeenCalledWith(
-        1,
-        12,
-        expect.objectContaining({ role: "skotare" }),
-      ),
+      expect(updatePerson).toHaveBeenCalledWith(1, 12, { role: "skotare" }),
     );
   });
 
-  it("sends no role when only the phone is changed", async () => {
+  it("sends only the phone, not the unchanged email or role, when only the phone is changed", async () => {
     vi.mocked(updatePerson).mockResolvedValue({ ok: true });
     render(<PersonsCard membership={MEMBERSHIP} canEdit />);
     fireEvent.click(
@@ -315,9 +306,6 @@ describe("PersonsCard — rollval vid redigering", () => {
     fireEvent.click(dialog.getByRole("button", { name: "Spara" }));
     await waitFor(() =>
       expect(updatePerson).toHaveBeenLastCalledWith(1, 12, {
-        first_name: "Bo",
-        last_name: "Olinkad",
-        email: "person@example.com",
         phone: "070-1234567",
       }),
     );

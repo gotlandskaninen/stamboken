@@ -104,9 +104,9 @@ export function PersonsCard({
   const [personOpen, setPersonOpen] = useState(false);
   const [editPersonId, setEditPersonId] = useState<number | null>(null);
   const [personForm, setPersonForm] = useState(EMPTY_PERSON_FORM);
-  // The role when the dialog opened: only a role the user changed is sent, so a
-  // phone edit cannot overwrite a role another admin changed meanwhile.
-  const [openedRole, setOpenedRole] = useState("");
+  // The form as the dialog opened: only the fields the user changed are sent,
+  // so a save cannot overwrite what another admin changed meanwhile.
+  const [openedForm, setOpenedForm] = useState(EMPTY_PERSON_FORM);
   const editedPerson = membership.persons.find((p) => p.id === editPersonId);
   const editingContact =
     Boolean(membership.organization_name) &&
@@ -181,14 +181,15 @@ export function PersonsCard({
 
   const openEditPerson = (p: Person) => {
     setEditPersonId(p.id);
-    setPersonForm({
+    const form = {
       first_name: p.first_name,
       last_name: p.last_name,
       email: p.email ?? "",
       phone: p.phone ?? "",
       role: p.role,
-    });
-    setOpenedRole(p.role);
+    };
+    setPersonForm(form);
+    setOpenedForm(form);
     setPersonOpen(true);
   };
 
@@ -207,15 +208,21 @@ export function PersonsCard({
         success: "Person tillagd",
       });
     } else {
+      // Empty fields are sent as null, as for a new person.
+      const now: Record<string, string | null> = {
+        ...payload,
+        role: personForm.role,
+      };
+      const opened: Record<string, string | null> = {
+        ...openedForm,
+        email: openedForm.email || null,
+        phone: openedForm.phone || null,
+      };
+      const changed = Object.fromEntries(
+        Object.entries(now).filter(([key, value]) => value !== opened[key]),
+      );
       run({
-        run: () =>
-          updatePerson(
-            membership.id,
-            editPersonId,
-            personForm.role === openedRole
-              ? payload
-              : { ...payload, role: personForm.role },
-          ),
+        run: () => updatePerson(membership.id, editPersonId, changed),
         errorTitle: "Kunde inte spara personen",
         success: "Person sparad",
       });
