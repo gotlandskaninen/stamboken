@@ -346,3 +346,17 @@ class TestMatrikelAudit(MatrikelApiTest):
             ["membership_retired", "person_anonymized", "person_updated"],
         )
         self.assertEqual(found["total"], 3)
+
+    def test_handler_who_fixes_their_own_wrong_link_keeps_the_name(self):
+        """Codex #248 r5: the link and the unlink are the handler's acts on her, not her self-service."""
+        handler = da.register_user("handlaggare.post@example.com", "pass", username="handlaggare")
+        matrikel.link_member_user(self.person.id, handler.id, actor=handler, mode="admin")
+        matrikel.unlink_member_user(self.person.id, actor=handler)
+        matrikel.anonymize_person(db.Member.get_by_id(self.person.id), self.matrikel_user)
+        self.login()
+        rows = self.get(f"membership_id={self.ms.id}").get_json()["rows"]
+        actors = {r["action"]: r["actor"]["name"] for r in rows if r["action"].startswith("person_user_")}
+        self.assertEqual(actors, {"person_user_linked": "handlaggare", "person_user_unlinked": "handlaggare"})
+        found = self.get("actor=handlaggare").get_json()
+        self.assertEqual(sorted(r["action"] for r in found["rows"]), ["person_user_linked", "person_user_unlinked"])
+        self.assertEqual(found["total"], 2)

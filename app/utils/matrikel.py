@@ -362,26 +362,29 @@ def _masked_actor_rows():
             Member.last_name == ANONYMIZED_LAST_NAME,
         )
     }
-    spans = {}  # (person, account) -> [(membership, linked at or None, unlinked at or None)]
+    # (person, account) -> [(membership, linked at or None, her own link?, unlinked at or None)]
+    spans = {}
     for a in links:
         person, account = (a.payload or {}).get("person_id"), (a.payload or {}).get("user_id")
         if person not in erased or not isinstance(account, int):
             continue
         pair = spans.setdefault((person, account), [])
         if a.action == "person_user_linked":
-            pair.append((a.membership_id, a.created_at, None))
-        elif pair and pair[-1][2] is None and pair[-1][1] is not None:
-            pair[-1] = (*pair[-1][:2], a.created_at)
+            own = (a.payload or {}).get("source") not in ("admin", "cli")  # oauth, matrikel_epost: she linked it
+            pair.append((a.membership_id, a.created_at, own, None))
+        elif pair and pair[-1][3] is None and pair[-1][1] is not None:
+            pair[-1] = (*pair[-1][:3], a.created_at)
         else:  # linked before the log began
-            pair.append((a.membership_id, None, a.created_at))
+            pair.append((a.membership_id, None, False, a.created_at))
     condition = None
     for (_person, account), pair in spans.items():
-        for membership, start, end in pair:
+        for membership, start, own, end in pair:
             row = (MatrikelAudit.actor == account) & (MatrikelAudit.membership == membership)
+            # A handler's link and every unlink (admin or the erasure) are acts on her, not hers: the ends are open.
             if start is not None:
-                row &= MatrikelAudit.created_at >= start
+                row &= MatrikelAudit.created_at >= start if own else MatrikelAudit.created_at > start
             if end is not None:
-                row &= MatrikelAudit.created_at <= end
+                row &= MatrikelAudit.created_at < end
             condition = row if condition is None else condition | row
     return condition
 
