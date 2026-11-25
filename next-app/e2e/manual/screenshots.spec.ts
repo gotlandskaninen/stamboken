@@ -33,6 +33,7 @@ const VARIES: Record<string, number> = {
   "admin-aktivitetslogg": 1500,
   "admin-aktiva-anvandare": 1500,
   "individ-andringshistorik": 1000,
+  "min-besattning-kaniner": 2500,
   "genetik-oversikt": 5000,
   "min-besattning-kullar": 2500,
   "min-besattning-slakttrad": 2500,
@@ -149,7 +150,6 @@ const SHOTS: Shot[] = [
     role: "manager",
     path: "/stamboken/genetik?genebank=1",
     actions: ["wait:8000"],
-    fullPage: true,
   },
   {
     name: "genetik-prioriteringar",

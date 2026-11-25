@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 
-// Skärmbilder av kodinloggningen till manualen (projektet "manual" i
+// Skärmbilder av kodinloggningen till manualen (projektet "login" i
 // playwright.manual-screenshots.config.ts): fältet för engångskoden, sidan för
 // länken i mejlet och Skapa mitt konto. Kräver samma API som
 // public-code-login.spec.ts (container test-api med kodinloggning, se

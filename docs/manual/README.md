@@ -58,7 +58,8 @@ bilder i manualen och guiden.
   stoppar testet i stället för att bli en bild.
 - `e2e/manual/login-screenshots.spec.ts` tar kodinloggningen: fältet för koden,
   sidan för länken och Skapa mitt konto. Fixturen är densamma som i
-  `public-code-login.spec.ts`.
+  `public-code-login.spec.ts`. Den lägger in ett medlemskap och en besättning och
+  körs därför sist (projektet `login`).
 - `e2e/manual/matrikel-guide-screenshots.spec.ts` tar guidens bilder, se nedan.
 
 Bilderna är Playwrights jämförelsebilder (`toHaveScreenshot`), och
@@ -72,7 +73,7 @@ Några sidor skiljer sig mellan två körningar av samma commit: tider, intygets
 slumpade kod, ordningen på lika rankade kaniner på genetiksidan och flikraden i Min
 besättning. De har en egen tolerans i specarna (`VARIES` i `screenshots.spec.ts`,
 argumentet `maxDiffPixels` i guidens spec), så att en körning utan ändrat gränssnitt
-ger en tom lista. Alla andra sidor måste stämma på 50 pixlar när.
+ger en tom lista. Alla andra sidor måste stämma exakt.
 
 Så förs bilderna in:
 
@@ -80,8 +81,9 @@ Så förs bilderna in:
    gren. Det körs också av sig självt på en PR som ändrar skärmbildsskripten.
 2. Hämta artefakten till en tom katalog utanför repot och kopiera bara PNG-filerna
    till de två bildkatalogerna, så att en artefakt aldrig skriver över annat i din
-   checkout. Hämta bara från en körning på `main` eller på en gren du har granskat:
-   en PR kan ändra workflowet och därmed vad artefakten innehåller.
+   checkout. Hämta bara från en grön körning på `main` eller på en gren du har
+   granskat: en PR kan ändra workflowet och därmed vad artefakten innehåller. En röd
+   körning laddar inte upp några bilder.
 
    ```bash
    tmp=$(mktemp -d)

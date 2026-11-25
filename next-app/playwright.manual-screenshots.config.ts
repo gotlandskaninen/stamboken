@@ -20,8 +20,6 @@ export default defineConfig({
     toHaveScreenshot: {
       animations: "disabled",
       caret: "hide",
-      // A few pixels of anti-aliasing are not a changed screen.
-      maxDiffPixels: 50,
       stylePath: "./e2e/manual/screenshots.css",
     },
   },
@@ -39,7 +37,15 @@ export default defineConfig({
   projects: [
     {
       name: "manual",
-      testMatch: /[\\/](?:login-)?screenshots\.spec\.ts$/,
+      testMatch: /[\\/]screenshots\.spec\.ts$/,
+      snapshotPathTemplate:
+        "{testDir}/../../public/stamboken/manual/{arg}{ext}",
+    },
+    // Last: its fixture adds a membership and a herd that the other pictures
+    // must not show.
+    {
+      name: "login",
+      testMatch: /[\\/]login-screenshots\.spec\.ts$/,
       snapshotPathTemplate:
         "{testDir}/../../public/stamboken/manual/{arg}{ext}",
     },

@@ -14,6 +14,9 @@ on:
       - .github/workflows/manual-screenshots.yml
       - next-app/e2e/manual/**
       - next-app/playwright.manual-screenshots.config.ts
+      - next-app/e2e/fixtures/code_login.py
+      - next-app/e2e/fixtures/code-login-rules.ts
+      - .github/actions/start-api/**
 
 permissions:
   contents: read
@@ -148,7 +151,7 @@ jobs:
 
       # The kullista and the certificate the screenshots show.
       - name: Run the manual's flows
-        run: pnpm exec playwright test --config=playwright.config.ts --project=mutation-tests e2e/manual/mutation-manual-flows.spec.ts
+        run: pnpm exec playwright test --config=playwright.config.ts --project=mutation-tests --retries=0 e2e/manual/mutation-manual-flows.spec.ts
         working-directory: next-app
 
       - name: Take the manual's screenshots
@@ -166,11 +169,17 @@ jobs:
         working-directory: next-app
 
       # The list of changed images is also the list of sections to reread.
+      # Last, so its herd and membership are in no other picture.
+      - name: Take the code login's screenshots
+        if: ${{ !cancelled() }}
+        run: pnpm exec playwright test --config playwright.manual-screenshots.config.ts --project=login --update-snapshots=changed --reporter=line --output=test-results/login
+        working-directory: next-app
+
       - name: List changed images
         if: ${{ !cancelled() }}
         run: |
           dirs=(next-app/public/stamboken/manual next-app/content/matrikel-guide)
-          mapfile -t changed < <(git status --porcelain --untracked-files=all -- "${dirs[@]}" | awk '/\.png$/ {print $2}')
+          mapfile -t changed < <(git -c core.quotePath=false status --porcelain --untracked-files=all -- "${dirs[@]}" | awk '/\.png$/ {print $2}')
           {
             echo "## Skärmbilder som ändrats (${#changed[@]})"
             [ ${#changed[@]} -eq 0 ] || printf -- "- \`%s\`\n" "${changed[@]}"
@@ -187,8 +196,9 @@ jobs:
           mkdir -p "$RUNNER_TEMP/bilder"
           for f in "${changed[@]}"; do install -D "$f" "$RUNNER_TEMP/bilder/$f"; done
 
+      # Only a green run: a failed test leaves its old picture unnamed.
       - name: Upload changed images
-        if: ${{ !cancelled() }}
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: manual-screenshots
