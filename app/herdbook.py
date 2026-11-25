@@ -1894,7 +1894,11 @@ def external_login_handler(service):
                     "user": user.id,
                     "herd": herd,
                 }
-                da.update_role(form, user.uuid, skip_role_check=True)
+                try:
+                    da.update_role(form, user.uuid, skip_role_check=True)
+                except da.ValidationError:
+                    # A new account is linked to no person yet, so the owner guard refuses it; sign-in goes on.
+                    da.auth_log.warning("Owner role for herd id=%s refused for new user id=%s", herd, user.id)
             else:
                 APP.logger.warning(f"Could not find herd id for herd {h.strip()}")
 

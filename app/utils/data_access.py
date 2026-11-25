@@ -40,6 +40,7 @@ from utils.database import Genebank  # isort: skip
 from utils.database import Herd  # isort: skip
 from utils.database import HerdTracking  # isort: skip
 from utils.database import Individual  # isort: skip
+from utils.database import Member  # isort: skip
 from utils.database import User  # isort: skip
 from utils.database import Weight  # isort: skip
 from utils.database import next_individual_number  # isort: skip
@@ -1171,6 +1172,17 @@ def _is_int_id(value):
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+def _in_herd_membership(user_id, herd_id):
+    """Whether the account is linked to an active person in the membership the herd belongs to (the user row is
+    locked by the caller, and every link and unlink locks it too)."""
+    return (
+        Member.select()
+        .join(Herd, on=(Herd.membership == Member.membership))
+        .where(Herd.id == int(herd_id), Member.user == user_id, Member.end_date.is_null(True))
+        .exists()
+    )
+
+
 def update_role(operation, user_uuid=None, skip_role_check=False):
     """
     Takes a role change description `operation`, and returns a status message.
@@ -1289,6 +1301,13 @@ def update_role(operation, user_uuid=None, skip_role_check=False):
                     target_user.remove_role(operation["role"], operation.get(target))
                     updated = True
                 elif not has_role and operation["action"] == "add":
+                    if operation["role"] == "owner" and not _in_herd_membership(target_user.id, operation["herd"]):
+                        raise ValidationError(
+                            "owner-requires-person",
+                            "Rollen besättningsägare kan bara ges till ett konto som är kopplat till en person "
+                            "(huvudmedlem, familjemedlem eller skötare) i besättningens medlemskap. "
+                            "Koppla kontot till en person i medlemskapet först.",
+                        )
                     if (
                         operation["role"] in ROLE_LEVELS
                         and not settings.service.allow_role_password_login
