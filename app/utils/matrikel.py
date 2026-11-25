@@ -435,7 +435,7 @@ def query_matrikel_audit(
     the erasure, user_id included. An anonymised person's former account is shown as REDACTED_VALUE as actor on the
     rows _masked_actor_rows() names, and the actor filter skips those rows. A membership where any person has been
     anonymised has the values of ANONYMISED_MEMBERSHIP_KEYS masked in all its rows, for every role: the keys stay, so
-    the change shows, and today's values are on the membership page.
+    the change shows, and today's values are on the membership page. The billing_* values are masked in every row.
     """
     masked = _masked_actor_rows()
     q = (
@@ -485,6 +485,8 @@ def query_matrikel_audit(
         # shortcut: masks the others' and a new household's values too, for good; refine only if someone needs them
         if a.membership_id in erased:
             payload, _ = _redact_node(payload, ANONYMISED_MEMBERSHIP_KEYS)
+        # Always: a billing recipient is free text that may name a person of another membership, erased or not.
+        payload, _ = _redact_node(payload, frozenset(BILLING_FIELDS))
         if not full_access:
             payload = _drop_keys(payload, {"organization_number"} | ({"notes"} if "person_id" in payload else set()))
         rows.append(

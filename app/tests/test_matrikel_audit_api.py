@@ -172,13 +172,13 @@ class TestMatrikelAudit(MatrikelApiTest):
                 self.assertEqual((found["total"], found["rows"]), (0, []))
 
     def _billing_row(self, minutes_before_now=0):
-        """A membership_updated row with the household's old billing address, written now and dated back if asked:
-        after the erasure, so the erasure's own redaction in the database never reached it."""
+        """A membership_updated row with the household's old street address (billing_* is always masked), written
+        now and dated back if asked: after the erasure, so the erasure's own redaction never reached it."""
         row = matrikel.write_matrikel_audit(
             self.admin,
             "membership_updated",
             self.ms,
-            {"before": {"billing_address": "Fakturagatan 9"}, "after": {"billing_address": None}},
+            {"before": {"address": "Fakturagatan 9"}, "after": {"address": None}},
         )
         at = datetime.now() - timedelta(minutes=minutes_before_now)
         db.MatrikelAudit.update(created_at=at).where(db.MatrikelAudit.id == row.id).execute()
@@ -193,7 +193,7 @@ class TestMatrikelAudit(MatrikelApiTest):
         self.login("man")
         shown, rows = self._billing_shown()
         self.assertFalse(shown)
-        self.assertEqual(rows[0]["payload"]["before"]["billing_address"], matrikel.REDACTED_VALUE)
+        self.assertEqual(rows[0]["payload"]["before"]["address"], matrikel.REDACTED_VALUE)
 
     def test_erased_household_masks_every_household_value_for_good(self):
         """Codex #248 r2–r5: once erased, the membership's household values are masked in all its rows, for every
@@ -201,7 +201,7 @@ class TestMatrikelAudit(MatrikelApiTest):
         erasure's own placeholders. The keys stay, so the change shows."""
         matrikel.anonymize_person(db.Member.get_by_id(self.person.id), self.matrikel_user)
         writes = (
-            {"before": {"billing_address": None}, "after": {"billing_address": "Fakturagatan 9"}},  # written back
+            {"before": {"address": None}, "after": {"address": "Fakturagatan 9"}},  # written back
             {"before": {"notes": "[borttagen]"}, "after": {"notes": "gammal not"}},
             {"before": {"payment_note": "Swish Testsson 0701"}, "after": {"payment_note": "Betalt"}},  # Codex r6
         )
@@ -280,12 +280,42 @@ class TestMatrikelAudit(MatrikelApiTest):
                     (added["payload"]["first_name"], added["payload"]["email"]), ("Vera", matrikel.REDACTED_VALUE)
                 )  # the others' names stay
 
+    def test_billing_values_are_always_masked(self):
+        """Codex #248 r9: membership B's former billing recipient is a person in A; A's person is anonymised."""
+        matrikel.write_matrikel_audit(
+            self.admin,
+            "membership_updated",
+            self.other_ms,
+            {
+                "before": {
+                    "billing_name": "Tova Testsson",
+                    "billing_email": "tova@example.com",
+                    "billing_address": "Fakturagatan 9",
+                },
+                "after": {"billing_name": "Ulf Provsson", "billing_email": None, "billing_address": None},
+            },
+        )
+        matrikel.anonymize_person(db.Member.get_by_id(self.person.id), self.matrikel_user)  # in A
+        for username in ("man", "admin"):
+            with self.subTest(username=username):
+                self.client.get("/api/logout")
+                self.login(username)
+                resp = self.get(f"membership_id={self.other_ms.id}")
+                text = resp.get_data(as_text=True)
+                for value in ("Tova", "tova@example.com", "Fakturagatan", "Ulf Provsson"):
+                    self.assertNotIn(value, text)
+                row = resp.get_json()["rows"][0]["payload"]
+                self.assertEqual(sorted(row["before"]), ["billing_address", "billing_email", "billing_name"])
+                self.assertEqual(row["after"]["billing_email"], None)  # empty stays empty
+
     def test_membership_without_anonymised_person_is_not_masked(self):
-        self._billing_row()
+        matrikel.write_matrikel_audit(
+            self.admin, "membership_updated", self.ms, {"before": {"address": "Gata 1"}, "after": {"address": "Gata 2"}}
+        )
         _mk_person(self.ms, "Vera", "Testsson", role="familjemedlem")
         db.Member.update(end_date=date.today()).where(db.Member.id == self.person.id).execute()  # ended, not erased
         self.login("man")
-        self.assertIn("Fakturagatan 9", self.get(f"membership_id={self.ms.id}").get_data(as_text=True))
+        self.assertIn("Gata 1", self.get(f"membership_id={self.ms.id}").get_data(as_text=True))
 
     def test_days_are_swedish_days(self):
         """Opus #248: Från/Till cut at midnight in Sweden, as the page shows the times, whatever the server's zone."""
