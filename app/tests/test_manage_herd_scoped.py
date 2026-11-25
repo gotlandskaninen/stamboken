@@ -1,5 +1,6 @@
 """Scoped /api/manage/herd endpoints."""
 
+import utils.data_access as da
 import utils.database as db
 from herdbook import APP, limiter
 
@@ -83,6 +84,28 @@ class TestManageHerdScoped(DatabaseTest):
             resp = self.client.get("/api/manage/herd")
             self.assertEqual(resp.status_code, 403, username)
             self.assertIn("application/problem+json", resp.content_type)
+
+    def _codes(self, query):
+        body = self.client.get(f"/api/manage/herd?{query}").get_json()
+        self.assertEqual(body["total"], len(body["herds"]), query)
+        return {r["herd"]: r["owner_usernames"] for r in body["herds"]}
+
+    def test_manage_herd_list_owner_includes_the_main_member_not_a_caretaker(self):
+        # #214: an active main member with an account owns the membership's herd (transfer_herd_ids), a caretaker
+        # with a grant does not — the owner column and both filters agree with that.
+        membership = db.Membership.create(member_number=9)
+        main = da.register_user("main@example.invalid", "pass", username="huvud")
+        carer = da.register_user("carer@example.invalid", "pass", username="skotare")
+        db.Member.create(membership=membership, first_name="A", last_name="B", role="huvudmedlem", user=main)
+        family = db.Member.create(
+            membership=membership, first_name="C", last_name="B", role="familjemedlem", user=carer
+        )
+        db.Herd.update(membership=membership).where(db.Herd.id == self.herds[1].id).execute()
+        db.HerdAccessGrant.create(member=family, herd=self.herds[2], granted_by=self.admin)
+        self.login("admin", "pass")
+
+        self.assertEqual(self._codes("has_owner=true"), {"G1": ["owner"], "G2": ["huvud"]})
+        self.assertEqual(self._codes("has_owner=false"), {"M3": []})
 
     def test_manage_herd_detail_by_id(self):
         self.login("admin", "pass")

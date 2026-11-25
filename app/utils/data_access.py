@@ -40,6 +40,7 @@ from utils.database import Genebank  # isort: skip
 from utils.database import Herd  # isort: skip
 from utils.database import HerdTracking  # isort: skip
 from utils.database import Individual  # isort: skip
+from utils.database import Member, Membership  # isort: skip
 from utils.database import User  # isort: skip
 from utils.database import Weight  # isort: skip
 from utils.database import next_individual_number  # isort: skip
@@ -1381,13 +1382,31 @@ def _herd_owner_map():
 
     A herd can have MULTIPLE owners (legacy parity — e.g. museum herds
     and shared family herds); lists are sorted by user id for stable
-    output.
+    output. The owners are those of User.transfer_herd_ids: legacy owner
+    roles plus the active main member of the herd's membership (#214),
+    never a caretaker with a herd-access grant.
     """
     owners = {}
     for u in User.select().order_by(User.id):
         for p in u.privileges:
             if p.get("level") == "owner" and isinstance(p.get("herd"), int):
                 owners.setdefault(p["herd"], []).append(u)
+    mains = {}
+    for person in (
+        Member.select(Member.membership, User)
+        .join(User)
+        .switch(Member)
+        .join(Membership)
+        .where(
+            (Member.role == "huvudmedlem") & Member.end_date.is_null(True) & (Membership.membership_status == "active")
+        )
+    ):
+        mains.setdefault(person.membership_id, []).append(person.user)
+    for herd in Herd.select(Herd.id, Herd.membership).where(Herd.membership.in_(list(mains))):
+        herd_owners = owners.setdefault(herd.id, [])
+        known = {u.id for u in herd_owners}
+        herd_owners += [u for u in mains[herd.membership_id] if u.id not in known]
+        herd_owners.sort(key=lambda u: u.id)
     return owners
 
 
