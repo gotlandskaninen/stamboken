@@ -64,7 +64,6 @@ describe("OnboardingChecklist", () => {
   });
 
   it("offers the test environment as a fourth step with a manual link", () => {
-    document.cookie = "sb_mode=prod";
     renderList({});
     const step = screen.getAllByRole("listitem")[3];
     expect(step).toHaveTextContent("Prova i testmiljön");
@@ -76,11 +75,16 @@ describe("OnboardingChecklist", () => {
     );
   });
 
-  it("ticks the test environment step once this browser has been there", () => {
-    const { unmount } = renderList({});
-    expect(screen.getAllByRole("listitem")[3]).toHaveTextContent("Klart");
-    unmount();
-    document.cookie = "sb_mode=prod";
+  it("does not tick the test environment step just by rendering in it", () => {
+    document.cookie = "sb_mode=demo";
+    renderList({});
+    expect(screen.getAllByRole("listitem")[3]).not.toHaveTextContent("Klart");
+    expect(localStorage.getItem("sb-onboarding-tried-demo")).toBeNull();
+  });
+
+  it("ticks the test environment step once the menu has switched there", () => {
+    // Written by AvatarMenu on "Ja, byt till testmiljön".
+    localStorage.setItem("sb-onboarding-tried-demo", "1");
     renderList({});
     expect(screen.getAllByRole("listitem")[3]).toHaveTextContent("Klart");
   });
@@ -169,7 +173,6 @@ describe("OnboardingChecklist", () => {
   });
 
   it("marks done steps and drops their action", () => {
-    document.cookie = "sb_mode=prod";
     renderList({ herd: { is_active: true, individuals: [hane, hona] } });
     expect(screen.getAllByText("Klart")).toHaveLength(2);
     expect(screen.queryByRole("button", { name: "Till Kaniner" })).toBeNull();

@@ -3,7 +3,7 @@
 import React from "react";
 import CheckRounded from "@mui/icons-material/CheckRounded";
 import type { Individual } from "@/redux/api/apiSlice";
-import { MANUAL_PATH } from "@/lib/constants";
+import { MANUAL_PATH, TRIED_DEMO_KEY } from "@/lib/constants";
 import { readModeCookieClient } from "@/lib/mode";
 import { useUser } from "@/lib/user-context";
 import {
@@ -70,8 +70,6 @@ export function onboardingSteps(
   ];
 }
 
-const TRIED_DEMO_KEY = "sb-onboarding-tried-demo";
-
 /**
  * Getting-started steps for a herd that has not bred yet (issue #41). Whether
  * a step is done comes from the herd's own data, so it holds across browsers
@@ -92,27 +90,21 @@ export default function OnboardingChecklist({
   onNewMating: () => void;
 }) {
   const user = useUser();
-  const mode = readModeCookieClient();
   // Per mode too: Stäng in the test environment must not hide the list in
   // the real stamboken (same origin, the mode is a cookie).
-  const key = `sb-onboarding-dismissed-${mode}-${herdNumber}`;
+  const key = `sb-onboarding-dismissed-${readModeCookieClient()}-${herdNumber}`;
   // Read per render, not once: the herd switcher changes herdNumber without
   // remounting. Min besättning renders tabs only after hydration, so reading
   // localStorage here cannot cause a markup mismatch.
   const [closedKey, setClosedKey] = React.useState<string | null>(null);
   let dismissed = closedKey === key;
+  // Set by the avatar menu when the user switches to the test environment.
+  let triedDemo = false;
   try {
     dismissed ||= localStorage.getItem(key) === "1";
+    triedDemo = localStorage.getItem(TRIED_DEMO_KEY) === "1";
   } catch {
     // unavailable storage: only this visit's Stäng counts
-  }
-  // The test environment step: once seen in this browser, done in both modes.
-  let triedDemo = mode === "demo";
-  try {
-    if (triedDemo) localStorage.setItem(TRIED_DEMO_KEY, "1");
-    else triedDemo = localStorage.getItem(TRIED_DEMO_KEY) === "1";
-  } catch {
-    // unavailable storage: done only while in the test environment
   }
 
   // Only the owner gets "your start animals"; a herd that has bred is not
