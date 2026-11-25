@@ -2,7 +2,7 @@
 // privileges audit rows (DB column name; `_privileges` is only the Python
 // attribute — W2 C5). RolePicker (Task 26) submits numeric ids from
 // the autocomplete — admins never type raw integers. Owner(herd) is refused
-// here: the account is linked to no person in the herd's membership.
+// here: the account has no person in the herd's membership (or the herd none).
 import { test, expect } from "@playwright/test";
 import { loginAs, ADMIN, VICTIM_ROLE } from "./helpers/auth";
 import {
@@ -43,7 +43,7 @@ test("owner(herd) is refused; grant + revoke viewer(genebank) writes two privile
   const userId = page.url().match(/anvandare\/(\d+)/)![1];
 
   // Owner(herd) via RolePicker (level select + herd autocomplete) is refused
-  // with the backend's reason: the account has no person in the membership.
+  // with the backend's reason, whether the herd has a membership or not.
   await page.getByLabel(ROLE_LEVEL_FIELD).click();
   await page.getByRole("option", { name: "Besättningsägare" }).click();
   await page.getByLabel(ROLE_HERD_FIELD, { exact: true }).fill(herdCode);
@@ -52,7 +52,9 @@ test("owner(herd) is refused; grant + revoke viewer(genebank) writes two privile
     .first()
     .click();
   await page.getByRole("button", { name: ROLE_ADD_BUTTON }).click();
-  await expect(page.getByText(/kopplat till en person/)).toBeVisible();
+  await expect(
+    page.getByText(/kopplat till (en person|något medlemskap)/),
+  ).toBeVisible();
 
   // Grant viewer(genebank) instead and revoke it again.
   await page.goto(`/stamboken/admin/anvandare/${userId}`);
