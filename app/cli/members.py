@@ -61,7 +61,8 @@ main member by name, e-mail address or e-mail local part (mode "cli"). Other
 cases are listed for the register manager. Plan only unless --apply.
 
 `link-household` handles the herds `link-by-herd` lists because several
-accounts own them: the main member's account is linked, and every other owner
+accounts own them, when the herd is tied to an active membership (an untied
+herd is left out): the main member's account is linked, and every other owner
 account becomes a familjemedlem (name and secondary address from a Google
 Admin user export) linked to that account. Plan only unless --apply.
 """
@@ -1571,7 +1572,10 @@ def _household_person(user, workspace, persons):
     if login_address_taken(address, 0):
         return "en annan medlem loggar redan in med adressen (AddressTaken)"
     name = _norm_name(f"{first} {last}")
-    if any(_norm_name(f"{p.first_name} {p.last_name}") == name or _norm_email(p.email) == address for p in persons):
+    if any(
+        _norm_name(f"{p.first_name} {p.last_name}") == name or _norm_email(p.email) == _norm_email(address)
+        for p in persons
+    ):
         return "medlemskapet har redan en person med samma namn eller adress"
     return {"first_name": first, "last_name": last, "email": address, "role": "familjemedlem"}, column
 

@@ -167,6 +167,17 @@ class TestMembersLinkHousehold(DatabaseTest):
         self._apply()
         self.assertEqual(self._added(membership), [])
 
+    def test_person_already_in_the_membership_is_not_added_twice(self):
+        membership, _, herd = self._household()
+        db.Member.create(membership=membership, role="familjemedlem", first_name="Bo", last_name="B", email="Bo@Ex.net")
+        self._account("Anna Svensson", owns=[herd])
+        bo = self._account("Bo Svensson", owns=[herd], email="bo@example.org")
+        self._workspace_row("bo@example.org", "Bo", "Svensson", home=" bo@EX.net ")
+
+        plan = self._run()
+
+        self.assertIn(f"konto {bo.id}: medlemskapet har redan en person med samma namn eller adress", plan.output)
+
     def test_role_account_and_account_in_two_memberships_are_listed(self):
         membership, _, herd = self._household()
         _, _, other_herd = self._household(902, first="Eva", last="Ek")
