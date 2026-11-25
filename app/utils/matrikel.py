@@ -429,9 +429,10 @@ def reactivate_person(member, actor):
     """Undo soft_delete_person for an ended, not anonymized person: clear end_date, audit it.
 
     Same lock order as the other person writers (membership, then the linked user, then the person).
-    The grants stay revoked and a linked account is detached, so reactivating never restores access
-    on its own. Raises ValueError for an anonymized, still active or inactive-membership person, or
-    a second active huvudmedlem; AddressTaken when a main member's address now belongs to someone else.
+    The grants stay revoked. A linked account is never detached here: the caller unlinks it first, as a
+    step of its own, so reactivating cannot give an account its access back. Raises ValueError for an
+    anonymized, still active or linked person, an inactive membership or a second active huvudmedlem;
+    AddressTaken when a main member's address now belongs to someone else.
     """
     with DB_PROXY.atomic():
         person, _user = _lock_for_detach(member.id)
@@ -442,6 +443,8 @@ def reactivate_person(member, actor):
             raise ValueError("Personen är redan aktiv")
         if membership.membership_status == "inactive":
             raise ValueError("Kan inte återaktivera personer i ett inaktivt medlemskap")
+        if person.user_id is not None:
+            raise ValueError("Koppla bort kontot först")
         if (
             person.role == "huvudmedlem"
             and Member.select()
@@ -449,9 +452,7 @@ def reactivate_person(member, actor):
             .exists()
         ):
             raise ValueError("Medlemskapet har redan en aktiv huvudmedlem")
-        unlinked = None
-        if person.user_id is not None:
-            unlinked = _detach_user_locked(person, actor=actor, mode="reactivate")
+        ended = person.end_date
         person.end_date = None
         person.save()
         if person.role == "huvudmedlem":
@@ -460,7 +461,12 @@ def reactivate_person(member, actor):
             actor,
             "person_reactivated",
             membership,
-            {"person_id": person.id, "role": person.role, "unlinked_user_id": unlinked},
+            {
+                "person_id": person.id,
+                "role": person.role,
+                "before": {"end_date": ended.isoformat()},
+                "after": {"end_date": None},
+            },
         )
     return person
 

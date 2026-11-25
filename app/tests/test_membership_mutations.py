@@ -1,7 +1,7 @@
 """Tests for /api/v2/memberships and /api/v2/persons mutations (Member Model v2)."""
 
 import json
-from datetime import datetime
+from datetime import date, datetime
 from unittest.mock import patch
 
 import utils.data_access as da  # noqa: E402
@@ -104,6 +104,14 @@ class TestMatrikelDomainFunctions(DatabaseTest):
         self.assertEqual((after.role, after.email), (before.role, before.email))
         self.assertTrue(db.MatrikelAudit.select().where(db.MatrikelAudit.action == "person_reactivated").exists())
 
+    def test_reactivate_person_audits_the_removed_end_date(self):
+        matrikel.soft_delete_person(self.family, self.admin)
+        db.Member.update(end_date=date(2024, 3, 1)).where(db.Member.id == self.family.id).execute()
+        matrikel.reactivate_person(self.family, self.admin)
+        audit = db.MatrikelAudit.get(db.MatrikelAudit.action == "person_reactivated")
+        self.assertEqual(audit.payload["before"], {"end_date": "2024-03-01"})
+        self.assertEqual(audit.payload["after"], {"end_date": None})
+
     def test_reactivate_person_refuses_anonymized_and_active(self):
         with self.assertRaises(ValueError):
             matrikel.reactivate_person(self.family, self.admin)  # still active
@@ -112,13 +120,17 @@ class TestMatrikelDomainFunctions(DatabaseTest):
             matrikel.reactivate_person(self.family, self.admin)
         self.assertIsNotNone(db.Member.get_by_id(self.family.id).end_date)
 
-    def test_reactivate_person_detaches_account(self):
+    def test_reactivate_person_refused_while_account_linked(self):
         user = da.register_user("fam@example.com", "pass", username="fam")
         self.family.user = user
         self.family.save()
         matrikel.soft_delete_person(self.family, self.admin)
+        with self.assertRaises(ValueError):
+            matrikel.reactivate_person(self.family, self.admin)
+        self.assertIsNotNone(db.Member.get_by_id(self.family.id).end_date)
+        matrikel.unlink_member_user(self.family.id, actor=self.admin)
         matrikel.reactivate_person(self.family, self.admin)
-        self.assertIsNone(db.Member.get_by_id(self.family.id).user_id)
+        self.assertIsNone(db.Member.get_by_id(self.family.id).end_date)
 
     def test_reactivate_main_member_refused_when_address_taken(self):
         # An ended huvudmedlem whose address another main member now holds.
