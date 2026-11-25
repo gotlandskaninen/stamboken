@@ -12,8 +12,18 @@ import { stambokenTheme } from "@/theme/stamboken";
 
 const trendsQuery = vi.fn();
 
+// The answer is the current argument's own, as RTK Query's currentData after a fetch.
+const own = (r: { data?: unknown; isLoading?: boolean }) => ({
+  currentData: r.data,
+  isFetching: Boolean(r.isLoading),
+  ...r,
+});
+
+// The genetics hooks take the rendered mode with the genebank (ModeProvider in the app).
+vi.mock("@/lib/mode-context", () => ({ useMode: () => "prod" }));
+
 vi.mock("@/redux/api/apiSlice", () => ({
-  useFetchGeneticsTrendsQuery: () => trendsQuery(),
+  useFetchGeneticsTrendsQuery: () => own(trendsQuery()),
 }));
 
 // The chart itself is ApexCharts; the stub keeps the props the component hands it.
