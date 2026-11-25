@@ -368,5 +368,10 @@ describe("UserEditClient profile form", () => {
     expect(await screen.findByRole("status")).toHaveTextContent(
       "Ändringen är sparad.",
     );
+    // A new edit clears the confirmation.
+    fireEvent.change(screen.getByLabelText("Fullständigt namn"), {
+      target: { value: "Ett namn till" },
+    });
+    expect(screen.queryByText("Ändringen är sparad.")).toBeNull();
   });
 });

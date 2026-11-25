@@ -246,9 +246,10 @@ export function UserEditClient({
                       id="ad-fullname"
                       className="sb-input"
                       value={fullname}
-                      onChange={(e) =>
-                        setEdits({ ...edits, fullname: e.target.value })
-                      }
+                      onChange={(e) => {
+                        setSaved(false);
+                        setEdits({ ...edits, fullname: e.target.value });
+                      }}
                     />
                   </div>
                   <div>
@@ -259,9 +260,10 @@ export function UserEditClient({
                       id="ad-email"
                       className="sb-input"
                       value={email}
-                      onChange={(e) =>
-                        setEdits({ ...edits, email: e.target.value })
-                      }
+                      onChange={(e) => {
+                        setSaved(false);
+                        setEdits({ ...edits, email: e.target.value });
+                      }}
                     />
                   </div>
                   <div>

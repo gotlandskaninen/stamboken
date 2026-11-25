@@ -13,11 +13,14 @@ const USER_LIST_KEYS = [
   "per_page",
 ] as const;
 
-export function userListQuery(sp: Record<string, string | undefined>): string {
+export function userListQuery(
+  sp: Record<string, string | string[] | undefined>,
+): string {
   const qs = new URLSearchParams();
   for (const key of USER_LIST_KEYS) {
     const v = sp[key];
-    if (v) qs.set(key, v);
+    const first = Array.isArray(v) ? v[0] : v; // a repeated key: the first
+    if (first) qs.set(key, first);
   }
   return qs.toString();
 }

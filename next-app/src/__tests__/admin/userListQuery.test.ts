@@ -14,6 +14,12 @@ describe("userListQuery (#249)", () => {
     ).toBe("search=a+b%26c&active=false&page=2");
   });
 
+  test("takes the first value of a repeated key", () => {
+    expect(userListQuery({ search: ["a", "b"], role: "admin" })).toBe(
+      "search=a&role=admin",
+    );
+  });
+
   test("is empty for an unfiltered list", () => {
     expect(userListQuery({})).toBe("");
   });
