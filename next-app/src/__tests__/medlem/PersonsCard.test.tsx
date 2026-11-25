@@ -302,6 +302,27 @@ describe("PersonsCard — rollval vid redigering", () => {
     );
   });
 
+  it("sends no role when only the phone is changed", async () => {
+    vi.mocked(updatePerson).mockResolvedValue({ ok: true });
+    render(<PersonsCard membership={MEMBERSHIP} canEdit />);
+    fireEvent.click(
+      within(row(/Bo Olinkad/)).getByRole("button", { name: "Redigera" }),
+    );
+    const dialog = within(screen.getByRole("dialog"));
+    fireEvent.change(dialog.getByLabelText("Telefon"), {
+      target: { value: "070-1234567" },
+    });
+    fireEvent.click(dialog.getByRole("button", { name: "Spara" }));
+    await waitFor(() =>
+      expect(updatePerson).toHaveBeenLastCalledWith(1, 12, {
+        first_name: "Bo",
+        last_name: "Olinkad",
+        email: "person@example.com",
+        phone: "070-1234567",
+      }),
+    );
+  });
+
   it("shows no role select for the huvudmedlem", () => {
     render(<PersonsCard membership={MEMBERSHIP} canEdit />);
     fireEvent.click(

@@ -94,6 +94,9 @@ export function PersonsCard({
   const [personOpen, setPersonOpen] = useState(false);
   const [editPersonId, setEditPersonId] = useState<number | null>(null);
   const [personForm, setPersonForm] = useState(EMPTY_PERSON_FORM);
+  // The role when the dialog opened: only a role the user changed is sent, so a
+  // phone edit cannot overwrite a role another admin changed meanwhile.
+  const [openedRole, setOpenedRole] = useState("");
   const editedPerson = membership.persons.find((p) => p.id === editPersonId);
   const editingContact =
     Boolean(membership.organization_name) &&
@@ -175,6 +178,7 @@ export function PersonsCard({
       phone: p.phone ?? "",
       role: p.role,
     });
+    setOpenedRole(p.role);
     setPersonOpen(true);
   };
 
@@ -198,7 +202,7 @@ export function PersonsCard({
           updatePerson(
             membership.id,
             editPersonId,
-            editedPerson?.role === "huvudmedlem"
+            personForm.role === openedRole
               ? payload
               : { ...payload, role: personForm.role },
           ),
