@@ -147,6 +147,11 @@ describe("CasePane", () => {
       "href",
       "/stamboken/admin/anvandare/174",
     );
+    // The handler too ("Hos Konto 1").
+    expect(screen.getByRole("link", { name: /Konto 1$/ })).toHaveAttribute(
+      "href",
+      "/stamboken/admin/anvandare/1",
+    );
   });
 
   it("can still open the complete registration view for a closed case", () => {

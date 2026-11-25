@@ -1146,7 +1146,7 @@ upp på sidan.
 ### Hitta en användare
 
 1. Klicka fliken **Användare**.
-2. Skriv i sökfältet (användarnamn, e-post eller namn) och klicka **Filtrera**.
+2. Skriv i sökfältet (kontonummer, användarnamn, e-post eller namn) och klicka **Filtrera**.
    Rullgardinerna **Roll**, **Konto**, **Riktiga stamboken** och **Webbkurs** avgränsar
    listan.
 3. Klicka användarnamnet för att öppna kontot.
