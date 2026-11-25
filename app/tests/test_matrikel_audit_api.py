@@ -202,18 +202,27 @@ class TestMatrikelAudit(MatrikelApiTest):
         self.assertIn(
             "Fakturagatan 9", json.dumps(db.MatrikelAudit.select().order_by(db.MatrikelAudit.id.desc()).first().payload)
         )
-        self.login("man")
-        self.assertFalse(self._billing_shown()[0])
-        _mk_person(self.ms, "Nils", "Nyman", "nils@example.com")
-        matrikel.write_matrikel_audit(
+        matrikel.write_matrikel_audit(  # the old address written back while the household is empty
             self.admin,
             "membership_updated",
             self.ms,
-            {"before": {"billing_address": None}, "after": {"billing_address": "Nya vägen 2"}},
+            {"before": {"billing_address": None}, "after": {"billing_address": "Fakturagatan 9"}},
+        )
+        self.login("man")
+        self.assertFalse(self._billing_shown()[0])
+        _mk_person(self.ms, "Nils", "Nyman", "nils@example.com")
+        matrikel.write_matrikel_audit(  # Codex #248 r4: the new household's first change carries it in "before"
+            self.admin,
+            "membership_updated",
+            self.ms,
+            {"before": {"billing_address": "Fakturagatan 9"}, "after": {"billing_address": "Nya vägen 2"}},
         )
         shown, rows = self._billing_shown()
         self.assertFalse(shown)
-        self.assertEqual(rows[0]["payload"]["after"]["billing_address"], "Nya vägen 2")  # the new household's own
+        self.assertEqual(
+            rows[0]["payload"],
+            {"before": {"billing_address": matrikel.REDACTED_VALUE}, "after": {"billing_address": "Nya vägen 2"}},
+        )
 
     def test_household_with_an_active_person_is_not_masked(self):
         self._billing_row(minutes_before_now=5)

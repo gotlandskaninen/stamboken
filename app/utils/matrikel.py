@@ -423,6 +423,32 @@ def _household_erasures(membership_ids) -> dict[int, datetime | None]:
     return until
 
 
+def _household_values(node, out: set) -> set:
+    """The (key, value) pairs of HOUSEHOLD_PII_KEYS anywhere in a payload, erased placeholders left out."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key in HOUSEHOLD_PII_KEYS and isinstance(value, (str, int)) and value != REDACTED_VALUE:
+                out.add((key, value))
+            else:
+                _household_values(value, out)
+    elif isinstance(node, list):
+        for item in node:
+            _household_values(item, out)
+    return out
+
+
+def _redact_values(node, pairs: set):
+    """Replace the values of `pairs` ((key, value)) wherever that key holds that value."""
+    if isinstance(node, dict):
+        return {
+            k: REDACTED_VALUE if isinstance(v, (str, int)) and (k, v) in pairs else _redact_values(v, pairs)
+            for k, v in node.items()
+        }
+    if isinstance(node, list):
+        return [_redact_values(item, pairs) for item in node]
+    return node
+
+
 @snapshot_read()  # one snapshot: an erasure committing mid-read must not pair her old account with "Borttagen person"
 def query_matrikel_audit(
     *,
@@ -444,7 +470,7 @@ def query_matrikel_audit(
     the erasure, user_id included. An anonymised person's former account is shown as REDACTED_VALUE as actor on the
     rows _masked_actor_rows() names, and the actor filter skips those rows. In a household that has been erased, the
     rows without a person (membership_updated and the like) from before the first person who joined after its last
-    erasure lose HOUSEHOLD_PII_KEYS.
+    erasure lose HOUSEHOLD_PII_KEYS, and the values those rows held are masked wherever they recur in its later rows.
     """
     masked = _masked_actor_rows()
     q = (
@@ -485,6 +511,15 @@ def query_matrikel_audit(
     ids = {pid for a in audits if isinstance(pid := person_of(a.payload or {}), int)}
     persons = {p.id: p for p in Member.select().where(Member.id.in_(list(ids)))} if ids else {}
     erasures = _household_erasures({a.membership_id for a in audits})
+    # An erased household's values, from its masked rows: a later row of the new household may carry one in "before"
+    # (the old address written back while the household was empty, then changed), and must not show it.
+    erased_values = {}
+    for r in MatrikelAudit.select(MatrikelAudit.membership, MatrikelAudit.created_at, MatrikelAudit.payload).where(
+        MatrikelAudit.membership.in_(list(erasures))
+    ):
+        until = erasures[r.membership_id]
+        if until is None or r.created_at < until:
+            _household_values(r.payload or {}, erased_values.setdefault(r.membership_id, set()))
     rows = []
     for a in audits:
         payload = a.payload or {}
@@ -494,6 +529,8 @@ def query_matrikel_audit(
         until = erasures.get(a.membership_id, a.created_at)  # not erased: no row is before itself
         if "person_id" not in payload and (until is None or a.created_at < until):
             payload, _ = _redact_node(payload, HOUSEHOLD_PII_KEYS)  # what redact_household_from_audits() covers
+        elif erased_values.get(a.membership_id):
+            payload = _redact_values(payload, erased_values[a.membership_id])
         if not full_access:
             payload = _drop_keys(payload, {"organization_number"} | ({"notes"} if "person_id" in payload else set()))
         rows.append(
