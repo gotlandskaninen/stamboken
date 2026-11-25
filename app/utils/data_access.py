@@ -1175,8 +1175,13 @@ def _is_int_id(value):
 
 def _owner_refused(user_id, herd_id):
     """Checked only when the owner role is granted (existing owner roles stay): the reason the account may not own the
-    herd, or None when it is linked to an active person in the herd's active membership. The caller holds the user
-    row lock, which every link and unlink takes too."""
+    herd, or None when it is linked to an active person in the herd's active membership.
+
+    Locks: the caller (update_role) holds the account's row, and link_member_user and unlink_member_user lock that
+    row too, so a link or unlink of this account waits for the grant. Ending a person or changing the membership's
+    status locks only the membership, so it can still commit between this read and the grant. The membership is not
+    locked here: update_role must take the account rows first, and taking the membership after them is the reverse
+    of link_member_user's order (membership, then account), which could deadlock."""
     herd = Herd.get_or_none(Herd.id == int(herd_id))
     if herd is None:
         return ValidationError("herd-not-found", f"Besättningen med id {int(herd_id)} finns inte.", status=404)
