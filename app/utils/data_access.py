@@ -1374,9 +1374,10 @@ HERD_EDITABLE_FIELDS = {
 
 def _herd_owner_map():
     """
-    Map numeric Herd.id -> list of owning Users, in ONE pass over hbuser.
+    Map numeric Herd.id -> list of owning Users: one scan of hbuser for the
+    owner roles, then one query for the main members and one for their herds.
 
-    `_privileges` is a TEXT JSON column, so owner lookups cannot be done
+    `_privileges` is a TEXT JSON column, so owner roles cannot be found
     in SQL. One scan of the small hbuser table (hundreds of rows)
     replaces the per-herd scans a naive join-substitute would do.
 
