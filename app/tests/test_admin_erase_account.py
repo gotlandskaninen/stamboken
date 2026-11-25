@@ -7,6 +7,8 @@ Only runs on PostgreSQL (audit_log rules and JSONB). Names and addresses are mad
 
 import os
 import tempfile
+import threading
+import time
 import unittest
 from datetime import date
 from unittest import mock
@@ -15,6 +17,7 @@ import peewee
 import utils.data_access as da
 import utils.database as db
 import utils.mail as mail
+import utils.matrikel as matrikel
 from herdbook import APP, limiter
 
 from tests.database_test import DatabaseTest
@@ -221,3 +224,37 @@ class TestAdminEraseAccount(DatabaseTest):
         self.assertEqual(response.status_code, 503, response.get_json())
         self._assert_untouched(user, "l")
         self.assertTrue(db.User.get_by_id(user.id).is_active)
+
+    def test_an_admin_who_loses_the_role_while_the_erase_waits_is_refused(self):
+        user = self._account("w")
+        started, results = threading.Event(), []
+
+        def erase():
+            try:
+                started.set()
+                matrikel.erase_unlinked_account(user.id, self.admin.id)
+                results.append("erased")
+            except matrikel.LinkError as err:
+                results.append(err.extensions["type"])
+            finally:
+                db.DB_PROXY.close()
+
+        with db.DB_PROXY.atomic():
+            # as a role writer does: the admin's row is locked while her role goes
+            db.User.select().where(db.User.id == self.admin.id).for_update().get()
+            eraser = threading.Thread(target=erase)
+            eraser.start()
+            self.assertTrue(started.wait(10))
+            time.sleep(1)  # the erasure waits for the row
+            db.User.update(_privileges="[]").where(db.User.id == self.admin.id).execute()
+        eraser.join(15)
+        self.assertEqual(results, ["not-admin"])
+        self._assert_untouched(user, "w")
+
+    def test_an_inactive_admin_is_refused(self):
+        user = self._account("i")
+        db.User.update(is_active=False).where(db.User.id == self.admin.id).execute()
+        with self.assertRaises(matrikel.LinkError) as refused:
+            matrikel.erase_unlinked_account(user.id, self.admin.id)
+        self.assertEqual((refused.exception.status, refused.exception.extensions["type"]), (403, "not-admin"))
+        self._assert_untouched(user, "i")

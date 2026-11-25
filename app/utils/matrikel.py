@@ -655,17 +655,21 @@ def erase_unlinked_account(user_id, actor_id):
     """
     Empties an account that belongs to no person (#250), as anonymize_person empties a person's account: the same
     steps for the account, in one transaction with its row locked, the audit purge last and the profile pictures
-    removed after the commit. Refuses (LinkError) the caller's own account, an account already emptied, one with a
-    role other than Läsrätt and one that a person in the register points to, ended or not: persons are handled in the
-    register. A linker takes this row's lock before it writes member.user_id and refuses an inactive account, so the
-    check holds.
-    What the account sent to the intake queue goes as for a person (erase_user_from_inbox), its files after the
-    commit.
+    removed after the commit. Refuses (LinkError) an actor who is no longer an active admin once the rows are locked,
+    the caller's own account, an account already emptied, one with a role other than Läsrätt and one that a person in
+    the register points to, ended or not: persons are handled in the register. A linker takes this row's lock before
+    it writes member.user_id and refuses an inactive account, so the check holds. What the account sent to the intake
+    queue goes as for a person (erase_user_from_inbox), its files after the commit.
     """
     if user_id == actor_id:
         raise LinkError("Ditt eget konto", "Du kan inte radera uppgifterna i kontot du är inloggad med.", type="self")
     with DB_PROXY.atomic():
-        user = User.select().where(User.id == user_id).for_update().first()
+        # Both rows in id order, as the role writers lock theirs: the actor may lose the admin role while this waits
+        locked = {u.id: u for u in User.select().where(User.id.in_([user_id, actor_id])).order_by(User.id).for_update()}
+        actor = locked.get(actor_id)
+        if actor is None or not actor.is_active or not actor.is_admin:
+            raise LinkError("Åtkomst nekad", "Du är inte längre administratör.", 403, type="not-admin")
+        user = locked.get(user_id)
         if user is None:
             raise LinkError("Användare saknas", f"Ingen användare med id {user_id}.", 404, type="user-not-found")
         if user.email == f"raderad-{user.id}":  # not_erased(), on the locked row
