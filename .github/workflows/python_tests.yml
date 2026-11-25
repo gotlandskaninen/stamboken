@@ -138,7 +138,6 @@ jobs:
       # app/tests/.test_durations; tests missing there count as average.
       - name: Run tests in container
         run: |
-          mkdir -p "$RUNNER_TEMP/durations"
           docker run \
             --network host \
             -e POSTGRES_HOST=localhost \
@@ -154,18 +153,10 @@ jobs:
             -e ALLOW_ROLE_PASSWORD_LOGIN=true \
             -e CI=true \
             -v "$PWD/nginx:/nginx:ro" \
-            -v "$RUNNER_TEMP/durations:/durations" \
             herdbook-api-test:latest \
             pytest /app/tests/ -v --tb=short -n auto \
               --splits 4 --group ${{ matrix.group }} --splitting-algorithm least_duration \
-              --durations-path /durations/test_durations.json --store-durations --clean-durations
-
-      # TEMPORARY: collect durations for the first committed durations file.
-      - name: Upload durations
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: durations-${{ matrix.group }}
-          path: ${{ runner.temp }}/durations/test_durations.json
+              --durations-path tests/.test_durations
 
   # The ruleset requires this name. It passes when the suite was skipped on
   # purpose, and fails when any part failed, was cancelled or did not start.
