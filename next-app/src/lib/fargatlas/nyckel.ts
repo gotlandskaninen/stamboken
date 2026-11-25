@@ -66,34 +66,39 @@ export function kontrollera(nyckel: Nyckel | null | undefined): string | null {
 function brister(nyckel: Nyckel | null | undefined): string | null {
   if (!nyckel?.fragor || typeof nyckel.fragor !== "object")
     return "nyckeln saknar frågor";
-  if (!(nyckel.start in nyckel.fragor))
-    return "nyckeln saknar sin första fråga";
+  // Object.hasOwn, not `in`: an inherited name such as "constructor" is no question.
+  const finns = (id: string) => Object.hasOwn(nyckel.fragor, id);
+  if (!finns(nyckel.start)) return "nyckeln saknar sin första fråga";
   if (nyckel.efter_numret !== undefined && !Array.isArray(nyckel.efter_numret))
     return "frågorna efter numret har fel form";
   for (const [id, fraga] of Object.entries(nyckel.fragor)) {
     if (!Array.isArray(fraga?.svar) || fraga.svar.length === 0)
       return `${id} saknar svar`;
+    const ids = new Set<string>();
     for (const s of fraga.svar) {
       if (typeof s?.id !== "string" || typeof s.text !== "string")
         return `ett svar på ${id} har fel form`;
+      // The guide follows an answer by its id, so a second answer with that id would give the first one's colour.
+      if (ids.has(s.id)) return `${id} har två svar med id ${s.id}`;
+      ids.add(s.id);
       if (typeof s.till === "number") continue;
       if (typeof s.till !== "string") return `${s.id} leder ingenstans`;
-      if (!(s.till in nyckel.fragor))
-        return `${s.id} leder till ${s.till}, som inte finns`;
+      if (!finns(s.till)) return `${s.id} leder till ${s.till}, som inte finns`;
     }
   }
-  const farg: Record<string, "gra" | "klar"> = {};
+  const farg = new Map<string, "gra" | "klar">();
   const slinga = (q: string): string | null => {
-    farg[q] = "gra";
+    farg.set(q, "gra");
     for (const s of nyckel.fragor[q].svar) {
       if (typeof s.till === "number") continue;
-      if (farg[s.till] === "gra") return `${q} leder tillbaka till ${s.till}`;
-      if (!farg[s.till]) {
+      if (farg.get(s.till) === "gra")
+        return `${q} leder tillbaka till ${s.till}`;
+      if (!farg.has(s.till)) {
         const fel = slinga(s.till);
         if (fel) return fel;
       }
     }
-    farg[q] = "klar";
+    farg.set(q, "klar");
     return null;
   };
   return slinga(nyckel.start);

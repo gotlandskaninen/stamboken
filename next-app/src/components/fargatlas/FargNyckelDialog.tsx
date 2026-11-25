@@ -21,9 +21,12 @@ export function FargNyckelDialog({
   onClose,
   onValj,
   saknas,
+  onExited,
 }: {
   open: boolean;
   onClose: () => void;
+  /** After the closing transition, when the page behind is readable for a screen reader again. */
+  onExited?: () => void;
   onValj: (nummer: number, paminnelser: string[]) => void;
   saknas?: number | null;
 }) {
@@ -40,6 +43,7 @@ export function FargNyckelDialog({
       fullWidth
       maxWidth="sm"
       sx={{ "& .MuiDialog-container": { alignItems: "flex-start" } }}
+      slotProps={{ transition: { onExited } }}
     >
       <DialogTitle>Hjälp mig välja</DialogTitle>
       <DialogContent>

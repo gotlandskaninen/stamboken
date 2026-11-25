@@ -78,4 +78,17 @@ describe("nyckeln som data", () => {
       /saknar frågor/,
     );
   });
+
+  it("kontrollera vägrar två svar med samma id och ärvda namn som frågor", () => {
+    const dubbel = kopia();
+    dubbel.fragor.q3.svar[1].id = "q3-ja"; // leads to 11, but the guide would follow the first q3-ja to 22
+    expect(kontrollera(dubbel)).toMatch(/två svar med id q3-ja/);
+
+    const arvd = kopia();
+    arvd.fragor.q1.svar[0].till = "constructor";
+    expect(kontrollera(arvd)).toMatch(/constructor, som inte finns/);
+    expect(kontrollera({ ...kopia(), start: "toString" })).toMatch(
+      /första fråga/,
+    );
+  });
 });

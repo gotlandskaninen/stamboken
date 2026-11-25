@@ -273,9 +273,11 @@ describe("ColorPicker", () => {
       fireEvent.click(screen.getByRole("button", { name: /^Välj 22/ }));
       expect(onChange).toHaveBeenCalledWith("Viltgrå");
       await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-      expect(
-        screen.getByText("Kom ihåg: Testsvar: välj Rex vid Päls."),
-      ).toBeDefined();
+      // announced only once the dialog has closed and the picker is readable again
+      const status = await screen.findByText(
+        "Kom ihåg: Testsvar: välj Rex vid Päls.",
+      );
+      expect(status.closest("[aria-hidden=true]")).toBeNull();
     });
 
     it("stäng utan val ändrar inget", async () => {

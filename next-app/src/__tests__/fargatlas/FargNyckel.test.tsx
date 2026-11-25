@@ -141,6 +141,21 @@ describe("FargNyckel", () => {
     expect(screen.queryByText(/finns inte i färglistan/)).toBeNull();
   });
 
+  it("guiden börjar om när en annan nyckel kommer mitt i", () => {
+    const { rerender } = render(<FargNyckel data={data} />);
+    svara("Nej");
+    expect(screen.getByText("Testfråga tre?")).toBeDefined();
+    const annan = structuredClone(TESTNYCKEL);
+    annan.fragor.q1.svar[1].id = "q1-annat"; // the old answer id is not in the new key
+    rerender(
+      <FargNyckel
+        data={{ ...data, atlas: { ...data.atlas, nyckel: annan } }}
+      />,
+    );
+    expect(screen.getByText("Testfråga ett?")).toBeDefined();
+    expect(screen.queryByRole("list", { name: "Dina svar" })).toBeNull();
+  });
+
   it("en nyckel med en slinga eller utan nyckel stoppas med ett meddelande", () => {
     const slinga = structuredClone(TESTNYCKEL);
     slinga.fragor.q3.svar[0].till = "q1";

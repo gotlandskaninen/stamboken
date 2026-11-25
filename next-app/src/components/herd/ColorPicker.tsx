@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import {
   Autocomplete,
   Box,
@@ -66,6 +66,9 @@ export function ColorPicker({
   const [guide, setGuide] = useState(false);
   const [saknas, setSaknas] = useState<number | null>(null);
   const [paminnelser, setPaminnelser] = useState<string[]>([]);
+  // Välj's reminders wait for the dialog to close: while it is open the picker is hidden from screen readers, and
+  // a status text set then would never be announced.
+  const vantande = useRef<string[]>([]);
   // The key covers the gotlandskanin numbers only (matched as colorsFor matches the list), and the guide is offered
   // only when the atlas package has a usable key.
   const gotland = genebank.includes("Gotland");
@@ -180,6 +183,10 @@ export function ColorPicker({
           setSaknas(null);
         }}
         saknas={saknas}
+        onExited={() => {
+          if (vantande.current.length) setPaminnelser(vantande.current);
+          vantande.current = [];
+        }}
         onValj={(nummer, paminn) => {
           const option = options.find((o) => o.id === nummer);
           if (!option) {
@@ -187,7 +194,7 @@ export function ColorPicker({
             return;
           }
           onChange(option.name);
-          setPaminnelser(paminn);
+          vantande.current = paminn;
           setGuide(false);
           setSaknas(null);
         }}

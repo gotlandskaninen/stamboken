@@ -24,6 +24,16 @@ export function FargNyckel({
 }) {
   const [svar, setSvar] = useState<string[]>([]);
   const [efter, setEfter] = useState<Record<string, boolean>>({});
+  // The answers belong to one key: when another key arrives (a switch between test mode and production), the old
+  // answers may not exist in it, so the guide starts over at its first question.
+  const nyckelNu = data?.atlas.nyckel;
+  const [svarensNyckel, setSvarensNyckel] = useState(nyckelNu);
+  const nyNyckel = nyckelNu !== svarensNyckel;
+  if (nyNyckel) {
+    setSvarensNyckel(nyckelNu);
+    setSvar([]);
+    setEfter({});
+  }
   const rubrik = useRef<HTMLHeadingElement>(null);
   // In a dialog the first question takes the focus at once; on the page only after the user's first step.
   const flyttat = useRef(!!onValj);
@@ -47,13 +57,14 @@ export function FargNyckel({
     );
   }
 
-  const steg = vandra(svar, nyckel);
-  const navigering = svar.length > 0 && (
+  const aktuella = nyNyckel ? [] : svar;
+  const steg = vandra(aktuella, nyckel);
+  const navigering = aktuella.length > 0 && (
     <div className={styles.knappar}>
       <button
         type="button"
         className="sb-btn sb-btn-ghost"
-        onClick={() => ga(svar.slice(0, -1))}
+        onClick={() => ga(aktuella.slice(0, -1))}
       >
         Tillbaka
       </button>
@@ -69,10 +80,10 @@ export function FargNyckel({
 
   return (
     <div className={styles.nyckel}>
-      {svar.length > 0 && <Spar nyckel={nyckel} svar={svar} ga={ga} />}
+      {aktuella.length > 0 && <Spar nyckel={nyckel} svar={aktuella} ga={ga} />}
       {"fraga" in steg ? (
         <>
-          <p className={styles.steg}>Fråga {svar.length + 1}</p>
+          <p className={styles.steg}>Fråga {aktuella.length + 1}</p>
           <h3 ref={rubrik} tabIndex={-1} className={styles.fraga}>
             {nyckel.fragor[steg.fraga].text}
           </h3>
@@ -85,7 +96,7 @@ export function FargNyckel({
                 key={s.id}
                 type="button"
                 className={styles.svarKnapp}
-                onClick={() => ga([...svar, s.id])}
+                onClick={() => ga([...aktuella, s.id])}
               >
                 <span>
                   {s.text}
