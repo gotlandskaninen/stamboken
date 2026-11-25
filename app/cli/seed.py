@@ -22,6 +22,8 @@ import json
 import logging
 import os
 import re
+import shutil
+import tempfile
 import uuid
 from collections import Counter, defaultdict
 from datetime import date, timedelta
@@ -48,7 +50,7 @@ from utils.database import (
     YearlyReportRound,
     ht_not_voided,
 )
-from utils.fargatlas import seed_colors
+from utils.fargatlas import ATLAS_FARGER, FOTO_FIL, MANIFEST, seed_colors
 from utils.mail import link_token
 
 logger = logging.getLogger("herdbook.seed")
@@ -97,6 +99,10 @@ def create_seed_data(verbose):
         # ══════════════════════════════════════════════
         colors = seed_colors(gk, mk)
         log(f"Colors: {len(colors)} (atlas numbers as ids)", True)
+        try:
+            log("Colour atlas: made-up test package", _fargatlas_paket())
+        except OSError as error:  # an unwritable private folder must not roll back the seed; the API starts anyway
+            click.echo(f"  ! Colour atlas test package not written: {error}", err=True)
 
         # ══════════════════════════════════════════════
         # HERDS (mixed active/inactive + GX1/MX1 external)
@@ -1028,6 +1034,98 @@ def _blank_form():
     page = Image.new("RGB", (1240, 1754), "white")
     ImageDraw.Draw(page).text((100, 100), "Tom årsblankett (testversion)", fill="black")
     page.save(path, format="PDF", title="Tom årsblankett (testversion)")
+
+
+# A made-up determination key in the real key's shape; the real key is in the package ops builds, never in the repo.
+_TESTNYCKEL = {
+    "version": "test",
+    "start": "q1",
+    "fragor": {
+        "q1": {
+            "text": "Testfråga: är kaninen ljus?",
+            "hjalp": "Testhjälp till den första frågan.",
+            "svar": [{"id": "q1-ja", "text": "Ja", "till": "q2"}, {"id": "q1-nej", "text": "Nej", "till": "q3"}],
+        },
+        "q2": {
+            "text": "Testfråga: vilken ljus färg?",
+            "svar": [
+                {"id": "q2-roda", "text": "Testsvar med röda ögon", "till": 12, "hjalp": "Testhjälp till ett svar."},
+                {"id": "q2-bla", "text": "Testsvar med blå ögon", "till": 18},
+                {"id": "q2-inget", "text": "Passar inget", "till": 99, "anteckning": "Testanteckning om färgen."},
+            ],
+        },
+        "q3": {
+            "text": "Testfråga: har kaninen viltfärg?",
+            "svar": [
+                {"id": "q3-ja", "text": "Ja, testviltfärg", "till": 22},
+                {"id": "q3-nej", "text": "Nej, testsvart", "till": 11},
+            ],
+        },
+    },
+    "efter_numret": [{"id": "rex", "text": "Testfråga om pälsen?", "ja": "Testsvar: välj Rex vid Päls."}],
+    "grupper": [
+        {"id": "testljusa", "namn": "Testgrupp ljusa", "nummer": [12, 17, 18, 23]},
+        {"id": "testvilt", "namn": "Testgrupp vilt", "nummer": [21, 22, 24, 25, 26, 27, 28]},
+        {"id": "mellerud", "namn": "Testgrupp mellerud", "nummer": [100, 101], "i_guiden": False},
+    ],
+}
+
+# Colours with a generated photo in the made-up atlas package; the others show "Foto saknas".
+_TESTFOTON = {11: "#2b2b2b", 22: "#8a7a66", 31: "#e9e6df", 42: "#c79a3a", 100: "#3a3a3a"}
+
+
+def _fargatlas_paket():
+    """
+    A made-up colour atlas package under PRIVATE_UPLOAD_FOLDER (no atlas text, photo or photographer), so the colour
+    page has something to show; False when a package folder is there already, which is left alone, complete or not.
+    """
+    target = os.path.dirname(inbox.private_path(MANIFEST))
+    if os.path.exists(target):
+        return False
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    # Built beside the target and renamed into place, so a seed that stops halfway leaves no package behind.
+    build = tempfile.mkdtemp(prefix=".fargatlas-", dir=os.path.dirname(target))
+    farger = {}
+    for id_, _, name, _ in ATLAS_FARGER:
+        foton = []
+        if id_ in _TESTFOTON:
+            foto = f"{id_}-a"
+            image = Image.new("RGB", (1600, 1200), _TESTFOTON[id_])
+            ImageDraw.Draw(image).text((60, 60), f"Testbild {id_}", fill="#d03030", font_size=120)
+            image.save(os.path.join(build, os.path.basename(FOTO_FIL["1600"].format(foto))), "JPEG")
+            image.resize((480, 360)).save(os.path.join(build, os.path.basename(FOTO_FIL["480"].format(foto))), "JPEG")
+            fotograf = "Test Fotograf" if id_ == 22 else None
+            foton.append({"id": foto, "fotograf": fotograf, "bildtext": f"Testbild, {name.lower()}"})
+        farger[str(id_)] = {
+            "beskrivning": f"Påhittad testbeskrivning av {name.lower()}.",
+            "skiljs_fran": f"Påhittad testtext om vad som skiljer {id_} från närliggande färger.",
+            "foton": foton,
+        }
+    paket = {
+        "version": "test",
+        "grupper": {"testvilt": {"beskrivning": "Påhittad testtext om en hel grupp."}},
+        "nyckel": _TESTNYCKEL,
+    }
+    with open(os.path.join(build, os.path.basename(MANIFEST)), "w", encoding="utf-8") as out:
+        json.dump({**paket, "farger": farger}, out, ensure_ascii=False, indent=1)
+    os.chmod(build, 0o755)  # mkdtemp's 0700 would keep a real package from being copied over it on a dev host
+    try:
+        os.rename(build, target)
+    except OSError:  # a package arrived meanwhile: it stays, and the build goes
+        shutil.rmtree(build, ignore_errors=True)
+        return False
+    return True
+
+
+@seed_cli.command("fargatlas")
+def create_fargatlas_package():
+    """
+    The made-up colour atlas package alone, for the demo API (api-test) in a local stack, whose private folder is its
+    own. Refused under FLASK_ENV=production, the deployed demo included: there the real package goes (ops).
+    """
+    if os.environ.get("FLASK_ENV") == "production":
+        raise click.ClickException("refusing to put a made-up colour atlas in production.")
+    click.echo("Colour atlas test package: " + ("created" if _fargatlas_paket() else "already there, left alone"))
 
 
 def _member_herd(genebank, code, name, email, owner, bank, log):
