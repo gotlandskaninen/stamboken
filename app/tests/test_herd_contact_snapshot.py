@@ -113,7 +113,7 @@ class TestHerdContactReadPaths(HerdContactReadTest):
         self.assertEqual(response.status_code, 403)
         self.assertNotIn(self.main.email, response.get_data(as_text=True))
 
-    def test_admin_list_herds(self):
+    def test_manager_list_herds(self):
         with (
             self.assert_repeatable_read(da, "herd_contacts"),
             self.assert_repeatable_read(da, "_herd_owner_map"),
@@ -121,7 +121,7 @@ class TestHerdContactReadPaths(HerdContactReadTest):
             body = self._get(self.manager, f"/api/manage/herd?q={self.herd.herd}")
         self.assertIn(self.herd.herd, [row["herd"] for row in body["herds"]])
 
-    def test_admin_list_herds_needs_the_role_in_session_and_snapshot(self):
+    def test_manager_list_herds_needs_the_role_in_session_and_snapshot(self):
         """#214: the herd list re-reads the user in its snapshot, like the detail view."""
         original = da.fetch_user_info
 
