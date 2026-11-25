@@ -723,8 +723,9 @@ under rubriken. Sidan har fyra flikar.
   hona. Steget **Prova i testmiljön** säger "Vill du prova utan att ändra något på
   riktigt? Byt till testmiljön i menyn. Där kan du klicka runt fritt, och allt återställs
   varje natt." Länken **Om testmiljön** leder till
-  [Testmiljön och riktiga stamboken](#testmiljön-och-riktiga-stamboken). Steget är klart
-  när du har varit i testmiljön i den här webbläsaren. Knappen **Ny parning** visas
+  [Testmiljön och riktiga stamboken](#testmiljön-och-riktiga-stamboken). Steget visas
+  för konton med tillgång till riktiga stamboken, och det bockas av när du har bytt till
+  testmiljön i menyn under din bild i den här webbläsaren. Knappen **Ny parning** visas
   när besättningen har en levande hona; hanen kan vara lånad. **Stäng** döljer rutan i
   den här webbläsaren, för testmiljön och riktiga stamboken var för sig.
 - Fyra siffror: **Aktiva kaniner**, **Avelsdjur** (aktiva, okastrerade honor och
