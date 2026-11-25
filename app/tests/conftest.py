@@ -27,6 +27,8 @@ def pytest_sessionstart(session):
     """
     import utils.data_access as da  # pylint: disable=import-outside-toplevel
 
+    # Kept so test_register_user_hashes_with_scrypt checks the module's own binding, not a stand-in.
+    da.PRODUCTION_GENERATE_PASSWORD_HASH = da.generate_password_hash
     da.generate_password_hash = functools.partial(da.generate_password_hash, method="pbkdf2:sha256:1")
 
 
