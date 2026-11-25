@@ -1,11 +1,17 @@
 import React from "react";
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { render, screen, cleanup, act, waitFor } from "@testing-library/react";
+import {
+  render,
+  screen,
+  cleanup,
+  act,
+  waitFor,
+  fireEvent,
+} from "@testing-library/react";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 
 const modes = vi.hoisted(() => ({ view: "prod" }));
 vi.mock("@/lib/mode-context", () => ({ useMode: () => modes.view }));
-vi.mock("@/lib/mode", () => ({ readModeCookieClient: () => modes.view }));
 // jsdom has no layout, so the real grid renders no cells: list the rabbits' numbers instead.
 vi.mock("@mui/x-data-grid", () => ({
   DataGrid: ({ rows }: { rows: { individual_id: string }[] }) => (
@@ -32,7 +38,49 @@ describe("Avelsprioritet after a mode switch", () => {
     cleanup();
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
+    vi.restoreAllMocks();
     modes.view = "prod";
+  });
+
+  const tab = () => (
+    <ThemeProvider theme={createTheme()}>
+      <PrioritiesTab genebankId={1} />
+    </ThemeProvider>
+  );
+
+  it("never saves a file that was still on its way when the mode switched", async () => {
+    let answerFile: () => void = () => {};
+    vi.stubEnv("NEXT_PUBLIC_API_TEST_URL", "/api-test");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init: RequestInit) => {
+        if (url.includes("priorities.csv"))
+          return new Promise<Response>((resolve, reject) => {
+            init.signal?.addEventListener("abort", () =>
+              reject(new DOMException("aborted", "AbortError")),
+            );
+            answerFile = () => resolve(new Response("x"));
+          });
+        return url.startsWith("/api-test")
+          ? new Promise<Response>(() => {})
+          : Promise.resolve(Response.json([rabbit("G1-2301")]));
+      }),
+    );
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click");
+    const { rerender } = render(tab());
+    expect(await screen.findByText("G1-2301")).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Ladda ner CSV" }));
+    await waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(
+        expect.stringContaining("priorities.csv"),
+        expect.anything(),
+      ),
+    );
+
+    modes.view = "demo";
+    rerender(tab());
+    await act(async () => answerFile());
+    expect(click).not.toHaveBeenCalled();
   });
 
   it("shows neither the other mode's rows nor a CSV button for them while its own list loads", async () => {
@@ -45,11 +93,6 @@ describe("Avelsprioritet after a mode switch", () => {
           ? new Promise<Response>((resolve) => (answerDemo = resolve))
           : Promise.resolve(Response.json([rabbit("G1-2301")])),
       ),
-    );
-    const tab = () => (
-      <ThemeProvider theme={createTheme()}>
-        <PrioritiesTab genebankId={1} />
-      </ThemeProvider>
     );
     const { rerender } = render(tab());
     expect(await screen.findByText("G1-2301")).toBeDefined();

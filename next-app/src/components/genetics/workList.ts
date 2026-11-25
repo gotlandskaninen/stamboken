@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { GeneticPriority } from "@/redux/api/apiSlice";
-import type { Mode } from "@/lib/mode";
+import { MODE_COOKIE, type Mode } from "@/lib/mode";
 
 /** A row of the work list: a priority with the rabbit's details, read fresh (app/blueprints/genetics.py). */
 export interface WorkListRow extends GeneticPriority {
@@ -102,15 +102,28 @@ export const byHerd = (rows: WorkListRow[]) =>
 export const EXPORT_ONLY_IN_PROD =
   "Exporten går bara att göra i den riktiga Stamboken, där varje uttag loggas.";
 
+const SWITCHED_TO_DEMO =
+  "Stamboken har bytts till testmiljön i en annan flik. Ladda om sidan innan du laddar ner.";
+
+/** The sb_mode cookie as sent (undefined when missing); readModeCookieClient turns a missing one into demo. */
+export function rawModeCookie(): string | undefined {
+  return document.cookie
+    .split("; ")
+    .find((row) => row.startsWith(`${MODE_COOKIE}=`))
+    ?.slice(MODE_COOKIE.length + 1);
+}
+
 /**
  * Why the export may not start, or null. The file is real data and every download is logged,
- * so only a view of the riktiga Stamboken exports, and only while the shared mode cookie still
- * says so: another tab may have switched to the testmiljö since this view was rendered.
+ * so only a view of the riktiga Stamboken exports. A cookie set to exactly "demo" means another
+ * tab has switched to the testmiljö since; the server refuses that request too.
  */
-export function exportRefusal(viewMode: Mode, cookieMode: Mode): string | null {
+export function exportRefusal(
+  viewMode: Mode,
+  cookie: string | undefined,
+): string | null {
   if (viewMode !== "prod") return EXPORT_ONLY_IN_PROD;
-  if (cookieMode !== "prod")
-    return "Stamboken har bytts till testmiljön i en annan flik. Ladda om sidan innan du laddar ner.";
+  if (cookie === "demo") return SWITCHED_TO_DEMO;
   return null;
 }
 
@@ -128,13 +141,18 @@ export function prioritiesCsvUrl(
  * Fetches the file and hands it to the browser. On a refusal (the demo, an expired
  * session) it returns the server's reason instead, so the page can show it in place.
  */
-export async function downloadExport(url: string): Promise<string | null> {
+export async function downloadExport(
+  url: string,
+  signal?: AbortSignal,
+): Promise<string | null> {
   const failed = "Filen gick inte att hämta. Försök igen om en stund.";
   let res: Response;
+  let blob: Blob;
   try {
-    res = await fetch(url, { credentials: "include" });
+    res = await fetch(url, { credentials: "include", signal });
+    if (res.ok) blob = await res.blob();
   } catch {
-    return failed;
+    return signal?.aborted ? null : failed;
   }
   if (!res.ok) {
     const problem = await res.json().catch(() => null);
@@ -144,7 +162,10 @@ export async function downloadExport(url: string): Promise<string | null> {
     /filename="([^"]+)"/.exec(
       res.headers.get("Content-Disposition") ?? "",
     )?.[1] ?? "avelsprioritet.csv";
-  const href = URL.createObjectURL(await res.blob());
+  // The page or its mode changed while the file came: nothing is saved.
+  if (signal?.aborted) return null;
+  if (rawModeCookie() === "demo") return SWITCHED_TO_DEMO;
+  const href = URL.createObjectURL(blob!);
   const a = document.createElement("a");
   a.href = href;
   a.download = name;

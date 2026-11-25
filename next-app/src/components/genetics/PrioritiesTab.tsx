@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import styled from "@emotion/styled";
 
@@ -18,7 +18,6 @@ import GeneticsInfoPanel from "./GeneticsInfoPanel";
 import GeneticsError from "./GeneticsError";
 import { readableChip } from "./readableChip";
 import { translateReasons } from "@/utils/translateReasons";
-import { readModeCookieClient } from "@/lib/mode";
 import { useMode } from "@/lib/mode-context";
 import {
   PRIORITY_LABEL,
@@ -27,6 +26,7 @@ import {
   downloadExport,
   exportRefusal,
   prioritiesCsvUrl,
+  rawModeCookie,
   sexLabel,
   useWorkList,
 } from "./workList";
@@ -89,6 +89,9 @@ const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
   // Per besättning: the rows in herd order within each level; the grid's own sort is cleared.
   const [perHerd, setPerHerd] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  // A file on its way is dropped when the tab goes or its mode or genebank changes.
+  const exportAbort = useRef<AbortController | null>(null);
+  useEffect(() => () => exportAbort.current?.abort(), [mode, genebankId]);
   const [sortModel, setSortModel] = useState<GridSortModel>([
     { field: "priority", sort: "asc" },
   ]);
@@ -264,9 +267,11 @@ const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
             disabled={filteredRows.length === 0}
             onClick={async () => {
               // The server builds the file and logs the download (who, which rabbits).
-              const refused = exportRefusal(mode, readModeCookieClient());
+              const refused = exportRefusal(mode, rawModeCookie());
               setExportError(refused);
               if (refused) return;
+              exportAbort.current?.abort();
+              const controller = (exportAbort.current = new AbortController());
               const url = prioritiesCsvUrl(
                 genebankId,
                 (Object.keys(filters) as Array<keyof typeof filters>).filter(
@@ -274,7 +279,8 @@ const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
                 ),
                 perHerd,
               );
-              setExportError(await downloadExport(url));
+              const message = await downloadExport(url, controller.signal);
+              if (!controller.signal.aborted) setExportError(message);
             }}
           >
             Ladda ner CSV

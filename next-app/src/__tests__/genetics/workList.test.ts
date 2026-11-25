@@ -63,10 +63,12 @@ describe("prioritiesCsvUrl", () => {
 });
 
 describe("exportRefusal", () => {
-  it("lets only a production view export, and only while the cookie still says production", () => {
+  it("lets only a production view export, refused when the cookie is exactly demo", () => {
     expect(exportRefusal("prod", "prod")).toBeNull();
+    expect(exportRefusal("prod", undefined)).toBeNull(); // no cookie: as the server
     expect(exportRefusal("demo", "demo")).toBe(EXPORT_ONLY_IN_PROD);
     expect(exportRefusal("demo", "prod")).toBe(EXPORT_ONLY_IN_PROD);
+    expect(exportRefusal("demo", undefined)).toBe(EXPORT_ONLY_IN_PROD);
     expect(exportRefusal("prod", "demo")).toMatch(/annan flik/);
   });
 });
@@ -183,6 +185,46 @@ describe("downloadExport", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.useRealTimers();
+    vi.unstubAllGlobals();
+    document.cookie = "sb_mode=; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+  });
+
+  const delayedFile = () => {
+    let answer: () => void = () => {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: string, init: RequestInit) =>
+          new Promise<Response>((resolve, reject) => {
+            init.signal?.addEventListener("abort", () =>
+              reject(new DOMException("aborted", "AbortError")),
+            );
+            answer = () => resolve(new Response("x"));
+          }),
+      ),
+    );
+    return () => answer();
+  };
+
+  it("saves nothing when the page drops the file while it comes", async () => {
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click");
+    const answer = delayedFile();
+    const controller = new AbortController();
+    const result = downloadExport("/x.csv", controller.signal);
+    controller.abort(); // a mode or genebank switch, or the tab closing
+    answer();
+    expect(await result).toBeNull();
+    expect(click).not.toHaveBeenCalled();
+  });
+
+  it("saves nothing when another tab switched to the testmiljö while the file came", async () => {
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click");
+    const answer = delayedFile();
+    const result = downloadExport("/x.csv", new AbortController().signal);
+    document.cookie = "sb_mode=demo";
+    answer();
+    expect(await result).toMatch(/annan flik/);
+    expect(click).not.toHaveBeenCalled();
   });
 
   it("returns the server's reason for a refusal and downloads nothing", async () => {

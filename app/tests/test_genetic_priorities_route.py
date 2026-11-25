@@ -145,6 +145,15 @@ class TestWorkListRoute(RouteTest):
         (row,) = self._audit()
         self.assertEqual(row.new_data["rows"], 0)
 
+    def test_no_snapshot_answers_503_without_a_row(self):
+        self._login(self.manager)
+        for snapshot in ({"return_value": None}, {"side_effect": RuntimeError("cold build failed")}):
+            with patch("utils.genetics_service.snapshot", **snapshot):
+                res = self._read(self.genebanks[0], [])  # what the memo answers without a snapshot
+            self.assertEqual(res.status_code, 503)
+            self.assertEqual(res.headers["Retry-After"], "30")
+        self.assertEqual(self._audit(), [])
+
     def test_refused_reads_write_no_row(self):
         self._login(self.owner)
         self.assertEqual(self._read(self.genebanks[0], [_priority("G1-2111")]).status_code, 403)
@@ -310,6 +319,23 @@ class TestPrioritiesExport(RouteTest):
         with patch.dict(APP.extensions, {"genetic_priorities": lambda g_id: rows}):
             (shown,) = self.client.get(WORK_LIST.format(self.genebanks[0].id)).get_json()
         self.assertEqual((shown["name"], shown["sex"], shown["herd"]), ("Testa", "female", "M3"))
+
+    def test_no_snapshot_answers_503_without_a_file_or_row(self):
+        self._login(self.manager)
+        for snapshot in ({"return_value": None}, {"side_effect": RuntimeError("cold build failed")}):
+            with patch("utils.genetics_service.snapshot", **snapshot):
+                res = self._export(self.genebanks[0], [])
+            self.assertEqual(res.status_code, 503)
+            self.assertNotIn("Individnummer", res.get_data(as_text=True))
+        self.assertEqual(self._audit(), [])
+
+    def test_an_empty_list_is_a_file_with_only_headers_and_a_row(self):
+        self._login(self.manager)
+        res = self._export(self.genebanks[0], [])
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(len(res.get_data(as_text=True).splitlines()), 1)
+        (row,) = self._audit()
+        self.assertEqual(row.new_data["rows"], 0)
 
     def test_a_browser_in_demo_mode_gets_no_file_from_production(self):
         self._login(self.manager)  # a production session with export rights

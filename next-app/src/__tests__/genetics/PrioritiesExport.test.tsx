@@ -14,9 +14,13 @@ const downloadExport = vi.fn(async (url: string): Promise<string | null> => {
   return null;
 });
 
-const modes = vi.hoisted(() => ({ view: "prod", cookie: "prod" }));
-vi.mock("@/lib/mode", () => ({ readModeCookieClient: () => modes.cookie }));
+const modes = vi.hoisted(() => ({ view: "prod" }));
 vi.mock("@/lib/mode-context", () => ({ useMode: () => modes.view }));
+const setCookie = (value?: string) => {
+  document.cookie = value
+    ? `sb_mode=${value}`
+    : "sb_mode=; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+};
 vi.mock("@/components/genetics/workList", async (original) => ({
   ...(await original<typeof import("@/components/genetics/workList")>()),
   downloadExport: (url: string) => downloadExport(url),
@@ -43,7 +47,8 @@ describe("Ladda ner CSV", () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
-    modes.view = modes.cookie = "prod";
+    modes.view = "prod";
+    setCookie("prod");
   });
 
   const renderTab = () =>
@@ -68,7 +73,8 @@ describe("Ladda ner CSV", () => {
   });
 
   it("refuses in the client from a demo view, or when another tab has switched the cookie", async () => {
-    modes.view = modes.cookie = "demo";
+    modes.view = "demo";
+    setCookie("demo");
     renderTab();
     fireEvent.click(screen.getByRole("button", { name: "Ladda ner CSV" }));
     expect(await screen.findByText(/där varje uttag loggas/)).toBeDefined();
@@ -79,6 +85,13 @@ describe("Ladda ner CSV", () => {
     fireEvent.click(screen.getByRole("button", { name: "Ladda ner CSV" }));
     expect(await screen.findByText(/i en annan flik/)).toBeDefined();
     expect(downloadExport).not.toHaveBeenCalled();
+  });
+
+  it("exports from a production view whose browser has no mode cookie, as the server allows", async () => {
+    setCookie();
+    renderTab();
+    fireEvent.click(screen.getByRole("button", { name: "Ladda ner CSV" }));
+    await waitFor(() => expect(downloadExport).toHaveBeenCalled());
   });
 
   it("shows the server's reason when the export is refused", async () => {

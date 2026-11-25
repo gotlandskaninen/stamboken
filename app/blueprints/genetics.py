@@ -5,8 +5,10 @@ The calculations and their cache stay in herdbook.py, which this module never im
 (ADR-0007): herdbook.py hands over the memoized priorities as APP.extensions["genetic_priorities"].
 """
 
+import logging
 from datetime import date
 
+import utils.genetics_service as genetics_service
 import utils.settings as settings
 import utils.work_list as work_list
 from flask import Blueprint, Response, current_app, jsonify, request
@@ -16,6 +18,27 @@ from utils.database import Individual
 from .common import DEMO_EXPORT_REFUSED, check_genebank_access, json_login_required, log_export, problem
 
 genetics_bp = Blueprint("genetics", __name__, url_prefix="/api")
+
+logger = logging.getLogger(__name__)
+
+
+def _not_computed(genebank_id):
+    """503 when the genebank's snapshot could not be built, else None.
+
+    Without a snapshot the memoized priorities answer an empty list (_on_snapshot in herdbook.py),
+    which must not pass for a genebank with no rabbits: no rows, and no audit row for them.
+    """
+    try:
+        built = genetics_service.snapshot(genebank_id) is not None
+    except Exception:  # pylint: disable=broad-except  # a cold build that failed
+        logger.warning("The genetics snapshot of genebank %s could not be read", genebank_id, exc_info=True)
+        built = False
+    if built:
+        return None
+    body, status, headers = problem(
+        503, "Inte beräknat", "Genetiken kan inte beräknas just nu. Försök igen om en stund."
+    )
+    return body, status, {**headers, "Retry-After": "30"}
 
 
 def _head_refused():
@@ -47,7 +70,7 @@ def work_list_rows(genebank_id):
     """
     if request.method == "HEAD":
         return _head_refused()
-    refused = check_genebank_access(genebank_id)
+    refused = check_genebank_access(genebank_id) or _not_computed(genebank_id)
     if refused:
         return refused
     priorities = current_app.extensions["genetic_priorities"](genebank_id)
@@ -75,6 +98,9 @@ def priorities_csv(genebank_id):
     # link must not export real rabbits while the user believes they are in the testmiljö.
     if settings.service.demo_instance or request.cookies.get("sb_mode") == "demo":
         return problem(403, "Inte i testmiljön", DEMO_EXPORT_REFUSED)
+    not_computed = _not_computed(genebank_id)
+    if not_computed:
+        return not_computed
     wanted = set(request.args.get("levels", ",".join(work_list.LEVELS)).split(","))
     if not wanted <= set(work_list.LEVELS):
         return problem(400, "Okänd nivå", f"levels tar {', '.join(work_list.LEVELS)}.")
