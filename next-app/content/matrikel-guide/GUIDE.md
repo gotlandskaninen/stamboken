@@ -251,10 +251,11 @@ Under **Personer** står hushållets personer med roll, kontakt, konto och
     skötare.
   - **Gör till huvudmedlem** byter huvudmedlem i hushållet.
   - **Avsluta** avslutar personen i medlemskapet och drar in hens åtkomster.
-    Raden finns kvar i historiken.
+    Raden finns kvar i historiken. Hushållets huvudmedlem går inte att
+    avsluta; byt huvudmedlem först.
   - **Återaktivera** finns för en avslutad person som inte är anonymiserad,
-    när medlemskapet inte är inaktivt. Personen blir aktiv igen med sin
-    tidigare roll, men åtkomsterna kommer inte tillbaka. Har personen ett
+    när medlemskapet inte är inaktivt. Personen blir aktiv igen med den
+    roll som står på raden, men åtkomsterna kommer inte tillbaka. Har personen ett
     kopplat konto kopplar du bort det först. En huvudmedlem går bara att
     återaktivera när hushållet inte har någon annan aktiv huvudmedlem.
   - **Anonymisera** ersätter personens namn med en platshållare, tar bort

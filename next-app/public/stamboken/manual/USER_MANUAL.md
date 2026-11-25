@@ -1614,8 +1614,8 @@ medlemsansökan lägger in medlemmen i matrikeln men skapar inget konto.
 **Roller**, **Lösenord**, **Sessioner**, **Status och åtkomst**, **Google-konto länkat**
 (om det finns), **Radera kontots uppgifter** och **Senaste aktivitet** (de tio senaste
 ändringarna användaren gjort). En gul ruta varnar om en annan administratör ändrat kontot
-de senaste fem minuterna. På ett raderat konto finns inget kvar att ändra, se [Radera
-kontots uppgifter](#radera-kontots-uppgifter).
+de senaste fem minuterna. På ett raderat konto visas bara **Status och åtkomst** och
+**Senaste aktivitet**, se [Radera kontots uppgifter](#radera-kontots-uppgifter).
 
 Under **Roller** länkar en Besättningsägare-roll till besättningen och visar **Aktiv**
 eller **Inaktiv**. Kortet **Sessioner** har två knappar:
