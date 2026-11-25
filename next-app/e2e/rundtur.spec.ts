@@ -45,6 +45,8 @@ test.describe("Rundtur för en vanlig medlem", () => {
     );
     // An ordinary member has no role step.
     expect(titles).not.toContain("Din roll");
+    // The offer's button is gone, so focus goes to the menu.
+    await expect(page.getByRole("button", { name: "Account" })).toBeFocused();
 
     // Answered: the offer does not come back by itself.
     await page.reload();
@@ -64,7 +66,10 @@ test.describe("Rundtur för en vanlig medlem", () => {
     ).toHaveCount(0);
     await expect(tour(page)).toHaveCount(0);
 
+    // prefers-reduced-motion: no fade.
+    await page.emulateMedia({ reducedMotion: "reduce" });
     await startFromMenu(page);
+    await expect(page.locator("body")).not.toHaveClass(/driver-fade/);
     await expectNoAxeViolations(page);
   });
 
@@ -73,6 +78,17 @@ test.describe("Rundtur för en vanlig medlem", () => {
   }) => {
     await openMinBesattning(page);
     await startFromMenu(page);
+    const inTour = () =>
+      page.evaluate(() => !!document.activeElement?.closest(".driver-popover"));
+    await expect.poll(inTour).toBe(true);
+    // Tab goes round inside the tour (focus trap).
+    for (let i = 0; i < 8; i++) {
+      await page.keyboard.press("Tab");
+      expect(await inTour()).toBe(true);
+    }
+    const progress = page.locator(".driver-popover-progress-text");
+    await page.keyboard.press("ArrowRight");
+    await expect(progress).toHaveText(/^2 av /);
     await page
       .getByRole("dialog")
       .getByRole("button", { name: "Nästa" })
@@ -91,6 +107,23 @@ test.describe("Rundtur för en vanlig medlem", () => {
       .getByRole("button", { name: "Stäng rundturen" })
       .click();
     await expect(tour(page)).toHaveCount(0);
+  });
+
+  test("on a rabbit's page the tour shows its photo and certificate", async ({
+    page,
+  }) => {
+    await page.goto("/stamboken/individ/G1274-2112");
+    await expect(page.locator('[data-tour="rabbit-card"]')).toBeVisible({
+      timeout: 15000,
+    });
+    await startFromMenu(page);
+    await expect(page.locator(".driver-popover-title")).toHaveText("Kaninen");
+    await expect(
+      page.getByRole("dialog").getByRole("link", { name: "Läs mer" }),
+    ).toHaveAttribute("href", "/stamboken-online/manual#ladda-upp-ett-foto");
+    const titles = await walk(page);
+    // Min besättning's tabs are not on this page.
+    expect(titles).not.toContain("Kullar och parningar");
   });
 
   test.describe("on a 375 px phone", () => {
