@@ -87,16 +87,19 @@ export function CasePane({
           {queueStatus(item, user.id, t)}
         </span>
         {item.assigned_to ? (
-          user.is_admin ? (
-            <Link
-              href={`/stamboken/admin/anvandare/${item.assigned_to.id}`}
-              className="sb-link"
-            >
-              {t("queue.with", { name: item.assigned_to.name })}
-            </Link>
-          ) : (
-            <span>{t("queue.with", { name: item.assigned_to.name })}</span>
-          )
+          // Always a span: the "·" separators (.caseStatus span + span) count spans only.
+          <span>
+            {user.is_admin ? (
+              <Link
+                href={`/stamboken/admin/anvandare/${item.assigned_to.id}`}
+                className="sb-link"
+              >
+                {t("queue.with", { name: item.assigned_to.name })}
+              </Link>
+            ) : (
+              t("queue.with", { name: item.assigned_to.name })
+            )}
+          </span>
         ) : (
           item.state === "ny" && <span>{t("queue.untaken")}</span>
         )}

@@ -147,11 +147,12 @@ describe("CasePane", () => {
       "href",
       "/stamboken/admin/anvandare/174",
     );
-    // The handler too ("Hos Konto 1").
-    expect(screen.getByRole("link", { name: /Konto 1$/ })).toHaveAttribute(
-      "href",
-      "/stamboken/admin/anvandare/1",
-    );
+    // The handler too ("Hos Konto 1"), still inside a span so the status
+    // row's "·" separators (.caseStatus span + span) stay in place.
+    const handler = screen.getByRole("link", { name: /Konto 1$/ });
+    expect(handler).toHaveAttribute("href", "/stamboken/admin/anvandare/1");
+    expect(handler.parentElement?.tagName).toBe("SPAN");
+    expect(handler.parentElement?.nextElementSibling?.tagName).toBe("SPAN");
   });
 
   it("can still open the complete registration view for a closed case", () => {
