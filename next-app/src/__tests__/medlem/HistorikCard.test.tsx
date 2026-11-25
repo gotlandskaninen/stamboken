@@ -123,3 +123,24 @@ it("says so when the log is empty or cannot be read", () => {
     screen.getByText("Historiken kunde inte läsas just nu."),
   ).toBeInTheDocument();
 });
+
+it("names no account for an anonymised person's former account", () => {
+  const masked = {
+    ...history,
+    rows: [{ ...history.rows[0], actor: { id: null, name: "[borttagen]" } }],
+  };
+  render(
+    <HistorikCard
+      membershipId={5}
+      memberNumber={99}
+      history={masked}
+      isAdmin
+    />,
+  );
+  expect(
+    screen.getByText("2026-11-20 09:05:00 · [borttagen]"),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("link", { name: "[borttagen]" }),
+  ).not.toBeInTheDocument();
+});

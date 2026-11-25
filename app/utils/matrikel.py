@@ -330,6 +330,30 @@ def _drop_keys(node, keys):
     return node
 
 
+def _erased_accounts() -> set[int]:
+    """Accounts ever linked to an anonymised person: the change log never names them, nor finds rows by them (#244).
+
+    The erasure detaches the account but empties it only when it was still linked; one unlinked before keeps its name,
+    and the self-service rows carry it as actor. Every link and detach writes person_user_(un)linked with both ids.
+    """
+    links = [
+        a.payload or {}
+        for a in MatrikelAudit.select(MatrikelAudit.payload).where(
+            MatrikelAudit.action.in_(("person_user_linked", "person_user_unlinked"))
+        )
+    ]
+    person_ids = {p.get("person_id") for p in links if isinstance(p.get("person_id"), int)}
+    erased = {
+        m.id
+        for m in Member.select(Member.id).where(
+            Member.id.in_(list(person_ids)),
+            Member.first_name == ANONYMIZED_FIRST_NAME,
+            Member.last_name == ANONYMIZED_LAST_NAME,
+        )
+    }
+    return {p["user_id"] for p in links if p.get("person_id") in erased and isinstance(p.get("user_id"), int)}
+
+
 def query_matrikel_audit(
     *,
     full_access,
@@ -346,7 +370,8 @@ def query_matrikel_audit(
 
     `date_from` and `date_to` are dates, both days included. Without `full_access` (a gene bank manager) the payloads
     lose what GET /v2/members/<id> does not show them: the organisation number and a person's notes. A row about an
-    anonymised person is redacted again on read, should a stored payload have escaped the erasure.
+    anonymised person is redacted again on read, should a stored payload have escaped the erasure. An account once
+    linked to an anonymised person is shown as REDACTED_VALUE, as actor and as user_id, and the actor filter skips it.
     """
     q = (
         MatrikelAudit.select(MatrikelAudit, User, Membership)
@@ -360,8 +385,12 @@ def query_matrikel_audit(
         q = q.where(Membership.member_number == member_number)
     if action:
         q = q.where(MatrikelAudit.action == action)
+    erased_accounts = _erased_accounts()
     if actor:
-        q = q.where((User.username == actor) | (User.email == actor))
+        q = q.where(
+            (User.username == actor) | (User.email == actor),
+            User.id.not_in(list(erased_accounts)) if erased_accounts else True,
+        )
     if date_from:
         q = q.where(MatrikelAudit.created_at >= date_from)
     if date_to:
@@ -380,6 +409,9 @@ def query_matrikel_audit(
         person = persons.get(person_of(payload))
         if person is not None and is_anonymized(person):
             payload, _ = _redact_node(payload)
+        if payload.get("user_id") in erased_accounts:
+            payload = {**payload, "user_id": REDACTED_VALUE}
+        masked_actor = a.actor_id in erased_accounts
         if not full_access:
             payload = _drop_keys(payload, {"organization_number"} | ({"notes"} if "person_id" in payload else set()))
         rows.append(
@@ -388,7 +420,13 @@ def query_matrikel_audit(
                 "action": a.action,
                 "created_at": a.created_at.astimezone().isoformat(),
                 # the name audit_log's changed_by holds too
-                "actor": {"id": a.actor.id, "name": a.actor.username or a.actor.email} if a.actor_id else None,
+                "actor": (
+                    {"id": None, "name": REDACTED_VALUE}
+                    if masked_actor
+                    else {"id": a.actor.id, "name": a.actor.username or a.actor.email}
+                    if a.actor_id
+                    else None
+                ),
                 "membership": {"id": a.membership_id, "member_number": a.membership.member_number},
                 "person": (
                     {"id": person.id, "name": f"{person.first_name} {person.last_name}".strip()} if person else None

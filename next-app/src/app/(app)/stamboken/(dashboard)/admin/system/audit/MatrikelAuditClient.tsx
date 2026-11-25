@@ -47,13 +47,15 @@ function Detail({ row }: { row: MatrikelAuditRow }) {
   return (
     <div className={styles["ad-audit-detail"]}>
       <p className={ds["ad-hint"]}>
-        {row.actor ? (
+        {row.actor?.id ? (
           <>
             Utförd av{" "}
             <Link href={`/stamboken/admin/anvandare/${row.actor.id}`}>
               {row.actor.name}
             </Link>
           </>
+        ) : row.actor ? (
+          `Utförd av ${row.actor.name}`
         ) : (
           "Utförd av den nattliga gallringen"
         )}{" "}

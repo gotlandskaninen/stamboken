@@ -106,3 +106,20 @@ it("keeps the member page's membership id through a new filter", () => {
     container.querySelector('input[type="hidden"][name="membership_id"]'),
   ).toHaveValue("5");
 });
+
+it("does not link a masked actor", () => {
+  render(
+    <MatrikelAuditClient
+      rows={[{ ...rows[0], actor: { id: null, name: "[borttagen]" } }]}
+      total={1}
+      page={1}
+      perPage={50}
+      filters={filters}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: /Status ändrad/ }));
+  expect(screen.getByText(/Utförd av \[borttagen\]/)).toBeInTheDocument();
+  expect(
+    screen.queryByRole("link", { name: "[borttagen]" }),
+  ).not.toBeInTheDocument();
+});

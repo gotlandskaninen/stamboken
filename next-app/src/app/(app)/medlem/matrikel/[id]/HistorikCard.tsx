@@ -60,7 +60,7 @@ export function HistorikCard({
                     {formatAuditTime(row.created_at)} ·{" "}
                     {row.actor === null ? (
                       "nattlig gallring"
-                    ) : isAdmin ? (
+                    ) : isAdmin && row.actor.id ? (
                       <Link href={`/stamboken/admin/anvandare/${row.actor.id}`}>
                         {row.actor.name}
                       </Link>

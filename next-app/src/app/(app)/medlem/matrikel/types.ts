@@ -172,7 +172,8 @@ export type MatrikelAuditRow = {
   id: number;
   action: string;
   created_at: string; // ISO 8601 with offset
-  actor: { id: number; name: string } | null; // null: the nightly anonymisation
+  // null: the nightly anonymisation. id null: an anonymised person's former account, name "[borttagen]".
+  actor: { id: number | null; name: string } | null;
   membership: { id: number; member_number: number | null };
   person: { id: number; name: string } | null;
   payload: Record<string, unknown>;

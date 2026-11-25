@@ -3,6 +3,7 @@
 import json
 from datetime import date, datetime, timedelta
 
+import utils.data_access as da
 import utils.database as db
 import utils.matrikel as matrikel
 
@@ -139,3 +140,27 @@ class TestMatrikelAudit(MatrikelApiTest):
         for bad in ("from=igar", "page=x", "membership_id=y", "member_number=z"):
             with self.subTest(bad=bad):
                 self.assertEqual(self.get(bad).status_code, 400)
+
+    def test_anonymised_persons_former_account_is_not_named(self):
+        """Codex #248: a profile change logs her own account as actor; unlinked before erasure it keeps its name."""
+        account = da.register_user("tova-konto@example.com", "pass")
+        matrikel.link_member_user(self.person.id, account.id, actor=self.matrikel_user, mode="admin")
+        matrikel.write_matrikel_audit(
+            account, "kontakt_andrad", self.ms, {"person_id": self.person.id, "fields": ["phone"], "source": "profil"}
+        )
+        matrikel.unlink_member_user(self.person.id, actor=self.matrikel_user)
+        matrikel.anonymize_person(db.Member.get_by_id(self.person.id), self.matrikel_user)
+        self.login("man")
+        data = self.get(f"membership_id={self.ms.id}").get_json()
+        text = json.dumps(data)
+        self.assertNotIn("tova-konto", text)
+        by_action = {r["action"]: r for r in data["rows"]}
+        self.assertEqual(by_action["kontakt_andrad"]["actor"], {"id": None, "name": matrikel.REDACTED_VALUE})
+        for action in ("person_user_linked", "person_user_unlinked"):
+            self.assertEqual(by_action[action]["payload"]["user_id"], matrikel.REDACTED_VALUE)
+            # the handler who linked and unlinked keeps the attribution
+            self.assertEqual(by_action[action]["actor"]["id"], self.matrikel_user.id)
+        for actor in ("tova-konto@example.com", "TOVA-KONTO@example.com"):
+            with self.subTest(actor=actor):
+                found = self.get(f"actor={actor}").get_json()
+                self.assertEqual((found["total"], found["rows"]), (0, []))
