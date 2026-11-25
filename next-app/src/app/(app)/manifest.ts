@@ -1,7 +1,7 @@
 import type { MetadataRoute } from "next";
 
-// Served as /manifest.webmanifest; Next links it on every page itself. The
-// legacy SPA keeps its own manifest under /static/ (#220).
+// Served as /manifest.webmanifest and linked from the (app) layout's metadata.
+// The legacy SPA keeps its own manifest under /static/ (#220).
 export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "Stamboken",

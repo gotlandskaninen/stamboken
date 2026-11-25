@@ -36,6 +36,8 @@ export const metadata = {
     process.env.NEXT_PUBLIC_SITE_URL || "https://gotlandskaninen.se",
   ),
   title: "Gotlandskaninen",
+  // src/app/(app)/manifest.ts; Next does not link it from a route group itself.
+  manifest: "/manifest.webmanifest",
   description:
     "Föreningen Gotlandskaninen — digitalt stamregister och information om lantraskaniner",
 };
