@@ -1,6 +1,7 @@
 import type { MetadataRoute } from "next";
 
-// Served as /manifest.webmanifest and linked from the (app) layout's metadata.
+// Served as /manifest.webmanifest (only from the app root, not a route group)
+// and linked from the (app) layout's metadata.
 // The legacy SPA keeps its own manifest under /static/ (#220).
 export default function manifest(): MetadataRoute.Manifest {
   return {
