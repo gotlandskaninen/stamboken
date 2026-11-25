@@ -15,6 +15,7 @@ import {
   type HerdOption,
 } from "../../_components/RolePicker";
 import {
+  eraseAccount,
   grantRole,
   logoutEverywhere,
   removeGoogleLogin,
@@ -91,9 +92,12 @@ export function UserEditClient({
   const [activeDialogOpen, setActiveDialogOpen] = useState(false);
   const [logoutDialogOpen, setLogoutDialogOpen] = useState(false);
   const [googleDialogOpen, setGoogleDialogOpen] = useState(false);
+  const [eraseDialogOpen, setEraseDialogOpen] = useState(false);
   const [selfRevoke, setSelfRevoke] = useState<PrivilegeEntry | null>(null);
   // Google-only accounts can lack a username (hbuser.username is nullable).
   const displayName = detail.username ?? detail.email;
+  // erase_account leaves the row with this e-mail (#250).
+  const erased = detail.email === `raderad-${detail.id}`;
 
   // Runs a Server Action; ApiError/pre-check failures come back as
   // { error } and render in the red banner. A successful one stays on the
@@ -168,6 +172,15 @@ export function UserEditClient({
 
   return (
     <>
+      {erased && (
+        <div
+          role="status"
+          className={`${ds["ad-banner"]} ${ds["ad-banner-warning"]}`}
+        >
+          Kontots uppgifter är raderade. Raden finns kvar som{" "}
+          {`raderad-${detail.id}`}, eftersom andra uppgifter pekar på den.
+        </div>
+      )}
       {!detail.is_active && (
         <div
           role="alert"
@@ -404,6 +417,29 @@ export function UserEditClient({
               Ta bort Google-inloggningen
             </button>
           </DetailCard>
+
+          {!erased && (
+            <DetailCard title="Radera kontots uppgifter">
+              <p className={ds["ad-hint"]}>
+                Raderar namn, e-post, inloggningar och profilbild och maskerar
+                kontot i ändringsloggen. Gäller bara ett konto utan roll som
+                inte hör till någon person i matrikeln. Personer anonymiseras i
+                matrikeln.
+              </p>
+              <button
+                type="button"
+                className="sb-btn sb-btn-secondary"
+                disabled={
+                  pending ||
+                  detail._privileges.length > 0 ||
+                  detail.id === actorId
+                }
+                onClick={() => setEraseDialogOpen(true)}
+              >
+                Radera kontots uppgifter
+              </button>
+            </DetailCard>
+          )}
         </div>
 
         <div className={ds["ad-col"]}>
@@ -576,6 +612,25 @@ export function UserEditClient({
         onConfirm={() => {
           setGoogleDialogOpen(false);
           run(() => removeGoogleLogin(detail.id));
+        }}
+      />
+
+      {/* Radera kontots uppgifter (#250): cannot be undone. */}
+      <ConfirmDialog
+        open={eraseDialogOpen}
+        title="Radera kontots uppgifter?"
+        body={
+          `Namn, e-post, inloggningar och profilbild i ${displayName} ` +
+          "raderas, och kontot maskeras i ändringsloggen. Det går inte att " +
+          `ångra. Raden finns kvar som raderad-${detail.id}, eftersom andra ` +
+          "uppgifter pekar på den."
+        }
+        confirmLabel="Radera"
+        confirmColor="error"
+        onClose={() => setEraseDialogOpen(false)}
+        onConfirm={() => {
+          setEraseDialogOpen(false);
+          run(() => eraseAccount(detail.id));
         }}
       />
 

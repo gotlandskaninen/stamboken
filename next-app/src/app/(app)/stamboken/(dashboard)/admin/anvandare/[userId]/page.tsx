@@ -119,6 +119,9 @@ export default async function AdminUserDetailPage({
       </div>
 
       <UserEditClient
+        // A new instance once the account is erased: the profile fields
+        // hold their first values in state (#250).
+        key={detail.email === `raderad-${detail.id}` ? "raderad" : "konto"}
         detail={detail}
         actorId={actor.id}
         genebanks={genebanks.map(({ id, name }) => ({ id, name }))}

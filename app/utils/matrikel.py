@@ -651,6 +651,40 @@ def anonymize_person(member, actor, deferred_originals=None, deferred_accounts=N
     return person
 
 
+def erase_unlinked_account(user_id, actor_id):
+    """
+    Empties an account that belongs to no person (#250), as anonymize_person empties a person's account: the same
+    steps for the account, in one transaction with its row locked, the audit purge last and the profile pictures
+    removed after the commit. Refuses (LinkError) the caller's own account, an account already emptied, one with any
+    role and one that a person in the register points to, ended or not: persons are handled in the register. A linker
+    takes this row's lock before it writes member.user_id and refuses an inactive account, so the check holds.
+    The intake queue's items the account uploaded stay: erase_person_from_inbox needs a person.
+    """
+    if user_id == actor_id:
+        raise LinkError("Ditt eget konto", "Du kan inte radera uppgifterna i kontot du är inloggad med.", type="self")
+    with DB_PROXY.atomic():
+        user = User.select().where(User.id == user_id).for_update().first()
+        if user is None:
+            raise LinkError("Användare saknas", f"Ingen användare med id {user_id}.", 404, type="user-not-found")
+        if user.email == f"raderad-{user.id}":  # not_erased(), on the locked row
+            raise LinkError("Redan raderat", "Kontots uppgifter är redan raderade.", type="erased")
+        if user.privileges:
+            raise LinkError("Kontot har en roll", "Ta bort kontots roller innan uppgifterna raderas.", type="has-role")
+        if Member.select().where(Member.user == user.id).exists():
+            raise LinkError(
+                "Kontot hör till en person",
+                "Kontot är kopplat till en person i matrikeln. Personer anonymiseras i matrikeln.",
+                type="has-person",
+            )
+        User.update(name_on_check_page=False).where(User.id == user.id).execute()
+        forget_recipient("user", user.id)
+        erase_account(user)  # `user` keeps the values read under the lock
+        pictures = profile_pictures_of(user)  # before the purge takes their names
+        purge_user_audit_pii(user.id, user.username, user.email)  # last: it locks audit_log until the commit
+    for name in pictures:
+        remove_profile_picture(name)
+
+
 ENDED_MEMBER_RETENTION = "12 months"  # a PostgreSQL interval: calendar months, as the privacy policy says (#34)
 # Account roles that keep an ended person from automatic erasure. Every account is a viewer, so viewer is not one;
 # a legacy owner entry counts only on an active herd (_retention_hold).

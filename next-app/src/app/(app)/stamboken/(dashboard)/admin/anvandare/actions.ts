@@ -124,6 +124,24 @@ export async function removeGoogleLogin(
   revalidateUser(userId);
 }
 
+export async function eraseAccount(
+  userId: number,
+): Promise<ActionError | void> {
+  await requireAdminProdMode();
+  try {
+    // #250: the backend refuses an account with a role or a person, one
+    // already emptied and the admin's own (409 problem+json).
+    await fetchApi(`/v2/admin/users/${userId}/erase`, {
+      method: "POST",
+      forceProd: true,
+    });
+  } catch (e) {
+    if (e instanceof ApiError) return { error: e.detail };
+    throw e;
+  }
+  revalidateUser(userId);
+}
+
 export async function grantRole(
   userId: number,
   role: PrivilegeEntry,

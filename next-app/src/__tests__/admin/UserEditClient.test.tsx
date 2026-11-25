@@ -14,10 +14,12 @@ const logoutEverywhere = vi.hoisted(() => vi.fn());
 const removeGoogleLogin = vi.hoisted(() => vi.fn());
 const setAccountActive = vi.hoisted(() => vi.fn());
 const setV2ProdAccess = vi.hoisted(() => vi.fn());
+const eraseAccount = vi.hoisted(() => vi.fn());
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
 }));
 vi.mock("@/app/(app)/stamboken/(dashboard)/admin/anvandare/actions", () => ({
+  eraseAccount,
   grantRole: vi.fn(),
   logoutEverywhere,
   removeGoogleLogin,
@@ -239,5 +241,76 @@ describe("UserEditClient switches (#249)", () => {
     );
     expect(await screen.findByRole("alert")).toHaveTextContent("Nej.");
     expect(screen.queryByText("Ändringen är sparad.")).not.toBeInTheDocument();
+  });
+});
+
+describe("UserEditClient Radera kontots uppgifter (#250)", () => {
+  // An account without a role, not the admin's own.
+  const plain: AdminUserDetail = {
+    ...detail,
+    role_summary: "ingen roll",
+    _privileges: [],
+  };
+  const renderPage = (d: AdminUserDetail, actorId = 1) =>
+    render(
+      <UserEditClient
+        detail={d}
+        actorId={actorId}
+        genebanks={[]}
+        herds={[]}
+        recentAudit={[]}
+        concurrentEditWarning={null}
+      />,
+    );
+  const button = () =>
+    screen.getByRole("button", { name: "Radera kontots uppgifter" });
+
+  it("says it cannot be undone, and Avbryt erases nothing", () => {
+    eraseAccount.mockClear();
+    renderPage(plain);
+    fireEvent.click(button());
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveTextContent("Det går inte att ångra.");
+    expect(dialog).toHaveTextContent("raderad-7");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Avbryt" }));
+    expect(eraseAccount).not.toHaveBeenCalled();
+  });
+
+  it("erases the account once the admin confirms", async () => {
+    eraseAccount.mockClear();
+    eraseAccount.mockResolvedValue(undefined);
+    renderPage(plain);
+    fireEvent.click(button());
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Radera",
+      }),
+    );
+    expect(eraseAccount).toHaveBeenCalledWith(7);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("is off for an account with a role and for the admin's own", () => {
+    renderPage(detail);
+    expect(button()).toBeDisabled();
+    cleanup();
+    renderPage(plain, 7);
+    expect(button()).toBeDisabled();
+  });
+
+  it("shows an erased account as erased, without the button", () => {
+    renderPage({
+      ...plain,
+      username: null,
+      fullname: null,
+      email: "raderad-7",
+      is_active: false,
+    });
+    expect(screen.getByText(/Kontots uppgifter är raderade/)).toHaveTextContent(
+      "Raden finns kvar som raderad-7",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Radera kontots uppgifter" }),
+    ).toBeNull();
   });
 });
