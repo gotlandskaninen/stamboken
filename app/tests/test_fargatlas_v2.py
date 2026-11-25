@@ -163,6 +163,15 @@ class FargatlasTest(DatabaseTest):
             {**hel, "fragor": {"q1": {**fragor["q1"], "svar": [None]}}},
             {**hel, "efter_numret": {}},
             {**hel, "fragor": {"q1": {**fragor["q1"], "hjalp": {"text": "fel"}}}},
+            {  # two answers with one id
+                **hel,
+                "fragor": {
+                    "q1": {
+                        **fragor["q1"],
+                        "svar": [{"id": "q1-a", "text": "A", "till": 22}, {"id": "q1-a", "text": "B", "till": 11}],
+                    }
+                },
+            },
         ):
             with self.subTest(nyckel=nyckel):
                 self.package({**MANIFEST, "nyckel": nyckel})
@@ -171,6 +180,14 @@ class FargatlasTest(DatabaseTest):
                     atlas = self.atlas()
                 self.assertIsNone(atlas["nyckel"])
                 self.assertEqual(len(atlas["farger"]), len(ATLAS_FARGER))  # the colours stay
+
+    def test_for_djupt_manifest_loggas(self):
+        self.package()
+        self.login()
+        with mock.patch("utils.fargatlas.json.load", side_effect=RecursionError):
+            with self.assertLogs("utils.fargatlas", "ERROR"):
+                atlas = self.atlas()
+        self.assertEqual(len(atlas["farger"]), len(ATLAS_FARGER))  # the database's colours still come
 
     def test_foto_ok(self):
         self.package()
@@ -196,6 +213,8 @@ class FargatlasTest(DatabaseTest):
         os.remove(os.path.join(self.paket, "22-a-480.jpg"))
         self.login()
         self.assertEqual(self.client.get("/api/v2/fargatlas/foto/22-a?storlek=480").status_code, 404)
+        # the size still on disk is not served either: the page does not show the photo
+        self.assertEqual(self.client.get("/api/v2/fargatlas/foto/22-a?storlek=1600").status_code, 404)
         # and the card has no photo instead of a broken image
         self.assertEqual({c["id"]: c for c in self.atlas()["farger"]}[22]["foton"], [])
 

@@ -94,8 +94,8 @@ def las_atlaspaket(logga_poster=True):
             paket = json.load(f)
     except FileNotFoundError:
         return {}
-    except (OSError, ValueError) as error:
-        logger.error("The colour atlas manifest cannot be read: %s", error)
+    except (OSError, ValueError, RecursionError) as error:  # RecursionError: JSON nested too deep for the decoder
+        logger.error("The colour atlas manifest cannot be read: %s", type(error).__name__)
         return {}
     if not isinstance(paket, dict) or not isinstance(paket.get("farger"), dict):
         logger.error("The colour atlas manifest has no farger object")
@@ -142,7 +142,15 @@ def _har_form(nyckel):
         )
 
     def fraga(f):
-        return isinstance(f, dict) and text(f.get("text")) and text(f.get("hjalp"), True) and isinstance(f.get("svar"), list) and all(map(svar, f["svar"]))
+        return (
+            isinstance(f, dict)
+            and text(f.get("text"))
+            and text(f.get("hjalp"), True)
+            and isinstance(f.get("svar"), list)
+            and all(map(svar, f["svar"]))
+            # the guide follows an answer by its id, so two answers with one id would lead to the first one's colour
+            and len({s["id"] for s in f["svar"]}) == len(f["svar"])
+        )
 
     def grupp(g):
         return isinstance(g, dict) and text(g.get("id")) and text(g.get("namn")) and isinstance(g.get("nummer"), list) and all(map(tal, g["nummer"]))
@@ -217,4 +225,7 @@ def foto_sokvag(foto_id, storlek):
     if storlek not in FOTO_FIL or not FOTO_ID.fullmatch(foto_id):
         return None
     listed = {f["id"] for farg in las_atlaspaket(logga_poster=False).get("farger", {}).values() for f in _foton(farg)}
-    return inbox.private_path(FOTO_FIL[storlek].format(foto_id)) if foto_id in listed and _finns(foto_id, storlek) else None
+    # Both sizes, as for the list: a photo the page does not show is not served either.
+    if foto_id not in listed or not all(_finns(foto_id, s) for s in FOTO_FIL):
+        return None
+    return inbox.private_path(FOTO_FIL[storlek].format(foto_id))
