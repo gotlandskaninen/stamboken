@@ -94,6 +94,17 @@ class TestAdminEraseAccount(DatabaseTest):
     def test_the_admin_empties_an_account_without_a_person(self):
         user = self._account("a")
         queued = mail.enqueue_mail("notis.sammandrag", "user", user.id, {})
+        personal = (
+            "anvandarea",
+            "kontoa@example.invalid",
+            "Namna",
+            "googlea@example.invalid",
+            "Googlenamna",
+            "bilda.jpg",
+            "profila.jpg",
+        )
+        for value in personal:  # the audit log has them before the erasure, so the check below means something
+            self.assertGreater(_audit_mentions(value), 0, value)
         self._login()
 
         response = self._erase(user.id)
@@ -115,15 +126,7 @@ class TestAdminEraseAccount(DatabaseTest):
             "SELECT count(*), count(ip_address) FROM audit_log WHERE changed_by = %s", (f"raderad-{user.id}",)
         ).fetchone()
         self.assertEqual((authored[0] > 0, authored[1]), (True, 0))
-        for value in (
-            "anvandarea",
-            "kontoa@example.invalid",
-            "Namna",
-            "googlea@example.invalid",
-            "Googlenamna",
-            "bilda.jpg",
-            "profila.jpg",
-        ):
+        for value in personal:
             self.assertEqual(_audit_mentions(value), 0, value)
         self.assertEqual(da.authenticate_user("anvandarea", "losen"), (None, None))
         self.assertIsNone(da.authenticate_with_credentials("google", "sub-a"))
@@ -201,9 +204,10 @@ class TestAdminEraseAccount(DatabaseTest):
 
     def test_only_an_admin_may_erase(self):
         user = self._account("x")
+        da.register_user("matrikel@example.invalid", "pass", username="matrikel").add_role("matrikel_admin", None)
         self.client.get("/api/logout")
         self.assertEqual(self._erase(user.id).status_code, 401)
-        for username in ("spec", "man", "owner"):
+        for username in ("spec", "man", "owner", "matrikel"):
             with self.subTest(username=username):
                 self._login(username)
                 self.assertEqual(self._erase(user.id).status_code, 403)
