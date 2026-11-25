@@ -12,9 +12,9 @@ import { uploadIntyg } from "./actions";
 import { prepare } from "./prepare";
 import styles from "../inskick.module.css";
 
-// nginx cuts the request at 10 MiB, multipart overhead included (docs/inkorg.md),
+// nginx cuts the request at 50 MiB, multipart overhead included (docs/inkorg.md),
 // so the files get a little less.
-const MAX_TOTAL = 9 * 1024 * 1024;
+const MAX_TOTAL = 48 * 1024 * 1024;
 
 /**
  * `herds` are the user's own. Someone who works in the queue may upload for
@@ -64,7 +64,7 @@ export function UploadForm({
     for (const f of files) prepared.push(await prepare(f));
     if (prepared.reduce((n, f) => n + f.size, 0) > MAX_TOTAL) {
       setError(
-        "Bilderna är för stora tillsammans (högst 9 MB). Skicka färre åt gången.",
+        "Bilderna är för stora tillsammans (högst 48 MB). Skicka färre åt gången.",
       );
       return null;
     }
@@ -212,7 +212,7 @@ export function UploadForm({
             Ta foto eller välj filer
           </button>
           <span className="sb-meta">
-            Foton eller PDF. Högst 10 bilder och 9 MB per inskick.
+            Foton eller PDF. Högst 10 bilder och 48 MB per inskick.
           </span>
         </div>
         <div className={styles.field}>

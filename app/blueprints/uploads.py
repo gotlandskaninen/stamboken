@@ -24,7 +24,7 @@ _PNG_MAGIC = b"\x89PNG"
 _WEBP_RIFF = b"RIFF"
 _WEBP_SIG = b"WEBP"
 
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+MAX_FILE_SIZE = 25 * 1024 * 1024  # a file: as large as a Gmail attachment
 MAX_PIXELS = 40_000_000  # decoded size, not bytes: a 20 KB PNG can decode to hundreds of MB
 
 
@@ -93,7 +93,7 @@ def upload_photo(individual_number):
     size = file.tell()
     file.seek(0)
     if size > MAX_FILE_SIZE:
-        return problem(413, "Payload Too Large", "Filen är för stor. Max 10 MB.")
+        return problem(413, "Payload Too Large", "Filen är för stor. Max 25 MB.")
 
     # Validate magic bytes (NFR-S7)
     file_type = _validate_magic_bytes(file)

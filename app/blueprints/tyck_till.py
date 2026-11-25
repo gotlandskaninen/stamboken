@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 tyck_till_bp = Blueprint("tyck_till", __name__, url_prefix="/api/v2")
 
-MAX_REQUEST = 9 * 1024 * 1024  # nginx takes 10 MB, and the form fields are on top of the images
+MAX_REQUEST = 25 * 1024 * 1024  # the images and the form fields together; nginx takes 50 MB
 MAX_TEXT = 5000
 MAX_POINTED = 200
 MAX_IMAGES = 4

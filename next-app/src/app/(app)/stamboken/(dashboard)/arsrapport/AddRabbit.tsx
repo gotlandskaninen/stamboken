@@ -37,7 +37,7 @@ export const ADD_FROM_CERTIFICATE =
   "Saknas en kanin? Lägg till den från intyget.";
 export const RABBIT_SAVED =
   "Kaninen är registrerad i Stamboken nu. Den finns kvar även om du drar tillbaka rapporten.";
-export const MAX_BYTES = 10 * 1024 * 1024; // the server's limit, checked before the photo is sent
+export const MAX_BYTES = 25 * 1024 * 1024; // the server's limit, checked before the photo is sent
 export const PHOTO_FIRST = "Ladda upp fotot av intyget först.";
 const PHOTO_SENDING = "Fotot laddas upp. Spara när det är klart.";
 const INTRO: Record<Parent, string> = {
@@ -283,7 +283,7 @@ export function AddRabbitDialog({
     updateDraft(draftId, (d) => ({ ...d, file }));
     let photo: Photo;
     if (file.size > MAX_BYTES) {
-      photo = { status: "fel", error: "Filen är för stor. Max 10 MB." };
+      photo = { status: "fel", error: "Filen är för stor. Max 25 MB." };
     } else {
       const data = new FormData();
       data.set("file", file);

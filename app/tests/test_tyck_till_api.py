@@ -257,14 +257,14 @@ class TestChecks(TyckTillTest):
         self.assertIn("pixlar", response.get_json()["detail"])
         self.assertNothingSent()
 
-    def test_body_between_9_and_10_mb_gives_413_without_folder_issue_or_queue_row(self):
-        response = self.send(files=[("a.jpg", b"\xff\xd8\xff" + b"x" * int(9.5 * 1024 * 1024))])
+    def test_body_between_25_and_50_mb_gives_413_without_folder_issue_or_queue_row(self):
+        response = self.send(files=[("a.jpg", b"\xff\xd8\xff" + b"x" * int(25.5 * 1024 * 1024))])
         self.assertEqual(response.status_code, 413)
         self.assertEqual(response.content_type, "application/problem+json")
         self.assertNothingSent()
 
-    def test_over_9_mb_gives_413_problem_json(self):
-        response = self.send(files=[("a.jpg", b"\xff\xd8\xff" + b"x" * (11 * 1024 * 1024))])
+    def test_over_25_mb_gives_413_problem_json(self):
+        response = self.send(files=[("a.jpg", b"\xff\xd8\xff" + b"x" * (26 * 1024 * 1024))])
         self.assertEqual(response.status_code, 413)
         self.assertEqual(response.get_json()["status"], 413)
         self.assertIn("Bilderna är för stora", response.get_json()["detail"])

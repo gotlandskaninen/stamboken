@@ -383,7 +383,7 @@ anrop till uppladdningen, nekade också, räknas i en andra gräns på 60 i timm
 | Fält | | |
 |---|---|---|
 | `herd` | krävs | besättningsnumret, till exempel `G1` |
-| `files` | krävs, upprepas | 1–10 filer: JPEG, PNG, WebP, HEIC eller PDF, högst 10 MB allt som allt (se nedan) |
+| `files` | krävs, upprepas | 1–10 filer: JPEG, PNG, WebP, HEIC eller PDF, högst 25 MB styck och 50 MB allt som allt (se nedan) |
 | `message` | valfritt | uppladdarens meddelande, högst 2000 tecken |
 | `accept_warnings` | valfritt | `1` eller `true`: spara också när någon bild har en varning |
 
@@ -447,7 +447,7 @@ aldrig kopplas kan skrotas, och uppfödaren får då ladda upp det igen.
 |---|---|
 | 400 | `Välj besättning.` (saknas eller okänd), `Ingen fil bifogad.`, `Högst 10 bilder per inskick. En PDF räknas sida för sida.`, `Meddelandet får vara högst 2000 tecken.` |
 | 403 | `Du kan bara skicka in för dina egna besättningar.` |
-| 413 | `Inskicket är för stort. …` (hela begäran över 10 MB), `Filen är för stor. Max 10 MB.`, `Bilden har för många pixlar. Max 40 megapixlar.` |
+| 413 | `Inskicket är för stort. …` (hela begäran över 50 MB), `Filen är för stor. Max 25 MB.`, `Bilden har för många pixlar. Max 40 megapixlar.` |
 | 415 | `Otillåten filtyp. Bara JPEG, PNG, WebP, HEIC och PDF.` |
 | 422 | `Filen kunde inte läsas. Den kan vara skadad.` |
 | 429 | för många inskick den senaste timmen |
@@ -995,7 +995,7 @@ och inställningar: [inkorg-gmail.md](inkorg-gmail.md)). Varje mejl i inkorgen b
 
 En ny post får avsändarens adress i `sender_address`, mejlets text i `message` (en HTML-text
 utan taggar; bara de första 100 000 tecknen läses och högst 10 000 sparas) och en gissad besättning. Bilagorna går genom samma kontroller som en uppladdning
-([Ladda upp](#ladda-upp)): JPEG, PNG, WebP, HEIC och PDF, högst 10 MB styck och högst 10 bilder
+([Ladda upp](#ladda-upp)): JPEG, PNG, WebP, HEIC och PDF, högst 25 MB styck (lika stort som Gmail tar emot) och högst 10 bilder
 per mejl. En bild vars kortaste sida är under 200 bildpunkter (en logotyp i signaturen, en
 spårningspixel) är inget dokument. Övriga bilagor sparas inte, men deras namn står i händelsen `inkommen`. Ett foto som
 skickats inbäddat i texten räknas som en bilaga. Genbanksansvarig och hjälpare i postens
@@ -1307,11 +1307,12 @@ dokumentet inte hör till den; 409 när dokumentet inte har någon kopia.
 
 ## Gränser och sådant gränssnittet behöver veta
 
-- En begäran till uppladdningen får vara högst 10 MB allt som allt, filer och formulär tillsammans:
-  lika mycket som nginx släpper igenom (`client_max_body_size 10M`). Ett större inskick nekas med 413
-  (problem+json när begäran når Flask, annars nginx egen sida), så gränssnittet bör räkna filernas
-  storlek före sändningen och dela upp inskicket. Resten av API:t tar högst 11 MB, men nginx högst
-  10 MB.
+- En fil får vara högst 25 MB och en begäran till uppladdningen högst 50 MB allt som allt, filer och
+  formulär tillsammans: lika mycket som nginx släpper igenom (`client_max_body_size 50M`). Next.js
+  släpper igenom lika mycket till Server Actions och middleware (`bodySizeLimit` och
+  `proxyClientMaxBodySize` i `next.config.js`). Ett större inskick nekas med 413 (problem+json när
+  begäran når Flask, annars nginx egen sida), så gränssnittet räknar filernas storlek före
+  sändningen (högst 48 MB) och ber om ett nytt inskick för resten. Resten av API:t tar högst 26 MB.
 - Telefonens filväljare: `<input type="file" accept="image/*,application/pdf" multiple>` ger både
   kamera och bildbibliotek.
 - Bilderna kräver inloggningens cookie. Använd dem som `src` i samma ursprung, eller hämta dem

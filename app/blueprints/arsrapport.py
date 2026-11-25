@@ -518,7 +518,7 @@ NO_RIGHT_TO_ADD = "Du har inte rätt att lägga till kaniner i besättningen."
 @arsrapport_bp.errorhandler(413)
 def too_large(_exc):
     """A photo over MAX_REQUEST (werkzeug's 413 is HTML) as problem+json, as the queue's upload."""
-    return problem(413, "Payload Too Large", "Filen är för stor. Max 10 MB.")
+    return problem(413, "Payload Too Large", "Filen är för stor. Max 25 MB.")
 
 
 def _photo_key(access):

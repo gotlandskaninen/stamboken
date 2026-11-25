@@ -13,10 +13,13 @@ const nextConfig = {
   transpilePackages: ["react-easy-crop"],
   experimental: {
     // Intyg uploads go through a Server Action. Next.js only has this limit
-    // globally (no per-action setting). nginx cuts every request at 10 MiB
-    // before it gets here, so 10mb is all that can arrive; Flask enforces the
-    // real limits per endpoint, and the upload form keeps the files to 9 MB.
-    serverActions: { bodySizeLimit: "10mb" },
+    // globally (no per-action setting). nginx cuts every request at 50 MiB
+    // before it gets here, so 50mb is all that can arrive; Flask enforces the
+    // real limits per endpoint, and the upload form keeps the files to 48 MB.
+    serverActions: { bodySizeLimit: "50mb" },
+    // The middleware (src/middleware.ts) runs on /stamboken/*, where those
+    // actions post, and Next.js buffers only 10 MB of a body for it by default.
+    proxyClientMaxBodySize: "50mb",
     optimizePackageImports: ["@mui/material", "@mui/icons-material"],
   },
   // The buyer's erase link carries its token in the fragment, which no server

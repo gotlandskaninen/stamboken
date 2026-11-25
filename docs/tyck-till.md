@@ -32,7 +32,7 @@ Det är grinden: ingen separat flagga slår funktionen på eller av.
 
 `POST /api/v2/tyck-till` (multipart, öppen utan inloggning, fel som RFC 9457):
 
-1. Hela anropet får vara högst 9 MB (nginx tar 10 MB), annars 413.
+1. Hela anropet får vara högst 25 MB (nginx tar 50 MB), annars 413.
 2. Fälten kontrolleras: `typ` (`fel` eller `onskemal`), `text` (1 till 5000
    tecken), `inskick_id` (UUID från webbläsaren), `email` (krävs när man inte är
    inloggad, och används om den fylls i). Utloggad blir alltid privat.

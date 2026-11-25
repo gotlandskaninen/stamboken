@@ -149,15 +149,15 @@ describe("UploadForm", () => {
     );
   });
 
-  it("refuses more than 9 MB in total, the room nginx's 10 MiB leaves for the multipart overhead", async () => {
+  it("refuses more than 48 MB in total, the room nginx's 50 MiB leaves for the multipart overhead", async () => {
     render(<UploadForm herds={["G9001"]} />);
     const big = (n: number) =>
       new File([new Uint8Array(n)], "stor.pdf", { type: "application/pdf" });
     fireEvent.change(screen.getByTestId("inskick-files"), {
-      target: { files: [big(9 * 1024 * 1024 + 1)] },
+      target: { files: [big(48 * 1024 * 1024 + 1)] },
     });
     fireEvent.click(await screen.findByRole("button", { name: "Skicka" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("högst 9 MB");
+    expect(await screen.findByRole("alert")).toHaveTextContent("högst 48 MB");
     expect(uploadIntyg).not.toHaveBeenCalled();
   });
 

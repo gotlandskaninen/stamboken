@@ -167,7 +167,7 @@ APP.config.update(
     CACHE_DEFAULT_TIMEOUT=300,
     UPLOAD_FOLDER=UPLOAD_DIR,
     PROFILE_UPLOAD_FOLDER=os.path.join(UPLOAD_DIR, "profiler"),
-    MAX_CONTENT_LENGTH=11 * 1024 * 1024,  # 11MB — upload endpoint validates 10MB max
+    MAX_CONTENT_LENGTH=26 * 1024 * 1024,  # one 25 MB file and its form; the queue's uploads raise it per request
 )
 
 

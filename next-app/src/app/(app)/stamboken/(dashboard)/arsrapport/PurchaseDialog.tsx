@@ -36,7 +36,8 @@ type Photo = {
   docType?: "bevis" | "intyg"; // what the photo shows, chosen once it is uploaded
 };
 const EMPTY: Photo = { status: "tom" };
-const PHOTO_TYPE_TEXT = "Välj om fotot visar försäljningsbeviset eller intyget.";
+const PHOTO_TYPE_TEXT =
+  "Välj om fotot visar försäljningsbeviset eller intyget.";
 // S7: a number Stamboken lacks. The buyer sends the photos; the genebank manager registers the rabbit.
 export const NOT_IN_STAMBOKEN_TEXT =
   "Kaninen finns inte i Stamboken än. Skicka foto av intyget, och av försäljningsbeviset om du har det. Genbanksansvarig registrerar kaninen och för över den till dig.";
@@ -96,7 +97,7 @@ function PhotoField({
     try {
       const prepared = await prepare(file);
       if (prepared.size > MAX_BYTES)
-        next = { status: "fel", error: "Filen är för stor. Max 10 MB." };
+        next = { status: "fel", error: "Filen är för stor. Max 25 MB." };
       else {
         const data = new FormData();
         data.set("file", prepared);
