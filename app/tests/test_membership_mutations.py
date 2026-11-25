@@ -128,6 +128,29 @@ class TestMatrikelDomainFunctions(DatabaseTest):
         self.assertEqual(live, [])
         self.assertEqual(db.Member.get_by_id(self.family.id).email, "frank.ratt@example.com")
 
+    def _added_notice(self, person):
+        return db.MailMessage.get(db.MailMessage.dedupe_key == f"medlemskap.tillagd:{person.id}")
+
+    def test_reactivate_requeues_an_undelivered_added_notice(self):
+        person = matrikel.add_person(
+            self.membership, {"first_name": "Nina", "last_name": "Nysson", "email": "nina@example.com"}, self.admin
+        )
+        matrikel.soft_delete_person(person, self.admin)
+        self.assertEqual(self._added_notice(person).status, "cancelled")
+        matrikel.reactivate_person(person, self.admin)
+        self.assertEqual(self._added_notice(person).status, "queued")
+
+    def test_reactivate_does_not_resend_a_delivered_added_notice(self):
+        person = matrikel.add_person(
+            self.membership, {"first_name": "Nina", "last_name": "Nysson", "email": "nina@example.com"}, self.admin
+        )
+        db.MailMessage.update(status="sent").where(
+            db.MailMessage.dedupe_key == f"medlemskap.tillagd:{person.id}"
+        ).execute()
+        matrikel.soft_delete_person(person, self.admin)
+        matrikel.reactivate_person(person, self.admin)
+        self.assertEqual(self._added_notice(person).status, "sent")
+
     def test_reactivate_person_refuses_anonymized_and_active(self):
         with self.assertRaises(ValueError):
             matrikel.reactivate_person(self.family, self.admin)  # still active

@@ -455,6 +455,8 @@ def reactivate_person(member, actor):
         ended = person.end_date
         person.end_date = None
         person.save()
+        if _added_by_another(person):  # soft_delete_person stopped her notice; a delivered one is not sent twice
+            queue_member_added(person)
         if person.role == "huvudmedlem":
             reserve_holder(person.id)
         write_matrikel_audit(
