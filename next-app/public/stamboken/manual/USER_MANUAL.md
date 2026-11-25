@@ -964,9 +964,10 @@ första anropet och kan ta upp till en minut.
    var på innan.
 2. **Översikt** – överst står **Läget**: några korta rader om Ne jämfört med FAO:s gräns
    50 och målet 100, om inavelsökningen per generation (ΔF) jämfört med FAO:s gräns
-   1 %, och om hur många founderdjur som har bara 1 bärare kvar. En bock betyder att
-   läget är bra, en varningstriangel att du ska hålla ögonen på det och ett utropstecken
-   att något behöver göras. **Se vilka** går till tabellen Founderdjurens läge. Sedan
+   1 %, och om hur många founderdjur som har bara 1 bärare kvar. Finns det founderdjur
+   utan bärare i beräkningen men med möjliga bärare att leta upp, får de en egen rad. En
+   bock betyder att läget är bra, en varningstriangel att du ska hålla ögonen på det och
+   ett utropstecken att något behöver göras. **Se vilka** går till tabellen Founderdjurens läge. Sedan
    kommer nyckeltalen **Kaniner i beräkningen**, **Effektiv populationsstorlek (Ne)**
    (målet är minst 50, helst 100), **Effektivt antal founderdjur (FE)** och
    **Medelsläktskap (MK)**, diagrammet **Founderdjur med störst andel av generna**,

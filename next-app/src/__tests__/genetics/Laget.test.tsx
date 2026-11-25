@@ -87,6 +87,34 @@ describe("lageLines", () => {
     ).toBe("good");
   });
 
+  it("adds a line for founderdjur without carriers only when there are possible carriers to look for", () => {
+    const none = metrics({ effective_population_size: null, delta_f: null });
+    const lost = (recoverable_carriers: string[]) =>
+      ({ ...founder("lost"), recoverable_carriers }) as FounderAtRisk;
+    expect(
+      lageLines(none, [
+        founder("critical"),
+        lost(["G9002-2301"]),
+        lost(["G9002-2302", "G9002-2303"]),
+        lost([]),
+        founder("lost"),
+      ])[1],
+    ).toEqual({
+      level: "warning",
+      text: "2 founderdjur saknar bärare i beräkningen, men det finns möjliga bärare att leta upp.",
+      anchor: "founderdjurens-lage",
+    });
+    // Without possible carriers there is nothing to do, so no line.
+    expect(lageLines(none, [founder("ok"), lost([]), founder("lost")])).toEqual(
+      [
+        {
+          level: "good",
+          text: "Inget founderdjur har bara 1 bärare kvar.",
+        },
+      ],
+    );
+  });
+
   it("says nothing for an empty genebank, a missing number or founders not yet loaded", () => {
     expect(lageLines(metrics({ n_active: 0 }), [founder("critical")])).toEqual(
       [],

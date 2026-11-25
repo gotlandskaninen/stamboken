@@ -79,6 +79,17 @@ export function lageLines(
             text: "Inget founderdjur har bara 1 bärare kvar.",
           },
     );
+    // Only when there is something to do: rabbits outside the calculation that may carry the genes.
+    const lookFor = founders.filter(
+      (f) => f.risk_level === "lost" && f.recoverable_carriers?.length,
+    ).length;
+    if (lookFor > 0) {
+      lines.push({
+        level: "warning",
+        text: `${lookFor} founderdjur saknar bärare i beräkningen, men det finns möjliga bärare att leta upp.`,
+        anchor: FOUNDER_TABLE_ID,
+      });
+    }
   }
   return lines;
 }
