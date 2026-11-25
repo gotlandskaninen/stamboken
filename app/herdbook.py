@@ -501,7 +501,7 @@ LOGIN.login_view = "/api/login/google"
 
 # Register domain-based Blueprints (ADR-0007)
 from blueprints import register_blueprints  # noqa: E402
-from blueprints.common import check_genebank_manager_access, contact_problem, problem  # noqa: E402
+from blueprints.common import check_genebank_manager_access, contact_problem, manager_required, problem  # noqa: E402
 
 register_blueprints(APP)
 
@@ -1228,24 +1228,19 @@ def _opt_bool_arg(name):
 
 @APP.route("/api/manage/herd", methods=["GET"])
 @login_required
+@manager_required
 def list_all_herds():
     """
-    List every herd for the adminpanel list page.
+    List the herds for the adminpanel list page.
 
     Query params: genebank_id (int), active (bool), has_owner (bool),
     q (free text — herd code/name/contact), page, page_size.
 
-    Auth: admin only. Manager(gb) lists their gb's herds via the
-    existing GET /api/genebank/<gb_id>.
+    Auth: admin, or manager(gb) — scoped to the genebanks they manage (#214).
     """
-    user = current_user
-    if not user.is_admin:
-        return problem(
-            403, "Admin-behörighet krävs", "Endast admin får lista alla besättningar.", type="admin-required"
-        )
     return jsonify(
         da.list_all_herds(
-            user,
+            current_user,
             genebank_id=request.args.get("genebank_id", type=int),
             active=_opt_bool_arg("active"),
             has_owner=_opt_bool_arg("has_owner"),

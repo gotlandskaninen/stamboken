@@ -1393,7 +1393,8 @@ def _herd_owner_map():
 
 def list_all_herds(user, *, genebank_id=None, active=None, has_owner=None, search=None, page=1, page_size=50):
     """
-    Admin-only cross-genebank herd list. Joins genebank name +
+    Adminpanel herd list: every genebank for admin, only the managed
+    genebanks for a manager (#214). Joins genebank name +
     owner usernames. Sorted by genebank + the numeric part of the herd
     code (an earlier design said herd.name asc, but `name` is the CONTACT person
     and NULL/empty for hundreds of rows — that order made specific herds
@@ -1402,9 +1403,11 @@ def list_all_herds(user, *, genebank_id=None, active=None, has_owner=None, searc
     filters run BEFORE pagination so `total` and page sizes stay correct.
     Returns {"herds": [...], "total": N, "page": ..., "page_size": ...}.
     """
-    if not user.is_admin:
-        raise ValueError("admin-required")
+    if not user.is_admin and not user.is_manager:
+        raise ValueError("manager-required")
     q = Herd.select(Herd, Genebank).join(Genebank)
+    if not user.is_admin:
+        q = q.where(Herd.genebank.in_(user.is_manager))
     if genebank_id is not None:
         q = q.where(Herd.genebank == genebank_id)
     if active is not None:

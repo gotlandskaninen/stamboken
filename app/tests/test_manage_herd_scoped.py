@@ -57,13 +57,32 @@ class TestManageHerdScoped(DatabaseTest):
             haystack = f"{r['herd']} {r['herd_name'] or ''} {r['name'] or ''}".lower()
             self.assertIn(needle, haystack)
 
-    def test_manage_herd_list_manager_gets_403(self):
-        # Managers read their gb's herds via
-        # /api/genebank/<gb_id>; the cross-gb list is admin-only.
+    def test_manage_herd_list_manager_sees_only_own_genebank(self):
+        # #214: the manager's herd page needs the same search and filters as
+        # admin, so the list answers managers too, scoped to their genebanks.
         self.login("man", "pass")
         resp = self.client.get("/api/manage/herd")
-        self.assertEqual(resp.status_code, 403)
-        self.assertIn("application/problem+json", resp.content_type)
+        self.assertEqual(resp.status_code, 200, resp.data)
+        body = resp.get_json()
+        self.assertEqual(sorted(r["herd"] for r in body["herds"]), ["G1", "G2"])
+        self.assertEqual(body["total"], 2)
+
+    def test_manage_herd_list_manager_cannot_reach_other_genebank(self):
+        self.login("man", "pass")
+        other_gb = self.herds[2].genebank_id
+        for query in (f"genebank_id={other_gb}", "q=M3", f"genebank_id={other_gb}&q=M3"):
+            resp = self.client.get(f"/api/manage/herd?{query}")
+            self.assertEqual(resp.status_code, 200, resp.data)
+            self.assertEqual(resp.get_json()["total"], 0, query)
+            self.assertEqual(resp.get_json()["herds"], [], query)
+
+    def test_manage_herd_list_viewer_and_owner_get_403(self):
+        for username in ("spec", "owner"):
+            self.client = APP.test_client(use_cookies=True)
+            self.login(username, "pass")
+            resp = self.client.get("/api/manage/herd")
+            self.assertEqual(resp.status_code, 403, username)
+            self.assertIn("application/problem+json", resp.content_type)
 
     def test_manage_herd_detail_by_id(self):
         self.login("admin", "pass")
