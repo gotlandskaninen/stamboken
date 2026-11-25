@@ -14,6 +14,8 @@ på skärmen) och slutar med **Skärmarna** (vad varje sida innehåller).
 - [Del 0 – Komma igång](#del-0--komma-igång)
   - [Logga in](#logga-in)
   - [Hitta i Stamboken](#hitta-i-stamboken)
+  - [Visa runt](#visa-runt)
+  - [Tyck till](#tyck-till)
   - [Testmiljön och riktiga stamboken](#testmiljön-och-riktiga-stamboken)
   - [Ordlista](#ordlista)
 - [Del 1 – Uppfödare](#del-1--uppfödare)
@@ -106,12 +108,33 @@ Till höger finns:
 
 - **SV / EN** – byter språk.
 - Klockan **Notiser** – meddelanden från systemet, till exempel bekräftelser och fel.
-- Din avatar (initialer eller bild) – menyn med **Profil**, **Manual** (den här manualen), **Adminpanel** (om du har
+- Din avatar (initialer eller bild) – menyn med **Profil**, **Manual** (den här manualen),
+  **Visa runt** (en [rundtur](#visa-runt)), **Adminpanel** (om du har
   rollen), **Medlemsansökningar**, **Matrikel** och **Statistik** (om du hanterar
   medlemsregistret), **Byt till testmiljön** / **Byt till riktiga stamboken** och **Logga ut**.
 
 Den blå rutan "Detta är nya Stamboken (beta)" stänger du med **Stäng**. Valet sparas
 i webbläsaren.
+
+### Visa runt
+
+Rundturen pekar ut de viktigaste delarna av sidan du är på, en i taget. Varje steg har
+en kort text och en länk hit till manualen. Du startar den med **Visa runt** i
+avatarmenyn, eller i rutan "Kom igång med din besättning" på Min besättning.
+
+- **Nästa** och **Tillbaka** flyttar mellan stegen. Piltangenterna gör samma sak.
+- **Klar** på sista steget, krysset **Stäng rundturen** eller Esc avslutar.
+- Rundturen visar bara det som finns på sidan. Starta den på Min besättning för att se
+  flikarna, och på en kanins sida för att se foto och intyg.
+
+Första gången du kommer till Min besättning frågar Stamboken om du vill se rundturen.
+Svarar du **Nej tack** frågar den inte igen. Valet sparas i webbläsaren.
+
+### Tyck till
+
+Fliken **Tyck till** sitter vid högerkanten på varje sida. På mobilen finns **Tyck till**
+också i menyn. Välj om något inte fungerar eller om du önskar något, och skriv några ord.
+De som utvecklar Stamboken läser det.
 
 ### Testmiljön och riktiga stamboken
 
