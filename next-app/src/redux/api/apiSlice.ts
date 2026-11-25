@@ -229,6 +229,7 @@ export interface PopulationMetrics {
   mean_equiv_gen: number;
   mean_full_gen: number;
   mean_max_gen: number;
+  reference_start?: string; // ISO date: life signs from this day on count for the reference population
 }
 
 export interface FounderStatistics {
@@ -282,6 +283,8 @@ export interface TrendDataPoint {
   mean_inbreeding: number;
   mean_kinship: number;
   effective_population_size: number | null; // realised Ne over the year's members, like the card
+  ne_se: number | null; // its standard error
+  ne_n: number | null; // rabbits behind it (more than one equivalent generation)
   founder_equivalents: number;
   data_quality: "high" | "medium" | "low";
 }

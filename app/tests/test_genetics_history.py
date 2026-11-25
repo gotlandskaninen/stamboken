@@ -433,7 +433,7 @@ class TestHistoryFounderEquivalents(HistoryTest):
         self.assertNotEqual(rows[-1]["founder_equivalents"], rows[-1]["active_count"])  # not the trivial case
 
     def test_effective_population_size_is_the_cards_estimator_over_the_years_members(self):
-        """Each year's Ne is what population metrics (the card) gives over that year's members."""
+        """Each year's Ne, its standard error and N are what population metrics (the card) gives over its members."""
         _, rows = gs.desired_history_rows(self.gb.id, TODAY)
         snap = ps.build_snapshot(self.gb.id, gs.fetch_pedigree_rows(self.gb.id), set(), key=("t",), seq=0)
 
@@ -442,20 +442,29 @@ class TestHistoryFounderEquivalents(HistoryTest):
             start, as_of = rp.history_window(r["report_year"])
             members = rp.members(self.gb.id, start=start, as_of=as_of, live=False)
             card = calculate_population_metrics(snap.individuals, population_ids=[i for i in snap.ids if i in members])
-            by_year[r["report_year"]] = (r["effective_population_size"], card["effective_population_size"])
+            by_year[r["report_year"]] = (
+                [r["effective_population_size"], r["ne_se"], r["ne_n"]],
+                [card["effective_population_size"], card["ne_se"], card["ne_n"]],
+            )
 
         # 2021 and 2022: no member has more than one equivalent generation, so neither gives an Ne.
-        self.assertEqual(by_year[2021], (None, None))
-        self.assertEqual(by_year[2022], (None, None))
+        self.assertEqual(by_year[2021], ([None, None, 0], [None, None, 0]))
+        self.assertEqual(by_year[2022], ([None, None, 0], [None, None, 0]))
         stored, card = by_year[2023]
-        self.assertIsNotNone(card)  # the inbred grandchild
-        np.testing.assert_allclose(stored, card, rtol=1e-12)
+        self.assertEqual(card[2], 2)  # the two grandchildren
+        self.assertIsNotNone(card[1])
+        np.testing.assert_allclose(stored[:2], card[:2], rtol=1e-12)
+        self.assertEqual(stored[2], card[2])
 
         gs.reconcile_history(self.gb.id, today=TODAY)
-        stored_rows = {r.report_year: r.effective_population_size for r in self.rows()}
-        self.assertIsNone(stored_rows[2021])
-        self.assertEqual(np.float32(stored_rows[2023]), np.float32(card))  # REAL column
-        trend = {r["year"]: r["effective_population_size"] for r in gs.get_genetics_trends(self.gb.id)}
+        stored_rows = {r.report_year: (r.effective_population_size, r.ne_se, r.ne_n) for r in self.rows()}
+        self.assertEqual(stored_rows[2021], (None, None, 0))
+        ne, se, n = stored_rows[2023]
+        self.assertEqual((np.float32(ne), np.float32(se), n), (np.float32(card[0]), np.float32(card[1]), 2))  # REAL
+        trend = {
+            r["year"]: (r["effective_population_size"], r["ne_se"], r["ne_n"])
+            for r in gs.get_genetics_trends(self.gb.id)
+        }
         self.assertEqual(trend, stored_rows)
 
     def test_one_unknown_parent_is_a_founder_of_its_own(self):
@@ -500,7 +509,8 @@ class TestTrendsAndScheduling(HistoryTest):
             set(rows[0]),
             {
                 "year", "snapshot_date", "population_size", "active_count", "mean_inbreeding", "mean_kinship",
-                "effective_population_size", "founder_equivalents", "data_quality", "definition_version",
+                "effective_population_size", "ne_se", "ne_n", "founder_equivalents", "data_quality",
+                "definition_version",
             },
         )  # fmt: skip
         self.assertEqual(rows[1]["snapshot_date"], "2026-03-31")

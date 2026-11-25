@@ -19,12 +19,15 @@ import {
   useFetchPopulationMetricsQuery,
   useFetchFounderStatisticsQuery,
   useFetchFoundersAtRiskQuery,
+  useFetchGeneticsTrendsQuery,
+  type TrendDataPoint,
 } from "@/redux/api/apiSlice";
 import { decimal, percent } from "@/lib/genetics";
-import KpiCard, { ThresholdLevel } from "./KpiCard";
+import KpiCard from "./KpiCard";
 import GeneticsInfoPanel, {
   FOUNDERDJUR,
   IN_CALCULATION,
+  MK_TEXT,
 } from "./GeneticsInfoPanel";
 import GeneticsError from "./GeneticsError";
 import TrendChart from "./TrendChart";
@@ -35,14 +38,25 @@ const Chart = dynamic(() => import("react-apexcharts"), {
   ssr: false,
 });
 
-// The 5 % and 10 % levels have no cited source, so the card states the band, not a verdict.
-// Banded on the value as shown (one decimal, like percent()), so "5,0 %" never reads "under 5 %".
-function mkBand(mk: number): { text: string; level: ThresholdLevel } {
-  const shown = Number((mk * 100).toFixed(1));
-  if (shown < 5) return { text: "under 5\u00a0%", level: "good" };
-  if (shown <= 10) return { text: "5–10\u00a0%", level: "warning" };
-  return { text: "över 10\u00a0%", level: "danger" };
+// No literature gives an absolute MK threshold (FAO 2023: kinship rises with pedigree
+// knowledge), so the card compares with the last closed year instead of colouring a level.
+function lastYearMk(trend: TrendDataPoint[]): string {
+  const last = trend[trend.length - 1];
+  if (last?.mean_kinship == null) return "förra året –";
+  const when =
+    last.year === new Date().getFullYear() - 1
+      ? "förra året"
+      : `år ${last.year}`;
+  return `${when} ${percent(last.mean_kinship)}`;
 }
+
+const swedishDate = (iso: string) =>
+  new Date(iso).toLocaleDateString("sv-SE", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  });
 
 const pctLabel = (val: number) => `${decimal(val, 1)}\u00a0%`;
 
@@ -109,6 +123,8 @@ const OverviewTab = ({ genebankId }: OverviewTabProps) => {
   // The founderdjur table's rows (the same request as the table below), so the
   // card and the table count the same animals. Until it arrives the count is left out.
   const { data: founderRows } = useFetchFoundersAtRiskQuery(genebankId);
+  // The trend below shares this request; its last row is the last closed year.
+  const { data: trend } = useFetchGeneticsTrendsQuery(genebankId);
 
   if (metricsLoading || foundersLoading) {
     return (
@@ -149,7 +165,6 @@ const OverviewTab = ({ genebankId }: OverviewTabProps) => {
   const nWithCarriers = founderRows?.filter(
     (f) => f.risk_level !== "lost",
   ).length;
-  const mk = mkBand(metrics.mean_kinship);
 
   return (
     <React.Fragment>
@@ -172,7 +187,11 @@ const OverviewTab = ({ genebankId }: OverviewTabProps) => {
           <KpiCard
             title="Kaniner i beräkningen"
             value={decimal(metrics.n_active)}
-            subtitle="levande, med intyg, i en aktiv besättning"
+            subtitle={
+              metrics.reference_start
+                ? `levande, med intyg, i en aktiv besättning, rapporterade sedan ${swedishDate(metrics.reference_start)}`
+                : "levande, med intyg, i en aktiv besättning"
+            }
             tooltip={IN_CALCULATION}
           />
         </Grid>
@@ -207,9 +226,8 @@ const OverviewTab = ({ genebankId }: OverviewTabProps) => {
           <KpiCard
             title="Medelsläktskap (MK)"
             value={empty ? "–" : percent(metrics.mean_kinship)}
-            subtitle={empty ? undefined : mk.text}
-            level={empty ? "neutral" : mk.level}
-            tooltip="Hur nära släkt kaninerna i beräkningen i genomsnitt är med varandra. Det är också den andel av founderdjurens genetiska variation som har gått förlorad. Lägre är bättre."
+            subtitle={trend ? lastYearMk(trend) : undefined}
+            tooltip={MK_TEXT}
           />
         </Grid>
       </Grid>

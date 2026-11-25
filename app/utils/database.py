@@ -2022,7 +2022,8 @@ class GeneticMetricsHistory(BaseModel):
     """One row per closed report year, fully derived; replaced on reconcile.
 
     ``effective_population_size`` is the realised Ne over the year's members, the
-    estimator the dashboard card uses for today (genetics.calculate_realised_ne).
+    estimator the dashboard card uses for today (genetics.calculate_realised_ne),
+    with its standard error ``ne_se`` and the animals behind it ``ne_n``.
     """
 
     id = AutoField(primary_key=True)
@@ -2039,6 +2040,8 @@ class GeneticMetricsHistory(BaseModel):
     founder_equivalents = FloatField(null=True)
     fge = FloatField(null=True)
     effective_population_size = FloatField(null=True)
+    ne_se = FloatField(null=True)
+    ne_n = IntegerField(null=True)
     data_quality = CharField(max_length=10)  # "high", "medium", "low"
     created_at = DateTimeField(default=datetime.now)
 
@@ -4936,12 +4939,21 @@ def migrate_53_to_54():
 
 
 def migrate_54_to_55():
-    """History rows store each year's realised Ne; the trend drew a rolling ln(1 - F) regression instead."""
+    """History rows store each year's realised Ne, its standard error and the animals behind it.
+
+    The trend drew a rolling ln(1 - F) regression instead.
+    """
     with DATABASE.atomic():
         table = GeneticMetricsHistory._meta.table_name
-        # A replay from below 16 creates the table from the current model, column included.
-        if "effective_population_size" not in {c.name for c in DATABASE.get_columns(table)}:
-            migrate(DATABASE_MIGRATOR.add_column(table, "effective_population_size", FloatField(null=True)))
+        existing = {c.name for c in DATABASE.get_columns(table)}
+        # A replay from below 16 creates the table from the current model, columns included.
+        for name, fld in (
+            ("effective_population_size", FloatField(null=True)),
+            ("ne_se", FloatField(null=True)),
+            ("ne_n", IntegerField(null=True)),
+        ):
+            if name not in existing:
+                migrate(DATABASE_MIGRATOR.add_column(table, name, fld))
         SchemaHistory.insert(  # pylint: disable=E1120
             version=55, comment="history: realised Ne per report year", applied=datetime.now()
         ).execute()

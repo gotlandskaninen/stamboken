@@ -960,15 +960,18 @@ pappersintyg; de byts ut för hand.
 första anropet och kan ta upp till en minut.
 
 1. Välj **Genbank** om du ansvarar för flera.
-2. **Översikt** – nyckeltalen **Kaniner i beräkningen**, **Effektiv
-   populationsstorlek (Ne)** (målet är minst 50, helst 100), **Effektivt antal
-   founderdjur (FE)** och **Medelsläktskap (MK)**, diagrammet **Founderdjur med störst
-   andel av generna**, rutan **Inavel** med genomsnittlig inavel (F) och inavelsökning
-   per generation (ΔF), **Genetiska trender** med ett mått i taget och tabellen
-   **Founderdjurens läge** med statusarna Ingen bärare, 1 bärare kvar, 2–3 bärare,
-   Liten andel och Ok. Founderdjur är rasens ursprungsdjur, kaniner utan kända
-   föräldrar i stamboken. Korten visar läget i dag; trenden har ett värde per stängd
-   årsrapportering.
+2. **Översikt** – nyckeltalen **Kaniner i beräkningen** (med datumet som räkningen
+   börjar från), **Effektiv populationsstorlek (Ne)** (målet är minst 50, helst 100),
+   **Effektivt antal founderdjur (FE)** och **Medelsläktskap (MK)**, som jämförs med
+   förra året eftersom det inte finns någon gräns för vad som är högt. Sedan kommer
+   diagrammet **Founderdjur med störst andel av generna**, rutan **Inavel** med
+   genomsnittlig inavel (F) och inavelsökning per generation (ΔF), **Genetiska
+   trender** med ett mått i taget och tabellen **Founderdjurens läge** med statusarna
+   Ingen bärare, 1 bärare kvar, 2–3 bärare, Liten andel och Ok. Founderdjur är rasens
+   ursprungsdjur, kaniner utan kända föräldrar i stamboken. Korten visar läget i dag;
+   trenden har ett värde per stängd årsrapportering. I trenden för Ne är en ihålig
+   punkt en osäker skattning, från färre än 30 kaniner; för musen över punkten så syns
+   Ne med osäkerheten och antalet kaniner.
 3. **Avelsprioritet** – kaninerna sorterade efter hur viktiga de är för aveln:
    **Högsta**, **Hög** eller **Övriga**, med **Ovanliga gener (0–100)**, **Unika gener**
    och **Skäl**. Knapparna **Högsta (N)**, **Hög (N)** och **Övriga (N)** slår av och på
@@ -978,7 +981,8 @@ första anropet och kan ta upp till en minut.
    (1 = utmärkt, 6 = dålig) och **Skäl**.
 
 Panelen **Förklaringar** på varje flik förklarar förkortningarna och vilka kaniner som är
-med i beräkningen. Frågetecknen vid rubrikerna ger samma text som verktygstips; du når
+med i beräkningen. Regeln för vilka kaniner som räknas är preliminär tills styrelsen har
+beslutat. Frågetecknen vid rubrikerna ger samma text som verktygstips; du når
 dem också med tabbtangenten. Står det under Genetiska trender att värdena för Ne räknas
 fram, laddar du om sidan om en stund.
 

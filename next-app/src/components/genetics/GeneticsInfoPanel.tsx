@@ -17,7 +17,10 @@ export const FOUNDERDJUR =
   "Founderdjur: rasens ursprungsdjur, kaniner utan kända föräldrar i stamboken.";
 
 export const IN_CALCULATION =
-  "Kaniner med intyg som lever, inte är kastrerade och står i en aktiv besättning i genbanken (inte GX1 eller MX1), och som har fötts, sålts eller årsrapporterats sedan 1 januari det år som den senast stängda årsrapporteringen gäller. Nyckeltalen och tabellerna räknas på dem; trenden räknar varje år på det årets kaniner.";
+  "Kaniner med intyg som lever, inte är kastrerade och står i en aktiv besättning i genbanken (inte GX1 eller MX1), och som har fötts, sålts eller årsrapporterats sedan 1 januari det år som den senast stängda årsrapporteringen gäller. Nyckeltalen och tabellerna räknas på dem; trenden räknar varje år på det årets kaniner. Regeln är preliminär tills styrelsen har beslutat.";
+
+export const MK_TEXT =
+  "Hur nära släkt kaninerna i beräkningen i genomsnitt är med varandra, i procent. Det är också den andel av founderdjurens genetiska variation som har gått förlorad. Lägre är bättre, men det finns ingen gräns för vad som är högt: talet stiger ju mer av stamtavlan som är känd, så jämför med tidigare år.";
 
 const founderdjur = {
   term: "Founderdjur",
@@ -52,8 +55,8 @@ const descriptions: Record<
     },
     {
       term: "Medelsläktskap (MK)",
-      description:
-        "Hur nära släkt kaninerna i beräkningen i genomsnitt är med varandra, i procent. Det är också den andel av founderdjurens genetiska variation som har gått förlorad. Lägre är bättre.",
+      description: MK_TEXT,
+      source: "FAO 2023, s. 12 (talet stiger med känd stamtavla)",
     },
     {
       term: "Inavelskoefficient (F)",
