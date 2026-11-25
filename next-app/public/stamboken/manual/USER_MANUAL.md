@@ -122,7 +122,7 @@ Rundturen pekar ut de viktigaste delarna av sidan du är på, en i taget. Varje 
 en kort text och en länk hit till manualen. Du startar den med **Visa runt** i
 avatarmenyn, eller i rutan "Kom igång med din besättning" på Min besättning.
 
-- **Nästa** och **Tillbaka** flyttar mellan stegen. Piltangenterna gör samma sak.
+- **Nästa** och **Tillbaka** flyttar mellan stegen.
 - **Klar** på sista steget, krysset **Stäng rundturen** eller Esc avslutar.
 - Rundturen visar bara det som finns på sidan. Starta den på Min besättning för att se
   flikarna, och på en kanins sida för att se foto och intyg.

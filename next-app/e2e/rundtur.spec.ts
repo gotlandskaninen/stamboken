@@ -86,9 +86,6 @@ test.describe("Rundtur för en vanlig medlem", () => {
       await page.keyboard.press("Tab");
       expect(await inTour()).toBe(true);
     }
-    const progress = page.locator(".driver-popover-progress-text");
-    await page.keyboard.press("ArrowRight");
-    await expect(progress).toHaveText(/^2 av /);
     await page
       .getByRole("dialog")
       .getByRole("button", { name: "Nästa" })
