@@ -1729,31 +1729,40 @@ class TestYearlyReportOwnerContracts(FlaskTest):
             is_active=True,
             created_by=self.admin,
         ).id
+        existing = db.YearlyHerdReport.create(
+            herd=self.herds[0], report_date=date(2025, 12, 31), generated_by=self.admin, name="2025",
+            data='{"kaniner": 1}', publish=False, publish_tel=False, publish_email=False, publish_address=False,
+            round=round_id,
+        )  # fmt: skip
         gone = {"status": "error", "message": "Årsrapporten skickas nu i nya Stamboken."}
         for user in (self.admin, self.owner, self.viewer):
             with self.app as ctx:
                 ctx.get("/api/logout")  # the client keeps the previous user's session
                 self.login(ctx, user)
-                for herd in (self.herds[0].herd, "G9999"):
+                for herd in (self.herds[0].herd, self.herds[1].herd, "G9999"):  # with a report, without, unknown
                     with self.subTest(user=user.email, herd=herd):
-                        response = ctx.post(f"/api/herd/{herd}/yearlyreport", json={"report_round_id": round_id})
+                        # a report the old route stored: an active round, the matching year
+                        body = {"report_round_id": round_id, "report_year": 2025, "data": {"kaniner": 3}}
+                        response = ctx.post(f"/api/herd/{herd}/yearlyreport", json=body)
                         self.assertEqual((response.status_code, response.get_json()), (410, gone))
-        self.assertEqual(db.YearlyHerdReport.select().count(), 0)
+        self.assertEqual([(r.id, r.data) for r in db.YearlyHerdReport.select()], [(existing.id, '{"kaniner": 1}')])
 
     def test_get_returns_a_stored_report(self):
         round_ = db.YearlyReportRound.create(
             report_year=2024, start_date=date(2024, 1, 1), end_date=date(2024, 12, 31), created_by=self.admin
         )
         db.YearlyHerdReport.create(
-            herd=self.herds[0], report_date=date(2024, 12, 31), generated_by=self.admin, name="2024", data="{}",
-            publish=False, publish_tel=False, publish_email=False, publish_address=False, round=round_,
+            herd=self.herds[0], report_date=date(2024, 12, 31), generated_by=self.admin, name="2024",
+            data='{"kaniner": 3}', publish=False, publish_tel=False, publish_email=False, publish_address=False,
+            round=round_,
         )  # fmt: skip
         with self.app as ctx:
             self.login(ctx, self.admin)
             response = ctx.get(f"/api/herd/{self.herds[0].herd}/yearlyreport?round_id={round_.id}")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["status"], "success")
-        self.assertIn("report", response.get_json())
+        body = response.get_json()
+        self.assertEqual(body["status"], "success")
+        self.assertEqual((body["report"]["data"], body["report"]["name"]), ({"kaniner": 3}, "2024"))
 
 
 # ============================================================================
