@@ -48,7 +48,7 @@ const STEPS: Array<{
   },
   {
     title: "Öva i testmiljön",
-    text: "Om ditt konto börjar i testmiljön kan du öva på att registrera kaniner där. Testmiljön uppdateras med en kopia av stamboken varje natt. När du har fått tillgång till riktiga stamboken kan du byta miljö i menyn under din bild. Du kan alltid byta tillbaka till testmiljön och prova utan att ändra något på riktigt.",
+    text: "När du loggar in hamnar du i riktiga stamboken. Vill du prova något utan att ändra på riktigt kan du byta till testmiljön i menyn under din bild. Där kan du öva fritt, och allt återställs varje natt.",
     link: {
       href: `${MANUAL_PATH}#testmiljön-och-riktiga-stamboken`,
       label: "Om testmiljön",
