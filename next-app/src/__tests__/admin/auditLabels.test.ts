@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
   fieldLabel,
+  matrikelActionLabel,
+  matrikelChangedFields,
+  matrikelFieldLabel,
+  matrikelValue,
   operationLabel,
   rowTitle,
   tableLabel,
@@ -39,7 +43,9 @@ describe("existing exports are unchanged (UserEditClient imports these)", () => 
     expect(rowTitle("hbuser", "mass-logout-2026-08-21T10:00:00")).toBe(
       "Massutloggning — alla sessioner",
     );
-    expect(rowTitle("audit_log", "purge-ip-20261114T034500Z")).toBe("Gallring av IP-adresser");
+    expect(rowTitle("audit_log", "purge-ip-20261114T034500Z")).toBe(
+      "Gallring av IP-adresser",
+    );
   });
 });
 
@@ -53,5 +59,41 @@ describe("herd_tracking 999.5 columns", () => {
     expect(fieldLabel("yearly_herd_report_id")).toBe("Årsrapport");
     expect(fieldLabel("transfer_id")).toBe("Försäljning");
     expect(fieldLabel("holder_contact_id")).toBe("Köparkontakt (id)");
+  });
+});
+
+describe("matrikel log labels (#244)", () => {
+  it("labels actions and falls back to the raw action", () => {
+    expect(matrikelActionLabel("person_user_linked")).toBe("Konto kopplat");
+    expect(matrikelActionLabel("okand_atgard")).toBe("okand_atgard");
+  });
+
+  it("finds the changed fields in all three payload shapes", () => {
+    expect(
+      matrikelChangedFields({
+        person_id: 1,
+        before: { email: "a@example.com" },
+        after: { email: "b@example.com", phone: "1" },
+      }),
+    ).toEqual(["email", "phone"]);
+    expect(matrikelChangedFields({ fields: ["address", "phone"] })).toEqual([
+      "address",
+      "phone",
+    ]);
+    expect(matrikelChangedFields({ person_id: 1, user_id: 2 })).toEqual([]);
+  });
+
+  it("labels matrikel fields before the studbook's", () => {
+    expect(matrikelFieldLabel("address")).toBe("Gatuadress");
+    expect(matrikelFieldLabel("email")).toBe("E-post");
+    expect(matrikelFieldLabel("herd_id")).toBe("Besättning");
+  });
+
+  it("shows role and status in Swedish and empty as a dash", () => {
+    expect(matrikelValue("role", "skotare")).toBe("Skötare");
+    expect(matrikelValue("membership_status", "inactive")).toBe("Inaktiv");
+    expect(matrikelValue("phone", null)).toBe("—");
+    expect(matrikelValue("email", "[borttagen]")).toBe("[borttagen]");
+    expect(matrikelValue("conveys_herd_ids", [1, 2])).toBe("[1,2]");
   });
 });

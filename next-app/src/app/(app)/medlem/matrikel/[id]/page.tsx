@@ -9,9 +9,10 @@ import styles from "../../medlem.module.css";
 import { MembershipFormCard } from "./MembershipFormCard";
 import { OversiktCard } from "./OversiktCard";
 import { PersonsCard } from "./PersonsCard";
+import { HistorikCard } from "./HistorikCard";
 import { BillingAddressRows } from "../BillingAddressRows";
 import { hasBillingAddress } from "../types";
-import type { MembershipDetail } from "../types";
+import type { MatrikelAuditPage, MembershipDetail } from "../types";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +33,10 @@ export default async function MembershipDetailPage({
   }
 
   const user = await getUser();
+  // A log that cannot be read must not take the member page down with it.
+  const history = await fetchApi<MatrikelAuditPage>(
+    `/v2/members/audit?membership_id=${membership.id}&per_page=10`,
+  ).catch(() => null);
   // Edit affordances: admin or matrikel_admin only — managers read-only.
   const canEdit = Boolean(user?.is_admin) || Boolean(user?.is_matrikel_admin);
 
@@ -97,6 +102,11 @@ export default async function MembershipDetailPage({
               </div>
             </section>
           ) : null}
+          <HistorikCard
+            membershipId={membership.id}
+            history={history}
+            isAdmin={Boolean(user?.is_admin)}
+          />
         </div>
       </div>
     </>

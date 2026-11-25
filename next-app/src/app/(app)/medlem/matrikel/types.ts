@@ -166,3 +166,21 @@ export function roleLabel(role: string, organizationName?: string | null) {
     ? "Kontaktperson"
     : (ROLE_LABELS[role] ?? role);
 }
+
+/** One row of GET /v2/members/audit (#244, app/utils/matrikel.py query_matrikel_audit). */
+export type MatrikelAuditRow = {
+  id: number;
+  action: string;
+  created_at: string; // ISO 8601 with offset
+  actor: { id: number; name: string } | null; // null: the nightly anonymisation
+  membership: { id: number; member_number: number | null };
+  person: { id: number; name: string } | null;
+  payload: Record<string, unknown>;
+};
+
+export type MatrikelAuditPage = {
+  rows: MatrikelAuditRow[];
+  total: number;
+  page: number;
+  per_page: number;
+};
