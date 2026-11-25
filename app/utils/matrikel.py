@@ -360,6 +360,32 @@ def _erased_accounts() -> set[int]:
     return {p["user_id"] for p in links if p.get("person_id") in erased and isinstance(p.get("user_id"), int)}
 
 
+def _household_erasures(membership_ids) -> dict[int, datetime]:
+    """When each household was last erased: the latest person_anonymized row after which no person was active.
+
+    anonymize_person() erases the household as its last active person goes, and writes no other marker. A person was
+    active at that moment if added before it and not ended by that day; an end the same day counts as before, which
+    errs towards masking. The mark outlives persons added later: their household is new, its old rows stay erased.
+    """
+    if not membership_ids:
+        return {}
+    active_then = Member.select().where(
+        Member.membership == MatrikelAudit.membership,
+        Member.created_at <= MatrikelAudit.created_at,
+        Member.end_date.is_null() | (Member.end_date > fn.DATE(MatrikelAudit.created_at)),
+    )
+    rows = (
+        MatrikelAudit.select(MatrikelAudit.membership, fn.MAX(MatrikelAudit.created_at).alias("erased_at"))
+        .where(
+            MatrikelAudit.membership.in_(list(membership_ids)),
+            MatrikelAudit.action == "person_anonymized",
+            ~fn.EXISTS(active_then),
+        )
+        .group_by(MatrikelAudit.membership)
+    )
+    return {r.membership_id: r.erased_at for r in rows}
+
+
 def query_matrikel_audit(
     *,
     full_access,
@@ -378,8 +404,8 @@ def query_matrikel_audit(
     gene bank manager) the payloads lose what GET /v2/members/<id> does not show them: the organisation number and a
     person's notes. A row about an anonymised person is redacted again on read, should a stored payload have escaped
     the erasure. An account once linked to an anonymised person is shown as REDACTED_VALUE, as actor and as user_id,
-    and the actor filter skips it. In an erased household the rows without a person (membership_updated and the
-    like) lose HOUSEHOLD_PII_KEYS.
+    and the actor filter skips it. In a household that has been erased, the rows without a person (membership_updated
+    and the like) from before its last erasure lose HOUSEHOLD_PII_KEYS, also when new persons came later.
     """
     q = (
         MatrikelAudit.select(MatrikelAudit, User, Membership)
@@ -414,24 +440,14 @@ def query_matrikel_audit(
 
     ids = {pid for a in audits if isinstance(pid := person_of(a.payload or {}), int)}
     persons = {p.id: p for p in Member.select().where(Member.id.in_(list(ids)))} if ids else {}
-    # anonymize_person() erases the household when its last active person goes: no active person, one anonymised
-    erased_households = {
-        m.membership_id
-        for m in Member.select(Member.membership)
-        .where(Member.membership.in_(list({a.membership_id for a in audits})))
-        .group_by(Member.membership)
-        .having(
-            ~fn.bool_or(Member.end_date.is_null())
-            & fn.bool_or((Member.first_name == ANONYMIZED_FIRST_NAME) & (Member.last_name == ANONYMIZED_LAST_NAME))
-        )
-    }
+    erasures = _household_erasures({a.membership_id for a in audits})
     rows = []
     for a in audits:
         payload = a.payload or {}
         person = persons.get(person_of(payload))
         if person is not None and is_anonymized(person):
             payload, _ = _redact_node(payload)
-        if a.membership_id in erased_households and "person_id" not in payload:
+        if a.membership_id in erasures and a.created_at <= erasures[a.membership_id] and "person_id" not in payload:
             payload, _ = _redact_node(payload, HOUSEHOLD_PII_KEYS)  # what redact_household_from_audits() covers
         if payload.get("user_id") in erased_accounts:
             payload = {**payload, "user_id": REDACTED_VALUE}
