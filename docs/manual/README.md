@@ -68,6 +68,12 @@ sig från bilden i repot skrivs om. Jobbets sammanfattning listar dem, och bilde
 manualen nämner men som saknas. Listan är också listan över avsnitt att läsa om. De
 ändrade bilderna laddas upp som artefakten `manual-screenshots`.
 
+Några sidor skiljer sig mellan två körningar av samma commit: tider, intygets
+slumpade kod, ordningen på lika rankade kaniner på genetiksidan och flikraden i Min
+besättning. De har en egen tolerans i specarna (`VARIES` i `screenshots.spec.ts`,
+argumentet `maxDiffPixels` i guidens spec), så att en körning utan ändrat gränssnitt
+ger en tom lista. Alla andra sidor måste stämma på 50 pixlar när.
+
 Så förs bilderna in:
 
 1. Kör workflowet: Actions → Manual screenshots → Run workflow, på `main` eller på en

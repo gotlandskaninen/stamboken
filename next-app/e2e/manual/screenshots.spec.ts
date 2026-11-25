@@ -24,6 +24,23 @@ type Shot = {
   heading?: string;
 };
 
+// Pages that differ between two runs of the same commit (measured 2026-11-25):
+// times, the certificate's random token, the order of equal rabbits on the
+// genetics page, and a 1 px shift of the herd tabs after the flows. Up to this
+// many pixels count as unchanged there; every other page must match.
+const VARIES: Record<string, number> = {
+  "verifiera-intyg": 2500,
+  "admin-aktivitetslogg": 1500,
+  "admin-aktiva-anvandare": 1500,
+  "individ-andringshistorik": 1000,
+  "genetik-oversikt": 5000,
+  "min-besattning-kullar": 2500,
+  "min-besattning-slakttrad": 2500,
+  kullista: 2500,
+  "ny-kull": 2500,
+  "ny-parning": 2500,
+};
+
 const SHOTS: Shot[] = [
   { name: "logga-in", role: "anonymous", path: "/auth/sign-in" },
   {
@@ -290,7 +307,13 @@ async function act(page: Page, action: string) {
   await page.waitForTimeout(800);
 }
 
-test.beforeEach(({ page }) => hideTyckTillWhileClicking(page));
+test.beforeEach(async ({ page }) => {
+  await hideTyckTillWhileClicking(page);
+  // The beta banner takes room on every picture; closed as a reader would.
+  await page.addInitScript(() =>
+    localStorage.setItem("herdbook-wip-banner-dismissed", "1"),
+  );
+});
 
 for (const shot of SHOTS) {
   for (const [suffix, viewport] of [
@@ -318,16 +341,11 @@ for (const shot of SHOTS) {
       await page.addStyleTag({
         content: "nextjs-portal { display: none !important; }",
       });
-      // Beta-bannern tar plats på varje bild; stäng den (valet sparas i webbläsaren).
-      const beta = page
-        .getByRole("alert")
-        .filter({ hasText: "nya Stamboken" })
-        .getByRole("button", { name: "Stäng" });
-      if (await beta.isVisible().catch(() => false)) await beta.click();
       for (const a of shot.actions ?? []) await act(page, a);
       await page.waitForTimeout(500);
       await expect(page).toHaveScreenshot(`${shot.name}-${suffix}.png`, {
         fullPage: shot.fullPage ?? false,
+        ...(VARIES[shot.name] && { maxDiffPixels: VARIES[shot.name] }),
       });
     });
   }

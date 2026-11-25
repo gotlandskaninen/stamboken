@@ -27,12 +27,22 @@ test.beforeEach(async ({ page }) => {
   );
 });
 
-async function shot(page: Page, name: string, fullPage = false) {
+// maxDiffPixels: the application pages show when it came in, which differs
+// every run.
+async function shot(
+  page: Page,
+  name: string,
+  fullPage = false,
+  maxDiffPixels?: number,
+) {
   await page.addStyleTag({
     content: "nextjs-portal { display: none !important; }",
   });
   await page.waitForTimeout(600);
-  await expect(page).toHaveScreenshot(`${name}.png`, { fullPage });
+  await expect(page).toHaveScreenshot(`${name}.png`, {
+    fullPage,
+    ...(maxDiffPixels && { maxDiffPixels }),
+  });
 }
 
 async function loginAdmin(page: Page) {
@@ -77,7 +87,7 @@ test("ansökan granskas och godkänns", async ({ page }) => {
   await expect(
     page.getByText(`${APPLICANT.first} ${APPLICANT.last}`),
   ).toBeVisible();
-  await shot(page, "ansokningar");
+  await shot(page, "ansokningar", false, 1000);
 
   await page.getByRole("button", { name: "Account" }).click();
   await expect(page.getByRole("menuitem", { name: "Matrikel" })).toBeVisible();
@@ -90,11 +100,11 @@ test("ansökan granskas och godkänns", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: /Ansökan från/ }),
   ).toBeVisible();
-  await shot(page, "ansokan", true);
+  await shot(page, "ansokan", true, 1000);
 
   await page.getByRole("button", { name: "Godkänn", exact: true }).click();
   await expect(page.getByText("Godkänna ansökan?")).toBeVisible();
-  await shot(page, "ansokan-godkann");
+  await shot(page, "ansokan-godkann", false, 1000);
   await page
     .getByRole("dialog")
     .getByRole("button", { name: "Godkänn" })
