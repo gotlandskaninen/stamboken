@@ -5,22 +5,32 @@ import config from "@payload-config";
 
 type LexicalNode = {
   type?: string;
+  text?: unknown;
   format?: number | string;
   fields?: { linkType?: string };
   children?: LexicalNode[];
 };
 // Bold and italic only: their words are the plain text's words.
 const PLAIN_FORMATS = 1 | 2;
+// The plain-text converter reads `text` and `children` of any node, the page
+// only what each node type renders, so a node must carry exactly those.
 function sameWordsAsText(node: LexicalNode): boolean {
   switch (node.type) {
     case "text":
-      return (Number(node.format ?? 0) & ~PLAIN_FORMATS) === 0;
+      return (
+        typeof node.text === "string" &&
+        node.children === undefined &&
+        (Number(node.format ?? 0) & ~PLAIN_FORMATS) === 0
+      );
     case "linebreak":
-      return true;
+      return node.text === undefined && node.children === undefined;
     case "link":
       return (
         node.fields?.linkType === "custom" &&
-        (node.children ?? []).every(sameWordsAsText)
+        node.text === undefined &&
+        (node.children ?? []).every(
+          (child) => child.type === "text" && sameWordsAsText(child),
+        )
       );
     default:
       return false;
@@ -34,7 +44,9 @@ function sameWordsAsText(node: LexicalNode): boolean {
 function formattable(content: SerializedEditorState) {
   return (content.root?.children ?? []).every(
     (node: LexicalNode) =>
-      node.type === "paragraph" && (node.children ?? []).every(sameWordsAsText),
+      node.type === "paragraph" &&
+      node.text === undefined &&
+      (node.children ?? []).every(sameWordsAsText),
   );
 }
 

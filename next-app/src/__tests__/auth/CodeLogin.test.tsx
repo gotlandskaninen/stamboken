@@ -172,19 +172,27 @@ it("clears the agreement when updated rules arrive after submission", async () =
   expect(actions.createMemberAccount).toHaveBeenCalledTimes(1);
 });
 it.each([
-  ["expired" as const, "Begär en ny kod", "/auth/sign-in"],
-  ["accountConflict" as const, "Till inloggningen", "/auth/sign-in"],
-])("gives the %s error a way on", async (error, name, href) => {
-  vi.mocked(actions.createMemberAccount).mockResolvedValue({ error });
-  render(<CreateAccount rules={{ version: "23", sha256: "a".repeat(64) }} />);
-  fireEvent.click(screen.getByRole("checkbox"));
-  fireEvent.click(screen.getByRole("button", { name: "Skapa mitt konto" }));
-  const alert = await screen.findByRole("alert");
-  expect(within(alert).getByRole("link", { name })).toHaveAttribute(
-    "href",
-    href,
-  );
-});
+  ["expired" as const, "Begär en ny kod"],
+  ["accountConflict" as const, "Till inloggningen"],
+])(
+  "gives the %s error a way on that keeps the destination",
+  async (error, name) => {
+    vi.mocked(actions.createMemberAccount).mockResolvedValue({ error });
+    render(
+      <CreateAccount
+        rules={{ version: "23", sha256: "a".repeat(64) }}
+        returnTo="/stamboken/inskick/ny"
+      />,
+    );
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button", { name: "Skapa mitt konto" }));
+    const alert = await screen.findByRole("alert");
+    expect(within(alert).getByRole("link", { name })).toHaveAttribute(
+      "href",
+      "/auth/sign-in?return_to=%2Fstamboken%2Finskick%2Fny",
+    );
+  },
+);
 it("explains a missing publication and provides no creation button", () => {
   render(<CreateAccount />);
   expect(screen.getByRole("alert")).toHaveTextContent(

@@ -186,8 +186,8 @@ export function LoginLink({ enabled }: { enabled: boolean }) {
 
 // The next step for each error, so the member is never left without a way on.
 const NEXT_STEP: Record<string, [href: string, label: string]> = {
-  expired: ["/auth/sign-in", "codeLogin.newCode"],
-  accountConflict: ["/auth/sign-in", "codeLogin.back"],
+  expired: ["sign-in", "codeLogin.newCode"],
+  accountConflict: ["sign-in", "codeLogin.back"],
   rulesChanged: ["#kontoregler", "codeLogin.toRules"],
 };
 
@@ -218,10 +218,14 @@ export function CreateAccount({
       </main>
     );
   const next = NEXT_STEP[error];
+  // Back to sign-in keeps where the member was going.
+  const signIn = returnTo
+    ? `/auth/sign-in?return_to=${encodeURIComponent(returnTo)}`
+    : "/auth/sign-in";
   return (
     <main className={`${styles.page} ${styles.reading}`}>
       <p className={styles.back}>
-        <Link href="/auth/sign-in">{t("codeLogin.back")}</Link>
+        <Link href={signIn}>{t("codeLogin.back")}</Link>
       </p>
       <h1>{t("codeLogin.create")}</h1>
       <p className={styles.status}>{t("codeLogin.confirmed")}</p>
@@ -280,7 +284,9 @@ export function CreateAccount({
                 {next && (
                   <>
                     {" "}
-                    <Link href={next[0]}>{t(next[1])}</Link>
+                    <Link href={next[0] === "sign-in" ? signIn : next[0]}>
+                      {t(next[1])}
+                    </Link>
                   </>
                 )}
               </p>

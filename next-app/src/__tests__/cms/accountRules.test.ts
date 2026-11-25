@@ -190,6 +190,33 @@ describe("published account rules revision", () => {
       },
     ],
     [
+      "a link with its own text",
+      {
+        type: "paragraph",
+        children: [
+          {
+            type: "link",
+            text: "Se även ",
+            fields: { url: "/ordlista", linkType: "custom" },
+            children: [{ type: "text", text: "ordlistan" }],
+          },
+        ],
+      },
+    ],
+    [
+      "a text node with children",
+      {
+        type: "paragraph",
+        children: [
+          {
+            type: "text",
+            text: "Synlig",
+            children: [{ type: "text", text: " dold" }],
+          },
+        ],
+      },
+    ],
+    [
       "heading",
       {
         type: "heading",

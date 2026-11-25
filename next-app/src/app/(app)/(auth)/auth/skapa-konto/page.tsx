@@ -32,7 +32,12 @@ export default async function CreateAccountPage({
           {rules.subtitle && <p>{rules.subtitle}</p>}
           {rules.sections.map(({ content, text }, index) =>
             content ? (
-              <RichText key={index} data={content} disableContainer />
+              <RichText
+                key={index}
+                data={content}
+                disableContainer
+                disableIndent
+              />
             ) : (
               text
                 ?.split("\n\n")
