@@ -27,7 +27,7 @@ function sameWordsAsText(node: LexicalNode): boolean {
     case "link":
     case "autolink":
       return (
-        (node.type === "autolink" || node.fields?.linkType === "custom") &&
+        node.fields?.linkType === "custom" &&
         node.text === undefined &&
         (node.children ?? []).every(
           (child) => child.type === "text" && sameWordsAsText(child),

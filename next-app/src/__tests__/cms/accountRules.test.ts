@@ -210,6 +210,20 @@ describe("published account rules revision", () => {
       },
     ],
     [
+      "an autolink without fields",
+      {
+        type: "paragraph",
+        children: [
+          { type: "text", text: "Läs " },
+          {
+            type: "autolink",
+            children: [{ type: "text", text: "example.org" }],
+          },
+          { type: "text", text: " före registrering." },
+        ],
+      },
+    ],
+    [
       "a line break with children",
       {
         type: "paragraph",
