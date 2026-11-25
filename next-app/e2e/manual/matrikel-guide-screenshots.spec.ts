@@ -62,7 +62,9 @@ test("en ansökan kommer in", async ({ page }) => {
   await page
     .getByLabel(/Berätta kort om dig själv/)
     .fill("Jag har gotlandskaniner hemma och vill bli genbanksbesättning.");
-  await page.getByLabel(/GDPR/).check();
+  await page
+    .getByRole("checkbox", { name: /behandlar mina personuppgifter/ })
+    .check();
   await page.getByRole("button", { name: /Skicka ansökan/ }).click();
   await expect(page.getByText(/Tack för din ansökan/)).toBeVisible({
     timeout: 15000,
