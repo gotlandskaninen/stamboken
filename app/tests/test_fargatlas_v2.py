@@ -16,7 +16,7 @@ from tests.database_test import DatabaseTest
 # Made up for the tests: no atlas text, photo or photographer from the real package.
 MANIFEST = {
     "version": "test",
-    "grupper": {"brokiga": {"beskrivning": "Testtext om brokiga."}},
+    "grupper": {"testgrupp-a": {"beskrivning": "Testtext om en grupp."}},
     "farger": {
         "22": {
             "beskrivning": "Testbeskrivning av viltgrå.",
@@ -125,7 +125,7 @@ class FargatlasTest(DatabaseTest):
     def test_feltypade_poster_loggas_och_utesluts(self):
         manifest = {
             "version": 3,
-            "grupper": {"brokiga": "text", "vita": {"beskrivning": ["lista"]}},
+            "grupper": {"testgrupp-a": "text", "testgrupp-b": {"beskrivning": ["lista"]}},
             "farger": {
                 **MANIFEST["farger"],
                 "23": "se 25",
@@ -146,12 +146,24 @@ class FargatlasTest(DatabaseTest):
         self.assertEqual((farger[23]["beskrivning"], farger[23]["foton"]), (None, []))
         self.assertEqual((farger[24]["beskrivning"], farger[24]["skiljs_fran"], farger[24]["foton"]), (None, None, []))
         self.assertEqual(farger[25]["foton"], [{"id": "25-a", "fotograf": None, "bildtext": None}])
-        self.assertEqual((atlas["version"], atlas["grupper"]), (None, {"vita": {"beskrivning": None}}))
+        self.assertEqual((atlas["version"], atlas["grupper"]), (None, {"testgrupp-b": {"beskrivning": None}}))
         with self.assertNoLogs("utils.fargatlas", "ERROR"):  # logged once by the page, not once per photo
             self.assertEqual(self.client.get("/api/v2/fargatlas/foto/22-a").status_code, 200)
 
     def test_nyckel_av_fel_form_loggas(self):
-        for nyckel in ("text", {"start": 1, "fragor": {}, "grupper": []}, {"start": "q1", "fragor": [], "grupper": []}):
+        hel = MANIFEST["nyckel"]
+        fragor = hel["fragor"]
+        for nyckel in (
+            "text",
+            {**hel, "start": 1},
+            {**hel, "fragor": []},
+            {**hel, "grupper": [{"id": "testgrupp", "namn": "Testgrupp"}]},  # no nummer
+            {**hel, "grupper": [None]},
+            {**hel, "fragor": {"q1": {**fragor["q1"], "svar": [{"id": "q1-ja", "text": "Ja", "till": None}]}}},
+            {**hel, "fragor": {"q1": {**fragor["q1"], "svar": [None]}}},
+            {**hel, "efter_numret": {}},
+            {**hel, "fragor": {"q1": {**fragor["q1"], "hjalp": {"text": "fel"}}}},
+        ):
             with self.subTest(nyckel=nyckel):
                 self.package({**MANIFEST, "nyckel": nyckel})
                 self.login()
