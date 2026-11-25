@@ -203,6 +203,7 @@ class TestMatrikelAudit(MatrikelApiTest):
         writes = (
             {"before": {"billing_address": None}, "after": {"billing_address": "Fakturagatan 9"}},  # written back
             {"before": {"notes": "[borttagen]"}, "after": {"notes": "gammal not"}},
+            {"before": {"payment_note": "Swish Testsson 0701"}, "after": {"payment_note": "Betalt"}},  # Codex r6
         )
         for payload in writes:
             matrikel.write_matrikel_audit(self.admin, "membership_updated", self.ms, payload)
@@ -219,7 +220,7 @@ class TestMatrikelAudit(MatrikelApiTest):
                 self.login(username)
                 resp = self.get(f"membership_id={self.ms.id}&action=membership_updated")
                 text = resp.get_data(as_text=True)
-                for value in ("Fakturagatan", "gammal not", "Nya v", "ny not"):
+                for value in ("Fakturagatan", "gammal not", "Nya v", "ny not", "Swish Testsson", "Betalt"):
                     self.assertNotIn(value, text)
                 newest = resp.get_json()["rows"][0]["payload"]
                 masked = matrikel.REDACTED_VALUE

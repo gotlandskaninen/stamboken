@@ -431,8 +431,8 @@ def query_matrikel_audit(
     person's notes. A row about an anonymised person is redacted again on read, should a stored payload have escaped
     the erasure, user_id included. An anonymised person's former account is shown as REDACTED_VALUE as actor on the
     rows _masked_actor_rows() names, and the actor filter skips those rows. A membership whose household has ever
-    been erased has the values of HOUSEHOLD_PII_KEYS masked in all its rows, for every role: the keys stay, so the
-    change shows, and today's values are on the membership page.
+    been erased has the values of HOUSEHOLD_PII_KEYS and payment_note masked in all its rows, for every role: the keys
+    stay, so the change shows, and today's values are on the membership page.
     """
     masked = _masked_actor_rows()
     q = (
@@ -480,8 +480,8 @@ def query_matrikel_audit(
         if person is not None and is_anonymized(person):  # user_id too: her account, as in person_user_linked
             payload, _ = _redact_node(payload, PII_PAYLOAD_KEYS | {"user_id"})
         # shortcut: masks the new household's values too, for good; refine only if someone needs that history
-        if a.membership_id in erased:
-            payload, _ = _redact_node(payload, HOUSEHOLD_PII_KEYS)
+        if a.membership_id in erased:  # payment_note too: kept on the row for the books, its old texts may name a payer
+            payload, _ = _redact_node(payload, HOUSEHOLD_PII_KEYS | {"payment_note"})
         if not full_access:
             payload = _drop_keys(payload, {"organization_number"} | ({"notes"} if "person_id" in payload else set()))
         rows.append(
