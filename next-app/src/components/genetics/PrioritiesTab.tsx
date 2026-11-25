@@ -10,6 +10,7 @@ import {
   Typography,
 } from "@mui/material";
 import { DataGrid, GridColDef, GridSortModel } from "@mui/x-data-grid";
+import CheckIcon from "@mui/icons-material/Check";
 
 import {
   useFetchGeneticPrioritiesQuery,
@@ -21,12 +22,13 @@ import GeneticsInfoPanel from "./GeneticsInfoPanel";
 import GeneticsError from "./GeneticsError";
 import { readableChip } from "./readableChip";
 import { translateReasons } from "@/utils/translateReasons";
+import { readModeCookieClient } from "@/lib/mode";
 import {
   PRIORITY_LABEL,
   PRIORITY_ORDER,
   byHerd,
-  downloadCsv,
-  prioritiesCsv,
+  downloadExport,
+  prioritiesCsvUrl,
   sexLabel,
 } from "./workList";
 
@@ -35,11 +37,16 @@ const RARE_GENES =
 const UNIQUE_GENES =
   "Sannolikheten att kaninen bär genvarianter från founderdjuren som ingen annan kanin i beräkningen bär, enligt en simulering av hur generna ärvs genom stamtavlan.";
 
-const FilterChip = styled(MuiChip)<{ selected: boolean }>`
+const FilterChip = styled(MuiChip)`
   margin-right: ${(props) => props.theme.spacing(1)};
   margin-bottom: ${(props) => props.theme.spacing(2)};
-  opacity: ${(props) => (props.selected ? 1 : 0.5)};
 `;
+
+// Off: outlined in ink, full contrast; on: the level's colour and a check mark.
+const chipOff = {
+  color: "var(--sb-ink-2)",
+  borderColor: "var(--sb-line-strong)",
+};
 
 const priorityConfig: Record<
   string,
@@ -80,6 +87,7 @@ const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
 
   // Per besättning: the rows in herd order within each level; the grid's own sort is cleared.
   const [perHerd, setPerHerd] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   const [sortModel, setSortModel] = useState<GridSortModel>([
     { field: "priority", sort: "asc" },
   ]);
@@ -215,22 +223,29 @@ const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
       >
         {(
           Object.keys(priorityConfig) as Array<keyof typeof priorityConfig>
-        ).map((level) => (
-          <FilterChip
-            key={level}
-            label={`${priorityConfig[level].label} (${
-              priorities?.filter((p) => p.priority === level).length || 0
-            })`}
-            color={priorityConfig[level].chipColor}
-            sx={readableChip}
-            selected={filters[level as keyof typeof filters]}
-            onClick={() => toggleFilter(level as keyof typeof filters)}
-            variant={
-              filters[level as keyof typeof filters] ? "filled" : "outlined"
-            }
-          />
-        ))}
-        <Box sx={{ display: "flex", gap: 2, mb: 2, ml: { sm: "auto" } }}>
+        ).map((level) => {
+          const on = filters[level as keyof typeof filters];
+          return (
+            <FilterChip
+              key={level}
+              label={`${priorityConfig[level].label} (${
+                priorities?.filter((p) => p.priority === level).length || 0
+              })`}
+              color={on ? priorityConfig[level].chipColor : "default"}
+              variant={on ? "filled" : "outlined"}
+              icon={
+                on ? (
+                  <CheckIcon sx={{ "&&": { color: "inherit" } }} />
+                ) : undefined
+              }
+              aria-pressed={on}
+              sx={on ? readableChip : chipOff}
+              onClick={() => toggleFilter(level as keyof typeof filters)}
+            />
+          );
+        })}
+        {/* Left, after the chips: the fixed Tyck till tab covers the right edge. */}
+        <Box sx={{ display: "flex", gap: 2, mb: 2, ml: { sm: 1 } }}>
           <button
             type="button"
             className={`sb-btn sb-btn-sm${perHerd ? "" : " sb-btn-secondary"}`}
@@ -246,17 +261,30 @@ const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
             type="button"
             className="sb-btn sb-btn-sm sb-btn-secondary"
             disabled={filteredRows.length === 0}
-            onClick={() =>
-              downloadCsv(
-                `avelsprioritet-genbank-${genebankId}-${new Date().toLocaleDateString("sv-SE")}.csv`,
-                prioritiesCsv(filteredRows),
-              )
-            }
+            onClick={async () => {
+              // The server builds the file and logs the download (who, which rabbits).
+              setExportError(null);
+              const url = prioritiesCsvUrl(
+                readModeCookieClient(),
+                process.env.NEXT_PUBLIC_API_TEST_URL,
+                genebankId,
+                (Object.keys(filters) as Array<keyof typeof filters>).filter(
+                  (level) => filters[level],
+                ),
+                perHerd,
+              );
+              setExportError(await downloadExport(url));
+            }}
           >
             Ladda ner CSV
           </button>
         </Box>
       </Box>
+      {exportError && (
+        <Alert severity="warning" sx={{ mb: 2 }}>
+          {exportError}
+        </Alert>
+      )}
       <Typography
         variant="body2"
         color="textSecondary"
@@ -282,6 +310,8 @@ const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
             "& .skal": { whiteSpace: "normal", lineHeight: 1.45, py: 1 },
           }}
           pageSizeOptions={[10, 25, 50]}
+          // The chips are the filter, so the CSV holds exactly what the grid shows.
+          disableColumnFilter
           disableRowSelectionOnClick
           localeText={{
             noRowsLabel: "Inga kaniner att visa",

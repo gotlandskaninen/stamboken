@@ -69,6 +69,7 @@ import utils.database as db  # isort:skip
 import utils.settings as settings  # isort:skip
 from utils import app_logging  # isort:skip
 import utils.genetics_service as genetics  # isort:skip
+import utils.work_list as work_list  # isort:skip
 from utils import number_assets  # isort:skip
 from utils.herd_contact import ContactConflict, ContactForbidden  # isort:skip
 from utils.individual_commands import purge_command_free_text  # isort:skip
@@ -2733,14 +2734,16 @@ def genetic_priorities(g_id):
         if not user or not (user.is_admin or genebank_id in (user.is_manager or [])):
             return jsonify({"status": "error", "message": "Åtkomst nekad"}), 403
 
-        priorities = get_genetic_priorities(genebank_id)
-        # Added fields (ADR-0006 rule 2), read fresh; new dicts, since the list may be the memo's own.
-        details = da.work_list_details([p["individual_id"] for p in priorities])
-        rows = [{**p, **details.get(p["individual_id"], {})} for p in priorities]
+        # Added fields (ADR-0006 rule 2), read fresh into new dicts, since the list may be the memo's own.
+        rows = work_list.with_details(get_genetic_priorities(genebank_id))
         return jsonify({"status": "success", "data": rows})
     except Exception as ex:
         APP.logger.error(f"Could not calculate genetic priorities: {ex}")
         return jsonify({"error": "Error calculating genetic priorities"}), 500
+
+
+# The CSV export in blueprints/genetics.py reads the same memoized priorities (ADR-0007: no import of herdbook).
+APP.extensions["genetic_priorities"] = get_genetic_priorities
 
 
 @APP.route("/api/<int:g_id>/breeding-suggestions/")

@@ -49,7 +49,6 @@ const riskConfig: Record<
   ok: { label: "Ok", summary: "ok", color: "success" },
 };
 
-// Action first; Ok and Ingen bärare, where nothing is to be done now, are folded away.
 const ORDER: FounderAtRisk["risk_level"][] = [
   "critical",
   "warning",
@@ -57,12 +56,21 @@ const ORDER: FounderAtRisk["risk_level"][] = [
   "ok",
   "lost",
 ];
-export const FOLDED: FounderAtRisk["risk_level"][] = ["ok", "lost"];
+
+// Action first: 1 bärare kvar, then Ingen bärare with possible carriers to look for, 2–3 bärare
+// and Liten andel. Ok, and Ingen bärare with nobody to look for, are folded away.
+const rank = (f: FounderAtRisk) =>
+  ({
+    critical: 0,
+    lost: f.recoverable_carriers?.length ? 1 : 5,
+    warning: 2,
+    monitor: 3,
+    ok: 4,
+  })[f.risk_level];
+export const isFolded = (f: FounderAtRisk) => rank(f) >= 4;
 
 export const founderOrder = (founders: FounderAtRisk[]) =>
-  [...founders].sort(
-    (a, b) => ORDER.indexOf(a.risk_level) - ORDER.indexOf(b.risk_level),
-  );
+  [...founders].sort((a, b) => rank(a) - rank(b));
 
 export const FOUNDER_TABLE_ID = "founderdjurens-lage";
 
@@ -156,14 +164,23 @@ const FoundersAtRiskPanel = ({ genebankId }: FoundersAtRiskPanelProps) => {
   // Summary counts
   const counts = { lost: 0, critical: 0, warning: 0, monitor: 0, ok: 0 };
   for (const f of founders) counts[f.risk_level]++;
-  const folded = FOLDED.filter((level) => counts[level] > 0);
-  const rows = founderOrder(founders).filter(
-    (f) => showAll || !FOLDED.includes(f.risk_level),
-  );
+  const hidden = founders.filter(isFolded);
+  const hiddenOk = hidden.filter((f) => f.risk_level === "ok").length;
+  const hiddenParts = [
+    hiddenOk && `${riskConfig.ok.label} (${hiddenOk})`,
+    hidden.length - hiddenOk &&
+      `${riskConfig.lost.label} (${hidden.length - hiddenOk})`,
+  ].filter(Boolean);
+  const rows = founderOrder(founders).filter((f) => showAll || !isFolded(f));
 
   return (
     // scrollMarginTop: the link from Läget lands below the sticky top bar.
-    <Card id={FOUNDER_TABLE_ID} sx={{ mb: 6, scrollMarginTop: 96 }}>
+    // tabIndex: "Se vilka" moves focus here, as a followed in-page link would.
+    <Card
+      id={FOUNDER_TABLE_ID}
+      tabIndex={-1}
+      sx={{ mb: 6, scrollMarginTop: 96 }}
+    >
       <CardContent>
         <Typography variant="h6" gutterBottom>
           Founderdjurens läge ({founders.length} founderdjur)
@@ -183,68 +200,77 @@ const FoundersAtRiskPanel = ({ genebankId }: FoundersAtRiskPanelProps) => {
             .map((level) => `${counts[level]} ${riskConfig[level].summary}`)
             .join(" · ")}
         </Typography>
-        <Typography
-          variant="body2"
-          color="textSecondary"
-          sx={{ display: { xs: "block", sm: "none" }, mb: 1 }}
-        >
-          Tabellen är bredare än skärmen. Dra i sidled för att se alla kolumner.
-        </Typography>
-        <TableContainer>
-          <Table size="small" sx={{ minWidth: 640 }}>
-            <TableHead>
-              <TableRow>
-                <TableCell>Founderdjur</TableCell>
-                <TableCell>Status</TableCell>
-                <TableCell align="right">Bärare i beräkningen</TableCell>
-                <TableCell align="right">Andel av generna</TableCell>
-                {hasRetention && (
-                  <TableCell align="right">
-                    Bevarade gener (simulerat)
-                  </TableCell>
-                )}
-                <TableCell>Bärare</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {rows.map((f) => {
-                const config = riskConfig[f.risk_level];
-                return (
-                  <TableRow key={f.founder_id}>
-                    <TableCell sx={{ whiteSpace: "nowrap" }}>
-                      <RabbitLinks numbers={[f.founder_id]} />
-                    </TableCell>
-                    <TableCell>
-                      <Chip
-                        label={config.label}
-                        color={config.color}
-                        size="small"
-                        sx={readableChip}
-                      />
-                    </TableCell>
-                    <TableCell align="right">{f.n_carriers}</TableCell>
-                    <TableCell align="right">
-                      {percent(f.avg_contribution, 2)}
-                    </TableCell>
+        {rows.length === 0 ? (
+          <Typography variant="body2">
+            Inget founderdjur behöver åtgärdas just nu.
+          </Typography>
+        ) : (
+          <>
+            <Typography
+              variant="body2"
+              color="textSecondary"
+              sx={{ display: { xs: "block", sm: "none" }, mb: 1 }}
+            >
+              Tabellen är bredare än skärmen. Dra i sidled för att se alla
+              kolumner.
+            </Typography>
+            <TableContainer>
+              <Table size="small" sx={{ minWidth: 640 }}>
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Founderdjur</TableCell>
+                    <TableCell>Status</TableCell>
+                    <TableCell align="right">Bärare i beräkningen</TableCell>
+                    <TableCell align="right">Andel av generna</TableCell>
                     {hasRetention && (
                       <TableCell align="right">
-                        {f.allele_retention !== null
-                          ? percent(f.allele_retention)
-                          : "–"}
+                        Bevarade gener (simulerat)
                       </TableCell>
                     )}
-                    <TableCell>
-                      <Typography variant="body2" color="textSecondary">
-                        <CarrierInfo founder={f} />
-                      </Typography>
-                    </TableCell>
+                    <TableCell>Bärare</TableCell>
                   </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </TableContainer>
-        {folded.length > 0 && (
+                </TableHead>
+                <TableBody>
+                  {rows.map((f) => {
+                    const config = riskConfig[f.risk_level];
+                    return (
+                      <TableRow key={f.founder_id}>
+                        <TableCell sx={{ whiteSpace: "nowrap" }}>
+                          <RabbitLinks numbers={[f.founder_id]} />
+                        </TableCell>
+                        <TableCell>
+                          <Chip
+                            label={config.label}
+                            color={config.color}
+                            size="small"
+                            sx={readableChip}
+                          />
+                        </TableCell>
+                        <TableCell align="right">{f.n_carriers}</TableCell>
+                        <TableCell align="right">
+                          {percent(f.avg_contribution, 2)}
+                        </TableCell>
+                        {hasRetention && (
+                          <TableCell align="right">
+                            {f.allele_retention !== null
+                              ? percent(f.allele_retention)
+                              : "–"}
+                          </TableCell>
+                        )}
+                        <TableCell>
+                          <Typography variant="body2" color="textSecondary">
+                            <CarrierInfo founder={f} />
+                          </Typography>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </>
+        )}
+        {hidden.length > 0 && (
           <button
             type="button"
             className="sb-btn sb-btn-sm sb-btn-secondary"
@@ -253,10 +279,8 @@ const FoundersAtRiskPanel = ({ genebankId }: FoundersAtRiskPanelProps) => {
             onClick={() => setShowAll(!showAll)}
           >
             {showAll
-              ? `Dölj ${folded.map((l) => riskConfig[l].label).join(" och ")}`
-              : `Visa också ${folded
-                  .map((l) => `${riskConfig[l].label} (${counts[l]})`)
-                  .join(" och ")}`}
+              ? `Dölj de ${hidden.length}`
+              : `Visa ${hidden.length} till: ${hiddenParts.join(" och ")}`}
           </button>
         )}
       </CardContent>

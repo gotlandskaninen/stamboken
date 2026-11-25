@@ -972,9 +972,11 @@ första anropet och kan ta upp till en minut.
    **Medelsläktskap (MK)**, diagrammet **Founderdjur med störst andel av generna**,
    rutan **Inavel** med genomsnittlig inavel (F) och inavelsökning per generation (ΔF),
    **Genetiska trender** med ett mått i taget och tabellen **Founderdjurens läge**.
-   Tabellen visar först founderdjuren med 1 bärare kvar, sedan 2–3 bärare och Liten
-   andel. Knappen **Visa också Ok (N) och Ingen bärare (N)** visar resten. Numren på
-   founderdjuren och bärarna är länkar till kaninernas sidor. Founderdjur är rasens
+   Tabellen visar först founderdjuren med 1 bärare kvar, sedan de utan bärare som har
+   kaniner att leta efter (kaniner utan dödsdatum som inte är med i beräkningen), sedan
+   2–3 bärare och Liten andel. Knappen **Visa N till** visar resten: Ok och de utan
+   bärare där det inte finns någon kanin att leta efter. Numren på founderdjuren och
+   bärarna är länkar till kaninernas sidor. Founderdjur är rasens
    ursprungsdjur, kaniner utan kända föräldrar i stamboken. Korten visar läget i dag;
    trenden har ett värde per stängd årsrapportering.
 3. **Avelsprioritet** – kaninerna sorterade efter hur viktiga de är för aveln:
@@ -982,11 +984,13 @@ första anropet och kan ta upp till en minut.
    kaninens sida), **Namn**, **Besättning** (en länk till besättningens sida, med
    uppfödarens kontaktuppgifter), **Kön**, **Född**, **Ovanliga gener (0–100)**, **Unika
    gener** och **Skäl**, som står i sin helhet. Knapparna **Högsta (N)**, **Hög (N)** och
-   **Övriga (N)** slår av och på nivåerna. **Sortera per besättning** samlar varje
+   **Övriga (N)** slår av och på nivåerna; en bock visar vilka som är på. **Sortera per besättning** samlar varje
    besättnings kaniner inom varje nivå, så att du ser vilka uppfödare du ska kontakta om
-   kaninerna med högsta prioritet. **Ladda ner CSV** sparar listan som den är filtrerad,
-   med svenska rubriker, i en fil som Excel öppnar. På en smal skärm drar du tabellerna
-   i sidled för att se alla kolumner.
+   kaninerna med högsta prioritet. **Ladda ner CSV** sparar listan med de nivåer som är
+   på och i den ordning som Sortera per besättning ger, med svenska rubriker, i en fil
+   som Excel öppnar. Varje nedladdning loggas i aktivitetsloggen: vem, när och vilka
+   kaniner som fanns i filen. I testmiljön går listan inte att ladda ner. På en smal
+   skärm drar du tabellerna i sidled för att se alla kolumner.
 4. **Parningsförslag** – ange **Max antal par**, **Max inavel (F)** och **Max per hane**
    och klicka **Beräkna**. Tabellen visar paren med **Förväntad F**, **ΔGD**, **MSI**
    (1 = utmärkt, 6 = dålig) och **Skäl**.

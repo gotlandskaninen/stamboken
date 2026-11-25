@@ -1,6 +1,6 @@
 "use client";
 
-import React, { Suspense } from "react";
+import React, { Suspense, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 
 import {
@@ -54,24 +54,37 @@ function GenetikPage() {
   const { user } = useAuth();
   const searchParams = useSearchParams();
 
-  // The URL holds the tab and the genebank: Back and Forward switch them, and a
-  // link opens the same view. Next feeds pushState and popstate into useSearchParams.
-  const tabParam = searchParams.get("tab");
-  const activeTab: TabValue = TABS.find((t) => t === tabParam) ?? "oversikt";
-  const genebankId: number | "" =
-    Number(searchParams.get("genebank")) || user?.is_manager?.[0] || "";
-
-  const pushParam = (key: string, value: string) => {
-    const url = new URL(window.location.href);
-    url.searchParams.set(key, value);
-    url.hash = ""; // "Se vilka" on Läget leaves the founder table's anchor
-    window.history.pushState(null, "", url.toString());
-  };
-
   // Genebanks the user can access
   const availableGenebanks: number[] = user?.is_admin
     ? [1, 2]
     : user?.is_manager || [];
+
+  // The URL holds the tab and the genebank: Back and Forward switch them, and a
+  // link opens the same view. Next feeds pushState and popstate into useSearchParams.
+  const tabParam = searchParams.get("tab");
+  const activeTab: TabValue = TABS.find((t) => t === tabParam) ?? "oversikt";
+  const genebankParam = searchParams.get("genebank");
+  // A genebank in the URL that the user cannot open falls back to the first one they can.
+  const genebankId: number | "" = genebankParam
+    ? availableGenebanks.includes(Number(genebankParam))
+      ? Number(genebankParam)
+      : (availableGenebanks[0] ?? "")
+    : user?.is_manager?.[0] || "";
+
+  // The URL then says so too, replaced so that Back does not return to it.
+  useEffect(() => {
+    if (!user || !genebankParam || Number(genebankParam) === genebankId) return;
+    const url = new URL(window.location.href);
+    if (genebankId) url.searchParams.set("genebank", String(genebankId));
+    else url.searchParams.delete("genebank");
+    window.history.replaceState(null, "", url.toString());
+  }, [user, genebankParam, genebankId]);
+
+  const pushParam = (key: string, value: string) => {
+    const url = new URL(window.location.href);
+    url.searchParams.set(key, value);
+    window.history.pushState(null, "", url.toString());
+  };
 
   const handleTabChange = (_: React.SyntheticEvent, newValue: TabValue) =>
     pushParam("tab", newValue);
@@ -101,7 +114,12 @@ function GenetikPage() {
       />
 
       {!genebankId ? (
-        <Alert severity="info">Välj en genbank för att visa genetikdata.</Alert>
+        // Until the user has loaded, the page cannot tell which genebanks are theirs.
+        user && (
+          <Alert severity="info">
+            Välj en genbank för att visa genetikdata.
+          </Alert>
+        )
       ) : (
         <>
           <Tabs value={activeTab} onChange={handleTabChange}>

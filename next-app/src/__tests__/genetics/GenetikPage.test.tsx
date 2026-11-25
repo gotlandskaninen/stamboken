@@ -49,11 +49,16 @@ vi.mock("@/components/genetics/BreedingSuggestionsTab", () => ({
 import GenetikPage from "@/app/(app)/stamboken/(dashboard)/genetik/page";
 
 const pushState = window.history.pushState.bind(window.history);
+const replaceState = window.history.replaceState.bind(window.history);
 
 describe("Genetik page URL", () => {
   beforeEach(() => {
     vi.spyOn(window.history, "pushState").mockImplementation((...args) => {
       pushState(...args);
+      window.dispatchEvent(new Event("test-pushstate"));
+    });
+    vi.spyOn(window.history, "replaceState").mockImplementation((...args) => {
+      replaceState(...args);
       window.dispatchEvent(new Event("test-pushstate"));
     });
   });
@@ -72,8 +77,21 @@ describe("Genetik page URL", () => {
     open("?genebank=2&tab=prioriteringar", { is_manager: [], is_admin: true });
     expect(screen.getByText("Avelsprioritet visas")).toBeDefined();
     cleanup();
-    open("?genebank=2&tab=nagot");
+    open("?genebank=2&tab=nagot", { is_manager: [], is_admin: true });
     expect(screen.getByText("Översikt för genbank 2")).toBeDefined();
+  });
+
+  it("replaces a genebank the user cannot open with the first one they can", async () => {
+    open("?genebank=2");
+    const entries = window.history.length;
+    expect(screen.getByText("Översikt för genbank 1")).toBeDefined();
+    await waitFor(() => expect(window.location.search).toBe("?genebank=1"));
+    expect(window.history.length).toBe(entries); // replaced: Back does not return to it
+    cleanup();
+
+    open("?genebank=1", { is_manager: [], is_admin: false });
+    expect(screen.getByText(/Välj en genbank/)).toBeDefined();
+    await waitFor(() => expect(window.location.search).toBe(""));
   });
 
   it("writes the chosen tab to the URL, and Back shows the tab before", async () => {

@@ -5,7 +5,7 @@ import WarningIcon from "@mui/icons-material/Warning";
 import ErrorIcon from "@mui/icons-material/Error";
 
 import type { FounderAtRisk, PopulationMetrics } from "@/redux/api/apiSlice";
-import { decimal, percent } from "@/lib/genetics";
+import { decimal } from "@/lib/genetics";
 import { FOUNDER_TABLE_ID } from "./FoundersAtRiskPanel";
 
 type Level = "good" | "warning" | "danger";
@@ -16,7 +16,18 @@ export interface LageLine {
   anchor?: string; // links "Se vilka" to this element id
 }
 
-/** The page's verdict in a few short lines, banded on each value as shown. */
+const neLevel = (ne: number): Level =>
+  ne >= 100 ? "good" : ne >= 50 ? "warning" : "danger";
+// ΔF in percent. Ne = 1/(2·ΔF), so ΔF at most 1 % is the same as Ne at least 50.
+const dfLevel = (pct: number): Level => (pct <= 1 ? "good" : "danger");
+
+// Banded on the unrounded value; the number gets another decimal while rounding would cross a limit.
+function shown(x: number, digits: number, level: (v: number) => Level) {
+  while (digits < 4 && level(Number(x.toFixed(digits))) !== level(x)) digits++;
+  return decimal(x, digits);
+}
+
+/** The page's verdict in a few short lines. */
 export function lageLines(
   metrics: PopulationMetrics,
   founders?: FounderAtRisk[],
@@ -26,36 +37,30 @@ export function lageLines(
 
   const ne = metrics.effective_population_size;
   if (ne != null) {
-    const n = Math.round(ne);
-    lines.push(
-      n >= 100
-        ? { level: "good", text: `Ne är ${decimal(ne)}. Det når målet 100.` }
-        : n >= 50
-          ? {
-              level: "warning",
-              text: `Ne är ${decimal(ne)}. Det är över FAO:s gräns 50 men under målet 100.`,
-            }
-          : {
-              level: "danger",
-              text: `Ne är ${decimal(ne)}. Det är under FAO:s gräns 50.`,
-            },
-    );
+    const n = shown(ne, 0, neLevel);
+    const text = {
+      good: `Ne är ${n}, minst 100 som är målet.`,
+      warning: `Ne är ${n}, minst 50 som FAO anger men under målet 100.`,
+      danger: `Ne är ${n}, under 50 som FAO anger.`,
+    };
+    lines.push({ level: neLevel(ne), text: text[neLevel(ne)] });
   }
 
   const df = metrics.delta_f;
   if (df != null) {
-    const shown = Number((df * 100).toFixed(2));
+    const pct = df * 100;
+    const p = `${shown(pct, 2, dfLevel)}\u00a0%`;
     lines.push(
-      shown <= 0
+      df <= 0
         ? { level: "good", text: "Inaveln ökar inte per generation." }
-        : shown < 1
+        : dfLevel(pct) === "good"
           ? {
               level: "good",
-              text: `Inaveln ökar ${percent(df, 2)} per generation, under FAO:s gräns 1 %.`,
+              text: `Inaveln ökar ${p} per generation, högst 1\u00a0% som FAO anger.`,
             }
           : {
               level: "danger",
-              text: `Inaveln ökar ${percent(df, 2)} per generation. FAO:s gräns är 1 %.`,
+              text: `Inaveln ökar ${p} per generation, mer än 1\u00a0% som FAO anger.`,
             },
     );
   }
@@ -121,7 +126,18 @@ const Laget = ({ metrics, founders }: LagetProps) => {
                 {line.anchor && (
                   <>
                     {" "}
-                    <a className="sb-link" href={`#${line.anchor}`}>
+                    <a
+                      className="sb-link"
+                      href={`#${line.anchor}`}
+                      onClick={(e) => {
+                        // No history entry: Back must leave the page as it was,
+                        // and Next does not restore its URL state from a hash entry.
+                        e.preventDefault();
+                        const target = document.getElementById(line.anchor!);
+                        target?.scrollIntoView({ block: "start" });
+                        target?.focus({ preventScroll: true });
+                      }}
+                    >
                       Se vilka
                     </a>
                   </>

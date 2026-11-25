@@ -11,7 +11,7 @@ import csv
 import io
 import re
 import secrets
-from datetime import date, datetime, timezone
+from datetime import date
 
 import utils.settings as settings
 from flask import Blueprint, Response, jsonify, request, session
@@ -19,7 +19,7 @@ from flask_login import current_user
 from peewee import IntegrityError
 from utils.csv_safe import csv_safe
 from utils.data_access import session_holds
-from utils.database import BILLING_FIELDS, DB_PROXY, AuditLog, Herd, HerdAccessGrant, Member, Membership, User
+from utils.database import BILLING_FIELDS, DB_PROXY, Herd, HerdAccessGrant, Member, Membership, User
 from utils.herd_contact import on_membership_active
 from utils.login_code import (
     AddressTaken,
@@ -53,8 +53,10 @@ from utils.members import (
 from utils.membership_lifecycle import Status, TransitionRefused
 
 from blueprints.common import (
+    DEMO_EXPORT_REFUSED,
     EMAIL_RE,
     json_login_required,
+    log_export,
     matrikel_admin_required,
     matrikel_read_required,
     membership_organization_fields,
@@ -788,7 +790,7 @@ def export_members():
             )
 
     filename = f"matrikel_export_{date.today().isoformat()}.csv"
-    log_member_export("matr")
+    log_export(Membership, "matr")
     return Response(
         buf.getvalue(),
         mimetype="text/csv; charset=utf-8",
@@ -844,21 +846,6 @@ def export_koharen():
         headers={"Content-Disposition": 'attachment; filename="koharen-matrikel.csv"'},
     )
 
-
-def log_member_export(action, **details):
-    """One audit_log row per download of the MATR export or the address list: who, when and which, never a value."""
-    AuditLog.create(
-        table_name=Membership._meta.table_name,
-        record_id=f"export-{action}-{datetime.now(timezone.utc).isoformat()}",
-        operation="READ",
-        new_data={"action": action, **details},
-        changed_by=current_user.username or current_user.email,
-    )
-
-
-# The demo is a nightly copy of production: an export there would carry real members
-# while its audit row is gone at the next sync.
-DEMO_EXPORT_REFUSED = "Exporten går bara att göra i den riktiga Stamboken, där varje uttag loggas."
 
 ADDRESS_LIST_HEADER = ["Nr", "Namn Efternamn", "Adress", "Postadress", "Betala nu"]
 
@@ -921,7 +908,7 @@ def export_address_list():
     writer = csv.writer(buf, quoting=csv.QUOTE_ALL)
     writer.writerow(ADDRESS_LIST_HEADER)
     writer.writerows(row for _, row in sorted(rows, key=lambda r: r[0]))
-    log_member_export("address-list", rows=len(rows), fee_reminder=fee_reminder)
+    log_export(Membership, "address-list", rows=len(rows), fee_reminder=fee_reminder)
     return Response(
         buf.getvalue(),
         mimetype="text/csv; charset=utf-8",

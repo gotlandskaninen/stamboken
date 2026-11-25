@@ -248,7 +248,7 @@ export interface GeneticPriority {
   genome_uniqueness: number;
   // Read fresh per request; missing when the database no longer has the number.
   name?: string | null;
-  sex?: "female" | "male" | null;
+  sex?: "female" | "male" | "eunuch" | null; // eunuch: a legacy value
   birth_date?: string | null; // YYYY-MM-DD
   herd?: string | null; // current besättningsnummer
 }

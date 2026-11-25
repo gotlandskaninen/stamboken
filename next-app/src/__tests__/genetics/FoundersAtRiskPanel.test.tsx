@@ -41,7 +41,17 @@ const founders = [
   }),
   founder("G9001-5", "warning"),
   founder("G9001-6", "ok"),
+  founder("G9001-7", "lost", { recoverable_carriers: ["G9004-2201"] }),
 ];
+
+const renderPanel = (data: FounderAtRisk[]) => {
+  atRiskQuery.mockReturnValue({ data, isLoading: false });
+  render(
+    <ThemeProvider theme={createTheme()}>
+      <FoundersAtRiskPanel genebankId={1} />
+    </ThemeProvider>,
+  );
+};
 
 const rowIds = () =>
   screen
@@ -55,53 +65,56 @@ describe("FoundersAtRiskPanel", () => {
     vi.clearAllMocks();
   });
 
-  it("orders 1 bärare kvar, 2–3 bärare, Liten andel, then Ok and Ingen bärare", () => {
-    expect(founderOrder(founders).map((f) => f.risk_level)).toEqual([
-      "critical",
-      "warning",
-      "monitor",
-      "ok",
-      "ok",
-      "lost",
-    ]);
-  });
-
-  it("folds Ok and Ingen bärare behind a toggle with their counts", () => {
-    atRiskQuery.mockReturnValue({ data: founders, isLoading: false });
-    render(
-      <ThemeProvider theme={createTheme()}>
-        <FoundersAtRiskPanel genebankId={1} />
-      </ThemeProvider>,
-    );
-    expect(rowIds()).toEqual(["G9001-4", "G9001-5", "G9001-3"]);
-
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "Visa också Ok (2) och Ingen bärare (1)",
-      }),
-    );
-    expect(rowIds()).toEqual([
+  it("orders 1 bärare kvar, Ingen bärare with possible carriers, 2–3 bärare, Liten andel, then the rest", () => {
+    expect(founderOrder(founders).map((f) => f.founder_id)).toEqual([
       "G9001-4",
+      "G9001-7",
       "G9001-5",
       "G9001-3",
       "G9001-2",
       "G9001-6",
       "G9001-1",
     ]);
+  });
+
+  it("folds only Ok and Ingen bärare without possible carriers, and the toggle counts them", () => {
+    renderPanel(founders);
+    expect(rowIds()).toEqual(["G9001-4", "G9001-7", "G9001-5", "G9001-3"]);
+
     fireEvent.click(
-      screen.getByRole("button", { name: "Dölj Ok och Ingen bärare" }),
+      screen.getByRole("button", {
+        name: "Visa 3 till: Ok (2) och Ingen bärare (1)",
+      }),
     );
-    expect(rowIds()).toHaveLength(3);
+    expect(rowIds()).toEqual([
+      "G9001-4",
+      "G9001-7",
+      "G9001-5",
+      "G9001-3",
+      "G9001-2",
+      "G9001-6",
+      "G9001-1",
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "Dölj de 3" }));
+    expect(rowIds()).toHaveLength(4);
+  });
+
+  it("says so in a line when everything is folded", () => {
+    renderPanel([founder("G9001-2", "ok"), founder("G9001-1", "lost")]);
+    expect(
+      screen.getByText("Inget founderdjur behöver åtgärdas just nu."),
+    ).toBeDefined();
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(
+      screen.getByRole("button", {
+        name: "Visa 2 till: Ok (1) och Ingen bärare (1)",
+      }),
+    ).toBeDefined();
   });
 
   it("links the founderdjur, its carriers and its possible carriers to the rabbit page", () => {
-    atRiskQuery.mockReturnValue({ data: founders, isLoading: false });
-    render(
-      <ThemeProvider theme={createTheme()}>
-        <FoundersAtRiskPanel genebankId={1} />
-      </ThemeProvider>,
-    );
-    for (const n of ["G9001-4", "G9002-2401", "G9003-2302"]) {
+    renderPanel(founders);
+    for (const n of ["G9001-4", "G9002-2401", "G9003-2302", "G9004-2201"]) {
       expect(screen.getByRole("link", { name: n }).getAttribute("href")).toBe(
         `/stamboken/individ/${n}`,
       );

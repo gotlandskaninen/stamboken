@@ -50,7 +50,7 @@ kanin vars medelsläktskap är på eller under gränsen för de 5 % minst släkt
 gränsen för de 25 % minst släkta, bland de 25 % med flest unika gener, eller bär gener från ett
 founderdjur som har liten andel av generna. Övriga är resten. Ordet Kritisk används inte, varken
 här eller om founderdjurens läge.\
-Kod: `calculate_genetic_priorities` (`priority`: `critical`, `important`, `normal`) · Legacy-manual: – · Legacy: – · Nytt UI: samma, "Högsta", "Hög", "Övriga" (workList.ts:12–14)
+Kod: `calculate_genetic_priorities` (`priority`: `critical`, `important`, `normal`) · Legacy-manual: – · Legacy: – · Nytt UI: samma, "Högsta", "Hög", "Övriga" (workList.ts:10–12)
 
 **Benring**\
 Ringen runt kaninens ben, med serie och löpnummer (till exempel GKF 123). De flesta kaniner tatueras
@@ -118,7 +118,7 @@ En bärare av ett founderdjur är en kanin i beräkningen som har gener från de
 det först står på en skärm och under Förklaringar. Har en kanin bara en känd förälder räknas den
 okända föräldern som ett eget founderdjur i FE, men inte i antalet founderdjur. Skriv inte founder,
 grundare eller grunddjur.\
-Kod: `identify_founders` · Legacy-manual: – · Legacy: – · Nytt UI: samma, "Founderdjurens läge" (FoundersAtRiskPanel.tsx:169)
+Kod: `identify_founders` · Legacy-manual: – · Legacy: – · Nytt UI: samma, "Founderdjurens läge" (FoundersAtRiskPanel.tsx:186)
 
 **Founderdjursekvivalenter / effektivt antal founderdjur (FE)**\
 Så många founderdjur som, om alla hade lämnat lika stor andel av generna, skulle ge samma spridning
