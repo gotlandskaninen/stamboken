@@ -172,6 +172,16 @@ describe("OverviewTab", () => {
     expect(refetch).toHaveBeenCalled();
   });
 
+  it("shows an older API's answer (no reference_start) without the date", () => {
+    const { reference_start: _absent, ...mainShaped } = metrics;
+    renderTab({ m: { ...mainShaped, n_active: 40 } });
+    expect(screen.getByText("40")).toBeDefined();
+    expect(
+      screen.getByText("levande, med intyg, i en aktiv besättning"),
+    ).toBeDefined();
+    expect(screen.queryByText(/Försök igen|gick inte att hämta/)).toBeNull();
+  });
+
   it("names the cause of an error and retries", () => {
     renderTab({ error: { status: 403 } });
     expect(screen.getByText(/inte behörighet/)).toBeDefined();

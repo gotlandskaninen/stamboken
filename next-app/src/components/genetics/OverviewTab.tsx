@@ -162,9 +162,9 @@ const OverviewTab = ({ genebankId }: OverviewTabProps) => {
 
   if (!metrics || !founders) return null;
 
-  // No date means no snapshot (a failed build): the zeros are not an empty genebank.
-  // A snapshot with no members still has its date.
-  if (metrics.reference_start == null) {
+  // An explicit null means no snapshot (a failed build): the zeros are not an empty genebank.
+  // A snapshot with no members still has its date; an older API (demo) sends no field at all.
+  if (metrics.reference_start === null) {
     return (
       <GeneticsError
         error={undefined}

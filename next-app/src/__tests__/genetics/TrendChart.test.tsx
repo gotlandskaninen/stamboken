@@ -115,6 +115,17 @@ describe("TrendChart", () => {
     expect(screen.queryByText(/Ihålig punkt/)).toBeNull();
   });
 
+  it("leaves out an older API's rolling Ne (rows without ne_n)", () => {
+    const mainShaped = (y: number) => {
+      const { ne_se: _se, ne_n: _n, ...row } = year(y, 449);
+      return row;
+    };
+    renderChart([mainShaped(2024), mainShaped(2025)]);
+    expect(screen.queryByRole("button", { name: "Ne" })).toBeNull();
+    expect(chart?.series).toEqual([{ name: "FE", data: [21.74, 21.74] }]);
+    expect(screen.queryByText(/449/)).toBeNull();
+  });
+
   it("says the values are on their way when no year has been recomputed", () => {
     renderChart([year(2024, null, null), year(2025, null, null)]);
     expect(screen.queryByTestId("chart")).toBeNull();
