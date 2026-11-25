@@ -26,3 +26,106 @@
   align-items: center;
   gap: 0.5rem;
 }
+
+/* Create account: a reading measure for the rules and a clear place to accept. */
+.reading {
+  max-width: 46rem;
+}
+
+.reading h1 {
+  font-family: var(--sb-display);
+  font-weight: 600;
+}
+
+.reading a {
+  color: var(--sb-skog);
+  text-underline-offset: 0.15em;
+}
+
+.back {
+  margin: 0 0 var(--sb-s-4);
+  font-size: var(--sb-fs-sm);
+}
+
+.status {
+  color: var(--sb-skog);
+  font-weight: 600;
+}
+
+.lead {
+  font-weight: 600;
+}
+
+.rules {
+  margin-top: var(--sb-s-5);
+  padding: clamp(1rem, 4vw, 2rem);
+  background: var(--sb-card);
+  border: 1px solid var(--sb-line);
+  border-radius: var(--sb-r-3);
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.rules h2 {
+  margin: 0 0 var(--sb-s-4);
+  font-family: var(--sb-display);
+  font-weight: 600;
+  font-size: var(--sb-fs-xl);
+  line-height: var(--sb-lh-snug);
+}
+
+/* Keeps the line breaks of the hashed plain text. */
+.rules p {
+  margin: 0;
+  padding-block: var(--sb-s-4);
+  white-space: pre-wrap;
+}
+
+/* One rule per paragraph, separated by a hairline. */
+.rules p + p {
+  border-top: 1px solid var(--sb-line-faint);
+}
+
+.rules p:last-child {
+  padding-bottom: 0;
+}
+
+.rules strong {
+  color: var(--sb-skog);
+  font-weight: 600;
+}
+
+.accept {
+  padding: var(--sb-s-5);
+  background: var(--sb-skog-soft);
+  border-radius: var(--sb-r-3);
+  gap: var(--sb-s-4);
+  scroll-margin-top: var(--sb-s-5);
+}
+
+.accept .check {
+  min-height: 44px;
+  gap: var(--sb-s-3);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.accept .check input {
+  flex: none;
+  width: 1.375rem;
+  height: 1.375rem;
+  min-height: 0;
+  margin: 0;
+  accent-color: var(--sb-skog);
+}
+
+.accept button {
+  justify-self: start;
+}
+
+.alert {
+  padding: var(--sb-s-3) var(--sb-s-4);
+  background: var(--sb-warning-soft);
+  border-left: 4px solid var(--sb-warning);
+  border-radius: var(--sb-r-2);
+}

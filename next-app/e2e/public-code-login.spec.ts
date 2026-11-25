@@ -80,13 +80,17 @@ test("a member signs in by code, accepts the rules and uploads a certificate on 
   await code.fill(digits);
   await page.getByRole("button", { name: "Logga in med kod" }).click();
   const create = page.getByRole("button", { name: "Skapa mitt konto" });
-  await expect(create).toBeDisabled();
   await expect(
     page.getByText("Använd bara ditt eget testkonto.", { exact: true }),
   ).toBeVisible();
-  await page
-    .getByRole("checkbox", { name: "Jag har läst reglerna och följer dem." })
-    .check();
+  // A press without the tick explains itself and leads to the box.
+  const accept = page.getByRole("checkbox", {
+    name: "Jag har läst reglerna och följer dem.",
+  });
+  await create.click();
+  await expect(page.getByText(/Kryssa först i rutan/)).toBeVisible();
+  await expect(accept).toBeFocused();
+  await accept.check();
   await create.click();
   await expect(
     page.getByRole("heading", { name: "Ladda upp intyg" }),

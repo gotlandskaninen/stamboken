@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   useTransition,
+  type MouseEvent,
   type ReactNode,
 } from "react";
 import Link from "next/link";
@@ -184,6 +185,25 @@ export function LoginLink({ enabled }: { enabled: boolean }) {
   );
 }
 
+// The next step for each error, so the member is never left without a way on.
+const NEXT_STEP: Record<string, [href: string, label: string]> = {
+  expired: ["sign-in", "codeLogin.newCode"],
+  accountConflict: ["sign-in", "codeLogin.back"],
+  rulesChanged: ["#kontoregler", "codeLogin.toRules"],
+};
+
+// Jumps within the page without a history entry, which the App Router cannot
+// go back from, and moves focus to the target.
+function jump(
+  event: MouseEvent<HTMLAnchorElement>,
+  target: HTMLElement | null,
+) {
+  if (!target) return;
+  event.preventDefault();
+  target.scrollIntoView({ block: "center" });
+  target.focus({ preventScroll: true });
+}
+
 export function CreateAccount({
   rules,
   returnTo,
@@ -199,6 +219,7 @@ export function CreateAccount({
   const [error, setError] = useState("");
   const [created, setCreated] = useState(false);
   const [pending, start] = useTransition();
+  const checkbox = useRef<HTMLInputElement>(null);
   if (created)
     return (
       <main className={styles.page}>
@@ -209,18 +230,43 @@ export function CreateAccount({
         </Link>
       </main>
     );
+  const next = NEXT_STEP[error];
+  // Back to sign-in keeps where the member was going.
+  const signIn = returnTo
+    ? `/auth/sign-in?return_to=${encodeURIComponent(returnTo)}`
+    : "/auth/sign-in";
   return (
-    <main className={styles.page}>
+    <main className={`${styles.page} ${styles.reading}`}>
+      <p className={styles.back}>
+        <Link href={signIn}>{t("codeLogin.back")}</Link>
+      </p>
       <h1>{t("codeLogin.create")}</h1>
+      <p className={styles.status}>{t("codeLogin.confirmed")}</p>
       <p>{t("codeLogin.accountPurpose")}</p>
       {rules ? (
         <>
+          <p className={styles.lead}>
+            {t("codeLogin.readFirst")}{" "}
+            <a
+              href="#godkann"
+              onClick={(event) => jump(event, checkbox.current)}
+            >
+              {t("codeLogin.toAccept")}
+            </a>
+          </p>
           {children}
           <form
-            className={styles.form}
+            id="godkann"
+            className={`${styles.form} ${styles.accept}`}
+            // The button stays usable, so a press without the tick explains itself.
+            noValidate
             onSubmit={(event) => {
               event.preventDefault();
-              if (!accepted) return;
+              if (!accepted) {
+                setError("acceptFirst");
+                checkbox.current?.focus();
+                return;
+              }
               setError("");
               start(async () => {
                 const result = await createMemberAccount(
@@ -238,34 +284,58 @@ export function CreateAccount({
           >
             <label className={styles.check}>
               <input
+                ref={checkbox}
                 type="checkbox"
                 checked={accepted}
                 required
-                onChange={(event) =>
-                  setAcceptedHash(event.target.checked ? rules.sha256 : null)
-                }
-              />{" "}
+                aria-describedby={error ? "godkann-fel" : undefined}
+                onChange={(event) => {
+                  setAcceptedHash(event.target.checked ? rules.sha256 : null);
+                  if (error === "acceptFirst" || error === "rulesChanged")
+                    setError("");
+                }}
+              />
               {t("codeLogin.accept")}
             </label>
-            {error && <p role="alert">{t(`codeLogin.${error}`)}</p>}
-            <button
-              className="sb-btn"
-              type="submit"
-              disabled={pending || !accepted}
-            >
+            {error && (
+              <p id="godkann-fel" role="alert" className={styles.alert}>
+                {t(`codeLogin.${error}`)}
+                {next && (
+                  <>
+                    {" "}
+                    {next[0] === "sign-in" ? (
+                      <Link href={signIn}>{t(next[1])}</Link>
+                    ) : (
+                      <a
+                        href={next[0]}
+                        onClick={(event) =>
+                          jump(event, document.getElementById("kontoregler"))
+                        }
+                      >
+                        {t(next[1])}
+                      </a>
+                    )}
+                  </>
+                )}
+              </p>
+            )}
+            <button className="sb-btn" type="submit" disabled={pending}>
               {t("codeLogin.create")}
             </button>
           </form>
+          <p>
+            {t("codeLogin.rulesAgain")}{" "}
+            <Link href="/kontoregler">{t("codeLogin.rules")}</Link>
+          </p>
         </>
       ) : (
-        <p role="alert">{t("codeLogin.rulesMissing")}</p>
+        <p role="alert" className={styles.alert}>
+          {t("codeLogin.rulesMissing")}
+        </p>
       )}
       <p>
         {t("codeLogin.privacyIntro")}{" "}
         <Link href="/dataskydd">{t("codeLogin.privacy")}</Link>
-      </p>
-      <p>
-        <Link href="/auth/sign-in">{t("codeLogin.back")}</Link>
       </p>
     </main>
   );
