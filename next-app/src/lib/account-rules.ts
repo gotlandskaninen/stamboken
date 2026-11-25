@@ -12,6 +12,13 @@ type LexicalNode = {
 };
 // Bold and italic only: their words are the plain text's words.
 const PLAIN_FORMATS = 1 | 2;
+// CMS data can be malformed; anything but a list of nodes is not formattable.
+function each(nodes: unknown, test: (node: LexicalNode) => boolean) {
+  return (
+    Array.isArray(nodes) &&
+    nodes.every((node) => !!node && typeof node === "object" && test(node))
+  );
+}
 // The plain-text converter reads the `text` and `children` it finds, the page
 // only what each node type renders, so a node must carry exactly those.
 function sameWordsAsText(node: LexicalNode): boolean {
@@ -29,7 +36,8 @@ function sameWordsAsText(node: LexicalNode): boolean {
       return (
         node.fields?.linkType === "custom" &&
         node.text === undefined &&
-        (node.children ?? []).every(
+        each(
+          node.children ?? [],
           (child) => child.type === "text" && sameWordsAsText(child),
         )
       );
@@ -43,11 +51,12 @@ function sameWordsAsText(node: LexicalNode): boolean {
 // headings, lists, strikethrough, links to CMS pages) is shown as the plain
 // text that is hashed.
 function formattable(content: SerializedEditorState) {
-  return (content.root?.children ?? []).every(
-    (node: LexicalNode) =>
+  return each(
+    content.root?.children ?? [],
+    (node) =>
       node.type === "paragraph" &&
       node.text === undefined &&
-      (node.children ?? []).every(sameWordsAsText),
+      each(node.children ?? [], sameWordsAsText),
   );
 }
 

@@ -319,6 +319,59 @@ describe("published account rules revision", () => {
       expect(db.findVersions).not.toHaveBeenCalled();
     },
   );
+  it.each([
+    [
+      "an empty column",
+      [
+        {
+          blockType: "richText",
+          content: paragraph("Använd bara ditt eget testkonto."),
+        },
+        {
+          blockType: "columns",
+          columns: [{ content: { root: { children: {} } } }],
+        },
+      ],
+    ],
+    [
+      "a paragraph whose children are not a list",
+      [
+        {
+          blockType: "richText",
+          content: {
+            root: {
+              children: [
+                {
+                  type: "paragraph",
+                  children: [
+                    { type: "text", text: "Använd bara ditt eget testkonto." },
+                  ],
+                },
+                { type: "paragraph", children: "" },
+              ],
+            },
+          },
+        },
+      ],
+    ],
+  ])("still offers the rules with %s", async (_name, layout) => {
+    db.find.mockResolvedValue({ docs: [{ ...page, layout }] });
+    db.findVersions.mockResolvedValue({ docs: [{ id: 8 }] });
+    const response = await GET();
+    expect(response.status).toBe(200);
+    const { text } = await response.json();
+    // The text is computed as on main, an empty paragraph's blank line included.
+    expect(text.trim()).toBe(
+      "Kontoregler\n\nFör alla konton\n\nAnvänd bara ditt eget testkonto.",
+    );
+    const form = await CreateAccountPage({ searchParams: Promise.resolve({}) });
+    expect(form.props.rules.sha256).toBe(
+      createHash("sha256").update(text).digest("hex"),
+    );
+    expect(shownText(renderToStaticMarkup(form.props.children))).toBe(
+      text.trim(),
+    );
+  });
   it("accepts readable rules in a column", async () => {
     const columns = [
       { content: paragraph("Använd bara ditt eget testkonto.") },
