@@ -403,6 +403,27 @@ def _masked_actor_rows():
 ANONYMISED_MEMBERSHIP_KEYS = HOUSEHOLD_PII_KEYS | {"payment_note"} | (PII_PAYLOAD_KEYS - {"first_name", "last_name"})
 
 
+MATRIKEL_AUDIT_VALUE_RETENTION = "12 months"  # a PostgreSQL interval: calendar months
+
+
+def purge_matrikel_audit_values(now) -> int:
+    """Nightly (#244): contact values (addresses, e-mail, phone, notes) in matrikel_audit payloads older than 12
+    months become REDACTED_VALUE. The row stays: who, when, what kind of change, and the keys. Idempotent.
+    shortcut: scans every old row each night; add a flag column if the log grows past a few hundred thousand rows."""
+    cutoff = DB_PROXY.execute_sql(
+        "SELECT %s::timestamp - %s::interval", (now.astimezone().replace(tzinfo=None), MATRIKEL_AUDIT_VALUE_RETENTION)
+    ).fetchone()[0]  # created_at holds the server's naive local time
+    touched = 0
+    with DB_PROXY.atomic():
+        for row in MatrikelAudit.select().where(MatrikelAudit.created_at < cutoff):
+            payload, changed = _redact_node(row.payload or {}, ANONYMISED_MEMBERSHIP_KEYS)
+            if changed:
+                row.payload = payload
+                row.save()
+                touched += 1
+    return touched
+
+
 def _memberships_with_anonymised(membership_ids) -> set[int]:
     """The memberships where any person has been anonymised. Their household values in the log may name her (a former
     billing recipient, an address she shared), and the log cannot tell whose they were."""

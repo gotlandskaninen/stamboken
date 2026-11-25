@@ -494,3 +494,31 @@ class TestMatrikelAudit(MatrikelApiTest):
         self.assertEqual(row["actor"], {"id": None, "name": matrikel.REDACTED_VALUE})
         found = self.get("actor=tova-konto@example.com").get_json()
         self.assertEqual((found["total"], found["rows"]), (0, []))
+
+
+class TestPurgeMatrikelAuditValues(MatrikelApiTest):
+    def test_old_rows_lose_contact_values_and_keep_the_rest(self):
+        ms = _mk_membership(number=43, address="Gata 1")
+        payload = {
+            "person_id": 1,
+            "before": {"email": "a@example.com", "city": "Visby"},
+            "after": {"email": "b@example.com"},
+        }
+        old = matrikel.write_matrikel_audit(self.admin, "person_updated", ms, payload)
+        new = matrikel.write_matrikel_audit(self.admin, "person_updated", ms, payload)
+        now = datetime.now().astimezone()
+        db.MatrikelAudit.update(created_at=datetime.now() - timedelta(days=400)).where(
+            db.MatrikelAudit.id == old.id
+        ).execute()
+
+        self.assertEqual(matrikel.purge_matrikel_audit_values(now), 1)
+
+        old, new = db.MatrikelAudit.get_by_id(old.id), db.MatrikelAudit.get_by_id(new.id)
+        gone = matrikel.REDACTED_VALUE
+        self.assertEqual(
+            old.payload,
+            {"person_id": 1, "before": {"email": gone, "city": gone}, "after": {"email": gone}},
+        )
+        self.assertEqual((old.action, old.actor_id, old.membership_id), ("person_updated", self.admin.id, ms.id))
+        self.assertEqual(new.payload, payload)
+        self.assertEqual(matrikel.purge_matrikel_audit_values(now), 0)
