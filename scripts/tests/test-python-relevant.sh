@@ -22,6 +22,11 @@ check "this workflow" true .github/workflows/python_tests.yml
 check "nginx" true nginx/nginx.main
 check "Dockerfile outside next-app" true .docker/next-app
 check "empty list" false ""
+check "the filter itself" true scripts/python-relevant.sh
+
+got=$(printf 'app/x.py' | "$SCRIPT")
+if [ "$got" = true ]; then echo "ok   - last line without newline"; pass=$((pass + 1))
+else echo "FAIL - last line without newline (got '$got')"; fail=$((fail + 1)); fi
 
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

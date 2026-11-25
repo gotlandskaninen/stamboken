@@ -1,5 +1,8 @@
 name: Python tests
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main, 'release/**']
@@ -12,37 +15,38 @@ jobs:
   changes:
     name: Python-relevant changes
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: read
     outputs:
       python: ${{ steps.filter.outputs.python }}
     steps:
       - name: Check out code
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
+      # Before the filter decides anything: a broken filter must not skip its own tests.
+      - name: Test the filter
+        run: bash scripts/tests/test-python-relevant.sh
+
+      # The diff of this run's own base and head, not the PR's current files,
+      # so a rerun of an older commit is judged on that commit. File names
+      # are never printed: the runner reads workflow commands from the log.
       - name: Decide whether the Python suite runs
         id: filter
         env:
-          GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
-          PR: ${{ github.event.pull_request.number }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           if [ "$EVENT" != pull_request ]; then
-            echo python=true >>"$GITHUB_OUTPUT"
-            exit 0
-          fi
-          files="$RUNNER_TEMP/changed-files"
-          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" \
-            --jq '.[] | .filename, (.previous_filename // empty)' >"$files"
-          cat "$files"
-          # The API lists at most 3000 files: run everything rather than trust a cut list.
-          if [ "$(wc -l <"$files")" -ge 3000 ]; then
-            echo python=true >>"$GITHUB_OUTPUT"
+            python=true
           else
-            echo "python=$(scripts/python-relevant.sh <"$files")" >>"$GITHUB_OUTPUT"
+            files="$RUNNER_TEMP/changed-files"
+            git diff --name-only --no-renames "$BASE...$HEAD" >"$files"
+            echo "$(wc -l <"$files") changed files"
+            python=$(scripts/python-relevant.sh <"$files")
           fi
-          tail -n1 "$GITHUB_OUTPUT"
+          case "$python" in true | false) ;; *) echo "Filter gave '$python'"; exit 1 ;; esac
+          echo "python=$python" | tee -a "$GITHUB_OUTPUT"
 
   checks:
     name: Script and nginx checks
@@ -78,7 +82,7 @@ jobs:
           scripts/check-nginx-prod-config.sh nginx/herdbook-local-production.conf
 
   pytest:
-    name: Pytest ${{ matrix.group }}/4
+    name: Pytest ${{ matrix.group }}/${{ strategy.job-total }}
     needs: changes
     if: needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
@@ -155,7 +159,7 @@ jobs:
             -v "$PWD/nginx:/nginx:ro" \
             herdbook-api-test:latest \
             pytest /app/tests/ -v --tb=short -n auto \
-              --splits 4 --group ${{ matrix.group }} --splitting-algorithm least_duration \
+              --splits ${{ strategy.job-total }} --group ${{ matrix.group }} --splitting-algorithm least_duration \
               --durations-path tests/.test_durations
 
   # The ruleset requires this name. It passes when the suite was skipped on
@@ -175,8 +179,8 @@ jobs:
         run: |
           echo "changes=$CHANGES python=$PYTHON checks=$CHECKS pytest=$PYTEST"
           [ "$CHANGES" = success ] || exit 1
-          if [ "$PYTHON" = true ]; then
-            [ "$CHECKS" = success ] && [ "$PYTEST" = success ]
-          else
-            echo "No Python-relevant changes: the suite was skipped."
-          fi
+          case "$PYTHON" in
+            true) [ "$CHECKS" = success ] && [ "$PYTEST" = success ] ;;
+            false) echo "No Python-relevant changes: the suite was skipped." ;;
+            *) exit 1 ;;
+          esac

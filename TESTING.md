@@ -223,11 +223,14 @@ GitHub-inställningarna, inte i förrådet.
 `python_tests.yml` delar pytest-sviten i fyra jobb (`Pytest 1/4` till `4/4`)
 med pytest-split, efter körtiderna i `app/tests/.test_durations`. Ett test som
 saknas där räknas som ett genomsnittligt test, så filen behöver bara förnyas
-när delarna blivit ojämna: kör sviten med `--store-durations` och slå ihop de
-fyra delarnas filer. En PR som bara ändrar `next-app/`, `docs/` eller Markdown
+när delarna blivit ojämna: kör hela sviten en gång utan `--splits`, med
+`--store-durations --clean-durations`. Slå inte ihop delarnas filer: varje del
+skriver om hela filen med de gamla tiderna för tester den inte körde. En PR som bara ändrar `next-app/`, `docs/` eller Markdown
 utanför `app/` hoppar över sviten (`scripts/python-relevant.sh`). Den
 obligatoriska kontrollen `Run Python tests` körs alltid och är grön när sviten
-hoppades över, röd när någon del misslyckades. Push till `main` kör allt.
+hoppades över, röd när någon del misslyckades eller filtret inte gav ett svar.
+Filtret bedömer körningens egen diff (bas mot head), inte PR:ens nuvarande
+filer. Push till `main` kör allt.
 
 ---
 
