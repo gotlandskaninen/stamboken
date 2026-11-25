@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Mode } from "@/lib/mode";
 import { activateGenebank, saveRound, sendTestMail } from "../../actions";
-import { fmtDate, type Round } from "../../lib";
+import { defaultRoundDates, fmtDate, type Round } from "../../lib";
 import styles from "../../arsrapport.module.css";
 import inkorg from "../../../inkorg/inkorg.module.css";
 
@@ -19,6 +19,7 @@ export function RoundPanel({
   genebankId,
   genebankName,
   round,
+  closed = false,
   canEdit,
   recipients,
   env,
@@ -27,16 +28,19 @@ export function RoundPanel({
   genebankId: number;
   genebankName: string;
   round: Round | null;
+  closed?: boolean;
   canEdit: boolean;
   recipients: { med_epost: number; utan_epost: number } | null;
   env: Mode;
 }) {
   const router = useRouter();
   const activation = round?.genebanks.find((g) => g.genebank_id === genebankId);
+  // A date the round lacks shows the default the server would give it.
+  const defaults = defaultRoundDates(year);
   const [dates, setDates] = useState({
-    start_date: round?.start_date ?? "",
-    deadline: round?.deadline ?? "",
-    end_date: round?.end_date ?? "",
+    start_date: round?.start_date ?? defaults.start_date,
+    deadline: round?.deadline ?? defaults.deadline,
+    end_date: round?.end_date ?? defaults.end_date,
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -148,6 +152,18 @@ export function RoundPanel({
       {error}
     </p>
   );
+
+  if (closed && round?.end_date)
+    return (
+      <section className={`sb-card ${styles.roundCard}`}>
+        <h2>Rundan {year} är stängd</h2>
+        <p className={inkorg.muted} style={{ margin: 0 }}>
+          Den stängde {fmtDate(round.end_date)} utan att ha aktiverats för{" "}
+          {genebankName}. Rapporter som skickades i gamla Stamboken visas inte
+          här.
+        </p>
+      </section>
+    );
 
   if (!activation)
     return (

@@ -130,3 +130,44 @@ describe("RoundPanel invitation", () => {
     expect(screen.queryByText("Skicka provmejl till mig")).toBeNull();
   });
 });
+
+describe("RoundPanel without an open round", () => {
+  it("says a round that closed without activation is closed, with nothing to do", () => {
+    render(
+      <RoundPanel
+        year={2025}
+        genebankId={1}
+        genebankName="Gotland"
+        round={{ ...round, year: 2025, end_date: "2026-03-30", genebanks: [] }}
+        closed
+        canEdit
+        recipients={null}
+        env="demo"
+      />,
+    );
+    expect(screen.getByText("Rundan 2025 är stängd")).toBeTruthy();
+    expect(screen.queryByText("Aktivera")).toBeNull();
+    expect(screen.queryByText("Skicka provmejl till mig")).toBeNull();
+  });
+  it("fills a new round's dates with the defaults", () => {
+    render(
+      <RoundPanel
+        year={2026}
+        genebankId={1}
+        genebankName="Gotland"
+        round={null}
+        canEdit
+        recipients={null}
+        env="demo"
+      />,
+    );
+    expect(screen.getByLabelText("Öppnar")).toHaveProperty(
+      "value",
+      "2026-12-31",
+    );
+    expect(screen.getByLabelText("Stänger")).toHaveProperty(
+      "value",
+      "2027-03-30",
+    );
+  });
+});

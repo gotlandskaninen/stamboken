@@ -6,11 +6,18 @@ import { requireQueueWorker } from "@/lib/inkorg-server";
 import { MODE_COOKIE, parseMode } from "@/lib/mode";
 import { Masthead } from "@/components/shell/Masthead";
 import { manages, type QueueList } from "../../../inkorg/lib";
-import { parseFilter, type StatusView } from "../../lib";
+import {
+  currentRoundYear,
+  parseFilter,
+  todayStockholm,
+  type Round,
+  type StatusView,
+} from "../../lib";
 import styles from "../../arsrapport.module.css";
 import inkorg from "../../../inkorg/inkorg.module.css";
 import { BlankFormLink, StatusTable } from "./StatusTable";
 import { RoundPanel } from "./RoundPanel";
+import { StatusSwitch } from "./StatusSwitch";
 
 export const dynamic = "force-dynamic";
 
@@ -28,10 +35,18 @@ export default async function StatusPage({
   const env = parseMode((await cookies()).get(MODE_COOKIE)?.value);
 
   // The genebanks the user may open: admin all, others where they manage or help.
-  const [queue, all] = await Promise.all([
+  const [queue, all, rounds, blankForm] = await Promise.all([
     fetchApi<QueueList>("/v2/inkorg?limit=1"),
     fetchApi<{ genebanks: { id: number; name: string }[] }>("/genebanks").then(
       (r) => r.genebanks ?? [],
+    ),
+    fetchApi<{ rounds: Round[] }>("/v2/arsrapport/rundor").then(
+      (r) => r.rounds,
+    ),
+    // Ops puts the blank form on the server (docs/arsrapport.md); until then the link would open a 404.
+    fetchApi("/v2/arsrapport/blankett.pdf", { method: "HEAD" }).then(
+      () => true,
+      (e) => !(e instanceof ApiError && e.status === 404),
     ),
   ]);
   const mine = queue.my_genebanks ?? [];
@@ -48,6 +63,15 @@ export default async function StatusPage({
     options.find((g) => g.id === wanted) ?? managed ?? options[0];
   if (!genebank) notFound();
   const canEdit = manages(user, genebank.id);
+  const today = todayStockholm();
+  // The rounds there are, the current one (which may not exist yet) and this page's.
+  const years = [
+    ...new Set([
+      ...rounds.map((r) => r.year),
+      currentRoundYear(rounds, today),
+      Number(year),
+    ]),
+  ].sort((a, b) => b - a);
 
   // 404: the year has no round yet. The panel offers to create it.
   let view: StatusView | null = null;
@@ -58,13 +82,19 @@ export default async function StatusPage({
   } catch (e) {
     if (!(e instanceof ApiError && e.status === 404)) throw e;
   }
+  const activation = view?.round.genebanks.find(
+    (g) => g.genebank_id === genebank.id,
+  );
+  // A round that closed without being activated here (the old app's rounds): nothing to report or show.
+  const closed =
+    !!view &&
+    !activation &&
+    !!view.round.end_date &&
+    view.round.end_date < today;
 
   // How many invitations go out, while none has: counts only, readable by helpers too.
-  const sent = view?.round.genebanks.find(
-    (g) => g.genebank_id === genebank.id,
-  )?.sent_at;
   const recipients =
-    view && !sent
+    view && !closed && !activation?.sent_at
       ? await fetchApi<{ med_epost: number; utan_epost: number }>(
           `/v2/arsrapport/rundor/${year}/genbanker/${genebank.id}/mottagare`,
         )
@@ -75,49 +105,32 @@ export default async function StatusPage({
       <Masthead
         eyebrow="Årsrapport"
         title={`Status ${year}`}
-        meta={`${genebank.name}${view ? ` · ${view.rows.length} besättningar` : ""}`}
+        meta={`${genebank.name}${view && !closed ? ` · ${view.rows.length} besättningar` : ""}`}
         actions={
-          <div className={inkorg.row}>
-            {options.length > 1 && (
-              <form method="get" className={inkorg.row}>
-                <label>
-                  Genbank{" "}
-                  <select
-                    name="genebank_id"
-                    defaultValue={genebank.id}
-                    className={`sb-input ${styles.field}`}
-                  >
-                    {options.map((g) => (
-                      <option key={g.id} value={g.id}>
-                        {g.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <button
-                  type="submit"
-                  className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
-                >
-                  Visa
-                </button>
-              </form>
-            )}
-            <BlankFormLink />
+          <div className={styles.mastActions}>
+            <StatusSwitch
+              year={Number(year)}
+              years={years}
+              genebankId={genebank.id}
+              genebanks={options}
+            />
+            <BlankFormLink available={blankForm} />
           </div>
         }
       />
-      <div className={inkorg.container}>
+      <div className={`${inkorg.container} ${styles.statusContainer}`}>
         <RoundPanel
           key={`${genebank.id}-${env}-${view?.round.start_date}-${view?.round.deadline}-${view?.round.end_date}`}
           year={Number(year)}
           genebankId={genebank.id}
           genebankName={genebank.name}
           round={view?.round ?? null}
+          closed={closed}
           canEdit={canEdit}
           recipients={recipients}
           env={env}
         />
-        {view && (
+        {view && !closed && (
           <StatusTable
             key={`${genebank.id}-${env}`}
             view={view}

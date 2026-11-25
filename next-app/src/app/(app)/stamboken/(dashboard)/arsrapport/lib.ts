@@ -1160,6 +1160,27 @@ export interface Round {
   genebanks: RoundGenebank[];
 }
 
+// Fråga 7: the server's defaults for a new round (arsrapport.default_dates).
+export const defaultRoundDates = (year: number) => ({
+  start_date: `${year}-12-31`,
+  deadline: `${year + 1}-01-31`,
+  end_date: `${year + 1}-03-30`,
+});
+
+// The round managers work on: last year's until it closes, then this year's.
+export function currentRoundYear(rounds: Round[], today: string): number {
+  const year = Number(today.slice(0, 4));
+  const last = rounds.find((r) => r.year === year - 1);
+  return last?.end_date && today <= last.end_date ? year - 1 : year;
+}
+
+// A phone field can hold two numbers, "08 - 510 122 07 0709 - 55 72 08": split before each "NN - ".
+export const phoneNumbers = (text: string): string[] =>
+  text
+    .split(/\s+(?=\d+\s*-\s*\d)/)
+    .map((n) => n.trim())
+    .filter(Boolean);
+
 export interface StatusView {
   round: Round;
   genebank_id: number;

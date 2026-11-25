@@ -2,10 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   callFrom,
   countByState,
+  currentRoundYear,
+  defaultRoundDates,
+  phoneNumbers,
   filterRows,
   parseFilter,
   toCall,
   ROW_STATES,
+  type Round,
   type RowState,
   type StatusRow,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/lib";
@@ -192,5 +196,48 @@ describe("toCall and a failed invitation", () => {
         today,
       ),
     ).toBe(false);
+  });
+});
+
+describe("phoneNumbers", () => {
+  it("splits a field with two numbers so each can be dialled", () => {
+    expect(phoneNumbers("08 - 510 122 07 0709 - 55 72 08")).toEqual([
+      "08 - 510 122 07",
+      "0709 - 55 72 08",
+    ]);
+  });
+  it("keeps one number whole, with or without a dash", () => {
+    expect(phoneNumbers("0761 13 39 05")).toEqual(["0761 13 39 05"]);
+    expect(phoneNumbers("070-000 00 01")).toEqual(["070-000 00 01"]);
+    expect(phoneNumbers("0730601951")).toEqual(["0730601951"]);
+  });
+});
+
+describe("currentRoundYear", () => {
+  const round = (year: number, end_date: string | null): Round => ({
+    year,
+    start_date: null,
+    deadline: null,
+    end_date,
+    is_active: false,
+    genebanks: [],
+  });
+  it("is last year's round until it closes", () => {
+    expect(currentRoundYear([round(2026, "2027-03-30")], "2027-02-01")).toBe(
+      2026,
+    );
+  });
+  it("is this year's once last year's has closed, even before it exists", () => {
+    expect(currentRoundYear([round(2025, "2026-03-30")], "2026-11-25")).toBe(
+      2026,
+    );
+    expect(currentRoundYear([], "2026-11-25")).toBe(2026);
+  });
+  it("gives the server's default dates for a new round", () => {
+    expect(defaultRoundDates(2026)).toEqual({
+      start_date: "2026-12-31",
+      deadline: "2027-01-31",
+      end_date: "2027-03-30",
+    });
   });
 });
