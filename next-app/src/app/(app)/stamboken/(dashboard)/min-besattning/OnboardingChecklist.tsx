@@ -29,14 +29,15 @@ export interface OnboardingStep {
 export function onboardingSteps(
   individuals: Individual[],
   breedings: BreedingRecord[],
-  triedDemo = false,
+  // undefined: no test environment step (the user has no menu item for it)
+  triedDemo?: boolean,
 ): OnboardingStep[] {
   // Living, uncastrated breeding stock. Not "Aktiv": that needs a life sign
   // within 13 months, which a herd that has not bred may lack.
   const stock = individuals.filter(
     (i) => rabbitStatus(i) !== "Död" && !i.castration_date,
   );
-  return [
+  const steps: OnboardingStep[] = [
     {
       title: "Ta emot dina startdjur",
       text: "När du har köpt dina startdjur säljer uppfödaren dem till din besättning i Stamboken. De syns sedan under Kaniner. Du behöver minst en hane och en hona.",
@@ -60,6 +61,10 @@ export function onboardingSteps(
       manual: "#registrera-en-parning",
       more: "Så registrerar du en parning",
     },
+  ];
+  if (triedDemo === undefined) return steps;
+  return [
+    ...steps,
     {
       title: "Prova i testmiljön",
       text: "Vill du prova utan att ändra något på riktigt? Byt till testmiljön i menyn. Där kan du klicka runt fritt, och allt återställs varje natt.",
@@ -114,7 +119,11 @@ export default function OnboardingChecklist({
   if (breedings.length > 0) return null;
 
   const individuals = herd.individuals ?? [];
-  const steps = onboardingSteps(individuals, breedings, triedDemo);
+  const steps = onboardingSteps(
+    individuals,
+    breedings,
+    user.v2_prod_access ? triedDemo : undefined,
+  );
   // The mating form needs a doe in the herd; the buck may be borrowed.
   const hasDoe = individuals.some(
     (i) => i.sex === "female" && rabbitStatus(i) !== "Död",
