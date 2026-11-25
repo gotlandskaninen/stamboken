@@ -105,10 +105,9 @@ class ValidationError(HTTPException):
     Subclasses werkzeug's HTTPException so a bare ``raise`` anywhere in
     the data-access layer becomes a finished HTTP response — Flask
     converts HTTPExceptions automatically (TRAP_HTTP_EXCEPTIONS is off).
-    This is how the last-admin invariant surfaces as 409 through the
-    UNTOUCHED legacy /api/manage/role route: the shared helper raises,
-    zero route handlers change (locked policy: zero
-    legacy endpoint modifications).
+    This is how the last-admin invariant surfaces as 409 through
+    POST /api/v2/admin/role: the shared helper raises, and no route
+    handler has to catch it.
     """
 
     code = 409

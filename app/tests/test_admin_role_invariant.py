@@ -40,12 +40,11 @@ class TestLastAdminInvariant(DatabaseTest):
         return user
 
     def _remove_admin_via_legacy(self, target_id):
-        """POST the UNTOUCHED legacy endpoint. The 409 comes from the shared
-        data-access helper raising ValidationError (an HTTPException) — the
-        route handler itself is byte-for-byte unchanged."""
+        """POST /api/v2/admin/role (the old /api/manage/role is closed, 410). The 409
+        comes from the shared data-access helper raising ValidationError."""
         return self.client.post(
-            "/api/manage/role",
-            json={"action": "remove", "role": "admin", "user": target_id},
+            "/api/v2/admin/role",
+            json={"operation": "remove", "user_id": target_id, "role": {"level": "admin"}},
         )
 
     def test_last_admin_cannot_remove_own_admin_via_direct_api(self):

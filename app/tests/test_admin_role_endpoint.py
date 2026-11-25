@@ -1,7 +1,7 @@
 """POST /api/v2/admin/role.
 
-The legacy /api/manage/role endpoint is UNTOUCHED in Phase 17; its
-legacy-compat regression tests live in test_legacy_api_contracts.py.
+The legacy /api/manage/role endpoint is closed (410, ADR-0020); the
+closed-route tests live in test_legacy_api_contracts.py.
 """
 
 import os

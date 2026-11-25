@@ -62,9 +62,9 @@ class TestHelperRole(DatabaseTest):
         self.assertIsNone(user.is_manager)
 
     def test_a_manager_grants_helper_only_in_their_genebank(self):
-        self.login("man")  # manager of Gotland, through the legacy role endpoint
+        # manager of Gotland, through the function behind the closed legacy role endpoint
         gotland, mellerud = self.genebanks
         for genebank, status in ((mellerud, "error"), (gotland, "updated")):
             body = {"action": "add", "role": "helper", "user": self.target.id, "genebank": genebank.id}
-            self.assertEqual(self.client.post("/api/manage/role", json=body).get_json()["status"], status)
+            self.assertEqual(da.update_role(body, self.manager.uuid)["status"], status)
         self.assertEqual(db.User.get_by_id(self.target.id).is_helper, [gotland.id])

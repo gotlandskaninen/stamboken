@@ -125,10 +125,10 @@ class TestSession(SessionTest):
 
     def test_basic_auth_changes_no_password(self):
         """Its one-request session has no mark, so the re-check under the account's row lock refuses the change."""
-        auth = {"Authorization": "Basic " + base64.b64encode(b"spec:pass").decode()}
         form = {"oldpassword": "pass", "newpassword": "ny", "password": "ny"}
-        res = APP.test_client().post("/api/manage/setpassword/", headers=auth, json=form)
-        self.assertIsNone(res.get_json())
+        self.assertIsNone(
+            da.change_password(self.viewer, self.viewer.id, form, session_stamps={"user_id": self.viewer.uuid})
+        )
         self.assertIsNotNone(da.authenticate_user("spec", "pass")[0])
 
     def test_a_login_flask_login_refuses_writes_no_session(self):
@@ -160,8 +160,7 @@ class TestRevocation(SessionTest):
         holder = self.login()
         before = self.mark()
         form = {"oldpassword": "pass", "newpassword": "ny", "password": "ny"}
-        answer = self.login("man").post(f"/api/manage/setpassword/{self.viewer.id}", json=form)
-        self.assertEqual((answer.status_code, answer.get_json()), (200, None))
+        self.assertIsNone(da.change_password(self.manager, self.viewer.id, form))
         self.assertIsNotNone(da.authenticate_user("spec", "pass")[0])
         self.assertEqual(self.mark(), before)
         self.assertTrue(self.signed_in(holder))
@@ -185,11 +184,8 @@ class TestRevocation(SessionTest):
             "Google login removed by an admin": lambda: (
                 self.admin_client().delete(f"/api/v2/admin/users/{uid}/google").status_code == 204
             ),
-            "password changed by the holder": lambda: (
-                self.login()
-                .post("/api/manage/setpassword/", json={"oldpassword": "pass", "newpassword": "pass"})
-                .get_json()
-                is True
+            "password changed by the holder": lambda: bool(
+                da.change_password(self.viewer, uid, {"oldpassword": "pass", "newpassword": "pass"})
             ),
             "password reset by an admin": lambda: (
                 self.admin_client()
@@ -496,9 +492,13 @@ class TestLostMarkAndRaces(SessionTest):
             with self.subTest(name):
                 real(other, self.admin.id, {"password": "pass", "newpassword": "pass"})
                 own = self.login("admin")
+                with own.session_transaction() as sess:
+                    stamps = dict(sess)
                 with mock.patch.object(da, "change_password", self.first(revoke, real)):
-                    answer = own.post("/api/manage/setpassword/", json={"password": "egen", "newpassword": "egen"})
-                self.assertIsNone(answer.get_json())
+                    answer = da.change_password(
+                        self.admin, self.admin.id, {"password": "egen", "newpassword": "egen"}, session_stamps=stamps
+                    )
+                self.assertIsNone(answer)
                 self.assertEqual(da.authenticate_user("admin", "egen"), (None, None))
 
     def test_logout_everywhere_waits_for_the_account(self):

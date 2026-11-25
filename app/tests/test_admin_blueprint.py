@@ -640,32 +640,18 @@ class TestAdminPasswordReset(DatabaseTest):
             if payload is not None:
                 self.assertNotIn("auth_data", payload)
 
-    def test_legacy_selfservice_setpassword_untouched(self):
-        # Regression guard against re-introducing the hardening that
-        # would have broken legacy settings.tsx: a NON-admin POSTs the
-        # no-ID legacy alias with old+new password → still works. NOTE:
-        # live change_password() reads form["oldpassword"] for non-admins
-        # (data_access.py:420) — that is the payload contract that works
-        # today and MUST keep working (an earlier spec wrote `password` for the
-        # old value, which raises KeyError in live code — pre-existing
-        # legacy-UI mismatch, out of scope).
+    def test_legacy_setpassword_is_closed(self):
+        # ADR-0020: the old self-service route answers 410 and changes nothing.
         self.login("spec")
         r = self.client.post(
             "/api/manage/setpassword/",
             json={"oldpassword": "pass", "newpassword": "Själv-Bytt-1"},
         )
-        self.assertEqual(r.status_code, 200)
-        self.assertTrue(r.get_json())
-        # new password works, old does not
+        self.assertEqual(r.status_code, 410)
         fresh = APP.test_client(use_cookies=True)
         self.assertEqual(
-            fresh.post("/api/login", json={"username": "spec", "password": "Själv-Bytt-1"}).status_code,
+            fresh.post("/api/login", json={"username": "spec", "password": "pass"}).status_code,
             200,
-        )
-        fresh2 = APP.test_client(use_cookies=True)
-        self.assertEqual(
-            fresh2.post("/api/login", json={"username": "spec", "password": "pass"}).status_code,
-            401,
         )
 
 

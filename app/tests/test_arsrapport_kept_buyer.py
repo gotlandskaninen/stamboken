@@ -17,6 +17,7 @@ import utils.arsrapport as arsrapport
 import utils.arsrapport_invite as arsrapport_invite
 import utils.buyer_contact as buyer_contact
 import utils.buyer_mail as buyer_mail
+import utils.data_access as da
 import utils.database as db
 import utils.herd_tracking as herd_tracking
 import utils.individual_commands as individual_commands
@@ -506,14 +507,13 @@ class KeptBuyerTest(ArsrapportTest):
         arsrapport.save_round(2025, self.admin, end_date=date(2026, 5, 15))
         self.assertEqual(contacts(), {contact.id: db.BuyerContact.purge_at_for(SOLD_ON)})
 
-    def test_legacy_round_patch_moves_kept_buyer_and_codes(self):  # Codex P1: the legacy endpoint is live
+    def test_round_update_moves_kept_buyer_and_codes(self):  # Codex P1: the old route is closed
         contact, _ = self.sold_and_withdrawn()
         code = report_code.issue_code(self.h, self.round_, self.member, now=arsrapport.now())
-        self.login("admin")
 
         def patched(end_date):
-            response = self.client.patch(f"/api/manage/yearly_report_round/{self.round_.id}", json=end_date)
-            self.assertEqual(response.get_json(), {"status": "success", "round": self.round_.id})  # legacy's contract
+            result = da.update_yearly_report_round(self.round_.id, {**end_date, "id": self.round_.id}, self.admin.uuid)
+            self.assertEqual(result, {"status": "success", "round": self.round_.id})
             return contacts(), db.ReportAccessCode.get_by_id(code.id).expires_at
 
         self.assertEqual(patched({"end_date": "2026-04-30"}), ({contact.id: EXTENDED_UNTIL}, EXTENDED))

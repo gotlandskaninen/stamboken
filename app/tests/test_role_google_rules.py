@@ -118,10 +118,11 @@ class TestRoleNeedsGoogle(RoleRulesTest):
                 for level in da.ROLE_LEVELS:
                     resp = self.grant(self.member, level)
                     self.assertEqual((resp.status_code, resp.get_json()["type"]), (409, "google-required"), level)
-                legacy = google_session(self.admin).post(
-                    "/api/manage/role", json={"action": "add", "role": "manager", "user": self.member.id, "genebank": 1}
-                )
-                self.assertEqual(legacy.status_code, 409)
+                with self.assertRaises(da.ValidationError) as refused:  # what the closed legacy route called
+                    da.update_role(
+                        {"action": "add", "role": "manager", "user": self.member.id, "genebank": 1}, self.admin.uuid
+                    )
+                self.assertEqual(refused.exception.code, 409)
                 self.assertFalse(self.has_level(self.member))
         self.assertEqual(self.grant(self.member, "viewer").status_code, 200)  # not a role in ROLE_LEVELS
         db.User.update(google_email=DOMAIN_ADDRESS).where(db.User.id == self.member.id).execute()
@@ -459,11 +460,10 @@ class TestRoleRule(RoleRulesTest):
         """The role is written without a new mark, as a data fix or the demo's nightly copy writes it: the role rule
         alone ends the session. Giving a role also replaces the mark (test_giving_a_role_ends_every_session_...)."""
         self.give_google(self.member)
-        manage_role = {"action": "add", "role": "viewer", "user": self.member.id, "genebank": 1}
         manager = json.dumps([{"level": "manager", "genebank": 1}])
         for path, call in (
             ("/api/user", lambda client: client.get("/api/user")),
-            ("/api/manage/role", lambda client: client.post("/api/manage/role", json=manage_role)),
+            ("/api/active_users", lambda client: client.get("/api/active_users")),
         ):
             with self.subTest(path):
                 db.User.update(_privileges="[]").where(db.User.id == self.member.id).execute()
@@ -681,8 +681,8 @@ class TestRoleRule(RoleRulesTest):
     def test_the_roles_of_an_account_without_a_session_still_count(self):
         """The rule is on sessions: is_admin and the other properties answer for an account that is not signed in."""
         form = {"id": self.admin.id, "email": "ny@example.org", "validated": True}
-        resp = google_session(self.manager).patch(f"/api/manage/user/{self.admin.id}", json=form)
-        self.assertEqual(resp.get_json(), {"status": "error", "message": "forbidden"})
+        resp = da.update_user(form, self.manager.uuid)
+        self.assertEqual(resp, {"status": "error", "message": "forbidden"})
         self.assertEqual(db.User.get_by_id(self.admin.id).email, "admin")
 
         self.member.add_role("matrikel_admin")

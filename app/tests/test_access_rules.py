@@ -572,6 +572,9 @@ class TestHolderCannotChangeValidated(DatabaseTest):
         client.post("/api/login", json={"username": actor.email, "password": "pass"})
         return client.patch(url, json=body).get_json()
 
+    def update(self, actor, body):  # the by-id route is closed (410, ADR-0020): the function behind it
+        return da.update_user(body, actor.uuid)
+
     def validated(self, user):
         return db.User.get_by_id(user.id).validated
 
@@ -585,7 +588,7 @@ class TestHolderCannotChangeValidated(DatabaseTest):
 
     def test_a_manager_cannot_validate_their_own_account(self):
         body = {"id": self.manager.id, "email": self.manager.email, "validated": True}
-        self.assertEqual(self.patch(self.manager, f"/api/manage/user/{self.manager.id}", body), {"status": "unchanged"})
+        self.assertEqual(self.update(self.manager, body), {"status": "unchanged"})
         self.assertFalse(self.validated(self.manager))
 
     def test_another_spelling_of_the_own_id_changes_nothing(self):
@@ -595,20 +598,20 @@ class TestHolderCannotChangeValidated(DatabaseTest):
                 for own_id in (f"00{actor.id}", float(actor.id), str(actor.id)):
                     with self.subTest(actor=actor.email, value=value, id=own_id):
                         body = {"id": own_id, "email": actor.email, "validated": value}
-                        answer = self.patch(actor, f"/api/manage/user/{actor.id}", body)
+                        answer = self.update(actor, body)
                         self.assertEqual(answer, {"status": "unchanged"})
                         self.assertEqual(self.validated(actor), not value)
 
     def test_an_id_that_is_no_number_is_no_account(self):
         body = {"id": "t", "email": "ny@example.org", "validated": True}
-        answer = self.patch(self.manager, f"/api/manage/user/{self.manager.id}", body)
+        answer = self.update(self.manager, body)
         self.assertEqual(answer, {"status": "error", "message": "unknown user"})
 
     def test_admin_and_manager_still_set_validated_on_another_account(self):
         for actor, value in ((self.admin, True), (self.manager, False)):
             with self.subTest(actor.email):
                 body = {"id": self.viewer.id, "email": self.viewer.email, "validated": value}
-                self.assertEqual(self.patch(actor, f"/api/manage/user/{self.viewer.id}", body), {"status": "updated"})
+                self.assertEqual(self.update(actor, body), {"status": "updated"})
                 self.assertEqual(self.validated(self.viewer), value)
 
     def test_a_member_still_cannot_send_validated_true(self):
