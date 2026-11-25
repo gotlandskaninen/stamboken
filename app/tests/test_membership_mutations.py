@@ -124,7 +124,8 @@ class TestMatrikelDomainFunctions(DatabaseTest):
         matrikel.set_member_email(self.family, "frank.ratt@example.com", self.admin, by="matrikel")
         matrikel.reactivate_person(self.family, self.admin)
         now = datetime.now(timezone.utc)
-        live = [r.address for r in prev if r.login_until is not None and r.login_until > now]
+        rows = db.MemberPreviousAddress.select().where(db.MemberPreviousAddress.member == self.family.id)  # re-read
+        live = [r.address for r in rows if r.login_until is not None and r.login_until > now]
         self.assertEqual(live, [])
         self.assertEqual(db.Member.get_by_id(self.family.id).email, "frank.ratt@example.com")
 
@@ -879,6 +880,7 @@ class TestPersonMutationEndpoints(MatrikelAdminTestBase):
     def test_reactivate_endpoint_403_for_manager_and_owner(self):
         self.client.delete(f"/api/v2/persons/{self.family.id}")
         for username in ("man", "owner"):
+            self.client.get("/api/logout")
             self.login(username)
             resp = self.client.post(f"/api/v2/persons/{self.family.id}/reactivate")
             self.assertEqual(resp.status_code, 403, username)
