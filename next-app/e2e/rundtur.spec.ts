@@ -136,6 +136,29 @@ test.describe("Rundtur för en vanlig medlem", () => {
     await expect(offer).toHaveCount(0);
   });
 
+  test("a narrower window mid-tour moves the step to the menu button", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await openMinBesattning(page);
+    await startFromMenu(page);
+    const progress = page.locator(".driver-popover-progress-text");
+    const title = page.locator(".driver-popover-title");
+    while ((await title.innerText()).trim() !== "Årsrapport") {
+      const before = await progress.innerText();
+      await page
+        .getByRole("dialog")
+        .getByRole("button", { name: "Nästa" })
+        .click();
+      await expect(progress).not.toHaveText(before);
+    }
+    const active = page.locator(".driver-active-element");
+    await expect(active).toHaveAttribute("data-tour", "nav-arsrapport");
+    await page.setViewportSize({ width: 375, height: 812 });
+    await expect(active).toHaveAttribute("data-tour", "menu");
+    await expect(title).toHaveText("Årsrapport");
+  });
+
   test.describe("on a 375 px phone", () => {
     test.use({ viewport: { width: 375, height: 812 }, hasTouch: true });
 

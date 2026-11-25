@@ -10,7 +10,7 @@ import "driver.js/dist/driver.css";
 import "./tour.css";
 import { useOptionalUser } from "@/lib/user-context";
 import { useSnackbar } from "@/components/SnackbarProvider";
-import { answerOffer, shouldOffer, stepsFor } from "./tour";
+import { answerOffer, shouldOffer, stepsFor, visibleTarget } from "./tour";
 
 interface Tour {
   /** Starts the tour on the current page. */
@@ -104,12 +104,22 @@ export function TourProvider({ children }: { children: React.ReactNode }) {
     answerOffer(user.id);
     flushSync(() => setAnswered(true));
     const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    // A resize or rotation can hide a top link mid-step: point anew.
+    const onResize = () => {
+      if (tour.current !== running)
+        return window.removeEventListener("resize", onResize);
+      const index = running.getActiveIndex();
+      const shown = running.getActiveElement();
+      if (index !== undefined && shown && shown.getClientRects().length === 0)
+        running.moveTo(index);
+    };
     const running = driver({
       steps: steps.map((step) => ({
-        element: step.element,
+        // Looked up when the step is shown, so it follows the layout.
+        element: () => visibleTarget(step.target) ?? step.element,
         popover: {
-          title: t(`tour.steps.${step.id}.title`),
-          // driver.js sets this as HTML: every text is escaped.
+          // driver.js sets both as HTML: every text is escaped.
+          title: escapeHtml(t(`tour.steps.${step.id}.title`)),
           description:
             `<p>${escapeHtml(t(`tour.steps.${step.textKey}`))}</p>` +
             (step.href
@@ -132,10 +142,13 @@ export function TourProvider({ children }: { children: React.ReactNode }) {
       // A click on the highlighted link would leave the page mid-tour.
       disableActiveInteraction: true,
       popoverClass: "sb-tour",
+      onPopoverRender: (popover) =>
+        popover.wrapper.setAttribute("aria-modal", "true"),
       // Every close by the user (Klar, the cross, Esc, the overlay) comes here
       // first; driver.js then leaves the teardown to us. Its own onDestroyed
       // is skipped when Esc comes between two steps.
       onDestroyStarted: () => {
+        window.removeEventListener("resize", onResize);
         running.destroy();
         if (tour.current !== running) return;
         tour.current = null;
@@ -148,8 +161,10 @@ export function TourProvider({ children }: { children: React.ReactNode }) {
         // After driver.js's own focus call, which can land on the old popover.
         requestAnimationFrame(() => back?.focus());
       },
+      onDestroyed: () => window.removeEventListener("resize", onResize),
     });
     tour.current = running;
+    window.addEventListener("resize", onResize);
     running.drive();
   }, [user, t, end, showSnackbar]);
 

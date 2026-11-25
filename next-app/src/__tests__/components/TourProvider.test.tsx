@@ -170,3 +170,21 @@ describe("a start that does not get going", () => {
     expect(mocks.drive).not.toHaveBeenCalled();
   });
 });
+
+describe("the popover", () => {
+  it("is a modal dialog and escapes every text", async () => {
+    mocks.steps = [{ ...STEP, href: '/x"><script>' }];
+    renderShell();
+    fireEvent.click(screen.getByRole("button", { name: "Meny: Visa runt" }));
+    await settle();
+    const config = mocks.driverConfig as {
+      steps: { popover: { title: string; description: string } }[];
+      onPopoverRender: (p: { wrapper: HTMLElement }) => void;
+    };
+    const wrapper = document.createElement("div");
+    config.onPopoverRender({ wrapper });
+    expect(wrapper.getAttribute("aria-modal")).toBe("true");
+    expect(config.steps[0].popover.description).not.toContain("<script>");
+    expect(config.steps[0].popover.description).toContain("&lt;script&gt;");
+  });
+});
