@@ -63,11 +63,14 @@ class TestMembersLinkHousehold(DatabaseTest):
         herd = db.Herd.create(genebank=self.genebanks[0], herd=f"G{number}", membership=membership, is_active=True)
         return membership, main, herd
 
-    def _account(self, fullname, owns=(), email=None):
+    def _account(self, fullname, owns=(), email=None, google=None):
+        """An `email` is also the account's verified Google address unless `google` says otherwise."""
         self._n += 1
         user = da.register_user(
             email or f"konto{self._n}@example.org", "pass", username=f"k{self._n}", fullname=fullname
         )
+        user.google_email = email if google is None else google or None
+        user.save()
         for herd in owns:
             user.add_role("owner", herd.id)
         return user
@@ -135,6 +138,24 @@ class TestMembersLinkHousehold(DatabaseTest):
         [person] = self._added(membership)
         self.assertEqual((person.email, person.user_id), ("bo.jobb@example.net", bo.id))
 
+    def test_only_the_verified_google_address_identifies_the_row(self):
+        membership, _, herd = self._household()
+        self._account("Anna Svensson", owns=[herd])
+        no_google = self._account("Bo Svensson", owns=[herd], email="bo@gotlandskaninen.se", google="")
+        conflict = self._account(
+            "Cia Svensson", owns=[herd], email="dan@gotlandskaninen.se", google="cia@gotlandskaninen.se"
+        )
+        self._workspace_row("bo@gotlandskaninen.se", "Bo", "Svensson", home="bo.hemma@example.net")
+        self._workspace_row("cia@gotlandskaninen.se", "Cia", "Svensson", home="cia.hemma@example.net")
+        self._workspace_row("dan@gotlandskaninen.se", "Dan", "Svensson", home="dan.hemma@example.net")
+
+        plan = self._run()
+
+        self.assertIn(f"konto {no_google.id}: kontot har ingen verifierad Google-adress", plan.output)
+        self.assertIn(f"konto {conflict.id}: kontots e-post och Google-adress hör till olika rader", plan.output)
+        self._apply()
+        self.assertEqual(self._added(membership), [])
+
     def test_missing_row_or_secondary_address_is_listed(self):
         membership, main, herd = self._household()
         anna = self._account("Anna Svensson", owns=[herd])
@@ -143,7 +164,7 @@ class TestMembersLinkHousehold(DatabaseTest):
         self._workspace_row("cia@example.org", "Cia", "Svensson")
 
         plan = self._run()
-        self.assertIn(f"G901: konto {no_row.id}: kontot finns inte i Workspace-exporten", plan.output)
+        self.assertIn(f"G901: konto {no_row.id}: kontots Google-adress finns inte i Workspace-exporten", plan.output)
         self.assertIn(f"G901: konto {no_address.id}: Workspace-raden saknar reservadress", plan.output)
 
         result = self._apply()

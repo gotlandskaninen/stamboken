@@ -1555,10 +1555,15 @@ def _account_problem(user, incomplete, memberships_of) -> str | None:
 
 
 def _household_person(user, workspace, persons):
-    """The person to add for the account from its Workspace row, or the reason none can be added."""
-    row = workspace.get(_norm_email(user.email)) or workspace.get(_norm_email(user.google_email))
+    """The person to add for the account from its Workspace row, or the reason none can be added. Only the Google
+    address identifies the row: it was verified at a Google sign-in, the account's own e-mail was not."""
+    if not _norm_email(user.google_email):
+        return "kontot har ingen verifierad Google-adress"
+    row = workspace.get(_norm_email(user.google_email))
     if row is None:
-        return "kontot finns inte i Workspace-exporten"
+        return "kontots Google-adress finns inte i Workspace-exporten"
+    if workspace.get(_norm_email(user.email), row) is not row:
+        return "kontots e-post och Google-adress hör till olika rader i Workspace-exporten"
     column = next((c for c in _WORKSPACE_ADDRESSES if row[c]), None)
     if column is None:
         return "Workspace-raden saknar reservadress"
@@ -1685,7 +1690,9 @@ def link_household_cmd(workspace_path: str, apply_links: bool, actor_user_id: in
     matches) is linked to her, and every other owner account that is linked to
     no person becomes a new familjemedlem in the membership, added as a manual
     add is, and is linked to that account. Name and address come from the
-    account's row in the Google Admin user export (Home Secondary Email, else
+    row of the account's verified Google address in the Google Admin user
+    export; an account without one, or whose own e-mail names another row, is
+    listed (Home Secondary Email, else
     Recovery Email, else Work Secondary Email). Accounts with a role, accounts
     owning herds in several memberships, accounts without a row or address,
     and addresses another member logs in with are listed, as is a household
