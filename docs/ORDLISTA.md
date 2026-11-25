@@ -50,8 +50,9 @@ kanin vars medelsläktskap är på eller under gränsen för de 5 % minst släkt
 gränsen för de 25 % minst släkta, bland de 25 % med flest unika gener, eller bär gener från ett
 founderdjur som har liten andel av generna. Övriga är resten. Nivåerna är Stambokens egen regel,
 inte en vedertagen standard (PMx rangordnar efter medelsläktskap inom kön och har inga sådana
-klasser): gränserna är andelar av kaninerna, så ungefär 5 % blir alltid Högsta och minst 25 % Hög,
-hur genbanken än mår. Ordet Kritisk används inte, varken här eller om founderdjurens läge.\
+klasser). Gränserna räknas fram ur kaninerna i genbanken och varje kanin jämförs med dem; hur många
+som hamnar på varje nivå beror på genbanken. Ordet Kritisk används inte, varken här eller om
+founderdjurens läge.\
 Kod: `calculate_genetic_priorities` (`priority`: `critical`, `important`, `normal`) · Legacy-manual: – · Legacy: – · Nytt UI: samma, "Högsta", "Hög", "Övriga" (PrioritiesTab.tsx:33–35)
 
 **Benring**\

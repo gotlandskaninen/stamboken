@@ -26,6 +26,7 @@ import {
 } from "@/redux/api/apiSlice";
 import HelpTooltip from "./HelpTooltip";
 import GeneticsInfoPanel from "./GeneticsInfoPanel";
+import GeneticsError from "./GeneticsError";
 import { translateReasons } from "@/utils/translateReasons";
 import { decimal, percent } from "@/lib/genetics";
 
@@ -75,6 +76,7 @@ const BreedingSuggestionsTab = ({
     isLoading,
     isFetching,
     error,
+    refetch,
   } = useFetchBreedingSuggestionsQuery(queryParams ?? skipToken);
 
   const usedCap = queryParams?.maxInbreeding ?? maxInbreeding;
@@ -166,17 +168,7 @@ const BreedingSuggestionsTab = ({
 
       {isLoading && <Skeleton variant="rounded" height={400} />}
 
-      {error &&
-        !(
-          typeof error === "object" &&
-          "status" in error &&
-          (error as { status: unknown }).status === 401
-        ) && (
-          <Alert severity="error">
-            Kunde inte beräkna parningsförslag. Kontrollera att genbanken har
-            tillräckligt med aktiva individer med könsdata.
-          </Alert>
-        )}
+      {error && <GeneticsError error={error} onRetry={refetch} />}
 
       {suggestions && suggestions.length === 0 && (
         <Alert severity="info">{emptyMessage}</Alert>

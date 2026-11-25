@@ -1,6 +1,12 @@
 import React from "react";
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { render, screen, cleanup, fireEvent } from "@testing-library/react";
+import {
+  render,
+  screen,
+  cleanup,
+  fireEvent,
+  within,
+} from "@testing-library/react";
 import { ThemeProvider } from "@mui/material/styles";
 import { stambokenTheme } from "@/theme/stamboken";
 
@@ -48,7 +54,7 @@ const year = (y: number, ne: number | null, n: number | null = 40) => ({
   mean_kinship: 0.0302,
   effective_population_size: ne,
   ne_se: ne == null ? null : 4.4,
-  ne_n: ne == null ? 0 : n,
+  ne_n: n,
   founder_equivalents: 21.74,
   data_quality: "high",
 });
@@ -109,11 +115,62 @@ describe("TrendChart", () => {
     expect(screen.queryByText(/Ihålig punkt/)).toBeNull();
   });
 
-  it("says the values are on their way when no year has Ne yet", () => {
-    renderChart([year(2024, null), year(2025, null)]);
+  it("says the values are on their way when no year has been recomputed", () => {
+    renderChart([year(2024, null, null), year(2025, null, null)]);
     expect(screen.queryByTestId("chart")).toBeNull();
     expect(screen.getByText(/ladda om sidan om en stund/)).toBeDefined();
-    expect(screen.queryByText(/kan inte räknas/)).toBeNull();
+    expect(screen.queryByText(/kan inte skattas/)).toBeNull();
+  });
+
+  it("says why when recomputed years have no estimable Ne", () => {
+    renderChart([year(2024, null, 0), year(2025, null, 3)]);
+    expect(screen.queryByTestId("chart")).toBeNull();
+    expect(
+      screen.getByText(
+        "Ne kan inte skattas för de här åren: för få kaniner med känd stamtavla i de här åren.",
+      ),
+    ).toBeDefined();
+    expect(screen.queryByText(/ladda om/)).toBeNull();
+  });
+
+  it("offers the values as a table, Ne with ± and the number of rabbits", () => {
+    renderChart([year(2015, 15.2, 12), year(2016, null, 0), year(2017, 30.6)]);
+    const toggle = screen.getByRole("button", { name: "Visa som tabell" });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    const table = screen.getByRole("table");
+    const head = within(table).getAllByRole("columnheader");
+    expect(head.map((h) => h.textContent)).toEqual([
+      "År",
+      "Ne",
+      "Osäkerhet (±)",
+      "Antal kaniner",
+    ]);
+    const cells = within(table)
+      .getAllByRole("row")
+      .slice(1)
+      .map((r) =>
+        within(r)
+          .getAllByRole("cell")
+          .map((c) => c.textContent),
+      );
+    expect(cells).toEqual([
+      ["2015", "15", "4", "12"],
+      ["2016", "–", "–", "0"],
+      ["2017", "31", "4", "40"],
+    ]);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Medelsläktskap (MK)" }),
+    );
+    expect(
+      within(screen.getByRole("table"))
+        .getAllByRole("columnheader")
+        .map((h) => h.textContent),
+    ).toEqual(["År", "Medelsläktskap (MK)"]);
+    // getAllByText compares with the no-break space collapsed.
+    expect(screen.getAllByText("3,0 %").length).toBe(3);
   });
 
   it("explains single years without Ne instead of hiding the chart", () => {

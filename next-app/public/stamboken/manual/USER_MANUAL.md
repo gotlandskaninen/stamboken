@@ -973,7 +973,8 @@ första anropet och kan ta upp till en minut.
    ursprungsdjur, kaniner utan kända föräldrar i stamboken. Korten visar läget i dag;
    trenden har ett värde per stängd årsrapportering. I trenden för Ne är en ihålig
    punkt en osäker skattning, från färre än 30 kaniner; för musen över punkten så syns
-   Ne med osäkerheten och antalet kaniner.
+   Ne med osäkerheten och antalet kaniner. **Visa som tabell** under diagrammet visar
+   samma värden år för år, också med tangentbord och skärmläsare.
 3. **Avelsprioritet** – kaninerna sorterade efter hur viktiga de är för aveln:
    **Högsta**, **Hög** eller **Övriga**, med **Ovanliga gener (0–100)**, **Unika gener**
    och **Skäl**. Knapparna **Högsta (N)**, **Hög (N)** och **Övriga (N)** slår av och på

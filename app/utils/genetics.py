@@ -1933,10 +1933,10 @@ def calculate_genetic_priorities(
     Assign genetic conservation priorities to active individuals.
 
     Priority rules: Stamboken's own percentile cut-offs, not a PMx rule (PMx ranks by MK
-    within sex and has no categories), so about 5 % are critical and at least 25 % important
-    whatever the population's state:
-    - critical: Sole living carrier of a founder line, or MK < 5th percentile
-    - important: MK < 25th percentile, or GU > 75th percentile,
+    within sex and has no categories). Each animal is compared with the cut-offs; the level
+    sizes follow from the data (ties at a percentile and sole carriers can fill critical):
+    - critical: Sole living carrier of a founder line, or MK <= 5th percentile
+    - important: MK <= 25th percentile, or GU > 75th percentile,
                  or carries underrepresented founder
     - normal: All others
 

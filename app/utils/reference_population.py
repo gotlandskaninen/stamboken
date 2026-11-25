@@ -175,12 +175,22 @@ def history_as_of(report_year: int) -> date | None:
     No round for the year: 1 April the year after. A round without an end
     date: ``None`` (the year is not closed).
     """
-    report_round = YearlyReportRound.get_or_none(YearlyReportRound.report_year == report_year)
+    return _as_of(report_year, YearlyReportRound.get_or_none(YearlyReportRound.report_year == report_year))
+
+
+def _as_of(report_year: int, report_round) -> date | None:
     if report_round is None:
         return date(report_year + 1, 4, 1)
     if report_round.end_date is None:
         return None
     return report_round.end_date + timedelta(days=1)
+
+
+def closed_years(years, today: date) -> set[int]:
+    """The years among ``years`` that is_closed on ``today``, from one query."""
+    years = set(years)
+    rounds = {r.report_year: r for r in YearlyReportRound.select().where(YearlyReportRound.report_year.in_(years))}
+    return {y for y in years if (as_of := _as_of(y, rounds.get(y))) is not None and as_of <= today}
 
 
 def is_closed(report_year: int, today: date) -> bool:
