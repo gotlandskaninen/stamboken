@@ -5,12 +5,14 @@ This module fetches pedigree data from the database and calculates genetic
 metrics using the Python implementation (replacing R-API).
 """
 
+import hashlib
 import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 import numpy as np
 from peewee import JOIN, fn
@@ -68,6 +70,15 @@ REFERENCE_DEFINITION_VERSION = CURRENT_DEFINITION.version
 # Part of the snapshot key, so the shared memo is never served across it, and of the
 # history watermark, so the next reconcile recomputes the stored years (0 = before versioning).
 ALGORITHM_VERSION = 2
+
+# Part of the shared memo key, which keeps results for days: a deploy that changes how they
+# are computed misses the old ones even when nobody bumped ALGORITHM_VERSION.
+CODE_VERSION = hashlib.sha256(
+    b"".join(
+        (Path(__file__).parent / name).read_bytes()
+        for name in ("genetics.py", "genetics_service.py", "pedigree_math.py", "pedigree_snapshot.py")
+    )
+).hexdigest()[:16]
 
 
 def reference_population_numbers(genebank_id: int, start_date: date | None = None) -> set[str]:
@@ -219,11 +230,6 @@ def _gene_drop_of(snap, n_iterations=1000, seed=None):
 
     # Only the endpoint's default run is memoized: a caller-chosen seed or count must not grow the snapshot.
     return snap.memo("gene_drop_1000_None", compute) if (n_iterations, seed) == (1000, None) else compute()
-
-
-def _cached_gene_drop(snap):
-    """The /gene-drop/ endpoint's default run, if it has been computed on this snapshot."""
-    return snap.derived.get("gene_drop_1000_None")
 
 
 def _founder_stats_of(snap):
@@ -715,13 +721,9 @@ def _founders_at_risk_of(snap):
     # Get average contributions from founder statistics
     avg_contributions = _founder_stats_of(snap).get("avg_contributions", {})
 
-    # Try to get allele retention from gene drop (if computed on this snapshot)
-    allele_retention = None
-    cached_gd = _cached_gene_drop(snap)
-    if cached_gd is not None:
-        allele_retention = cached_gd.get("allele_retention")
-
-    result = identify_founders_at_risk(individuals, contrib, avg_contributions, allele_retention)
+    # No allele retention: its only source is an unseeded /gene-drop/ run that this worker may or
+    # may not have made, and the shared memo must not depend on which worker filled it.
+    result = identify_founders_at_risk(individuals, contrib, avg_contributions)
 
     # Enrich lost/critical founders with recoverable carriers: individuals
     # outside the reference population that are plausibly alive and breedable
@@ -736,7 +738,9 @@ def _founders_at_risk_of(snap):
 
         for f_entry in needs_recovery:
             founder_id = f_entry["founder_id"]
-            recoverable = [ind_id for ind_id in alive_inactive_ids if contrib.get(ind_id, {}).get(founder_id, 0.0) > 0]
+            recoverable = sorted(
+                ind_id for ind_id in alive_inactive_ids if contrib.get(ind_id, {}).get(founder_id, 0.0) > 0
+            )
             f_entry["recoverable_carriers"] = recoverable
 
     return result

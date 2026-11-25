@@ -8,11 +8,21 @@ const foundersQuery = vi.fn();
 const atRiskQuery = vi.fn();
 const trendsQuery = vi.fn(() => ({ data: [] as object[], isLoading: false }));
 
+// The answer is the current argument's own, as RTK Query's currentData after a fetch.
+const own = (r: { data?: unknown; isLoading?: boolean }) => ({
+  currentData: r.data,
+  isFetching: Boolean(r.isLoading),
+  ...r,
+});
+
+// The genetics hooks take the rendered mode with the genebank (ModeProvider in the app).
+vi.mock("@/lib/mode-context", () => ({ useMode: () => "prod" }));
+
 vi.mock("@/redux/api/apiSlice", () => ({
-  useFetchPopulationMetricsQuery: () => metricsQuery(),
-  useFetchFounderStatisticsQuery: () => foundersQuery(),
-  useFetchFoundersAtRiskQuery: () => atRiskQuery(),
-  useFetchGeneticsTrendsQuery: () => trendsQuery(),
+  useFetchPopulationMetricsQuery: () => own(metricsQuery()),
+  useFetchFounderStatisticsQuery: () => own(foundersQuery()),
+  useFetchFoundersAtRiskQuery: () => own(atRiskQuery()),
+  useFetchGeneticsTrendsQuery: () => own(trendsQuery()),
 }));
 
 import OverviewTab from "@/components/genetics/OverviewTab";

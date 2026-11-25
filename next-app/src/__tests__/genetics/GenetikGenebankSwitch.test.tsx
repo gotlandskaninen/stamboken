@@ -13,19 +13,27 @@ const responses = vi.hoisted(() => ({
   priorities: new Map<number, unknown>(),
 }));
 
+// The genetics hooks take the rendered mode with the genebank (ModeProvider in the app).
+vi.mock("@/lib/mode-context", () => ({ useMode: () => "prod" }));
+
 vi.mock("@/redux/api/apiSlice", async () => {
   const { useRef } = await import("react");
-  // Like RTK Query's `data`: a hook keeps its last result while a new argument loads.
-  const hook = (name: keyof typeof responses) => (genebankId: number) => {
-    const last = useRef<unknown>(undefined);
-    const now = responses[name].get(genebankId);
-    if (now !== undefined) last.current = now;
-    return {
-      data: last.current,
-      isLoading: last.current === undefined,
-      refetch: () => {},
+  // Like RTK Query: `data` keeps the last result while a new argument loads,
+  // `currentData` is only ever the current argument's.
+  const hook =
+    (name: keyof typeof responses) =>
+    ({ genebankId }: { genebankId: number }) => {
+      const last = useRef<unknown>(undefined);
+      const now = responses[name].get(genebankId);
+      if (now !== undefined) last.current = now;
+      return {
+        data: last.current,
+        currentData: now,
+        isLoading: last.current === undefined,
+        isFetching: now === undefined,
+        refetch: () => {},
+      };
     };
-  };
   return {
     useFetchPopulationMetricsQuery: hook("metrics"),
     useFetchFounderStatisticsQuery: hook("founders"),

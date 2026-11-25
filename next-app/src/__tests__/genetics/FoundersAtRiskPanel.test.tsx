@@ -8,8 +8,9 @@ import type { FounderAtRisk } from "@/redux/api/apiSlice";
 const atRiskQuery = vi.fn();
 
 vi.mock("@/redux/api/apiSlice", () => ({
-  useFetchFoundersAtRiskQuery: () => atRiskQuery(),
+  useFetchFoundersAtRiskQuery: (...args: unknown[]) => atRiskQuery(...args),
 }));
+vi.mock("@/lib/mode-context", () => ({ useMode: () => "prod" }));
 
 import FoundersAtRiskPanel, {
   founderOrder,
@@ -45,7 +46,8 @@ const founders = [
 ];
 
 const renderPanel = (data: FounderAtRisk[]) => {
-  atRiskQuery.mockReturnValue({ data, isLoading: false });
+  // The answer is the current argument's own, as RTK Query's currentData after a fetch.
+  atRiskQuery.mockReturnValue({ data, currentData: data, isFetching: false });
   render(
     <ThemeProvider theme={createTheme()}>
       <FoundersAtRiskPanel genebankId={1} />
@@ -119,5 +121,77 @@ describe("FoundersAtRiskPanel", () => {
         `/stamboken/individ/${n}`,
       );
     }
+  });
+});
+
+// The genetics panels' RTK cache (#222), shown on this table: the Avelsprioritet list reads
+// the logged work list instead (useWorkList), which has no cache to keep.
+describe("FoundersAtRiskPanel cache", () => {
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  const cached = [founder("G1-1", "critical", { n_carriers: 1 })];
+  const renderState = (state: Record<string, unknown>) => {
+    atRiskQuery.mockReturnValue(state);
+    render(
+      <ThemeProvider theme={createTheme()}>
+        <FoundersAtRiskPanel genebankId={1} />
+      </ThemeProvider>,
+    );
+  };
+  const rows = () => screen.queryByText("Founderdjurens läge (1 founderdjur)");
+  const failedAlert = () =>
+    screen.queryByText(/inte behörighet|gick inte att hämta/);
+  const staleNote = () => screen.queryByText(/Kunde inte uppdatera/);
+
+  it("refetches on mount and keeps the cached rows on screen meanwhile", () => {
+    renderState({ data: cached, currentData: cached, isFetching: true });
+    expect(atRiskQuery).toHaveBeenCalledWith(
+      { genebankId: 1, mode: "prod" },
+      { refetchOnMountOrArgChange: true },
+    );
+    expect(rows()).toBeTruthy();
+  });
+
+  it("does not show the previous genebank's rows while the new one loads", () => {
+    // After a switch A→B, data is still A's until B answers (and isLoading is false).
+    renderState({ data: cached, currentData: undefined, isFetching: true });
+    expect(rows()).toBeNull();
+  });
+
+  it("keeps the cached rows with a note when a refetch fails", () => {
+    renderState({
+      data: cached,
+      currentData: cached,
+      isFetching: false,
+      error: { status: 500 },
+    });
+    expect(failedAlert()).toBeNull();
+    expect(staleNote()).toBeTruthy();
+    expect(rows()).toBeTruthy();
+  });
+
+  it("shows the error when the failed genebank has no data of its own", () => {
+    renderState({
+      data: cached,
+      currentData: undefined,
+      isFetching: false,
+      error: { status: 500 },
+    });
+    expect(failedAlert()).toBeTruthy();
+    expect(rows()).toBeNull();
+  });
+
+  it("hides the cached rows after a 403 or 401", () => {
+    const denied = { data: cached, currentData: cached, isFetching: false };
+    renderState({ ...denied, error: { status: 403 } });
+    expect(failedAlert()).toBeTruthy();
+    expect(rows()).toBeNull();
+    cleanup();
+    renderState({ ...denied, error: { status: 401 } });
+    expect(screen.getByText(/utloggad/)).toBeTruthy();
+    expect(rows()).toBeNull();
   });
 });

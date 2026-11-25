@@ -24,6 +24,8 @@ import {
   useFetchGeneticsTrendsQuery,
   TrendDataPoint,
 } from "@/redux/api/apiSlice";
+import { useQueryView, StaleNote } from "./queryView";
+import { useMode } from "@/lib/mode-context";
 import { decimal, percent } from "@/lib/genetics";
 import GeneticsError from "./GeneticsError";
 
@@ -79,18 +81,30 @@ interface TrendChartProps {
 }
 
 const TrendChart = ({ genebankId }: TrendChartProps) => {
-  const { data, isLoading, error, refetch } =
-    useFetchGeneticsTrendsQuery(genebankId);
+  const mode = useMode();
+  const query = useFetchGeneticsTrendsQuery(
+    { genebankId, mode },
+    {
+      refetchOnMountOrArgChange: true,
+    },
+  );
+  const { data, loading, failed, stale } = useQueryView(query);
   const theme = useTheme();
 
   const [chosen, setMetricKey] = useState<MetricKey>("ne");
 
-  if (isLoading) {
+  if (loading) {
     return <Skeleton variant="rounded" height={300} sx={{ mb: 6 }} />;
   }
 
-  if (error) {
-    return <GeneticsError error={error} onRetry={refetch} />;
+  if (failed) {
+    // A denial seen by another genetics panel hides this too; it reads as no access.
+    return (
+      <GeneticsError
+        error={query.error ?? { status: 403 }}
+        onRetry={query.refetch}
+      />
+    );
   }
 
   if (!data || data.length === 0) return null;
@@ -193,6 +207,7 @@ const TrendChart = ({ genebankId }: TrendChartProps) => {
         <Typography variant="h6" gutterBottom>
           Genetiska trender
         </Typography>
+        {stale && <StaleNote />}
         <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
           Ett värde per stängd årsrapportering, räknat på kaninerna det året.
           Korten ovan visar läget i dag.

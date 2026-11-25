@@ -412,10 +412,24 @@ def erase_person_from_inbox(member, user_id=None):
     if user_id is not None:
         sent |= InboxItem.sender_user == user_id
         replies |= InboxEvent.detail.contains({"sender_user": user_id})
+    return paths + _erase_sent(sent, replies, user_id)
+
+
+def erase_user_from_inbox(user_id):
+    """
+    What an account sent, for an account that belongs to no person (#250, matrikel.erase_unlinked_account): the
+    items it uploaded and its replies, as erase_person_from_inbox does with them. In the caller's transaction; the
+    caller passes the returned paths to remove_originals after the commit.
+    """
+    return _erase_sent(InboxItem.sender_user == user_id, InboxEvent.detail.contains({"sender_user": user_id}), user_id)
+
+
+def _erase_sent(sent, replies, user_id):
+    """The items matching `sent` and the reply events matching `replies`; returns the paths of the deleted files."""
     _clear_event_text((InboxEvent.kind == "svar") & replies)
     ids = [item_id for (item_id,) in InboxItem.select(InboxItem.id).where(sent).tuples()]
     if not ids:
-        return paths
+        return []
     to_sender = (MailMessage.recipient_kind == "inbox_sender") & MailMessage.recipient_id.in_(ids)
     if user_id is not None:
         to_sender |= (MailMessage.recipient_kind == "user") & (MailMessage.recipient_id == user_id)
@@ -431,7 +445,7 @@ def erase_person_from_inbox(member, user_id=None):
     InboxItem.update(sender_address=None).where(InboxItem.id.in_(kept)).execute()
     for item_id in kept:
         forget_recipient("inbox_sender", item_id)
-    return paths + more
+    return more
 
 
 def erase_document(item, document, user):

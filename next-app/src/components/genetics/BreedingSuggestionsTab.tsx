@@ -26,6 +26,8 @@ import {
 } from "@/redux/api/apiSlice";
 import HelpTooltip from "./HelpTooltip";
 import GeneticsInfoPanel from "./GeneticsInfoPanel";
+import { useQueryView } from "./queryView";
+import { useMode } from "@/lib/mode-context";
 import GeneticsError from "./GeneticsError";
 import { translateReasons } from "@/utils/translateReasons";
 import { decimal, percent } from "@/lib/genetics";
@@ -52,7 +54,17 @@ const BreedingSuggestionsTab = ({
   const [editedMaxInbreeding, setMaxInbreeding] = useState<number | null>(null);
   const [maxPerMale, setMaxPerMale] = useState(3);
 
-  const { data: metrics } = useFetchPopulationMetricsQuery(genebankId);
+  const mode = useMode();
+  const metricsQuery = useFetchPopulationMetricsQuery(
+    { genebankId, mode },
+    { refetchOnMountOrArgChange: true },
+  );
+  const metricsView = useQueryView(metricsQuery);
+  // Only a value this visit confirmed: after a failed or denied refresh the
+  // expected F is unknown, and the cap falls back to its base.
+  const metrics = metricsView.stale ? undefined : metricsView.data;
+  // An automatic cap waits for that value; a typed one does not.
+  const capPending = editedMaxInbreeding === null && metricsQuery.isFetching;
   const expectedOffspringF = metrics?.expected_offspring_f ?? null;
   // Explicit null from the API: no male or no female in the reference population
   const lacksSexes = metrics != null && metrics.expected_offspring_f === null;
@@ -67,14 +79,21 @@ const BreedingSuggestionsTab = ({
       MAX_INBREEDING_LIMIT,
     );
 
-  // Only fetch when user clicks "Beräkna"
-  const [queryParams, setQueryParams] =
+  // Only fetch when user clicks "Beräkna"; a mode switch drops the calculation
+  // made in the other mode, so its pairs are never shown in this one.
+  const [requestedParams, setQueryParams] =
     useState<BreedingSuggestionsParams | null>(null);
+  const queryParams = requestedParams?.mode === mode ? requestedParams : null;
 
-  // currentData: only the answer for the submitted parameters, never the previous one's pairs.
-  const { currentData, isLoading, isFetching, error, refetch } =
-    useFetchBreedingSuggestionsQuery(queryParams ?? skipToken);
-  const suggestions = error ? undefined : currentData;
+  // Every "Beräkna" asks the server: a cached answer may be one a denial hides.
+  const suggestionsQuery = useFetchBreedingSuggestionsQuery(
+    queryParams ?? skipToken,
+    { refetchOnMountOrArgChange: true },
+  );
+  const { isLoading, isFetching, error } = suggestionsQuery;
+  const suggestionsView = useQueryView(suggestionsQuery);
+  // Only the answer for the submitted parameters (the view reads currentData), and nothing on an error.
+  const suggestions = error ? undefined : suggestionsView.data;
 
   const usedCap = queryParams?.maxInbreeding ?? maxInbreeding;
   const raiseHint =
@@ -88,12 +107,10 @@ const BreedingSuggestionsTab = ({
       : `Inga par hittades under taket ${percent(usedCap)}.${raiseHint}`;
 
   const handleCalculate = () => {
-    setQueryParams({
-      genebankId,
-      maxPairs,
-      maxInbreeding,
-      maxPerMale,
-    });
+    const params = { genebankId, mode, maxPairs, maxInbreeding, maxPerMale };
+    if (JSON.stringify(params) === JSON.stringify(queryParams))
+      suggestionsQuery.refetch(); // the same calculation again
+    else setQueryParams(params);
   };
 
   return (
@@ -149,7 +166,7 @@ const BreedingSuggestionsTab = ({
           <Button
             variant="contained"
             onClick={handleCalculate}
-            disabled={isFetching}
+            disabled={isFetching || capPending}
           >
             {isFetching ? "Beräknar..." : "Beräkna"}
           </Button>
@@ -165,7 +182,12 @@ const BreedingSuggestionsTab = ({
 
       {isLoading && <Skeleton variant="rounded" height={400} />}
 
-      {error && <GeneticsError error={error} onRetry={refetch} />}
+      {(error || (suggestionsView.denied && !isFetching)) && (
+        <GeneticsError
+          error={error ?? { status: 403 }}
+          onRetry={() => suggestionsQuery.refetch()}
+        />
+      )}
 
       {suggestions && suggestions.length === 0 && (
         <Alert severity="info">{emptyMessage}</Alert>

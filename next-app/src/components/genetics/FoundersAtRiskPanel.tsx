@@ -19,6 +19,8 @@ import {
   useFetchFoundersAtRiskQuery,
   FounderAtRisk,
 } from "@/redux/api/apiSlice";
+import { useQueryView, StaleNote } from "./queryView";
+import { useMode } from "@/lib/mode-context";
 import { percent } from "@/lib/genetics";
 import GeneticsError from "./GeneticsError";
 import { FOUNDERDJUR } from "./GeneticsInfoPanel";
@@ -142,19 +144,27 @@ interface FoundersAtRiskPanelProps {
 const FoundersAtRiskPanel = ({ genebankId }: FoundersAtRiskPanelProps) => {
   const [showAll, setShowAll] = useState(false);
 
-  const {
-    data: founders,
-    isLoading,
-    error,
-    refetch,
-  } = useFetchFoundersAtRiskQuery(genebankId);
+  const mode = useMode();
+  const query = useFetchFoundersAtRiskQuery(
+    { genebankId, mode },
+    {
+      refetchOnMountOrArgChange: true,
+    },
+  );
+  const { data: founders, loading, failed, stale } = useQueryView(query);
 
-  if (isLoading) {
+  if (loading) {
     return <Skeleton variant="rounded" height={200} sx={{ mb: 6 }} />;
   }
 
-  if (error) {
-    return <GeneticsError error={error} onRetry={refetch} />;
+  if (failed) {
+    // A denial seen by another genetics panel hides this too; it reads as no access.
+    return (
+      <GeneticsError
+        error={query.error ?? { status: 403 }}
+        onRetry={query.refetch}
+      />
+    );
   }
 
   if (!founders || founders.length === 0) return null;
@@ -189,6 +199,7 @@ const FoundersAtRiskPanel = ({ genebankId }: FoundersAtRiskPanelProps) => {
           {FOUNDERDJUR} En bärare är en kanin i beräkningen som har gener från
           founderdjuret.
         </Typography>
+        {stale && <StaleNote />}
         <Typography
           variant="body2"
           color="textSecondary"

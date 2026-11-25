@@ -75,7 +75,7 @@ from utils.individual_commands import purge_command_free_text  # isort:skip
 from utils.log_masking import TokenMaskFilter  # isort:skip
 from utils.mail import purge_old_mail, send_pending  # isort:skip
 from utils import login_code  # isort:skip
-from utils.matrikel import purge_previous_addresses  # isort:skip
+from utils.matrikel import purge_matrikel_audit_values, purge_previous_addresses  # isort:skip
 from utils import inbox  # isort:skip
 from utils.inbox import queue_digests  # isort:skip
 from utils.arsrapport_invite import send_due_invitations  # isort:skip
@@ -283,6 +283,10 @@ def _purge_command_free_text():
             APP.logger.info("Purged %s previous addresses", purge_previous_addresses(now))
         except Exception:  # pylint: disable=broad-except
             APP.logger.exception("Purging the previous addresses failed")
+        try:
+            APP.logger.info("Purged contact values from %s matrikel log rows", purge_matrikel_audit_values(now))
+        except Exception:  # pylint: disable=broad-except
+            APP.logger.exception("Purging the matrikel log values failed")
         count = purge_command_free_text(now)
         APP.logger.info("Purged free text from %s command log rows", count)
     finally:
@@ -560,7 +564,11 @@ def rate_limit_exceeded(error):  # pylint: disable=unused-argument
 
 
 KINSHIP_LIFETIME = 300
-DASHBOARD_LIFETIME = 3600  # Dashboard aggregates change rarely (hourly refresh)
+# Keyed on the snapshot's content (_memo_key), so a long life never serves changed inputs. Bounded by
+# Redis memory, which has no maxmemory: about 110 KiB per memoized pedigree state of a large genebank.
+# Its bodies are memoized with source_check: herdbook.py is outside genetics.CODE_VERSION, and a
+# deploy that changes a body (what it passes on) must miss the week-old entries.
+DASHBOARD_LIFETIME = 7 * 24 * 3600
 
 
 # Before_request
@@ -2215,10 +2223,16 @@ def check_ind_intyg():
     )
 
 
-def _memo_key(snap):
-    version, day, definition, algorithm, epoch = snap.key
-    # The epoch identifies the database: a restored one can repeat a version already memoized.
-    return f"{epoch}:{version}:{day.isoformat()}:{definition}:{algorithm}"
+def _memo_key(snap, eligible=False):
+    """The shared memo key: what the results are computed from, never the global version or the day.
+
+    A write that leaves the genebank's pedigree and membership alone (the other genebank, a
+    herd-tracking note) or a new day keeps the key, and the cached results with it. Carrier
+    eligibility moves with the date (age cap); only founders at risk reads it (`eligible`).
+    """
+    _version, _day, definition, algorithm, _epoch = snap.key
+    key = f"{snap.fingerprint}:{definition}:{algorithm}:{genetics.CODE_VERSION}"
+    return f"{key}:{snap.eligible_fingerprint}" if eligible else key
 
 
 def _pinned_snapshot(g_id):
@@ -2230,12 +2244,12 @@ def _pinned_snapshot(g_id):
     return genetics.ps.pinned(snap) if snap is not None else contextlib.nullcontext()
 
 
-def _on_snapshot(g_id, cached, *params):
-    """Run a memoized genetics body on one pinned snapshot, cached under that snapshot's key.
+def _on_snapshot(g_id, cached, *params, eligible=False):
+    """Run a memoized genetics body on one pinned snapshot, cached under that snapshot's content key.
 
-    A result computed on snapshot v is stored under v even if v+1 is published
-    meanwhile, so it can never be served as v+1. Without a snapshot (a failed
-    cold build) the body runs uncached and returns the service's empty result;
+    A result computed on snapshot v is stored under v's inputs even if v+1 is
+    published meanwhile, so it is never served for other inputs. Without a
+    snapshot (a failed cold build) the body runs uncached and returns the service's empty result;
     when reading the snapshot fails, the uncached body fails as it always did.
     The memoized `_<name>_cached` bodies take `snap_key` only as part of the cache key.
     """
@@ -2247,7 +2261,7 @@ def _on_snapshot(g_id, cached, *params):
     if snap is None:
         return cached.uncached(g_id, None, *params)
     with genetics.ps.pinned(snap):
-        return cached(g_id, _memo_key(snap), *params)
+        return cached(g_id, _memo_key(snap, eligible), *params)
 
 
 def get_ind_inbreeding(i_number, g_id):
@@ -2376,7 +2390,7 @@ def get_population_metrics(g_id):
     return _on_snapshot(g_id, _get_population_metrics_cached)
 
 
-@CACHE.memoize(timeout=DASHBOARD_LIFETIME)
+@CACHE.memoize(timeout=DASHBOARD_LIFETIME, source_check=True)
 def _get_population_metrics_cached(g_id, snap_key):  # pylint: disable=unused-argument
     return genetics.get_population_metrics(g_id)
 
@@ -2386,17 +2400,17 @@ def get_founder_statistics(g_id):
     return _on_snapshot(g_id, _get_founder_statistics_cached)
 
 
-@CACHE.memoize(timeout=DASHBOARD_LIFETIME)
+@CACHE.memoize(timeout=DASHBOARD_LIFETIME, source_check=True)
 def _get_founder_statistics_cached(g_id, snap_key):  # pylint: disable=unused-argument
     return genetics.get_founder_statistics(g_id)
 
 
 def get_founders_at_risk(g_id):
     """Get founders at risk for genebank, shared across workers via Redis."""
-    return _on_snapshot(g_id, _get_founders_at_risk_cached)
+    return _on_snapshot(g_id, _get_founders_at_risk_cached, eligible=True)
 
 
-@CACHE.memoize(timeout=DASHBOARD_LIFETIME)
+@CACHE.memoize(timeout=DASHBOARD_LIFETIME, source_check=True)
 def _get_founders_at_risk_cached(g_id, snap_key):  # pylint: disable=unused-argument
     return genetics.get_founders_at_risk(g_id)
 
@@ -2406,7 +2420,7 @@ def get_genetic_priorities(g_id):
     return _on_snapshot(g_id, _get_genetic_priorities_cached)
 
 
-@CACHE.memoize(timeout=DASHBOARD_LIFETIME)
+@CACHE.memoize(timeout=DASHBOARD_LIFETIME, source_check=True)
 def _get_genetic_priorities_cached(g_id, snap_key):  # pylint: disable=unused-argument
     return genetics.get_genetic_priorities(g_id)
 
@@ -2416,7 +2430,7 @@ def get_breeding_suggestions(g_id, max_pairs=20, max_inbreeding=0.0625, max_per_
     return _on_snapshot(g_id, _get_breeding_suggestions_cached, max_pairs, max_inbreeding, max_per_male, max_per_female)
 
 
-@CACHE.memoize(timeout=DASHBOARD_LIFETIME)
+@CACHE.memoize(timeout=DASHBOARD_LIFETIME, source_check=True)
 def _get_breeding_suggestions_cached(g_id, snap_key, max_pairs, max_inbreeding, max_per_male, max_per_female):  # pylint: disable=unused-argument
     return genetics.get_breeding_suggestions(
         g_id,
