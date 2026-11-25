@@ -36,6 +36,7 @@ export const PANEL_HEADING = "Adminpanel"; // Task 24/25 landing heading → C8 
 export const SEARCH_FIELD = /Sök/; // Task 26/27 list search fields
 export const FULLNAME_FIELD = "Fullständigt namn"; // Task 26 profile form
 export const SAVE_BUTTON = "Spara"; // Task 26/27/28 forms
+export const SAVED_NOTICE = "Ändringen är sparad."; // #249 account page: a saved change stays on the page
 export const CREATE_HERD_BUTTON = "Skapa besättning"; // Task 27 create form
 export const ROLE_LEVEL_FIELD = "Roll"; // Task 26 RolePicker level select (label "Roll")
 export const ROLE_HERD_FIELD = "Besättning"; // Task 26 RolePicker herd autocomplete

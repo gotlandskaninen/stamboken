@@ -60,7 +60,7 @@ from utils.herd_contact import (
     on_person_leaving,
     snapshot_before_leaving,
 )
-from utils.inbox_purge import erase_person_from_inbox, remove_originals
+from utils.inbox_purge import erase_person_from_inbox, erase_user_from_inbox, remove_originals
 from utils.individual_commands import purge_command_free_text
 from utils.login_code import (
     AddressTaken,
@@ -929,6 +929,49 @@ def anonymize_person(member, actor, deferred_originals=None, deferred_accounts=N
         deferred_accounts.append(user)
     _invalidate_genebanks(lost_genebanks)
     return person
+
+
+def erase_unlinked_account(user_id, actor_id):
+    """
+    Empties an account that belongs to no person (#250), as anonymize_person empties a person's account: the same
+    steps for the account, in one transaction with its row locked, the audit purge last and the profile pictures
+    removed after the commit. Refuses (LinkError) an actor who is no longer an active admin once the rows are locked,
+    the caller's own account, an account already emptied, one with a role other than Läsrätt and one that a person in
+    the register points to, ended or not: persons are handled in the register. A linker takes this row's lock before
+    it writes member.user_id and refuses an inactive account, so the check holds. What the account sent to the intake
+    queue goes as for a person (erase_user_from_inbox), its files after the commit.
+    """
+    if user_id == actor_id:
+        raise LinkError("Ditt eget konto", "Du kan inte radera uppgifterna i kontot du är inloggad med.", type="self")
+    with DB_PROXY.atomic():
+        # Both rows in id order, as the role writers lock theirs: the actor may lose the admin role while this waits
+        locked = {u.id: u for u in User.select().where(User.id.in_([user_id, actor_id])).order_by(User.id).for_update()}
+        actor = locked.get(actor_id)
+        if actor is None or not actor.is_active or not actor.is_admin:
+            raise LinkError("Åtkomst nekad", "Du är inte längre administratör.", 403, type="not-admin")
+        user = locked.get(user_id)
+        if user is None:
+            raise LinkError("Användare saknas", f"Ingen användare med id {user_id}.", 404, type="user-not-found")
+        if user.email == f"raderad-{user.id}":  # not_erased(), on the locked row
+            raise LinkError("Redan raderat", "Kontots uppgifter är redan raderade.", type="erased")
+        # Läsrätt is no role here: every account gets it on both genebanks (RETENTION_HOLD_LEVELS)
+        if any(p["level"] != "viewer" for p in user.privileges or []):
+            raise LinkError("Kontot har en roll", "Ta bort kontots roller innan uppgifterna raderas.", type="has-role")
+        if Member.select().where(Member.user == user.id).exists():
+            raise LinkError(
+                "Kontot hör till en person",
+                "Kontot är kopplat till en person i matrikeln. Personer anonymiseras i matrikeln.",
+                type="has-person",
+            )
+        User.update(name_on_check_page=False).where(User.id == user.id).execute()
+        forget_recipient("user", user.id)
+        erase_account(user)  # `user` keeps the values read under the lock
+        originals = erase_user_from_inbox(user.id)
+        pictures = profile_pictures_of(user)  # before the purge takes their names
+        purge_user_audit_pii(user.id, user.username, user.email)  # last: it locks audit_log until the commit
+    remove_originals(originals)  # only after the commit: a row never names a removed file
+    for name in pictures:
+        remove_profile_picture(name)
 
 
 ENDED_MEMBER_RETENTION = "12 months"  # a PostgreSQL interval: calendar months, as the privacy policy says (#34)
