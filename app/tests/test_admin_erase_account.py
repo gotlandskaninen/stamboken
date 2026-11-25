@@ -154,7 +154,7 @@ class TestAdminEraseAccount(DatabaseTest):
 
     def test_an_account_a_person_points_to_is_refused_even_when_the_person_has_ended(self):
         for number, ended in enumerate((None, date(2025, 1, 31)), start=500):
-            with self.subTest(ended=ended):
+            with self.subTest(ended=str(ended)):  # xdist cannot send a date
                 tag = f"p{number}"
                 user = self._account(tag)
                 membership = db.Membership.create(member_number=number)
