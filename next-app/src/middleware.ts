@@ -4,6 +4,7 @@ import {
   MODE_COOKIE,
   initialMode,
   modeCookieOptions,
+  sessionCookieOptions,
   type Mode,
 } from "@/lib/mode";
 
@@ -70,8 +71,7 @@ export async function middleware(request: NextRequest) {
   if (mode) response.cookies.set(MODE_COOKIE, mode, modeCookieOptions);
   else if (lookup)
     response.cookies.set(RETRY_COOKIE, "1", {
-      ...modeCookieOptions,
-      httpOnly: true,
+      ...sessionCookieOptions,
       maxAge: 120,
     });
   response.headers.set("x-next-url", currentPath);

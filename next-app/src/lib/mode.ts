@@ -24,8 +24,8 @@ export const MODE_COOKIE = "sb_mode";
  * Validate a raw cookie value against the `demo|prod` allow-list.
  * Returns `"prod"` only for the exact string `"prod"`; everything else
  * (undefined, unknown values, wrong case) fail-safes to `"demo"` (ASVS V5).
- * With a session, middleware replaces a missing or invalid value with
- * {@link initialMode} before any page reads it (#227).
+ * With a session, on routes the middleware matches, a missing or invalid
+ * value is replaced with {@link initialMode} before any page reads it (#227).
  */
 export function parseMode(value: string | undefined): Mode {
   return value === "prod" ? "prod" : "demo";
@@ -43,17 +43,26 @@ export function initialMode(v2ProdAccess: boolean): Mode {
 }
 
 /**
+ * Cookie settings that must match Flask's session config (herdbook.py,
+ * APP.config): SameSite "Lax", Secure in production only.
+ */
+export const sessionCookieOptions = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === "production",
+  sameSite: "lax" as const,
+  path: "/",
+};
+
+/**
  * The browser must read sb_mode (RTK Query picks demo vs. prod from it), so it
- * is NON-httpOnly; the rest mirrors the session cookie (actions.ts). It is not
+ * is NON-httpOnly; the rest mirrors the session cookie. It is not
  * an auth token (threat T-999.2-10). It lives as long as the Flask session
  * (PERMANENT_SESSION_LIFETIME, 31 days), so a chosen demo outlasts a browser
  * restart and middleware rarely has to look the mode up.
  */
 export const modeCookieOptions = {
+  ...sessionCookieOptions,
   httpOnly: false,
-  secure: process.env.NODE_ENV === "production",
-  sameSite: "lax" as const,
-  path: "/",
   maxAge: 31 * 24 * 60 * 60,
 };
 

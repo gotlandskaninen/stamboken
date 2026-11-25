@@ -9,6 +9,7 @@ import {
   initialMode,
   modeCookieOptions,
   parseMode,
+  sessionCookieOptions,
   type Mode,
 } from "@/lib/mode";
 
@@ -27,16 +28,8 @@ function extractSessionValue(setCookieHeader: string): string | null {
   return match ? match[1] : null;
 }
 
-// Cookie settings must match Flask's session config (herdbook.py, APP.config):
-// - SameSite: "Lax"
-// - Secure: true in production only
-const isProduction = process.env.NODE_ENV === "production";
-const cookieOptions = {
-  httpOnly: true,
-  secure: isProduction,
-  sameSite: "lax" as const,
-  path: "/",
-};
+// The session cookie's settings, shared with sb_mode (lib/mode.ts).
+const cookieOptions = { ...sessionCookieOptions };
 
 /**
  * Validate return_to is a same-site path (prevent open redirect). The client
