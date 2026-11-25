@@ -111,6 +111,10 @@ it("shows the full rules and requires an explicit agreement to the displayed ver
     </CreateAccount>,
   );
   expect(screen.getByText("Hela regeltexten")).toBeVisible();
+  expect(screen.getByText(/kryssa sedan i rutan längst ner/)).toBeVisible();
+  expect(
+    screen.getByRole("link", { name: "Regler för ditt konto" }),
+  ).toHaveAttribute("href", "/kontoregler");
   const privacyLink = screen.getByRole("link", { name: "Integritetspolicyn" });
   expect(privacyLink).toHaveAttribute("href", "/dataskydd");
   expect(privacyLink.closest("p")).toHaveTextContent(

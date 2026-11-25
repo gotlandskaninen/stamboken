@@ -23,27 +23,29 @@ export async function getAccountRules() {
     if (!page) return null;
     // Only editorial rule text enables acceptance. Captions can accompany it.
     let hasRuleText = false;
-    function ruleText(content?: SerializedEditorState | null) {
+    // The page renders each section's content; its text is what is hashed.
+    type Section = { content?: SerializedEditorState; text?: string | null };
+    function ruleText(content?: SerializedEditorState | null): Section {
       const text = content ? convertLexicalToPlaintext({ data: content }) : "";
       if (/[\p{L}\p{N}]/u.test(text)) hasRuleText = true;
-      return text;
+      return { content: content ?? undefined, text };
     }
-    const sections = (page.layout ?? []).flatMap((block) => {
+    const sections = (page.layout ?? []).flatMap((block): Section[] => {
       switch (block.blockType) {
         case "richText":
           return [ruleText(block.content)];
         case "columns":
           return (block.columns ?? []).map(({ content }) => ruleText(content));
         case "image":
-          return [block.caption];
+          return [{ text: block.caption }];
         case "gallery":
-          return (block.images ?? []).map(({ caption }) => caption);
+          return (block.images ?? []).map(({ caption }) => ({ text: caption }));
         default:
           return [];
       }
     });
     if (!hasRuleText) return null;
-    const text = [page.title, page.subtitle, ...sections]
+    const text = [page.title, page.subtitle, ...sections.map((s) => s.text)]
       .filter(Boolean)
       .join("\n\n");
     const {
@@ -59,7 +61,15 @@ export async function getAccountRules() {
       sort: "-id",
       limit: 1,
     });
-    return revision ? { version: String(revision.id), text } : null;
+    return revision
+      ? {
+          version: String(revision.id),
+          text,
+          title: page.title,
+          subtitle: page.subtitle,
+          sections: sections.filter((s) => s.text),
+        }
+      : null;
   } catch {
     return null;
   }

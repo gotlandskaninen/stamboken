@@ -67,19 +67,69 @@ describe("published account rules revision", () => {
     });
     expect(response.headers.get("cache-control")).toBe("no-store");
   });
-  it("displays the text that Flask will archive and binds the form to its UTF-8 digest", async () => {
-    db.find.mockResolvedValue({ docs: [page] });
+  it("displays the text that Flask will archive, with its formatting, and binds the form to its UTF-8 digest", async () => {
+    // The node shapes the seeded rules use: a bold opening, a mailto link
+    // and an internal link.
+    const text = (value: string, format?: number) => ({
+      type: "text",
+      text: value,
+      ...(format ? { format } : {}),
+    });
+    const link = (url: string, label: string) => ({
+      type: "link",
+      fields: { url, linkType: "custom", newTab: false },
+      children: [text(label)],
+    });
+    const content = {
+      root: {
+        children: [
+          { type: "paragraph", children: [text("Inledning & syfte.")] },
+          {
+            type: "paragraph",
+            children: [
+              text("Kontot är ditt eget.", 1),
+              text(" Mejla "),
+              link("mailto:test@example.org", "test@example.org"),
+              text("."),
+            ],
+          },
+          {
+            type: "paragraph",
+            children: [text("Läs "), link("/dataskydd", "policyn"), text(".")],
+          },
+        ],
+      },
+    };
+    db.find.mockResolvedValue({
+      docs: [
+        {
+          ...page,
+          layout: [
+            { blockType: "richText", content },
+            { blockType: "image", caption: "En bildtext" },
+          ],
+        },
+      ],
+    });
     db.findVersions.mockResolvedValue({ docs: [{ id: 8 }] });
     const form = await CreateAccountPage({ searchParams: Promise.resolve({}) });
-    const { text, version } = await (await GET()).json();
+    const response = await (await GET()).json();
+    expect(Object.keys(response).sort()).toEqual(["text", "version"]);
     expect(form.props.rules).toEqual({
-      version,
-      sha256: createHash("sha256").update(text).digest("hex"),
+      version: response.version,
+      sha256: createHash("sha256").update(response.text).digest("hex"),
     });
     const markup = renderToStaticMarkup(form.props.children);
-    expect(markup).toContain(
-      "<h2>Kontoregler</h2><p>För alla konton</p><p>Använd bara ditt eget testkonto.</p>",
-    );
+    expect(markup).toContain("<strong>Kontot är ditt eget.</strong>");
+    expect(markup).toContain('href="mailto:test@example.org"');
+    expect(markup).toContain('href="/dataskydd"');
+    // What the member reads is, word for word, what the digest covers.
+    const shown = markup
+      .replace(/<\/(h2|p)>/g, "\n\n")
+      .replace(/<[^>]+>/g, "")
+      .replace(/&amp;/g, "&")
+      .trim();
+    expect(shown).toBe(response.text);
   });
   it.each([[], [{ ...page, layout: [] }]])(
     "does not accept a missing or empty publication",

@@ -210,14 +210,15 @@ export function CreateAccount({
       </main>
     );
   return (
-    <main className={styles.page}>
+    <main className={`${styles.page} ${styles.reading}`}>
       <h1>{t("codeLogin.create")}</h1>
       <p>{t("codeLogin.accountPurpose")}</p>
       {rules ? (
         <>
+          <p className={styles.lead}>{t("codeLogin.readFirst")}</p>
           {children}
           <form
-            className={styles.form}
+            className={`${styles.form} ${styles.accept}`}
             onSubmit={(event) => {
               event.preventDefault();
               if (!accepted) return;
@@ -236,6 +237,10 @@ export function CreateAccount({
               });
             }}
           >
+            <p className={styles.again}>
+              {t("codeLogin.rulesAgain")}{" "}
+              <Link href="/kontoregler">{t("codeLogin.rulesPage")}</Link>
+            </p>
             <label className={styles.check}>
               <input
                 type="checkbox"
