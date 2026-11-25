@@ -46,6 +46,10 @@ class TestV2AdminRoleEndpoint(DatabaseTest):
             {"level": "viewer", "genebank": self.genebanks[0].id},
             {"level": "owner", "herd": self.herds[1].id},
         ]
+        # The owner role needs the account linked to a person in the herd's membership.
+        membership = db.Membership.create(membership_status="active")
+        db.Herd.update(membership=membership).where(db.Herd.id == self.herds[1].id).execute()
+        db.Member.create(membership=membership, role="familjemedlem", first_name="T", last_name="T", user=self.victim)
         for role in grants:
             with self.subTest(role=role):
                 resp = self._post_role("add", self.victim.id, role)
