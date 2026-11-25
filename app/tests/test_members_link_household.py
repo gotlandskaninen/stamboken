@@ -484,6 +484,34 @@ class TestMembersLinkHousehold(DatabaseTest):
         self._apply()
         self.assertIsNone(db.Member.get_by_id(main.id).user_id)
 
+    def test_google_address_changed_after_the_plan_stops_the_add(self):
+        membership, main, _, bo = self._household_of_two()
+
+        def new_google_address(person_id):
+            if person_id == main.id:
+                db.User.update(google_email="annan@example.org").where(db.User.id == bo.id).execute()
+
+        result = self._apply_with(new_google_address)
+
+        self.assertIn("Personvalet har ändrats sedan planen", result.output)
+        self.assertEqual(self._added(membership), [])
+        self.assertEqual(self._notices(), [])
+
+    def test_person_added_by_hand_after_the_plan_stops_the_add(self):
+        membership, main, _, _ = self._household_of_two()
+
+        def add_by_hand(person_id):
+            if person_id == main.id:  # the register manager adds him meanwhile, with another address
+                db.Member.create(
+                    membership=membership, role="familjemedlem", first_name="Bo", last_name="Svensson", email="b@ex.net"
+                )
+
+        result = self._apply_with(add_by_hand)
+
+        self.assertIn("Personvalet har ändrats sedan planen: kontot matchar en person i medlemskapet", result.output)
+        self.assertEqual([p.email for p in self._added(membership)], ["b@ex.net"])
+        self.assertEqual(self._notices(), [])
+
     def test_changed_plan_writes_nothing(self):
         membership, main, herd = self._household()
         self._account("Anna Svensson", owns=[herd])

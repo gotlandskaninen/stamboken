@@ -1610,6 +1610,18 @@ def _household_person(user, workspace, persons):
     return f"ingen reservadress i Workspace-raden går att använda ({'; '.join(refused)})"
 
 
+def _family_choice(user, workspace, persons, review):
+    """The person to add for an owner account linked to no person, or the reason none is added. The plan asks, and
+    _add_household_person asks again under lock with what is stored then."""
+    if any(_match_reason(p, user) for p in persons):
+        return "kontot matchar en person i medlemskapet (koppla för hand)"
+    if review:
+        return f"medlemskapet har {review} (lägg till för hand)"
+    if holder := _registry_holder(user):
+        return f"Google-adressen hör till person {holder.id} (koppla för hand)"
+    return _household_person(user, workspace, persons)
+
+
 def _plan_household_links(workspace) -> tuple[list, list, int]:
     """Memberships with a herd that several active accounts own: returns (actions [(codes, line, main, user,
     person data or None for the main member's link, (main member's account id, herd ids the account owns) for a new
@@ -1692,18 +1704,9 @@ def _plan_household_links(workspace) -> tuple[list, list, int]:
                 else:
                     listed.append((codes, f"konto {user.id}: kontot är redan kopplat till en annan medlem"))
                 continue
-            if any((p.id, user.id) in possible for p in persons):
-                listed.append((codes, f"konto {user.id}: kontot matchar en person i medlemskapet (koppla för hand)"))
-                continue
-            if review:
-                listed.append((codes, f"konto {user.id}: medlemskapet har {review} (lägg till för hand)"))
-                continue
-            if holder := _registry_holder(user):
-                listed.append(
-                    (codes, f"konto {user.id}: Google-adressen hör till person {holder.id} (koppla för hand)")
-                )
-                continue
-            planned = _account_problem(user, incomplete, memberships_of) or _household_person(user, workspace, persons)
+            planned = _account_problem(user, incomplete, memberships_of) or _family_choice(
+                user, workspace, persons, review
+            )
             if isinstance(planned, str):
                 listed.append((codes, f"konto {user.id}: {planned}"))
                 continue
@@ -1714,7 +1717,7 @@ def _plan_household_links(workspace) -> tuple[list, list, int]:
                 f"-> konto {user.id} | {_account_detail(user)} | anteckning som skrivs: {_q(_HOUSEHOLD_NOTE)}"
             )
             owned = [herd_id for herd_id in herd_ids if user.id in owners.get(herd_id, {})]
-            actions.append((codes, line, main, user, data, (main_user.id, owned)))
+            actions.append((codes, line, main, user, data, (main_user.id, owned, column)))
 
     # Two new persons with one name in a membership, or one login address anywhere: none of them is added.
     family = [action for action in actions if action[4] is not None]
@@ -1734,12 +1737,13 @@ def _plan_household_links(workspace) -> tuple[list, list, int]:
     return actions, listed, len(already)
 
 
-def _add_household_person(main, user, data, planned, actor) -> None:
+def _add_household_person(main, user, data, planned, workspace, actor) -> None:
     """The same add as a manual one (address check, audit, medlemskap.tillagd), and the link, in one transaction.
     First, under the locks link_member_user takes and in its order (membership, then account), what the plan rested
     on must still hold: an active membership, the main member linked to her account, and the account an owner of
-    one of the household's herds."""
-    main_user_id, herd_ids = planned
+    one of the household's herds, and the person chosen again from the stored persons and the account's Google
+    address must be the planned one, with the planned address."""
+    main_user_id, herd_ids, column = planned
     with DB_PROXY.atomic():
         membership = Membership.select().where(Membership.id == main.membership_id).for_update().get()
         account = User.select().where(User.id == user.id).for_update().get()
@@ -1759,6 +1763,11 @@ def _add_household_person(main, user, data, planned, actor) -> None:
         roles = [r for r in account.privileges if isinstance(r, dict) and r.get("level") == "owner"]
         if not {str(r.get("herd")).lstrip("0") for r in roles} & {str(herd.id) for herd in herds}:
             raise LinkError("Kontot äger inte besättningen", "Kontot har inte längre rollen ägare på besättningen")
+        persons = list(Member.select().where(Member.membership == membership.id, Member.end_date.is_null(True)))
+        choice = _family_choice(account, workspace, persons, None)
+        if choice != (data, column):
+            detail = choice if isinstance(choice, str) else "en annan person eller adress än i planen"
+            raise LinkError("Personvalet har ändrats", f"Personvalet har ändrats sedan planen: {detail}")
         person = add_person(membership, data, actor)
         person.notes = _HOUSEHOLD_NOTE
         person.save(only=[Member.notes])
@@ -1800,7 +1809,8 @@ def link_household_cmd(workspace_path: str, apply_links: bool, actor_user_id: in
     Plan, Kontrollvärde and --apply work as in link-by-herd.
     """
     actor = _link_actor(apply_links, actor_user_id, plan_value)
-    actions, listed, already = _plan_household_links(_read_workspace(workspace_path))
+    workspace = _read_workspace(workspace_path)
+    actions, listed, already = _plan_household_links(workspace)
     value = _plan_checksum(action[1] for action in actions)
     if apply_links and plan_value != value:
         _echo_plan("Att koppla", [action[1] for action in actions], listed, already)
@@ -1816,7 +1826,7 @@ def link_household_cmd(workspace_path: str, apply_links: bool, actor_user_id: in
             if apply_links and data is None:
                 link_member_user(main.id, user.id, actor=actor, mode="cli")
             elif apply_links:
-                _add_household_person(main, user, data, planned, actor)
+                _add_household_person(main, user, data, planned, workspace, actor)
         except (ConfirmRequired, LinkError, IntegrityError, AddressTaken, ValueError) as exc:
             if data is None:
                 refused_main.add(main.membership_id)
