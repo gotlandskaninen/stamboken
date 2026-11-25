@@ -258,3 +258,18 @@ class TestAdminEraseAccount(DatabaseTest):
             matrikel.erase_unlinked_account(user.id, self.admin.id)
         self.assertEqual((refused.exception.status, refused.exception.extensions["type"]), (403, "not-admin"))
         self._assert_untouched(user, "i")
+
+    def test_an_erased_account_takes_no_role(self):
+        user = self._account("g")
+        self._login()
+        self.assertEqual(self._erase(user.id).status_code, 204)
+        response = self.client.post(
+            "/api/v2/admin/role",
+            json={
+                "operation": "add",
+                "user_id": user.id,
+                "role": {"level": "viewer", "genebank": self.genebanks[0].id},
+            },
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(db.User.get_by_id(user.id).privileges, [])

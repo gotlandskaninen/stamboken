@@ -220,238 +220,246 @@ export function UserEditClient({
 
       <div className={ds["ad-detail-grid"]}>
         <div className={ds["ad-col"]}>
-          {/* Edit profile — username is immutable. */}
-          <DetailCard title="Profil">
-            <div className={ds["ad-form"]}>
-              <div>
-                <label className="sb-label" htmlFor="ad-username">
-                  Användarnamn
-                </label>
-                <input
-                  id="ad-username"
-                  className="sb-input"
-                  value={detail.username ?? ""}
-                  disabled
-                  readOnly
-                />
-              </div>
-              <div>
-                <label className="sb-label" htmlFor="ad-fullname">
-                  Fullständigt namn
-                </label>
-                <input
-                  id="ad-fullname"
-                  className="sb-input"
-                  value={fullname}
-                  onChange={(e) =>
-                    setEdits({ ...edits, fullname: e.target.value })
-                  }
-                />
-              </div>
-              <div>
-                <label className="sb-label" htmlFor="ad-email">
-                  E-post
-                </label>
-                <input
-                  id="ad-email"
-                  className="sb-input"
-                  value={email}
-                  onChange={(e) =>
-                    setEdits({ ...edits, email: e.target.value })
-                  }
-                />
-              </div>
-              <div>
-                <button
-                  type="button"
-                  className="sb-btn"
-                  disabled={pending || Object.keys(edits).length === 0}
-                  onClick={() =>
-                    run(async () => {
-                      const result = await updateUserProfile(detail.id, edits);
-                      if (!result) setEdits({}); // the saved values come back from the server
-                      return result;
-                    })
-                  }
-                >
-                  Spara
-                </button>
-              </div>
-            </div>
-          </DetailCard>
-
-          {/* Roles — expanded entries with resolved names + RolePicker. */}
-          <DetailCard title="Roller">
-            {detail._privileges.length === 0 ? (
-              <p className={ds["ad-hint"]}>Inga roller tilldelade.</p>
-            ) : (
-              <ul className={styles["ad-role-list"]}>
-                {detail._privileges.map((p, i) => {
-                  const herd =
-                    p.level === "owner"
-                      ? herds.find((h) => h.id === p.herd)
-                      : undefined;
-                  return (
-                    <li
-                      key={`${p.level}-${i}`}
-                      className={styles["ad-role-row"]}
+          {/* An erased account has nothing left to edit (#250). */}
+          {!erased && (
+            <>
+              {/* Edit profile — username is immutable. */}
+              <DetailCard title="Profil">
+                <div className={ds["ad-form"]}>
+                  <div>
+                    <label className="sb-label" htmlFor="ad-username">
+                      Användarnamn
+                    </label>
+                    <input
+                      id="ad-username"
+                      className="sb-input"
+                      value={detail.username ?? ""}
+                      disabled
+                      readOnly
+                    />
+                  </div>
+                  <div>
+                    <label className="sb-label" htmlFor="ad-fullname">
+                      Fullständigt namn
+                    </label>
+                    <input
+                      id="ad-fullname"
+                      className="sb-input"
+                      value={fullname}
+                      onChange={(e) =>
+                        setEdits({ ...edits, fullname: e.target.value })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label className="sb-label" htmlFor="ad-email">
+                      E-post
+                    </label>
+                    <input
+                      id="ad-email"
+                      className="sb-input"
+                      value={email}
+                      onChange={(e) =>
+                        setEdits({ ...edits, email: e.target.value })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <button
+                      type="button"
+                      className="sb-btn"
+                      disabled={pending || Object.keys(edits).length === 0}
+                      onClick={() =>
+                        run(async () => {
+                          const result = await updateUserProfile(
+                            detail.id,
+                            edits,
+                          );
+                          if (!result) setEdits({}); // the saved values come back from the server
+                          return result;
+                        })
+                      }
                     >
-                      <span className={`sb-badge ${LEVEL_BADGE[p.level]}`}>
-                        {LEVEL_TEXT[p.level]}
-                      </span>
-                      {roleTarget(p) && (
-                        <span className={styles["ad-role-target"]}>
-                          {herd ? (
-                            <Link
-                              href={`/stamboken/admin/besattningar/${herd.herd}`}
-                              className="sb-link"
-                            >
-                              {roleTarget(p)}
-                            </Link>
-                          ) : (
-                            roleTarget(p)
+                      Spara
+                    </button>
+                  </div>
+                </div>
+              </DetailCard>
+
+              {/* Roles — expanded entries with resolved names + RolePicker. */}
+              <DetailCard title="Roller">
+                {detail._privileges.length === 0 ? (
+                  <p className={ds["ad-hint"]}>Inga roller tilldelade.</p>
+                ) : (
+                  <ul className={styles["ad-role-list"]}>
+                    {detail._privileges.map((p, i) => {
+                      const herd =
+                        p.level === "owner"
+                          ? herds.find((h) => h.id === p.herd)
+                          : undefined;
+                      return (
+                        <li
+                          key={`${p.level}-${i}`}
+                          className={styles["ad-role-row"]}
+                        >
+                          <span className={`sb-badge ${LEVEL_BADGE[p.level]}`}>
+                            {LEVEL_TEXT[p.level]}
+                          </span>
+                          {roleTarget(p) && (
+                            <span className={styles["ad-role-target"]}>
+                              {herd ? (
+                                <Link
+                                  href={`/stamboken/admin/besattningar/${herd.herd}`}
+                                  className="sb-link"
+                                >
+                                  {roleTarget(p)}
+                                </Link>
+                              ) : (
+                                roleTarget(p)
+                              )}
+                            </span>
                           )}
-                        </span>
-                      )}
-                      {/* The herd's status in words, not only colour (#214). */}
-                      {herd &&
-                        (herd.is_active ? (
-                          <span className="sb-badge sb-badge-mossa">Aktiv</span>
-                        ) : (
-                          <span className="sb-badge">Inaktiv</span>
-                        ))}
+                          {/* The herd's status in words, not only colour (#214). */}
+                          {herd &&
+                            (herd.is_active ? (
+                              <span className="sb-badge sb-badge-mossa">
+                                Aktiv
+                              </span>
+                            ) : (
+                              <span className="sb-badge">Inaktiv</span>
+                            ))}
+                          <button
+                            type="button"
+                            className={`sb-btn sb-btn-ghost sb-btn-sm ${styles["ad-role-remove"]}`}
+                            aria-label={`Ta bort ${roleLabel(p)}`}
+                            disabled={pending}
+                            onClick={() => handleRevoke(p)}
+                          >
+                            Ta bort
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+                <hr className="sb-rule" />
+                <div className={styles["ad-role-add"]}>
+                  <RolePicker
+                    genebanks={genebanks}
+                    herds={herds.filter((h) => h.is_active)}
+                    disabled={pending}
+                    onGrant={(role) => run(() => grantRole(detail.id, role))}
+                  />
+                </div>
+              </DetailCard>
+
+              {/* Password reset — plaintext shown exactly once. */}
+              <DetailCard title="Lösenord">
+                {plaintext === null ? (
+                  <>
+                    <p className={ds["ad-hint"]}>
+                      Det nya lösenordet visas endast en gång. Skicka det via en
+                      säker kanal — inte sms eller e-post.
+                    </p>
+                    <button
+                      type="button"
+                      className="sb-btn sb-btn-secondary"
+                      disabled={pending}
+                      onClick={() => {
+                        setError(null);
+                        startTransition(async () => {
+                          const result = await resetPassword(detail.id);
+                          if ("error" in result) setError(result.error);
+                          else setPlaintext(result.plaintext);
+                        });
+                      }}
+                    >
+                      Återställ lösenord
+                    </button>
+                  </>
+                ) : (
+                  <div
+                    className={`${ds["ad-banner"]} ${ds["ad-banner-warning"]}`}
+                    data-tyck-till="dolj"
+                  >
+                    <div>
+                      <strong>Nytt lösenord för {displayName}:</strong>{" "}
+                      <code>{plaintext}</code>
+                    </div>
+                    <p>
+                      Detta lösenord visas endast en gång. Skicka det till
+                      användaren via en säker kanal, till exempel Signal eller
+                      telefonsamtal. Använd inte sms eller e-post.
+                    </p>
+                    <div className={styles["ad-role-add"]}>
                       <button
                         type="button"
-                        className={`sb-btn sb-btn-ghost sb-btn-sm ${styles["ad-role-remove"]}`}
-                        aria-label={`Ta bort ${roleLabel(p)}`}
-                        disabled={pending}
-                        onClick={() => handleRevoke(p)}
+                        className="sb-btn sb-btn-secondary sb-btn-sm"
+                        onClick={() => navigator.clipboard.writeText(plaintext)}
                       >
-                        Ta bort
+                        Kopiera
                       </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-            <hr className="sb-rule" />
-            <div className={styles["ad-role-add"]}>
-              <RolePicker
-                genebanks={genebanks}
-                herds={herds.filter((h) => h.is_active)}
-                disabled={pending}
-                onGrant={(role) => run(() => grantRole(detail.id, role))}
-              />
-            </div>
-          </DetailCard>
+                      <button
+                        type="button"
+                        className="sb-btn sb-btn-sm"
+                        onClick={() => {
+                          // [Klar] → back to the user detail view.
+                          setPlaintext(null);
+                          router.refresh();
+                        }}
+                      >
+                        Klar
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </DetailCard>
 
-          {/* Password reset — plaintext shown exactly once. */}
-          <DetailCard title="Lösenord">
-            {plaintext === null ? (
-              <>
+              <DetailCard title="Sessioner">
                 <p className={ds["ad-hint"]}>
-                  Det nya lösenordet visas endast en gång. Skicka det via en
-                  säker kanal — inte sms eller e-post.
+                  Avslutar kontots alla sessioner, i riktiga stamboken och i
+                  testmiljön. Användaren kan logga in igen direkt.
                 </p>
                 <button
                   type="button"
                   className="sb-btn sb-btn-secondary"
                   disabled={pending}
-                  onClick={() => {
-                    setError(null);
-                    startTransition(async () => {
-                      const result = await resetPassword(detail.id);
-                      if ("error" in result) setError(result.error);
-                      else setPlaintext(result.plaintext);
-                    });
-                  }}
+                  onClick={() => setLogoutDialogOpen(true)}
                 >
-                  Återställ lösenord
+                  Logga ut överallt
                 </button>
-              </>
-            ) : (
-              <div
-                className={`${ds["ad-banner"]} ${ds["ad-banner-warning"]}`}
-                data-tyck-till="dolj"
-              >
-                <div>
-                  <strong>Nytt lösenord för {displayName}:</strong>{" "}
-                  <code>{plaintext}</code>
-                </div>
-                <p>
-                  Detta lösenord visas endast en gång. Skicka det till
-                  användaren via en säker kanal, till exempel Signal eller
-                  telefonsamtal. Använd inte sms eller e-post.
+                <button
+                  type="button"
+                  className="sb-btn sb-btn-secondary"
+                  disabled={pending}
+                  onClick={() => setGoogleDialogOpen(true)}
+                >
+                  Ta bort Google-inloggningen
+                </button>
+              </DetailCard>
+
+              <DetailCard title="Radera kontots uppgifter">
+                <p className={ds["ad-hint"]}>
+                  Raderar namn, e-post, inloggningar och profilbild och maskerar
+                  kontot i ändringsloggen. Gäller bara ett konto som inte har
+                  någon annan roll än läsrätt och inte hör till någon person i
+                  matrikeln. Personer anonymiseras i matrikeln.
                 </p>
-                <div className={styles["ad-role-add"]}>
-                  <button
-                    type="button"
-                    className="sb-btn sb-btn-secondary sb-btn-sm"
-                    onClick={() => navigator.clipboard.writeText(plaintext)}
-                  >
-                    Kopiera
-                  </button>
-                  <button
-                    type="button"
-                    className="sb-btn sb-btn-sm"
-                    onClick={() => {
-                      // [Klar] → back to the user detail view.
-                      setPlaintext(null);
-                      router.refresh();
-                    }}
-                  >
-                    Klar
-                  </button>
-                </div>
-              </div>
-            )}
-          </DetailCard>
-
-          <DetailCard title="Sessioner">
-            <p className={ds["ad-hint"]}>
-              Avslutar kontots alla sessioner, i riktiga stamboken och i
-              testmiljön. Användaren kan logga in igen direkt.
-            </p>
-            <button
-              type="button"
-              className="sb-btn sb-btn-secondary"
-              disabled={pending}
-              onClick={() => setLogoutDialogOpen(true)}
-            >
-              Logga ut överallt
-            </button>
-            <button
-              type="button"
-              className="sb-btn sb-btn-secondary"
-              disabled={pending}
-              onClick={() => setGoogleDialogOpen(true)}
-            >
-              Ta bort Google-inloggningen
-            </button>
-          </DetailCard>
-
-          {!erased && (
-            <DetailCard title="Radera kontots uppgifter">
-              <p className={ds["ad-hint"]}>
-                Raderar namn, e-post, inloggningar och profilbild och maskerar
-                kontot i ändringsloggen. Gäller bara ett konto som inte har
-                någon annan roll än läsrätt och inte hör till någon person i
-                matrikeln. Personer anonymiseras i matrikeln.
-              </p>
-              <button
-                type="button"
-                className="sb-btn sb-btn-secondary"
-                disabled={
-                  pending ||
-                  // Läsrätt is no role here: every account gets it (#250).
-                  detail._privileges.some((p) => p.level !== "viewer") ||
-                  detail.id === actorId
-                }
-                onClick={() => setEraseDialogOpen(true)}
-              >
-                Radera kontots uppgifter
-              </button>
-            </DetailCard>
+                <button
+                  type="button"
+                  className="sb-btn sb-btn-secondary"
+                  disabled={
+                    pending ||
+                    // Läsrätt is no role here: every account gets it (#250).
+                    detail._privileges.some((p) => p.level !== "viewer") ||
+                    detail.id === actorId
+                  }
+                  onClick={() => setEraseDialogOpen(true)}
+                >
+                  Radera kontots uppgifter
+                </button>
+              </DetailCard>
+            </>
           )}
         </div>
 

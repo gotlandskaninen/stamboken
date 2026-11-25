@@ -324,6 +324,14 @@ describe("UserEditClient Radera kontots uppgifter (#250)", () => {
     expect(
       screen.queryByRole("button", { name: "Radera kontots uppgifter" }),
     ).toBeNull();
+    // Nothing left to edit: no profile, roles, password or sessions.
+    expect(
+      screen.getByRole("heading", { name: "Status och åtkomst" }),
+    ).toBeInTheDocument();
+    for (const name of ["Profil", "Roller", "Lösenord", "Sessioner"]) {
+      expect(screen.queryByRole("heading", { name })).toBeNull();
+    }
+    expect(screen.queryByRole("button", { name: "Spara" })).toBeNull();
   });
 });
 
