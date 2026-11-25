@@ -12,10 +12,6 @@ import {
 import { DataGrid, GridColDef, GridSortModel } from "@mui/x-data-grid";
 import CheckIcon from "@mui/icons-material/Check";
 
-import {
-  useFetchGeneticPrioritiesQuery,
-  GeneticPriority,
-} from "@/redux/api/apiSlice";
 import { decimal, percent } from "@/lib/genetics";
 import HelpTooltip from "./HelpTooltip";
 import GeneticsInfoPanel from "./GeneticsInfoPanel";
@@ -23,13 +19,16 @@ import GeneticsError from "./GeneticsError";
 import { readableChip } from "./readableChip";
 import { translateReasons } from "@/utils/translateReasons";
 import { readModeCookieClient } from "@/lib/mode";
+import { useMode } from "@/lib/mode-context";
 import {
   PRIORITY_LABEL,
   PRIORITY_ORDER,
   byHerd,
   downloadExport,
+  exportRefusal,
   prioritiesCsvUrl,
   sexLabel,
+  useWorkList,
 } from "./workList";
 
 const RARE_GENES =
@@ -68,12 +67,14 @@ interface PrioritiesTabProps {
 }
 
 const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
+  const mode = useMode(); // the view's own mode, as the server rendered it
+  // Every read of the list is logged on the server; the tab is keyed per genebank.
   const {
     data: priorities,
     isLoading,
     error,
     refetch,
-  } = useFetchGeneticPrioritiesQuery(genebankId);
+  } = useWorkList(genebankId, mode);
 
   const [filters, setFilters] = useState({
     critical: true,
@@ -263,10 +264,10 @@ const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
             disabled={filteredRows.length === 0}
             onClick={async () => {
               // The server builds the file and logs the download (who, which rabbits).
-              setExportError(null);
+              const refused = exportRefusal(mode, readModeCookieClient());
+              setExportError(refused);
+              if (refused) return;
               const url = prioritiesCsvUrl(
-                readModeCookieClient(),
-                process.env.NEXT_PUBLIC_API_TEST_URL,
                 genebankId,
                 (Object.keys(filters) as Array<keyof typeof filters>).filter(
                   (level) => filters[level],

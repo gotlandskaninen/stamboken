@@ -27,10 +27,13 @@ HEADER = [
 ]
 
 
-def with_details(priorities):
-    """New rows with each rabbit's name, sex, birth date and current herd; without them when reading fails."""
+def with_details(priorities, genebanks):
+    """New rows with each rabbit's name, sex, birth date and current herd; without them when reading fails.
+
+    `genebanks`: the user's accessible genebanks, which decide whether name and herd are shown.
+    """
     try:
-        details = da.work_list_details([p["individual_id"] for p in priorities])
+        details = da.work_list_details([p["individual_id"] for p in priorities], genebanks)
     except Exception:  # pylint: disable=broad-except  # the priorities are worth showing without the details
         logger.exception("Could not read the work list details")
         details = {}
@@ -97,6 +100,20 @@ _REASONS = [
     ),
     (re.compile(r"^Genetic representation within normal range$"), lambda own: "–"),
 ]
+
+
+_FOUNDER_IN_REASON = re.compile(r"^(?:Sole active carrier of founder|Carries underrepresented founder) (.+)$")
+
+
+def reason_numbers(rows):
+    """The founderdjur numbers the Skäl column writes: swedish_reason leaves out a rabbit's own number."""
+    found = set()
+    for r in rows:
+        for reason in r["reasons"]:
+            match = _FOUNDER_IN_REASON.match(reason)
+            if match and match.group(1) != r["individual_id"]:
+                found.add(match.group(1))
+    return sorted(found)
 
 
 def swedish_reason(reason, own_number):

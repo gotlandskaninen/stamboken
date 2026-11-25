@@ -5,9 +5,12 @@ import { ThemeProvider, createTheme } from "@mui/material/styles";
 
 const prioritiesQuery = vi.fn();
 
-vi.mock("@/redux/api/apiSlice", () => ({
-  useFetchGeneticPrioritiesQuery: () => prioritiesQuery(),
+// The list comes from the logged work-list route (useWorkList), not an RTK hook.
+vi.mock("@/components/genetics/workList", async (original) => ({
+  ...(await original<typeof import("@/components/genetics/workList")>()),
+  useWorkList: () => prioritiesQuery(),
 }));
+vi.mock("@/lib/mode-context", () => ({ useMode: () => "prod" }));
 
 // jsdom has no layout, so the real grid renders no cells. The stub renders each
 // cell through the column's valueFormatter with the row, as the grid does.

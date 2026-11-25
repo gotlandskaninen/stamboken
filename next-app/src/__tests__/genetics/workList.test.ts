@@ -1,18 +1,22 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 
-import type { GeneticPriority } from "@/redux/api/apiSlice";
+import { renderHook, waitFor, act } from "@testing-library/react";
 import {
+  EXPORT_ONLY_IN_PROD,
+  WorkListRow,
   byHerd,
   downloadExport,
+  exportRefusal,
   prioritiesCsvUrl,
   sexLabel,
+  useWorkList,
 } from "@/components/genetics/workList";
 
 const row = (
   individual_id: string,
-  priority: GeneticPriority["priority"],
+  priority: WorkListRow["priority"],
   herd: string,
-): GeneticPriority => ({
+): WorkListRow => ({
   individual_id,
   priority,
   reasons: [],
@@ -48,18 +52,100 @@ describe("sexLabel", () => {
 });
 
 describe("prioritiesCsvUrl", () => {
-  it("asks the server for the chosen levels and order, on the API of the mode shown", () => {
-    expect(
-      prioritiesCsvUrl("prod", "/api-test", 1, ["critical", "normal"], true),
-    ).toBe(
+  it("asks the production API for the chosen levels and order", () => {
+    expect(prioritiesCsvUrl(1, ["critical", "normal"], true)).toBe(
       "/api/v2/genetics/1/priorities.csv?levels=critical,normal&per_herd=1",
     );
-    expect(prioritiesCsvUrl("demo", "/api-test", 2, ["critical"], false)).toBe(
-      "/api-test/v2/genetics/2/priorities.csv?levels=critical",
+    expect(prioritiesCsvUrl(2, ["critical"], false)).toBe(
+      "/api/v2/genetics/2/priorities.csv?levels=critical",
     );
-    // Base dev without a test API: demo stays on /api, as the RTK baseQuery does.
-    expect(prioritiesCsvUrl("demo", undefined, 1, ["critical"], false)).toBe(
-      "/api/v2/genetics/1/priorities.csv?levels=critical",
+  });
+});
+
+describe("exportRefusal", () => {
+  it("lets only a production view export, and only while the cookie still says production", () => {
+    expect(exportRefusal("prod", "prod")).toBeNull();
+    expect(exportRefusal("demo", "demo")).toBe(EXPORT_ONLY_IN_PROD);
+    expect(exportRefusal("demo", "prod")).toBe(EXPORT_ONLY_IN_PROD);
+    expect(exportRefusal("prod", "demo")).toMatch(/annan flik/);
+  });
+});
+
+describe("useWorkList", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  const answer = (status: number, body: unknown) =>
+    vi.fn(async () => Response.json(body, { status }));
+
+  it("loads the logged work list of the genebank, on the API of the view's mode", async () => {
+    const fetchMock = answer(200, [row("G9-1", "critical", "G9")]);
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("NEXT_PUBLIC_API_TEST_URL", "/api-test");
+    const { result, rerender } = renderHook(
+      ({ mode }: { mode: "prod" | "demo" }) => useWorkList(1, mode),
+      { initialProps: { mode: "prod" as "prod" | "demo" } },
+    );
+    expect(result.current.isLoading).toBe(true);
+    await waitFor(() => expect(result.current.data).toHaveLength(1));
+    expect(result.current.isLoading).toBe(false);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "/api/v2/genetics/1/work-list",
+      expect.objectContaining({ credentials: "include" }),
+    );
+    rerender({ mode: "demo" });
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenLastCalledWith(
+        "/api-test/v2/genetics/1/work-list",
+        expect.objectContaining({ credentials: "include" }),
+      ),
+    );
+  });
+
+  it("gives the status of a refusal, and loads again on retry", async () => {
+    const fetchMock = answer(403, { detail: "nej" });
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useWorkList(2, "prod"));
+    await waitFor(() => expect(result.current.error).toEqual({ status: 403 }));
+    expect(result.current.data).toBeUndefined();
+
+    fetchMock.mockImplementation(async () => Response.json([]));
+    act(() => result.current.refetch());
+    expect(result.current.isLoading).toBe(true);
+    await waitFor(() => expect(result.current.data).toEqual([]));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("never sends a read the page drops at once, as React's dev double mount does", async () => {
+    const fetchMock = vi.fn(() => new Promise<Response>(() => {}));
+    vi.stubGlobal("fetch", fetchMock);
+    renderHook(() => useWorkList(1, "prod")).unmount();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("aborts a sent read the page no longer needs", async () => {
+    const fetchMock = vi.fn(() => new Promise<Response>(() => {}));
+    vi.stubGlobal("fetch", fetchMock);
+    const { unmount } = renderHook(() => useWorkList(1, "prod"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    unmount();
+    const init = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(init[1].signal?.aborted).toBe(true);
+  });
+
+  it("names a network failure", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("offline");
+      }),
+    );
+    const { result } = renderHook(() => useWorkList(1, "prod"));
+    await waitFor(() =>
+      expect(result.current.error).toEqual({ status: "FETCH_ERROR" }),
     );
   });
 });

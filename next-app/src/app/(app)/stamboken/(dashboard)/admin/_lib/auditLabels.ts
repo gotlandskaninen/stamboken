@@ -40,6 +40,7 @@ const OPERATION_PREPOSITION: Record<string, string> = {
 // Uttagen loggas med record_id "export-<action>-<utc>" (log_export, app/blueprints/common.py).
 const EXPORT_TITLES: Record<string, string> = {
   avelsprioritet: "Uttag: Avelsprioritet (CSV)",
+  "avelsprioritet-lista": "Uttag: Avelsprioritet (listan på skärmen)",
   matr: "Uttag: matrikeln (MATR)",
   "address-list": "Uttag: adresslistan till tryckeriet",
 };

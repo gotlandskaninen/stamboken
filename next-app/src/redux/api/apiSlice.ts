@@ -247,11 +247,6 @@ export interface GeneticPriority {
   reasons: string[];
   genetic_value_score: number;
   genome_uniqueness: number;
-  // Read fresh per request; missing when the database no longer has the number.
-  name?: string | null;
-  sex?: "female" | "male" | "eunuch" | null; // eunuch: a legacy value
-  birth_date?: string | null; // YYYY-MM-DD
-  herd?: string | null; // current besättningsnummer
 }
 
 export interface BreedingSuggestion {

@@ -88,6 +88,32 @@ describe("Genetik page URL", () => {
     expect(screen.getByText("Översikt för genbank 2")).toBeDefined();
   });
 
+  it("writes the default genebank to the URL, so tabs, Back, Forward and a copied link keep it", async () => {
+    open(""); // the menu's link has no parameters
+    const entries = window.history.length;
+    await waitFor(() => expect(window.location.search).toBe("?genebank=1"));
+    expect(window.history.length).toBe(entries);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Avelsprioritet" }));
+    expect(window.location.search).toBe("?genebank=1&tab=prioriteringar");
+    window.history.back();
+    await waitFor(() =>
+      expect(screen.getByText("Översikt för genbank 1")).toBeDefined(),
+    );
+    expect(window.location.search).toBe("?genebank=1");
+    window.history.forward();
+    await waitFor(() =>
+      expect(screen.getByText("Avelsprioritet visas")).toBeDefined(),
+    );
+    const copied = window.location.search;
+    expect(copied).toBe("?genebank=1&tab=prioriteringar");
+    cleanup();
+
+    open(copied, { is_manager: [1, 2], is_admin: false });
+    expect(screen.getByText("Avelsprioritet visas")).toBeDefined();
+    expect(window.location.search).toBe(copied);
+  });
+
   it("replaces a genebank the user cannot open with the first one they can", async () => {
     open("?genebank=2");
     const entries = window.history.length;

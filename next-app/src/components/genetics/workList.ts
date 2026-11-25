@@ -1,4 +1,67 @@
+import { useEffect, useState } from "react";
 import type { GeneticPriority } from "@/redux/api/apiSlice";
+import type { Mode } from "@/lib/mode";
+
+/** A row of the work list: a priority with the rabbit's details, read fresh (app/blueprints/genetics.py). */
+export interface WorkListRow extends GeneticPriority {
+  // Missing when the database no longer has the number; name and herd null when the
+  // rabbit now stands in a genebank the user cannot read.
+  name?: string | null;
+  sex?: "female" | "male" | "eunuch" | null; // eunuch: a legacy value
+  birth_date?: string | null; // YYYY-MM-DD
+  herd?: string | null; // current besättningsnummer
+}
+
+// The view's own mode picks the API, by the RTK baseQuery's rule (modeAwareBaseQuery).
+const apiBase = (mode: Mode) =>
+  mode === "demo" && process.env.NEXT_PUBLIC_API_TEST_URL
+    ? process.env.NEXT_PUBLIC_API_TEST_URL
+    : "/api";
+
+/**
+ * The work list, read with fetch and not RTK Query (ADR-0008: no new RTK endpoints). The server
+ * logs every read. `error` has the shape GeneticsError reads ({ status }).
+ */
+export function useWorkList(genebankId: number, mode: Mode) {
+  const [result, setResult] = useState<{
+    data?: WorkListRow[];
+    error?: { status: number | string };
+  }>({});
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    // Started a tick later and cancelled on unmount or a new genebank, so a read the page
+    // drops is never sent: every read is logged, and React's dev double mount would log two.
+    const controller = new AbortController();
+    const start = setTimeout(() =>
+      fetch(`${apiBase(mode)}/v2/genetics/${genebankId}/work-list`, {
+        credentials: "include",
+        signal: controller.signal,
+      })
+        .then(async (res) => {
+          const next = res.ok
+            ? { data: (await res.json()) as WorkListRow[] }
+            : { error: { status: res.status } };
+          if (!controller.signal.aborted) setResult(next);
+        })
+        .catch(() => {
+          if (!controller.signal.aborted)
+            setResult({ error: { status: "FETCH_ERROR" } });
+        }),
+    );
+    return () => {
+      clearTimeout(start);
+      controller.abort();
+    };
+  }, [genebankId, mode, attempt]);
+  return {
+    ...result,
+    isLoading: !result.data && !result.error,
+    refetch: () => {
+      setResult({});
+      setAttempt((n) => n + 1);
+    },
+  };
+}
 
 export const PRIORITY_ORDER: Record<GeneticPriority["priority"], number> = {
   critical: 0,
@@ -22,28 +85,37 @@ export const sexLabel = (sex?: string | null) =>
         : "Okänt";
 
 /** The rows grouped per besättning within each level, so Högsta comes first and each herd's rabbits together. */
-export const byHerd = (rows: GeneticPriority[]) =>
+export const byHerd = (rows: WorkListRow[]) =>
   [...rows].sort(
     (a, b) =>
       PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority] ||
       (a.herd ?? "").localeCompare(b.herd ?? "", "sv", { numeric: true }),
   );
 
+/** The server's text (DEMO_EXPORT_REFUSED, app/blueprints/common.py). */
+export const EXPORT_ONLY_IN_PROD =
+  "Exporten går bara att göra i den riktiga Stamboken, där varje uttag loggas.";
+
 /**
- * The server's CSV of the list (app/blueprints/genetics.py), which logs who took which rabbits.
- * Same demo/prod routing rule as the RTK baseQuery and medlem/statistik/exportUrl.ts: the demo
- * goes to the test API, which refuses the export, never to production.
+ * Why the export may not start, or null. The file is real data and every download is logged,
+ * so only a view of the riktiga Stamboken exports, and only while the shared mode cookie still
+ * says so: another tab may have switched to the testmiljö since this view was rendered.
  */
+export function exportRefusal(viewMode: Mode, cookieMode: Mode): string | null {
+  if (viewMode !== "prod") return EXPORT_ONLY_IN_PROD;
+  if (cookieMode !== "prod")
+    return "Stamboken har bytts till testmiljön i en annan flik. Ladda om sidan innan du laddar ner.";
+  return null;
+}
+
+/** The server's CSV of the list (app/blueprints/genetics.py), which logs who took which rabbits. */
 export function prioritiesCsvUrl(
-  mode: string,
-  apiTestUrl: string | undefined,
   genebankId: number,
   levels: GeneticPriority["priority"][],
   perHerd: boolean,
 ): string {
-  const base = mode === "demo" && apiTestUrl ? apiTestUrl : "/api";
   const query = `levels=${levels.join(",")}${perHerd ? "&per_herd=1" : ""}`;
-  return `${base}/v2/genetics/${genebankId}/priorities.csv?${query}`;
+  return `/api/v2/genetics/${genebankId}/priorities.csv?${query}`;
 }
 
 /**

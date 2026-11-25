@@ -71,9 +71,10 @@ function GenetikPage() {
       : (availableGenebanks[0] ?? "")
     : user?.is_manager?.[0] || "";
 
-  // The URL then says so too, replaced so that Back does not return to it.
+  // The URL then says which genebank is shown, also when it was chosen by default (the menu's
+  // link has none), so tab changes, Back and a copied link keep it. Replaced: Back skips it.
   useEffect(() => {
-    if (!user || !genebankParam || Number(genebankParam) === genebankId) return;
+    if (!user || (genebankParam ?? "") === String(genebankId)) return;
     const url = new URL(window.location.href);
     if (genebankId) url.searchParams.set("genebank", String(genebankId));
     else url.searchParams.delete("genebank");

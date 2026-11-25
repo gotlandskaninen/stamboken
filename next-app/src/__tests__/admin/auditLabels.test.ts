@@ -57,6 +57,12 @@ describe("export rows (log_export)", () => {
       ),
     ).toBe("Uttag: Avelsprioritet (CSV)");
     expect(
+      rowTitle(
+        "individual",
+        "export-avelsprioritet-lista-2026-11-25T14:23:49.113774+00:00",
+      ),
+    ).toBe("Uttag: Avelsprioritet (listan på skärmen)");
+    expect(
       rowTitle("membership", "export-matr-2026-11-25T08:00:00+00:00"),
     ).toBe("Uttag: matrikeln (MATR)");
     expect(

@@ -995,8 +995,9 @@ första anropet och kan ta upp till en minut.
    besättning** samlar varje besättnings kaniner inom varje nivå, så att du ser vilka
    uppfödare du ska kontakta om kaninerna med högsta prioritet. **Ladda ner CSV** sparar listan med de nivåer som är
    på och i den ordning som Sortera per besättning ger, med svenska rubriker, i en fil
-   som Excel öppnar. Varje nedladdning loggas i aktivitetsloggen: vem, när och vilka
-   kaniner som fanns i filen. I testmiljön går listan inte att ladda ner. På en smal
+   som Excel öppnar. Både att öppna listan och varje nedladdning loggas i
+   aktivitetsloggen: vem, när och vilka kaniner som visades eller fanns i filen. I
+   testmiljön går listan inte att ladda ner. På en smal
    skärm drar du tabellerna i sidled för att se alla kolumner.
 4. **Parningsförslag** – ange **Max antal par**, **Max inavel (F)** och **Max per hane**
    och klicka **Beräkna**. Tabellen visar paren med **Förväntad F**, **ΔGD**, **MSI**
