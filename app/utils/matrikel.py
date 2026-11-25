@@ -19,6 +19,7 @@ import json
 import logging
 import re
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from peewee import JOIN, Case, IntegrityError, fn
 
@@ -330,6 +331,11 @@ def _drop_keys(node, keys):
     return node
 
 
+def _stockholm_midnight(day: date) -> datetime:
+    """The start of `day` in Sweden, as the server's naive local time that created_at holds (datetime.now())."""
+    return datetime.combine(day, datetime.min.time(), ZoneInfo("Europe/Stockholm")).astimezone().replace(tzinfo=None)
+
+
 def _erased_accounts() -> set[int]:
     """Accounts ever linked to an anonymised person: the change log never names them, nor finds rows by them (#244).
 
@@ -368,11 +374,12 @@ def query_matrikel_audit(
 ):
     """The matrikel's change log for GET /v2/members/audit (#244), newest first.
 
-    `date_from` and `date_to` are dates, both days included. Without `full_access` (a gene bank manager) the payloads
-    lose what GET /v2/members/<id> does not show them: the organisation number and a person's notes. A row about an
-    anonymised person is redacted again on read, should a stored payload have escaped the erasure. An account once
-    linked to an anonymised person is shown as REDACTED_VALUE, as actor and as user_id, and the actor filter skips it.
-    In an erased household the rows without a person (membership_updated and the like) lose HOUSEHOLD_PII_KEYS.
+    `date_from` and `date_to` are dates, both days included, cut at midnight in Sweden. Without `full_access` (a
+    gene bank manager) the payloads lose what GET /v2/members/<id> does not show them: the organisation number and a
+    person's notes. A row about an anonymised person is redacted again on read, should a stored payload have escaped
+    the erasure. An account once linked to an anonymised person is shown as REDACTED_VALUE, as actor and as user_id,
+    and the actor filter skips it. In an erased household the rows without a person (membership_updated and the
+    like) lose HOUSEHOLD_PII_KEYS.
     """
     q = (
         MatrikelAudit.select(MatrikelAudit, User, Membership)
@@ -392,10 +399,13 @@ def query_matrikel_audit(
             (User.username == actor) | (User.email == actor),
             User.id.not_in(list(erased_accounts)) if erased_accounts else True,
         )
+    # The days are Swedish days, as the pages show the times. Capped: the far ends of date overflow the conversion.
     if date_from:
-        q = q.where(MatrikelAudit.created_at >= date_from)
-    if date_to:  # capped: the day after date.max overflows
-        q = q.where(MatrikelAudit.created_at < min(date_to, date(9998, 12, 31)) + timedelta(days=1))
+        q = q.where(MatrikelAudit.created_at >= _stockholm_midnight(max(date_from, date(1900, 1, 1))))
+    if date_to:
+        q = q.where(
+            MatrikelAudit.created_at < _stockholm_midnight(min(date_to, date(9998, 12, 31)) + timedelta(days=1))
+        )
     total = q.count()
     audits = list(q.order_by(MatrikelAudit.created_at.desc(), MatrikelAudit.id.desc()).paginate(page, per_page))
 

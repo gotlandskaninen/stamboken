@@ -2,6 +2,7 @@
 
 import json
 from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import utils.data_access as da
 import utils.database as db
@@ -190,3 +191,14 @@ class TestMatrikelAudit(MatrikelApiTest):
         self._billing_row()
         self.login("man")
         self.assertIn("Fakturagatan 9", self.get(f"membership_id={self.ms.id}").get_data(as_text=True))
+
+    def test_days_are_swedish_days(self):
+        """Opus #248: Från/Till cut at midnight in Sweden, as the page shows the times, whatever the server's zone."""
+        row = matrikel.write_matrikel_audit(self.admin, "membership_updated", self.ms, {"before": {}, "after": {}})
+        sweden = datetime(2025, 1, 10, 0, 30, tzinfo=ZoneInfo("Europe/Stockholm"))
+        naive = sweden.astimezone().replace(tzinfo=None)  # how datetime.now() would have stored it
+        db.MatrikelAudit.update(created_at=naive).where(db.MatrikelAudit.id == row.id).execute()
+        self.login()
+        self.assertEqual(self.get("from=2025-01-10&to=2025-01-10").get_json()["total"], 1)
+        self.assertEqual(self.get("to=2025-01-09").get_json()["total"], 0)
+        self.assertEqual(self.get("from=2025-01-11").get_json()["total"], 0)
