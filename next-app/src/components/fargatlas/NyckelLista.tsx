@@ -1,4 +1,4 @@
-import type { Nyckel } from "@/lib/fargatlas/nyckel";
+import { fragorIOrdning, type Nyckel } from "@/lib/fargatlas/nyckel";
 import type { AtlasFarg } from "@/lib/fargatlas/atlas";
 import styles from "./fargatlas.module.css";
 
@@ -10,7 +10,7 @@ export function NyckelLista({
   nyckel: Nyckel;
   farger: AtlasFarg[];
 }) {
-  const ids = Object.keys(nyckel.fragor);
+  const ids = fragorIOrdning(nyckel);
   const namn = new Map(farger.map((f) => [f.id, f.name]));
   return (
     <section
@@ -20,7 +20,7 @@ export function NyckelLista({
       <h2 className={styles.gruppNamn}>Bestämningsnyckeln för gotlandskanin</h2>
       <p>
         Börja vid fråga 1 och följ svaren tills du kommer till ett färgnummer.
-        En mellerudskanin får 100 eller 101 och går inte genom nyckeln.
+        En mellerudskanin går inte genom nyckeln.
       </p>
       <ol>
         {ids.map((id) => {

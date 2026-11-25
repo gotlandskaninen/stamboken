@@ -65,6 +65,17 @@ describe("FargNyckel", () => {
     expect(onValj).toHaveBeenCalledWith(22, ["Testsvar: välj Rex vid Päls."]);
   });
 
+  it("färganteckningen följer med Välj som påminnelse", () => {
+    const onValj = vi.fn();
+    render(<FargNyckel data={data} onValj={onValj} />);
+    svara("Ja");
+    svara("Testsvar B");
+    fireEvent.click(screen.getByRole("button", { name: /^Välj 99/ }));
+    expect(onValj).toHaveBeenCalledWith(99, [
+      "Färganteckning: Testanteckning.",
+    ]);
+  });
+
   it("Tillbaka går ett steg och fokus följer med till frågan", () => {
     render(<FargNyckel data={data} />);
     expect(screen.queryByRole("button", { name: "Tillbaka" })).toBeNull();

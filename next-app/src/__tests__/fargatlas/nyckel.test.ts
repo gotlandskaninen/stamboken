@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   kontrollera,
-  nabaraNummer,
+  fragorIOrdning,
   vandra,
   type Nyckel,
 } from "@/lib/fargatlas/nyckel";
@@ -25,9 +25,19 @@ describe("nyckeln som data", () => {
     expect(() => vandra(["q1-nej", "q3-ja", "q1-ja"], TESTNYCKEL)).toThrow();
   });
 
-  it("nabaraNummer ger de nummer någon väg slutar i", () => {
-    expect([...nabaraNummer(TESTNYCKEL)].sort((a, b) => a - b)).toEqual([
-      11, 12, 22, 99,
+  it("frågorna numreras med starten först och i den ordning människor numrerar dem", () => {
+    // the API sorts the keys of the object, so q10 can come before q2
+    const fragor = {
+      q10: TESTNYCKEL.fragor.q3,
+      q2: TESTNYCKEL.fragor.q2,
+      q1: TESTNYCKEL.fragor.q1,
+      q9b: TESTNYCKEL.fragor.q3,
+    };
+    expect(fragorIOrdning({ ...TESTNYCKEL, fragor })).toEqual([
+      "q1",
+      "q2",
+      "q9b",
+      "q10",
     ]);
   });
 
@@ -50,5 +60,22 @@ describe("nyckeln som data", () => {
 
     expect(kontrollera({ ...kopia(), start: "q0" })).toMatch(/första fråga/);
     expect(kontrollera(null)).not.toBeNull();
+  });
+
+  it("kontrollera kastar aldrig, också för en nyckel av fel form", () => {
+    const utanMal = kopia();
+    (utanMal.fragor.q1.svar[0] as unknown as { till: null }).till = null;
+    expect(kontrollera(utanMal)).toMatch(/leder ingenstans/);
+
+    const tomtSvar = kopia();
+    (tomtSvar.fragor.q1.svar as unknown[])[0] = null;
+    expect(kontrollera(tomtSvar)).toMatch(/fel form/);
+
+    expect(kontrollera({ ...kopia(), efter_numret: {} as never })).toMatch(
+      /efter numret/,
+    );
+    expect(kontrollera({ ...kopia(), fragor: null as never })).toMatch(
+      /saknar frågor/,
+    );
   });
 });

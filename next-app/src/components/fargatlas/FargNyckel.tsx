@@ -186,7 +186,10 @@ function Resultat({
 }) {
   const farg = data.atlas.farger.find((f) => f.id === nummer);
   const fragor = nyckel.efter_numret ?? [];
-  const paminnelser = fragor.filter((q) => efter[q.id]).map((q) => q.ja);
+  const paminnelser = [
+    ...(anteckning ? [`Färganteckning: ${anteckning}`] : []),
+    ...fragor.filter((q) => efter[q.id]).map((q) => q.ja),
+  ];
   const foto = farg?.foton[0];
   return (
     <div className={styles.resultat}>
@@ -226,11 +229,10 @@ function Resultat({
               </button>
             ))}
           </div>
-          {efter[q.id] && (
-            <p className={styles.paminnelse} role="status">
-              {q.ja}
-            </p>
-          )}
+          {/* Mounted from the start, so a screen reader announces the text when it comes. */}
+          <p className={styles.paminnelse} role="status">
+            {efter[q.id] ? q.ja : ""}
+          </p>
         </fieldset>
       ))}
       {saknas === nummer && (

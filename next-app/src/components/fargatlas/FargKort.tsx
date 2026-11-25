@@ -5,18 +5,12 @@ import styles from "./fargatlas.module.css";
 export function FargKort({
   farg,
   fotoBas,
-  ankare = true,
 }: {
   farg: AtlasFarg;
   fotoBas: string;
-  /** The id #farg-<nummer> that links point at; off for a second copy of the card on the same page. */
-  ankare?: boolean;
 }) {
   return (
-    <article
-      className={`sb-card ${styles.kort}`}
-      id={ankare ? `farg-${farg.id}` : undefined}
-    >
+    <article className={`sb-card ${styles.kort}`} id={`farg-${farg.id}`}>
       {/* Without a photo the text leads; an empty box per card would make the atlas look unfinished. */}
       {farg.foton.map((foto) => (
         <figure key={foto.id} className={styles.foto}>

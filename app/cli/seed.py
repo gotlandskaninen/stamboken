@@ -1070,7 +1070,7 @@ _TESTNYCKEL = {
     ],
 }
 
-# Colours with a generated photo in the made-up atlas package; the others show "Foto saknas".
+# Colours with a generated photo in the made-up atlas package; the others have none.
 _TESTFOTON = {11: "#2b2b2b", 22: "#8a7a66", 31: "#e9e6df", 42: "#c79a3a", 100: "#3a3a3a"}
 
 

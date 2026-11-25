@@ -196,7 +196,7 @@ class FargatlasTest(DatabaseTest):
         os.remove(os.path.join(self.paket, "22-a-480.jpg"))
         self.login()
         self.assertEqual(self.client.get("/api/v2/fargatlas/foto/22-a?storlek=480").status_code, 404)
-        # and the card says "Foto saknas" instead of showing a broken image
+        # and the card has no photo instead of a broken image
         self.assertEqual({c["id"]: c for c in self.atlas()["farger"]}[22]["foton"], [])
 
     def test_foto_traversal_404(self):

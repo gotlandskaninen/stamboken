@@ -109,7 +109,7 @@ nummer är dess id i Stamboken, och numret anger grundfärgen, också när päls
 i Stamboken visas bara för inloggade, och länken Visa färgen i färgvalet öppnar färgens kort.
 Hjälp mig välja är bestämningsnyckeln: en fråga i taget fram till ett färgnummer, bara för
 gotlandskanin.\
-Kod: `Color.id`, `/stamboken/fargatlas`, `/api/v2/fargatlas` (nyckeln och texterna ur atlaspaketet) · Legacy-manual: – · Legacy: – · Nytt UI: "Färgatlas", "Visa färgen", "Foto saknas", "Hjälp mig välja"
+Kod: `Color.id`, `/stamboken/fargatlas`, `/api/v2/fargatlas` (nyckeln och texterna ur atlaspaketet) · Legacy-manual: – · Legacy: – · Nytt UI: "Färgatlas", "Visa färgen", "Hjälp mig välja", "Resurser"
 
 **Genbank**\
 Alla besättningar och alla kaniner av en ras i föreningens bevarandeprogram. Föreningen har två

@@ -28,7 +28,7 @@ export default async function FargatlasPage() {
         <p className={styles.intro}>
           Föreningens färgnummer med foto och beskrivning, ordnade i grupper.
           Färgnumret anger grundfärgen, också när pälsen är rex: välj då Rex vid
-          Päls. Mellerudskaninens nummer står längst ned.
+          Päls.
         </p>
         {!data ? (
           <p role="alert">

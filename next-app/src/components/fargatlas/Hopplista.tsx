@@ -22,14 +22,16 @@ export function Hopplista({
           </li>
         ))}
       </ul>
-      <label className={styles.nummerVal}>
-        <span>Gå till nummer</span>
-        <select
-          defaultValue=""
-          onChange={(e) => {
-            if (e.target.value) location.hash = `farg-${e.target.value}`;
-          }}
-        >
+      <form
+        className={styles.nummerVal}
+        onSubmit={(e) => {
+          e.preventDefault();
+          const nummer = new FormData(e.currentTarget).get("nummer");
+          if (nummer) location.hash = `farg-${nummer}`;
+        }}
+      >
+        <label htmlFor="ga-till-nummer">Gå till nummer</label>
+        <select id="ga-till-nummer" name="nummer" defaultValue="">
           <option value="" disabled>
             Välj färg
           </option>
@@ -39,7 +41,10 @@ export function Hopplista({
             </option>
           ))}
         </select>
-      </label>
+        <button type="submit" className="sb-btn sb-btn-secondary">
+          Visa
+        </button>
+      </form>
     </nav>
   );
 }

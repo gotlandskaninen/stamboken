@@ -4,7 +4,7 @@ import { test, expect } from "@playwright/test";
 // groups, and generated photos for 11, 22, 31, 42 and 100, none for the others. Auth: storageState gk-owner (playwright.config.ts).
 
 test.describe("Färgatlas", () => {
-  test("grupperna, ett foto och Foto saknas", async ({ page }) => {
+  test("grupperna, ett foto och ett kort utan foto", async ({ page }) => {
     await page.goto("/stamboken/fargatlas");
     await expect(
       page.getByRole("heading", { level: 1, name: "Färgatlas" }),
@@ -29,6 +29,7 @@ test.describe("Färgatlas", () => {
 
     // the index jumps to a number
     await page.getByLabel("Gå till nummer").selectOption("24");
+    await page.getByRole("button", { name: "Visa" }).click();
     await expect(page).toHaveURL(/#farg-24$/);
   });
 

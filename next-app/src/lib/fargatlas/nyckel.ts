@@ -42,36 +42,45 @@ export function vandra(svarIds: string[], nyckel: Nyckel): Steg {
     : { fraga: steg };
 }
 
-/** Every number some path from the start ends in. */
-export function nabaraNummer(nyckel: Nyckel): Set<number> {
-  const nummer = new Set<number>();
-  const sett = new Set<string>();
-  const ko = [nyckel.start];
-  while (ko.length) {
-    const fraga = ko.pop()!;
-    if (sett.has(fraga)) continue;
-    sett.add(fraga);
-    for (const s of nyckel.fragor[fraga]?.svar ?? []) {
-      if (typeof s.till === "number") nummer.add(s.till);
-      else ko.push(s.till);
-    }
-  }
-  return nummer;
+/** The questions in reading order for the printed key: the start first, then by id as people number them (q9b before q10). */
+export function fragorIOrdning(nyckel: Nyckel): string[] {
+  const ovriga = Object.keys(nyckel.fragor)
+    .filter((id) => id !== nyckel.start)
+    .sort((a, b) => a.localeCompare(b, "sv", { numeric: true }));
+  return [nyckel.start, ...ovriga];
 }
 
 /**
- * Why the guide cannot use this key, or null when it can: a missing start, a question without answers, an answer
- * that leads nowhere, or a path that comes back to a question it has passed (the guide would go round for ever).
+ * Why the guide cannot use this key, or null when it can: a key of the wrong shape, a missing start, a question
+ * without answers, an answer that leads nowhere, or a path that comes back to a question it has passed (the guide
+ * would go round for ever). It never throws, since the page and the colour picker call it while rendering.
  */
 export function kontrollera(nyckel: Nyckel | null | undefined): string | null {
-  if (!nyckel?.fragor || !(nyckel.start in nyckel.fragor))
+  try {
+    return brister(nyckel);
+  } catch {
+    return "nyckeln har fel form";
+  }
+}
+
+function brister(nyckel: Nyckel | null | undefined): string | null {
+  if (!nyckel?.fragor || typeof nyckel.fragor !== "object")
+    return "nyckeln saknar frågor";
+  if (!(nyckel.start in nyckel.fragor))
     return "nyckeln saknar sin första fråga";
+  if (nyckel.efter_numret !== undefined && !Array.isArray(nyckel.efter_numret))
+    return "frågorna efter numret har fel form";
   for (const [id, fraga] of Object.entries(nyckel.fragor)) {
     if (!Array.isArray(fraga?.svar) || fraga.svar.length === 0)
       return `${id} saknar svar`;
-    for (const s of fraga.svar)
-      if (typeof s.till === "string" && !(s.till in nyckel.fragor))
+    for (const s of fraga.svar) {
+      if (typeof s?.id !== "string" || typeof s.text !== "string")
+        return `ett svar på ${id} har fel form`;
+      if (typeof s.till === "number") continue;
+      if (typeof s.till !== "string") return `${s.id} leder ingenstans`;
+      if (!(s.till in nyckel.fragor))
         return `${s.id} leder till ${s.till}, som inte finns`;
+    }
   }
   const farg: Record<string, "gra" | "klar"> = {};
   const slinga = (q: string): string | null => {

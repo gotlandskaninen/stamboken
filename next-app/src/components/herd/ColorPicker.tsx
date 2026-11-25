@@ -69,7 +69,7 @@ export function ColorPicker({
   // The key covers the gotlandskanin numbers only (matched as colorsFor matches the list), and the guide is offered
   // only when the atlas package has a usable key.
   const gotland = genebank.includes("Gotland");
-  const atlas = useFargatlas(gotland);
+  const atlas = useFargatlas(gotland && (loading || options.length > 0));
   const medGuide = gotland && !loading && !kontrollera(atlas?.atlas.nyckel);
   // Free text when no official list could be loaded; the backend validates either way.
   if (options.length === 0 && !loading) {
@@ -136,16 +136,14 @@ export function ColorPicker({
           <TextField {...params} label={label} required={required} />
         )}
       />
-      {paminnelser.map((p) => (
-        <Typography
-          key={p}
-          role="status"
-          variant="body2"
-          sx={{ mt: 1, fontWeight: 600 }}
-        >
-          Kom ihåg: {p}
-        </Typography>
-      ))}
+      {/* Mounted from the start, so a screen reader announces the reminder after Välj. */}
+      <Typography
+        role="status"
+        variant="body2"
+        sx={{ mt: paminnelser.length ? 1 : 0, fontWeight: 600 }}
+      >
+        {paminnelser.map((p) => `Kom ihåg: ${p}`).join(" ")}
+      </Typography>
       <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", mt: 1 }}>
         {selected?.id != null && (
           <Button

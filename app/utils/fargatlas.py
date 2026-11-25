@@ -192,7 +192,7 @@ def fargatlas_data():
                 "genebank": color.genebank.name,
                 "beskrivning": _text(farg.get("beskrivning")),
                 "skiljs_fran": _text(farg.get("skiljs_fran")),
-                # Only photos with both sizes on disk: a copy that stopped halfway gives "Foto saknas", not a broken image.
+                # Only photos with both sizes on disk: a copy that stopped halfway gives a card without a photo, not a broken image.
                 "foton": [f for f in _foton(farg) if all(_finns(f["id"], storlek) for storlek in FOTO_FIL)],
             }
         )
