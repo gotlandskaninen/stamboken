@@ -323,6 +323,22 @@ describe("PersonsCard — rollval vid redigering", () => {
     );
   });
 
+  it("explains what the chosen role changes", () => {
+    render(<PersonsCard membership={MEMBERSHIP} canEdit />);
+    fireEvent.click(
+      within(row(/Bo Olinkad/)).getByRole("button", { name: "Redigera" }),
+    );
+    const dialog = within(screen.getByRole("dialog"));
+    expect(
+      dialog.getByText(/alla hushållets besättningar/),
+    ).toBeInTheDocument();
+    fireEvent.mouseDown(dialog.getByLabelText("Roll"));
+    fireEvent.click(screen.getByRole("option", { name: "Skötare" }));
+    expect(
+      dialog.getByText(/bara åtkomst till de besättningar/),
+    ).toBeInTheDocument();
+  });
+
   it("shows no role select for the huvudmedlem", () => {
     render(<PersonsCard membership={MEMBERSHIP} canEdit />);
     fireEvent.click(

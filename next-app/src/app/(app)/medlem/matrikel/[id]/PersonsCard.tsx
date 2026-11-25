@@ -71,6 +71,12 @@ type Mutation = {
   success: string;
 };
 
+const ROLE_HELP: Record<string, string> = {
+  familjemedlem: "Familjemedlem har åtkomst till alla hushållets besättningar.",
+  skotare:
+    "Skötare har bara åtkomst till de besättningar personen får, ett år i taget.",
+};
+
 const EMPTY_PERSON_FORM = {
   first_name: "",
   last_name: "",
@@ -539,7 +545,7 @@ export function PersonsCard({
                 onChange={(e) =>
                   setPersonForm({ ...personForm, role: e.target.value })
                 }
-                helperText="Huvudmedlem byts via 'Gör till huvudmedlem'."
+                helperText={`${ROLE_HELP[personForm.role] ?? ""} Huvudmedlem byts via 'Gör till huvudmedlem'.`.trim()}
               >
                 <MenuItem value="familjemedlem">Familjemedlem</MenuItem>
                 <MenuItem value="skotare">Skötare</MenuItem>
