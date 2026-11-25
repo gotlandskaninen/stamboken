@@ -1178,7 +1178,9 @@ def _owner_refused(user_id, herd_id):
     herd, or None when it is linked to an active person in the herd's active membership. The caller holds the user
     row lock, which every link and unlink takes too."""
     herd = Herd.get_or_none(Herd.id == int(herd_id))
-    if herd is None or herd.membership_id is None:
+    if herd is None:
+        return ValidationError("herd-not-found", f"Besättningen med id {int(herd_id)} finns inte.", status=404)
+    if herd.membership_id is None:
         return ValidationError(
             "herd-without-membership",
             "Besättningen är inte kopplad till något medlemskap. "

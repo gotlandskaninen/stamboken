@@ -60,6 +60,12 @@ class TestOwnerRoleNeedsPerson(FlaskTest):
             "Koppla den i matrikeln innan du ger rollen besättningsägare.",
         )
 
+    def test_unknown_herd_has_its_own_problem(self):
+        unknown = db.Herd(id=999999)  # never saved
+        for status, body, owns in self._grants(unknown):
+            self.assertEqual((status, body["type"], owns), (404, "herd-not-found", False))
+            self.assertIn("finns inte", body["detail"])
+
     def test_given_to_a_linked_familjemedlem(self):
         db.Member.create(membership=self.membership, role="familjemedlem", first_name="Bo", last_name="S", user=self.bo)
         for status, body, owns in self._grants(self.herd):
