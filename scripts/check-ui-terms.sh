@@ -5,7 +5,8 @@
 #   Kaninens nummer (G1274-2312)   Individnummer — inte "Genbanksnummer" eller "Kaninnummer"
 #   Besättningens nummer (G1274)   Besättningsnummer — inte "Genbanksnummer" eller "Besättningskod"
 #   Dokumentet                     intyg, Intygsnummer, Digitalt intyg, Pappersintyg — aldrig "certifikat"
-#   Byte av besättning             Sälj, Säljdatum, Såld, Försäljning — inte "Överlåtelse" eller "Flytta",
+#   Byte av besättning             Sälj, Säljdatum, Såld, Försäljning — inte "Överlåtelse" eller "Flytta";
+#                                  pappret heter försäljningsbevis, aldrig "överlåtelsebevis";
 #                                  inte "Försäljningsdatum" eller "Köpdatum";
 #                                  "flytt"/"Flyttad hit" bara i historiktext (lib/herdTracking.ts)
 #   Rollen                         Genbanksansvarig — "manager" bara som kodvärde
@@ -31,7 +32,7 @@ set -euo pipefail
 export LC_ALL=C.UTF-8 # grep -i och [[:lower:]] känner bara igen åäö i en UTF-8-locale
 cd "$(dirname "$0")/.."
 
-FORBIDDEN='genbanksnummer|kaninnummer|certifikat|överlåt|byter hem|bekräfta flytt|sälj / flytta|genbanksmanager'
+FORBIDDEN='genbanksnummer|kaninnummer|certifikat|överlåtelse|överlåt(a|er|s|it|en)\b|byter hem|bekräfta flytt|sälj / flytta|genbanksmanager'
 FORBIDDEN+='|kullar & parningar|besättningshistoria|rapportera som död|dödsnotering|dödsanteckning'
 FORBIDDEN+='|försäljningsdatum|köpdatum|lista över individer|årsavgift'
 FORBIDDEN+='|förslag|torrkörning|kodinnehavare'

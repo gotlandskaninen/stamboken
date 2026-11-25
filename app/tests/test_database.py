@@ -1239,11 +1239,18 @@ class TestDatabaseMigration(DatabaseTest):
                 self.assertEqual(self._max_schema_version(), 51)
                 self.doCleanups()
 
-        # main's 51 with its tables replays to 52
-        rewind_migrations(52)
-        db.SchemaHistory.update(comment="Bootstrapped").where(db.SchemaHistory.version == 51).execute()
-        db.check_migrations()
-        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+        # main's 51 with its tables replays to 52, also when one report table is missing (verify() restores it)
+        for drop_one in (False, True):
+            with self.subTest(drop_one=drop_one):
+                self.addCleanup(db.check_migrations)
+                self.addCleanup(rewind_migrations, 51)
+                rewind_migrations(52)
+                db.SchemaHistory.update(comment="Bootstrapped").where(db.SchemaHistory.version == 51).execute()
+                if drop_one:
+                    db.DATABASE.drop_tables([db.SaleProposal], cascade=True)
+                db.check_migrations()
+                self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+                self.doCleanups()
 
     def test_replay_49_to_50_keeps_contact_values_out_of_audit(self):
         """After the migration an UPDATE of herd.email is listed in changed_fields without its value."""
@@ -1956,6 +1963,56 @@ class TestDatabaseMigration(DatabaseTest):
         self.assertIn(("member_previous_address", "member_id", "member"), fresh[2])
         self.assertTrue(set(tables).isdisjoint(db.AUDITED_TABLES))
 
+    def test_replay_adds_account_rules_acceptance(self):
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("column introspection requires PostgreSQL")
+        self.addCleanup(db.check_migrations)
+
+        table = "account_rules_snapshot"
+
+        def shape():
+            columns = {
+                (t, c.name, c.data_type, c.null)
+                for t in ("hbuser", table)
+                for c in db.DATABASE.get_columns(t)
+                if t == table or c.name.startswith("rules_")
+            }
+            keys = {(k.column, k.dest_table, k.dest_column) for k in db.DATABASE.get_foreign_keys("hbuser")}
+            rules = db.DATABASE.execute_sql("SELECT rulename FROM pg_rules WHERE tablename = %s", (table,))
+            return columns, keys, db.DATABASE.get_primary_keys(table), {name for (name,) in rules}
+
+        fresh = shape()
+        version = self._migration_version("hbuser account rules acceptance")
+        rewind_migrations(version)
+        db.DATABASE.execute_sql(
+            "ALTER TABLE hbuser DROP COLUMN rules_accepted_at, DROP COLUMN rules_version, DROP COLUMN rules_sha256"
+        )
+        db.DATABASE.execute_sql("DROP TABLE account_rules_snapshot")
+        db.DATABASE.execute_sql("ALTER TABLE mail_sender DROP COLUMN code_queue_errors, DROP COLUMN code_limit_at")
+        self.assertIn("erased_email_hash", {c.name for c in db.DATABASE.get_columns("buyer_contact")})
+        db.check_migrations()
+        self.assertEqual(db.SchemaHistory.get_by_id(version).comment, "hbuser account rules acceptance")
+        self.assertEqual(shape(), fresh)
+        columns, keys, pk, rules = fresh
+        self.assertEqual(
+            columns,
+            {
+                ("hbuser", "rules_accepted_at", "timestamp with time zone", True),
+                ("hbuser", "rules_version", "text", True),
+                ("hbuser", "rules_sha256", "text", True),
+                (table, "sha256", "text", False),
+                (table, "text", "text", False),
+                (table, "cms_version", "text", False),
+                (table, "first_accepted_at", "timestamp with time zone", False),
+            },
+        )
+        self.assertIn(("rules_sha256", table, "sha256"), keys)
+        self.assertEqual(pk, ["sha256"])
+        self.assertEqual(rules, {"account_rules_no_update", "account_rules_no_delete"})
+        self.assertNotIn(table, db.AUDITED_TABLES)
+        user = db.User.get_by_id(self.viewer.id)
+        self.assertEqual((user.rules_accepted_at, user.rules_version, user.rules_sha256), (None, None, None))
+
     def test_replay_adds_name_on_check_page(self):
         """Stamboken #6: an older database gets the person's choice, on for the accounts it has, and the issuing
         role, shaped as a fresh bootstrap."""
@@ -2000,6 +2057,41 @@ class TestDatabaseMigration(DatabaseTest):
         self.assertEqual(db.AuditLog.select().where(db.AuditLog.table_name == "hbuser").count(), audit_before)
         # A new account has not chosen yet
         self.assertIsNone(db.User.get_by_id(da.register_user("ny", "pass").id).name_on_check_page)
+
+    def test_replay_lets_a_notice_point_at_a_rabbit(self):
+        """An older database gets notice.individual_id, as a fresh bootstrap."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("column introspection requires PostgreSQL")
+        self.addCleanup(db.check_migrations)
+
+        def shape():
+            columns = {(c.name, c.null) for c in db.DATABASE.get_columns("notice")}
+            keys = {(k.column, k.dest_table, k.dest_column) for k in db.DATABASE.get_foreign_keys("notice")}
+            indexes = {(i.name, tuple(i.columns), i.unique) for i in db.DATABASE.get_indexes("notice")}
+            buyer_columns = {(c.name, c.null) for c in db.DATABASE.get_columns("buyer_contact")}
+            return columns, keys, indexes, buyer_columns
+
+        fresh = shape()
+        version = self._migration_version("notice.individual")
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= version).execute()
+        if db.SchemaHistory.get_or_none(db.SchemaHistory.version == version - 1) is None:
+            db.SchemaHistory.insert(  # pylint: disable=E1120
+                version=version - 1, comment="test seed", applied=datetime.now()
+            ).execute()
+        db.DATABASE.execute_sql("ALTER TABLE notice DROP COLUMN individual_id")
+        db.DATABASE.execute_sql(
+            "ALTER TABLE buyer_contact DROP COLUMN erased_email_hash, DROP COLUMN email_review_pending"
+        )
+
+        db.check_migrations()
+
+        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+        self.assertEqual(shape(), fresh)
+        self.assertIn(("individual_id", True), fresh[0])
+        self.assertIn(("individual_id", "individual", "individual_id"), fresh[1])
+        self.assertIn(("notice_individual_id", ("individual_id",), False), fresh[2])
+        self.assertIn(("erased_email_hash", True), fresh[3])
+        self.assertIn(("email_review_pending", False), fresh[3])
 
     @staticmethod
     def _migration_version(marker):

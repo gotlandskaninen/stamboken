@@ -7,10 +7,12 @@ The files live under PRIVATE_UPLOAD_FOLDER, never under UPLOAD_FOLDER, which ngi
 
 import hashlib
 import io
+import json
 import math
 import os
 import re
 import uuid
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 from peewee import fn
@@ -42,7 +44,7 @@ from utils.inbox_proposal import build_proposal
 from utils.individual_number_v2 import NUMBER_PATTERN, parse_number
 from utils.individual_policy import Role
 from utils.log_masking import mask_tokens
-from utils.mail import enqueue_mail, forget_recipient, mail_kind
+from utils.mail import MAIL_NO_LONGER_RELEVANT, enqueue_mail, forget_recipient, mail_kind
 
 OPEN_STATES = ("ny", "tagen", "vantar_uppfodare", "vantar_foralder", "hos_genbanksansvarig", "ofullstandig")
 CLOSED_STATES = ("klar", "dubblett", "skrap")
@@ -83,6 +85,7 @@ NOTICE_TEXTS = {
     "klar": "Ditt inskick är klart",
     "svar": "Uppfödaren har svarat",
     "star_still": "En post har stått still i 14 dagar",
+    "kopare_borttagen": "En köpare har tagit bort sina uppgifter",
 }
 DOC_TYPES = ("intyg", "bevis", "arsblankett", "annat")
 CERT_FORMATS = ("handskrivet", "datorskrivet", "v1_pdf", "intyg_b", "digitalt_v2")
@@ -213,9 +216,9 @@ def log_event(item, user, kind, **detail):
     return InboxEvent.create(item=item, user=user, kind=kind, detail=detail or None)
 
 
-def notify(user, kind, item, *, mailed=False):
+def notify(user, kind, item, *, individual=None, mailed=False):
     """A notice in Stamboken; `mailed` keeps it out of the daily digest (it has a mail of its own)."""
-    Notice.create(user=user, kind=kind, item=item, mailed_at=now() if mailed else None)
+    return Notice.create(user=user, kind=kind, item=item, individual=individual, mailed_at=now() if mailed else None)
 
 
 def queue_workers(genebank_id, *, managers_only=False):
@@ -339,6 +342,33 @@ def items_json(items):
     ]
 
 
+def queue_items_json(items):
+    """Extend the worker's list with mail metadata from the events that own and purge the text."""
+    listed = items_json(items)
+    by_id = {row["id"]: row for row in listed}
+    member_ids = {item.member_id for item in items if item.member_id}
+    members = Member.select(Member.id, Member.first_name, Member.last_name).where(Member.id.in_(member_ids))
+    names = {m.id: f"{m.first_name} {m.last_name}".strip() for m in members} if member_ids else {}
+    for row, item in zip(listed, items, strict=True):
+        row.update(subject=None, has_skipped=False, member_name=names.get(item.member_id))
+    if by_id:
+        detail = InboxEvent.detail
+        skipped = fn.jsonb_extract_path_text(detail, "not_saved", "0").is_null(False) | fn.jsonb_extract_path_text(
+            detail, "not_saved_reasons", "0"
+        ).is_null(False)
+        events = (
+            InboxEvent.select(InboxEvent.item, InboxEvent.kind, fn.jsonb_extract_path_text(detail, "subject"), skipped)
+            .where(InboxEvent.item.in_(list(by_id)), InboxEvent.kind.in_(("inkommen", "svar")))
+            .order_by(InboxEvent.id.desc())  # the original arrival supplies the subject
+        )
+        for item_id, kind, subject, has_skipped in events.tuples():
+            row = by_id[item_id]
+            if kind == "inkommen":
+                row["subject"] = subject
+            row["has_skipped"] |= has_skipped
+    return listed
+
+
 def manages(user, genebank_id):
     """A manager of the genebank, or an admin; with no genebank, any manager."""
     managed = user.is_manager or []
@@ -395,12 +425,17 @@ def _set_state(item, state):
     item.closed_at = item.state_changed_at if state in CLOSED_STATES else None
 
 
-def take(item, user, *, over):
+def take(item, user, *, over, expected=None):
     """ "Jag tar den", or with `over` "Ta över": the item becomes the user's, in "tagen"."""
     require_worker_of(item, user)
     if item.state in CLOSED_STATES:
         raise InboxError(409, "Posten är stängd.")
     previous = item.assigned_to_id
+    if expected is not None:
+        if type(expected.get("assigned_to")) is not int or "assigned_at" not in expected:
+            raise InboxError(400, "Ange handläggarens id och tilldelningstid.")
+        if expected["assigned_to"] != previous or expected["assigned_at"] != _iso(item.assigned_at):
+            raise InboxError(409, "Tilldelningen har ändrats. Kontrollera vem som har ärendet innan du tar över.")
     if previous == user.id and item.state == "tagen":
         return
     if previous not in (None, user.id) and not over:
@@ -410,10 +445,8 @@ def take(item, user, *, over):
     _set_state(item, "tagen")
     item.save()
     if previous not in (None, user.id):
-        log_event(item, user, "overtagen", from_user=previous)
-        notify(previous, "overtagen", item)
-    else:
-        log_event(item, user, "tagen")
+        return log_event(item, user, "overtagen", from_user=previous), notify(previous, "overtagen", item)
+    return log_event(item, user, "tagen"), None
 
 
 def assign(item, by, to):
@@ -429,9 +462,143 @@ def assign(item, by, to):
     if item.state in ("ny", "hos_genbanksansvarig"):
         _set_state(item, "tagen")
     item.save()
-    log_event(item, by, "tilldelad", to_user=to.id, from_user=previous)
-    if to.id != by.id:
-        notify(to, "tilldelad", item)
+    event = log_event(item, by, "tilldelad", to_user=to.id, from_user=previous)
+    return event, notify(to, "tilldelad", item) if to.id != by.id else None
+
+
+def release(item, user):
+    require_handler(item, user)
+    if item.state != "tagen":
+        raise InboxError(409, "Ärendet väntar på något och kan inte läggas tillbaka.")
+    _set_state(item, "ny")
+    item.assigned_to, item.assigned_at = None, None
+    item.save()
+    return log_event(item, user, "slappt"), None
+
+
+def _assignment(item):
+    return {
+        "assigned_to": item.assigned_to_id,
+        "assigned_at": item.assigned_at.astimezone(timezone.utc).isoformat() if item.assigned_at else None,
+        "state": item.state,
+        "state_changed_at": item.state_changed_at.astimezone(timezone.utc).isoformat(),
+    }
+
+
+def herd_items(herd, user):
+    if not manages(user, herd.genebank_id):
+        raise InboxError(403, "Bara genbanksansvarig för besättningen och admin kan tilldela ärenden.")
+    return (
+        InboxItem.select(
+            InboxItem.id,
+            InboxItem.state,
+            InboxItem.state_changed_at,
+            InboxItem.assigned_to,
+            InboxItem.assigned_at,
+            InboxItem.genebank,
+        )
+        .where(InboxItem.herd == herd, InboxItem.state.in_(OPEN_STATES), not_held())
+        .order_by(InboxItem.id)
+    )
+
+
+def assignment_revision(items):
+    """The preview covers the open items and their assignments in id order, independent of the chosen recipient."""
+    data = [(item.id, _assignment(item)) for item in items]
+    return hashlib.sha256(json.dumps(data).encode()).hexdigest()
+
+
+def assignment_preview(items):
+    counts = Counter(item.assigned_to_id for item in items if item.assigned_to_id is not None)
+    names = person_names(counts)
+    return {
+        "total": len(items),
+        "assignees": [{**_person(uid, names), "count": count} for uid, count in counts.items()],
+        "revision": assignment_revision(items),
+    }
+
+
+def record_assignment(item, change):
+    """Run a change under the item's lock. Only structured assignment metadata goes into the undo receipt."""
+    before = _assignment(item)
+    result = change(item)
+    if not result:  # taking an item already held by the caller
+        return None
+    event, notice = result
+    return {
+        "item": item.id,
+        "before": before,
+        "after": _assignment(item),
+        "event": event.id,
+        "notice": notice.id if notice else None,
+    }
+
+
+def _restore_attachment_request(item):
+    event_id = (
+        item.events.select(InboxEvent.id)
+        .where(InboxEvent.kind == "lage", InboxEvent.detail.contains({"to": "ofullstandig"}))
+        .order_by(InboxEvent.id.desc())
+        .scalar()
+    )
+    # Keep the sender from claiming either row before the restored state commits.
+    messages = (
+        MailMessage.select()
+        .where(
+            MailMessage.ref_type == "inbox_item",
+            MailMessage.ref_id == item.id,
+            MailMessage.kind.in_(("inlasning.ofullstandig", "inlasning.paminnelse")),
+            MailMessage.params.contains({"event_id": event_id}),
+        )
+        .order_by(MailMessage.id)
+        .for_update()
+    )
+    warning = None
+    for message in messages:
+        if message.status == "sending":
+            raise InboxError(409, "Utskicket pågår. Det går inte att ångra medan mejlet behandlas.")
+        if message.status == "cancelled":
+            if message.last_error != MAIL_NO_LONGER_RELEVANT:
+                warning = "Mejlet kunde inte skickas om."
+                continue
+            message.status, message.last_error = "queued", None
+            message.save(only=[MailMessage.status, MailMessage.last_error])
+    return warning
+
+
+def undo_assignments(receipts, user):
+    """Restore the entire signed operation, or roll it all back. GETs may have logged reads in between."""
+    result = {"restored": []}
+    for receipt in receipts:  # signed in ascending item id, the same lock order as assignment
+        item = lock_item(receipt["item"])
+        require_worker_of(item, user)
+        event = (
+            item.events.select(InboxEvent.id, InboxEvent.kind)
+            .where(InboxEvent.kind.not_in(("oppnad", "original_visat")))
+            .order_by(InboxEvent.id.desc())
+            .first()
+        )
+        if not event or event.id != receipt["event"] or _assignment(item) != receipt["after"]:
+            raise InboxError(409, "Ärendet har ändrats. Det går inte längre att ångra.")
+        if event.kind == "tilldelad" and not manages(user, item.genebank_id):
+            raise InboxError(403, "Du får inte längre tilldela ärendet.")
+        before = receipt["before"]
+        if before["state"] == "ofullstandig" and item.state != "ofullstandig":
+            if warning := _restore_attachment_request(item):
+                result["warning"] = warning
+        if before["assigned_to"] is not None:
+            previous = User.get_or_none(User.id == before["assigned_to"])
+            if previous is None or not can_handle(previous, item.genebank_id):
+                raise InboxError(409, "Den tidigare handläggaren kan inte längre få ärendet.")
+        item.assigned_to = before["assigned_to"]
+        item.assigned_at = datetime.fromisoformat(before["assigned_at"]) if before["assigned_at"] else None
+        item.state, item.state_changed_at = before["state"], datetime.fromisoformat(before["state_changed_at"])
+        item.save(only=[InboxItem.assigned_to, InboxItem.assigned_at, InboxItem.state, InboxItem.state_changed_at])
+        if receipt["notice"]:
+            Notice.delete().where(Notice.id == receipt["notice"], Notice.item == item.id).execute()
+        log_event(item, user, "angrad", event=event.id)
+        result["restored"].append(item.id)
+    return result
 
 
 def change_state(item, user, state, *, note=None, duplicate_of=None):
@@ -905,8 +1072,12 @@ def item_detail(item, user):
     documents = list(item.documents.order_by(InboxDocument.id))
     events = list(item.events.order_by(InboxEvent.at, InboxEvent.id))
     names = person_names([e.user_id for e in events])
+    arrived = next((e.detail or {} for e in events if e.kind == "inkommen"), {})
+    mail = (e.detail for e in events if e.detail and e.kind in ("inkommen", "svar"))
     return {
         **items_json([item])[0],
+        "subject": arrived.get("subject"),
+        "has_skipped": any(d.get("not_saved") or d.get("not_saved_reasons") for d in mail),
         "report_year": _report_year(item),
         "ref_data": item.ref_data,
         "message": item.message,
@@ -975,17 +1146,51 @@ def my_uploads(user):
     ]
 
 
+def _notice_rabbit_numbers(user, notices):
+    """Only a current manager or admin sees the number. Address reviews belong to the sale's genebank."""
+    visible = {}
+    for review in (False, True):
+        about = {
+            n.id: n.individual_id for n in notices if n.individual_id and (n.kind == "kopare_adresskontroll") == review
+        }
+        if not about:
+            continue
+        rabbits = Individual.select(Individual.id, Individual.number).where(Individual.id.in_(set(about.values())))
+        if review:
+            rabbits = (
+                rabbits.join(HerdTracking)
+                .join(Herd, on=(HerdTracking.herd == Herd.id))
+                .where(Herd.herd.in_(OUTSIDE_GENEBANK_HERDS), HerdTracking.kind.in_(("TRANSFER", "CORRECTION")))
+            )
+        else:
+            rabbits = rabbits.join(Herd, on=(Individual.origin_herd == Herd.id))
+        if not user.is_admin:
+            rabbits = rabbits.where(Herd.genebank.in_(user.is_manager or []))
+        numbers = dict(rabbits.tuples())
+        visible.update({notice: numbers[rabbit] for notice, rabbit in about.items() if rabbit in numbers})
+    return visible
+
+
+def _notice_text(notice, number):
+    if notice.kind == "kopare_adresskontroll":
+        rabbit = f"köparen av {number}" if number else "köparen"
+        return f"E-postadressen till {rabbit} finns redan hos en annan köpare. Kontrollera adressen."
+    return NOTICE_TEXTS.get(notice.kind, notice.kind)
+
+
 def notices_json(user, *, unread_only, limit, offset):
     query = Notice.select().where(Notice.user == user.id)
     if unread_only:
         query = query.where(Notice.read_at.is_null(True))
-    rows = query.order_by(Notice.created_at.desc(), Notice.id.desc()).limit(limit).offset(offset)
+    rows = list(query.order_by(Notice.created_at.desc(), Notice.id.desc()).limit(limit).offset(offset))
+    numbers = _notice_rabbit_numbers(user, rows)
     return [
         {
             "id": n.id,
             "kind": n.kind,
-            "text": NOTICE_TEXTS.get(n.kind, n.kind),
+            "text": _notice_text(n, numbers.get(n.id)),
             "item_id": n.item_id,
+            "individual_number": numbers.get(n.id),
             "created_at": _iso(n.created_at),
             "read_at": _iso(n.read_at),
         }
@@ -1333,12 +1538,23 @@ def _incomplete_mail(params):
 @mail_kind("notis.sammandrag", priority=1, category="N")
 def _digest_mail(params):
     """The user's unread notices when the mail goes; none left (all read since), no mail."""
-    notices = (
+    user = User.get_or_none(User.id == params["user_id"])
+    if user is None or not user.is_active:  # deactivated since the digest was queued
+        return None
+    notices = list(
         Notice.select()
-        .where((Notice.user == params["user_id"]) & Notice.read_at.is_null(True) & (Notice.kind != "klar"))
+        .where((Notice.user == user.id) & Notice.read_at.is_null(True) & (Notice.kind != "klar"))
         .order_by(Notice.created_at, Notice.id)
     )
-    rows = [{"text": NOTICE_TEXTS.get(n.kind, n.kind), "item_id": n.item_id} for n in notices]
+    numbers = _notice_rabbit_numbers(user, notices)
+    rows = [
+        {
+            "text": _notice_text(n, numbers.get(n.id)),
+            "item_id": n.item_id,
+            "individual_number": numbers.get(n.id) if n.kind != "kopare_adresskontroll" else None,
+        }
+        for n in notices
+    ]
     return {"notices": rows} if rows else None
 
 

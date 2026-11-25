@@ -103,7 +103,7 @@ radering hittar anmälan. Länken står i historiken med `via` och `access_code_
 number, from_herd, date, state}`.
 
 Kroppen kan också ha `document_id` och `doc_type` (`"bevis"` eller `"intyg"`): ett foto av
-överlåtelsebeviset eller intyget som sessionen laddat upp med `…/foto?syfte=kop`. Fotot flyttar till
+försäljningsbeviset eller intyget som sessionen laddat upp med `…/foto?syfte=kop`. Fotot flyttar till
 anmälans post med den typen, och fotots egen post tas bort. Bildmodellen läser det aldrig: inte
 efter uppladdningen, och en tidigare läsning tas bort vid flytten. Kön visar det bara, utan typ,
 format och Tolka igen, och servern låter inte kön skicka det till läsning: köpet registreras på
@@ -116,7 +116,7 @@ med anmälan.
 - Kaninen och säljaren söks bara i besättningens genbank (kaninens ursprungsbesättning), så en
   annan genbanks nummer eller besättning får samma svar som ett som inte finns.
 - Ett nummer som Stamboken saknar ger 422 med `code` `inte_i_stamboken`: köparen skickar foton av
-  intyget och överlåtelsebeviset till kön (se nedan), och genbanksansvarig registrerar kaninen i
+  intyget och försäljningsbeviset till kön (se nedan), och genbanksansvarig registrerar kaninen i
   säljarens besättning och för över den. Köparen får inte registrera i en annan besättning. En kanin som redan står i besättningen ger 409. En öppen anmälan av samma
   kanin under året är svaret igen, och en öppen anmälan från ett annat år ger 409.
 - Anmälan skrivs som rapporten, under rapportens lås: medan rundan är öppen, och efter `end_date`

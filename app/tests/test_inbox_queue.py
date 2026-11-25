@@ -157,6 +157,61 @@ class TestVisibility(InboxTest):
         self.assertEqual((body["counts"], body["total"]), ({"ny": 2, "tagen": 1}, 1))
         self.assertEqual(self.client.get("/api/v2/inkorg?state=okand").status_code, 400)
 
+    def test_mail_summary_uses_original_subject_and_includes_skipped_replies_until_purged(self):
+        item = db.InboxItem.create(kind="meddelande", sender_address="inkorg@example.org")
+        start = inbox.log_event(item, None, "inkommen", subject="Intyg")
+        reply = inbox.log_event(item, None, "svar", subject="Nytt ämne", not_saved=["bilaga.txt"])
+        self.login("hjalp")
+
+        def summary():
+            row = self.client.get("/api/v2/inkorg").get_json()["items"][0]
+            self.assertNotIn("sender_address", row)
+            return row["subject"], row["has_skipped"], row["member_name"]
+
+        self.assertEqual(summary(), ("Intyg", True, None))
+        db.InboxEvent.update(detail={}).where(db.InboxEvent.id.in_([start.id, reply.id])).execute()
+        member = db.Member.create(
+            first_name="Medlem", last_name="A", membership=db.Membership.create(member_number=9001)
+        )
+        db.InboxItem.update(member=member).where(db.InboxItem.id == item.id).execute()
+        self.assertEqual(summary(), (None, False, "Medlem A"))
+        detail = self.client.get(f"/api/v2/inkorg/{item.id}").get_json()
+        self.assertEqual(detail["sender_address"], "inkorg@example.org")
+
+    def test_modes_follow_scope_while_prefix_sort_and_pagination_only_change_the_list(self):
+        mine, unassigned, done, other, unknown = self.item(0), self.item(1), self.item(0), self.item(2), self.item(0)
+        db.InboxItem.update(assigned_to=self.helper, state="vantar_uppfodare").where(db.InboxItem.id == mine).execute()
+        db.InboxItem.update(assigned_to=self.helper, state="skrap").where(db.InboxItem.id == done).execute()
+        db.InboxItem.update(herd=None, genebank=None, state="hos_genbanksansvarig").where(
+            db.InboxItem.id == unknown
+        ).execute()
+        self.login("hjalp")
+
+        def items(query, expected, counts):
+            resp = self.client.get(f"/api/v2/inkorg?{query}")
+            self.assertEqual(resp.status_code, 200, resp.get_json())
+            body = resp.get_json()
+            self.assertEqual([row["id"] for row in body["items"]], expected)
+            self.assertEqual(body["mode_counts"], counts)
+            self.assertEqual(body["next_untaken"], [unassigned.id, other.id if "scope=alla" in query else unknown.id])
+
+        scoped = {"nya": 2, "mina": 1, "oppna": 3, "klara": 1}
+        items("mode=mina", [mine.id], scoped)
+        items("mode=nya", [unassigned.id, unknown.id], scoped)
+        items("mode=klara", [done.id], scoped)
+        items("mode=oppna&herd_prefix=g&order=newest&limit=1", [unassigned.id], scoped)
+        items("mode=nya&scope=alla", [unassigned.id, other.id, unknown.id], {**scoped, "nya": 3, "oppna": 4})
+        for query in ("mode=okand", "order=okand"):
+            self.assertEqual(self.client.get(f"/api/v2/inkorg?{query}").status_code, 400)
+
+    def test_next_untaken_advances_past_each_selected_item_even_when_received_at_ties(self):
+        a, b, c = self.item(), self.item(), self.item()
+        db.InboxItem.update(received_at=a.received_at).where(db.InboxItem.id == b.id).execute()
+        self.login("hjalp")
+        for selected, expected in [(a, [b.id]), (b, [c.id]), (c, [])]:
+            response = self.client.get(f"/api/v2/inkorg?after={selected.id}&mode=mina&order=newest")
+            self.assertEqual(response.get_json()["next_untaken"], expected)
+
     def test_opening_an_item_is_logged_and_reads_its_notices(self):
         item = self.item(0)
         self.login("hjalp")
@@ -195,6 +250,106 @@ class TestVisibility(InboxTest):
 
 
 class TestTakeAndAssign(InboxTest):
+    def test_takeover_requires_the_displayed_handler_and_assignment_time(self):
+        item = self.item()
+        inbox.take(item, self.helper, over=False)
+        self.login("man")
+        path = f"/api/v2/inkorg/{item.id}"
+        shown = self.client.get(path).get_json()
+        expected = {"assigned_to": shown["assigned_to"]["id"], "assigned_at": shown["assigned_at"]}
+
+        def refused(stale):
+            response = self.client.put(f"{path}/ta-over", json=stale)
+            self.assertEqual(response.status_code, 409)
+            self.assertIn("Tilldelningen har ändrats", response.get_json()["detail"])
+
+        inbox.assign(item, self.manager, self.manager)
+        refused({**expected, "assigned_at": self.client.get(path).get_json()["assigned_at"]})
+        self.assertEqual(self.reload(item).assigned_to_id, self.manager.id)
+        inbox.assign(item, self.manager, self.helper)
+        refused(expected)  # back with the displayed handler, under a new assignment
+        self.assertEqual(self.reload(item).assigned_to_id, self.helper.id)
+        self.assertFalse(item.events.where(db.InboxEvent.kind == "overtagen").exists())
+        current = self.client.get(path).get_json()
+        response = self.client.put(f"{path}/ta-over", json={**expected, "assigned_at": current["assigned_at"]})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.reload(item).assigned_to_id, self.manager.id)
+
+    def test_only_actor_undoes_a_take_and_a_view_does_not_invalidate_it(self):
+        item = self.item()
+        self.login("hjalp")
+        token = self.post(f"/{item.id}/ta").get_json()["undo"]
+        self.assertIsNone(self.post(f"/{item.id}/ta").get_json()["undo"])
+        self.client.get(f"/api/v2/inkorg/{item.id}")
+        self.login("man")
+        self.assertEqual(self.post("/angra", undo=token).status_code, 403)
+        self.login("hjalp")
+        self.assertEqual(self.post("/angra", undo="ogiltig").status_code, 400)
+        self.assertEqual(self.post("/angra", undo=token).get_json(), {"restored": [item.id]})
+        self.assertEqual(self.reload(item).state_changed_at, item.state_changed_at)
+        self.assertIsNone(self.reload(item).assigned_to_id)
+        self.assertEqual(self.post("/angra", undo=token).status_code, 409)
+
+    def test_undo_takeover_and_release_restore_prior_handler_and_waiting_state(self):
+        item = self.item()
+        inbox.take(item, self.helper, over=False)
+        item.state = "vantar_uppfodare"
+        item.save()
+        self.login("man")
+        self.assertEqual(self.post(f"/{item.id}/slapp").status_code, 409)
+        takeover = self.post(f"/{item.id}/ta-over").get_json()
+        self.assertEqual(self.post("/angra", undo=takeover["undo"]).status_code, 200)
+        self.assertFalse(db.Notice.select().where(db.Notice.kind == "overtagen").exists())
+        previous = self.reload(item)
+        self.assertEqual((previous.state, previous.assigned_to_id), ("vantar_uppfodare", self.helper.id))
+        self.login("hjalp")
+        for state in ("vantar_uppfodare", "vantar_foralder", "ofullstandig"):
+            db.InboxItem.update(state=state).where(db.InboxItem.id == item.id).execute()
+            refused = self.post(f"/{item.id}/slapp")
+            self.assertEqual(refused.status_code, 409)
+            self.assertIn("väntar", refused.get_json()["detail"])
+            self.assertEqual(self.reload(item).state, state)
+        db.InboxItem.update(state="tagen").where(db.InboxItem.id == item.id).execute()
+        previous = self.reload(item)
+        released = self.post(f"/{item.id}/slapp").get_json()
+        self.assertEqual((released["state"], released["assigned_to"]), ("ny", None))
+        self.assertEqual(self.post("/angra", undo=released["undo"]).status_code, 200)
+        restored = self.reload(item)
+        self.assertEqual((restored.state, restored.assigned_at), (previous.state, previous.assigned_at))
+
+    def test_preview_and_batch_undo_cover_the_whole_herd_or_nothing(self):
+        first, second = self.item(), self.item()
+        self.item(1)
+        inbox.take(second, self.helper, over=False)
+        self.login("hjalp")
+        self.assertEqual(self.client.get("/api/v2/inkorg/tilldela?herd=G1").status_code, 403)
+        self.login("man")
+
+        def preview():
+            return self.client.get("/api/v2/inkorg/tilldela?herd=G1").get_json()
+
+        def assign(revision):
+            return self.post("/tilldela", herd="G1", user_id=self.manager.id, revision=revision)
+
+        before = preview()
+        self.assertEqual(before["total"], 2)
+        self.assertEqual([(p["id"], p["count"]) for p in before["assignees"]], [(self.helper.id, 1)])
+        third = self.item()
+        self.assertEqual(assign(before["revision"]).status_code, 409)
+        self.assertIsNone(self.reload(first).assigned_to_id)
+        batch = assign(preview()["revision"]).get_json()
+        self.assertEqual(batch["assigned"], [first.id, second.id, third.id])
+        self.assertEqual(self.post("/angra", undo=batch["undo"]).get_json(), {"restored": batch["assigned"]})
+        self.assertEqual([self.reload(i).assigned_to_id for i in (first, second, third)], [None, self.helper.id, None])
+
+        batch = assign(preview()["revision"]).get_json()
+        self.login("hjalp")
+        self.post(f"/{third.id}/ta-over")
+        self.login("man")
+        self.assertEqual(self.post("/angra", undo=batch["undo"]).status_code, 409)
+        self.assertEqual([self.reload(i).assigned_to_id for i in (first, second)], [self.manager.id, self.manager.id])
+        self.assertEqual(self.reload(third).assigned_to_id, self.helper.id)
+
     def test_take_and_take_over(self):
         item = self.item(0)
         self.login("hjalp")
@@ -238,12 +393,22 @@ class TestTakeAndAssign(InboxTest):
 
     def test_assign_all_open_items_of_a_herd(self):
         first, second, closed, other = self.item(0), self.item(0), self.item(0), self.item(1)
+        held = self.item(0)
+        held.ref_data = {inbox.PURPOSE: inbox.HELD_RABBIT}
+        held.save()
         inbox.take(closed, self.helper, over=False)
         inbox.change_state(closed, self.helper, "skrap")
         self.login("man")
-        resp = self.post("/tilldela", herd="G1", user_id=self.helper.id)
+        refused = self.post("/tilldela", herd="G1", user_id=self.helper.id)
+        self.assertEqual(refused.status_code, 400)
+        self.assertIn("revision", refused.get_json()["detail"])
+        self.assertIsNone(self.reload(first).assigned_to_id)
+        preview = self.client.get("/api/v2/inkorg/tilldela?herd=G1").get_json()
+        self.assertEqual(preview["total"], 2)
+        resp = self.post("/tilldela", herd="G1", user_id=self.helper.id, revision=preview["revision"])
         self.assertEqual(resp.status_code, 200, resp.get_json())
         self.assertEqual(resp.get_json()["assigned"], [first.id, second.id])
+        self.assertIsNone(self.reload(held).assigned_to_id)
         self.assertIsNone(self.reload(other).assigned_to_id)
         self.assertEqual(self.reload(closed).state, "skrap")
         self.login("hjalp")

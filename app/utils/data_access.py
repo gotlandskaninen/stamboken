@@ -411,9 +411,9 @@ def storable_google_email(email, hosted_domain):
     return email
 
 
-def holds_role(user):
-    """The account has a role in ROLE_LEVELS, and ALLOW_ROLE_PASSWORD_LOGIN (development, tests) is off."""
-    return not settings.service.allow_role_password_login and any(
+def holds_role(user, *, password_override=True):
+    """A protected role. Only password sign-in in development and tests can opt out."""
+    return not (password_override and settings.service.allow_role_password_login) and any(
         p.get("level") in ROLE_LEVELS for p in user.privileges
     )
 
@@ -468,10 +468,10 @@ def add_user(form, user_uuid=None):
         return {"status": "error", "message": "missing data"}
 
     with DATABASE.atomic():
-        if User.select().where(User.email == email).first():
+        try:
+            user = register_user(email, password, username, validated, privileges, adopt_existing=False)
+        except AddressInUseError:
             return {"status": "error", "message": "already exists"}
-
-    user = register_user(email, password, username, validated, privileges)
     return {"status": "created", "data": user.id}
 
 
@@ -489,33 +489,27 @@ def register_user(
     object. An account that already has this exact e-mail is returned instead,
     unless adopt_existing is False: then an account holding the address in any
     casing raises AddressInUseError, and the user returned is always the row
-    this call inserted. (No unique index on e-mail: a concurrent request can
-    still insert a second account with the address, never hand back this one.)
+    this call inserted. New registrations serialize on the normalized address.
     """
     if privileges is None:
         privileges = []
 
-    if adopt_existing:
-        # Don't create a new user if the email exists already
-        user = User.select().where(User.email == email).first()
-    else:
-        taken = User.select(User.id).where(fn.LOWER(User.email) == email.lower()).first()
-        if taken:
-            raise AddressInUseError(taken.id)
-        user = None
-    if user is None:
-        user = User(
-            email=email,
-            uuid=uuid.uuid4().hex,
-            username=username,
-            fullname=fullname,
-            validated=validated,
-            privileges=privileges,
-        )
-        with DATABASE.atomic():
-            user.save()
+    with DATABASE.atomic():
+        if adopt_existing:
+            user = User.select().where(User.email == email).first()
+        else:
+            _lock_available_account_email(email)
+            user = None
+        if user is None:
+            user = User.create(
+                email=email,
+                uuid=uuid.uuid4().hex,
+                username=username,
+                fullname=fullname,
+                validated=validated,
+                privileges=privileges,
+            )
 
-    # By id, not e-mail: another account may hold the same address.
     user = User.get_by_id(user.id)
     auth_log.info("Registered user id=%s", user.id)
 
@@ -546,11 +540,24 @@ class InactiveAccountError(Exception):
 
 
 class AddressInUseError(Exception):
-    """register_user(adopt_existing=False): account `user_id` already holds the address."""
+    """Account `user_id` already holds the requested address."""
 
     def __init__(self, user_id):
         super().__init__(user_id)
         self.user_id = user_id
+
+
+def _lock_available_account_email(email, excluding=None):
+    """Hold the normalized address through the caller's insert or update."""
+    from utils.login_code import lock_addresses
+
+    lock_addresses([email])
+    accounts = User.select(User.id).where(fn.LOWER(fn.BTRIM(User.email)) == email.strip().lower())
+    if excluding is not None:
+        accounts = accounts.where(User.id != excluding)
+    taken = accounts.first()
+    if taken:
+        raise AddressInUseError(taken.id)
 
 
 def authenticate_user(name, password):
@@ -974,40 +981,29 @@ def update_user(form, user_uuid=None):
     if not user.is_admin and target_user.is_admin and target_user.id != user.id:
         return {"status": "error", "message": "forbidden"}
 
-    # No taking an erased account's pseudonym (not_erased()), which would lock the account as if erased
     if any(is_pseudonym(form.get(field)) for field in ("email", "username")):
         return {"status": "error", "message": "email already in use"}
 
-    # No taking an address another account holds: it is the password-login key
-    # (stop-gap; CMS identity keys on google_email, never on this field).
-    if (
-        form["email"] != target_user.email
-        and User.select()
-        .where((fn.LOWER(User.email) == str(form["email"]).lower()) & (User.id != target_user.id))
-        .exists()
-    ):
+    try:
+        changed = _save_user_fields(target_user, form, ("email", "username", "validated", "fullname"))
+    except User.DoesNotExist:
+        return {"status": "error", "message": "unknown user"}
+    except AddressInUseError:
         return {"status": "error", "message": "email already in use"}
+    return {"status": "updated" if changed else "unchanged"}
 
-    # update target user data if needed
-    changed = []
-    for field in ["email", "username", "validated", "fullname"]:
-        if field in form and getattr(target_user, field) != form[field]:
-            setattr(target_user, field, form[field])
-            changed.append(getattr(User, field))
 
-    if changed:
-        # Only the changed columns: target_user was read without a lock, so a
-        # full-row save would write back a stale is_active/_privileges. Never
-        # on an account an erasure emptied, also one committed since the read.
-        with DATABASE.atomic():
-            saved = (
-                User.update({field: getattr(target_user, field.name) for field in changed})
-                .where((User.id == target_user.id) & not_erased())
-                .execute()
-            )
-        return {"status": "updated"} if saved else {"status": "error", "message": "unknown user"}
-
-    return {"status": "unchanged"}
+def _save_user_fields(user, fields, allowed):
+    changed = {name: fields[name] for name in allowed if name in fields and fields[name] != getattr(user, name)}
+    if not changed:
+        return False
+    with DATABASE.atomic():
+        if "email" in changed and str(fields["email"]).strip():
+            _lock_available_account_email(str(fields["email"]), excluding=user.id)
+        # Only the changed fields, and only if the account survived since it was read.
+        if not User.update(changed).where((User.id == user.id) & not_erased()).execute():
+            raise User.DoesNotExist
+    return True
 
 
 _ALLOWED_LEVELS = ("admin", "matrikel_admin", "manager", "helper", "viewer", "owner")
@@ -4174,14 +4170,15 @@ def edit_admin_user(u_id, fields):
     (POST /api/v2/admin/role) and flags through their dedicated endpoints;
     the endpoint rejects everything else before calling this.
     """
-    if User.get_or_none(User.id == u_id) is None:
+    user = User.get_or_none((User.id == u_id) & not_erased())
+    if user is None:
         raise ValueError("user-not-found")
     if is_pseudonym(fields.get("email")):
         raise ValidationError("reserved-address", "Adressen är reserverad för konton som har tömts.")
-    # Only the edited columns, never a stale is_active/_privileges, and never on an account an erasure emptied.
-    values = {getattr(User, f): fields[f] for f in ("fullname", "email") if f in fields}
-    if values and not User.update(values).where((User.id == u_id) & not_erased()).execute():
-        raise ValueError("user-not-found")
+    try:
+        _save_user_fields(user, fields, ("fullname", "email"))
+    except User.DoesNotExist as exc:
+        raise ValueError("user-not-found") from exc
     return get_admin_user_detail(u_id)
 
 
@@ -4799,6 +4796,10 @@ def purge_member_applications(now) -> int:
 LOGOUT_EPOCH_KEY = "logout-epoch"
 
 
+def logout_epoch():
+    return int(session_redis.get(LOGOUT_EPOCH_KEY) or 0)
+
+
 def _generation_key(user_uuid):
     # Beside LOGOUT_EPOCH_KEY, for the same reasons. Keyed on the uuid the session holds, read before any user is.
     return f"generation:{uuid.UUID(str(user_uuid)).hex}"
@@ -4819,7 +4820,7 @@ def session_holds(stamps):
     if not stamps.get("user_id"):
         return False
     generation = account_generation(stamps["user_id"])
-    epoch = int(session_redis.get(LOGOUT_EPOCH_KEY) or 0)
+    epoch = logout_epoch()
     return generation is not None and stamps.get("generation") == generation and stamps.get("logout_epoch", 0) >= epoch
 
 

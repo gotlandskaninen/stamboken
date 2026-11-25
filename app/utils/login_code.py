@@ -15,8 +15,9 @@ from datetime import datetime, timedelta, timezone
 from peewee import fn
 
 import utils.settings as settings
-from utils.database import DB_PROXY, LoginCode, Member, MemberPreviousAddress, Membership
-from utils.mail import Recipient, address_hash, forget_recipient, mail_kind, one_time_code, recipient_kind
+from utils.data_access import holds_role
+from utils.database import DB_PROXY, LoginCode, MailSender, Member, MemberPreviousAddress, Membership
+from utils.mail import Recipient, address_hash, forget_recipient, link_mac, mail_kind, one_time_code, recipient_kind
 from utils.membership_lifecycle import Status
 
 logger = logging.getLogger("herdbook.login_code")
@@ -41,6 +42,10 @@ def _utcnow():
     return datetime.now(timezone.utc)
 
 
+def enabled():
+    return os.environ.get("KODINLOGGNING", "false").lower() == "true" and not settings.service.demo_instance
+
+
 def refuse_unsafe():
     if not settings.mail.link_secret:
         raise CodeRefused("LINK_SECRET is not set")
@@ -51,6 +56,13 @@ def refuse_unsafe():
 def _lock():
     """One lock for issuing and checking, so the counts below are exact. Held to the end of the transaction."""
     DB_PROXY.execute_sql("SELECT pg_advisory_xact_lock(hashtext('login_code'))")
+
+
+def require_open():
+    """Keep the global gate stable until the caller's transaction commits."""
+    _lock()
+    if closed():
+        raise CodeLoginClosed
 
 
 def closed(now=None):
@@ -117,6 +129,9 @@ def issue(person, purpose, browser, address, replaces=None):
         logger.warning("No code for member %s: %s codes today", person.id, A_PERSON_A_DAY)
         return None
     if LoginCode.select().where(LoginCode.created_at > now - timedelta(hours=1)).count() >= AN_HOUR:
+        MailSender.insert(id=1, code_limit_at=now).on_conflict(
+            conflict_target=[MailSender.id], preserve=[MailSender.code_limit_at]
+        ).execute()
         logger.warning("No code for member %s: %s codes in the last hour", person.id, AN_HOUR)
         return None
     return LoginCode.create(
@@ -133,28 +148,34 @@ def issue(person, purpose, browser, address, replaces=None):
 
 _SEPARATORS = re.compile(r"[\s-]")
 _DIGITS = re.compile(r"[0-9]{8}")
+# A missing row takes the same MAC comparison, but can never be returned.
+_MISSING_ROW = LoginCode(id=0, nonce="0" * 32)
 
 
-def check(purpose, browser, entered, member_id=None):
+def check(purpose, browser, entered, member_id=None, *, link=False):
     """
-    The browser's live code row for `purpose` when `entered` is its code, else None. The try is counted on the row
-    first, in the statement that checks the limit of TRIES, and commits on its own, before the comparison: the
-    caller cannot roll a wrong try back. A right code is then used with consume() in the transaction that acts on
-    it. Raises CodeLoginClosed when code login is closed; the row is not touched then.
+    Return the live row for this browser and credential. A link lookup spends no try.
+    Count a numeric try before comparing. Address changes commit the count independently.
+    Sign-in checks inside its redemption transaction and commits every wrong numeric try.
     """
     refuse_unsafe()
-    if DB_PROXY.in_transaction():
+    if DB_PROXY.in_transaction() and purpose != "login":
         raise RuntimeError("check() commits the try on its own: call it outside a transaction")
     with DB_PROXY.atomic():
-        _lock()
+        require_open()
         now = _utcnow()
-        if closed(now):
-            raise CodeLoginClosed
+        if link:
+            if purpose != "login" or not isinstance(entered, str) or not entered.isascii():
+                return None
+            row = login_row(browser)
+            if hmac.compare_digest(login_link_token(row or _MISSING_ROW), entered):
+                return row
+            return None
         params = [browser_hash(browser), purpose, now - VALID_FOR]
         mine = ""
         if member_id is not None:
             mine, params = "AND member_id = %s", [*params, member_id]
-        cursor = DB_PROXY.execute_sql(
+        updated = LoginCode.raw(
             f"""
             UPDATE login_code SET failed = failed + 1
             WHERE id = (
@@ -163,22 +184,20 @@ def check(purpose, browser, entered, member_id=None):
                     AND membership_status <> 'friexemplar'
                 ORDER BY c.id DESC LIMIT 1
             ) AND failed < %s
-            RETURNING id
+            RETURNING *
             """,
-            [*params, TRIES],
+            *params,
+            TRIES,
         )
-        found = cursor.fetchone()
-    if found is None:
-        return None
-    row = LoginCode.get_by_id(found[0])
+        row = next(iter(updated), None)
     digits = _SEPARATORS.sub("", entered) if isinstance(entered, str) else ""
     # fullmatch first: compare_digest takes ASCII only
-    if not _DIGITS.fullmatch(digits) or not hmac.compare_digest(code(row), digits):
+    if not _DIGITS.fullmatch(digits) or not hmac.compare_digest(code(row or _MISSING_ROW), digits):
         return None
     return row
 
 
-def consume(row):
+def consume(row, *, link=False):
     """
     Uses the row check() gave, in the caller's transaction: one UPDATE, so of two uses at once at most one wins. The
     try check() counted is taken back, as it was right. False when the row has been used, voided or has expired.
@@ -186,7 +205,7 @@ def consume(row):
     if not _may_use_code(row.member):
         return False
     now = _utcnow()
-    used = LoginCode.update(used_at=now, failed=LoginCode.failed - 1, new_address=None).where(
+    used = LoginCode.update(used_at=now, failed=LoginCode.failed - (0 if link else 1), new_address=None).where(
         (LoginCode.id == row.id) & LoginCode.used_at.is_null(True) & (LoginCode.created_at > now - VALID_FOR)
     )
     return used.execute() == 1
@@ -252,6 +271,56 @@ _ADDRESSES = f"""
 """
 
 
+def login_holder(address):
+    """Resolve only an unambiguous reservation, including addresses still in their waiting period."""
+    rows = DB_PROXY.execute_sql(
+        f"SELECT member_id FROM ({_ADDRESSES}) a WHERE address = %(address)s LIMIT 2",
+        {"now": _utcnow(), "address": address},
+    ).fetchall()
+    return Member.get_or_none(Member.id == rows[0][0]) if len(rows) == 1 else None
+
+
+def login_address(person, hashed_address):
+    """Resolve the original recipient again, using today's account, membership and address validity."""
+    if person.end_date or person.membership.membership_status == "inactive":
+        return None
+    if person.user_id:
+        if not person.user.is_active or holds_role(person.user, password_override=False):
+            return None
+    elif person.role != "huvudmedlem":
+        return None
+    now = _utcnow()
+    previous = MemberPreviousAddress.select(MemberPreviousAddress.address).where(
+        (MemberPreviousAddress.member == person.id) & (MemberPreviousAddress.login_until > now)
+    )
+    addresses = [p.address for p in previous]
+    if person.email and (person.email_login_from is None or person.email_login_from <= now):
+        addresses.append(person.email)
+    for address in addresses:
+        normalized = address.strip().lower()
+        if address_hash(normalized) == hashed_address:
+            holder = login_holder(normalized)
+            if holder and holder.id == person.id:
+                return normalized
+    return None
+
+
+def login_row(browser):
+    """The browser's current redeemable login row. Only check() counts a numeric try."""
+    return (
+        LoginCode.select()
+        .where(
+            (LoginCode.browser_hash == browser_hash(browser))
+            & (LoginCode.purpose == "login")
+            & LoginCode.used_at.is_null(True)
+            & (LoginCode.failed < TRIES)
+            & (LoginCode.created_at > _utcnow() - VALID_FOR)
+        )
+        .order_by(LoginCode.id.desc())
+        .first()
+    )
+
+
 class AddressTaken(Exception):
     """Another person holds the address for login. Only the matrikel admin and the approver of an application see it."""
 
@@ -264,6 +333,12 @@ def lock_addresses(addresses):
         DB_PROXY.execute_sql("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"login_address:{address}",))
 
 
+def lock_holder_addresses(person):
+    rows = MemberPreviousAddress.select().where(MemberPreviousAddress.member == person.id)
+    lock_addresses([person.email, *(r.address for r in rows)])
+    return rows
+
+
 def reserve_holder(person_id):
     """
     A person becomes a holder again (main member, or an account linked): her address and every previous one that
@@ -272,8 +347,7 @@ def reserve_holder(person_id):
     person = Member.get_by_id(person_id)
     if person.membership.membership_status == Status.FRIEXEMPLAR:
         return
-    rows = MemberPreviousAddress.select().where(MemberPreviousAddress.member == person_id)
-    lock_addresses([person.email, *(r.address for r in rows)])
+    rows = lock_holder_addresses(person)
     now = _utcnow()
     for address in [person.email, *(r.address for r in rows.where(MemberPreviousAddress.login_until > now))]:
         reserve_login_address(address, person_id)
@@ -321,25 +395,39 @@ def reserve_on_leaving_friexemplar(membership_id):
         previous = address
 
 
+def login_link_token(row):
+    """Bind the mail link to the same row and nonce as its eight digits."""
+    return link_mac(f"login:{row.nonce}", row.id)
+
+
 @recipient_kind("login_code")
 def _code_recipient(row_id):
-    """
-    The address the code goes to, read when it goes: none once the code is used, voided or too old, or the person's
-    account has changed. Only a new address (ny_adress) has one yet; the login code's comes with the login page.
-    """
+    """Recheck the row, account and original destination on each delivery attempt."""
     row = LoginCode.get_or_none(LoginCode.id == row_id)
-    if row is None or row.used_at or row.created_at <= _utcnow() - VALID_FOR or row.purpose != "ny_adress":
+    if row is None or row.used_at or row.failed >= TRIES or row.created_at <= _utcnow() - VALID_FOR or closed():
         return None
     person = row.member
     if person.user_id != row.user_id or person.membership.membership_status == Status.FRIEXEMPLAR:
         return None
-    return Recipient(row.new_address, f"{person.first_name} {person.last_name}")
+    if row.purpose == "ny_adress":
+        address = row.new_address
+    elif row.purpose == "login" and enabled():
+        try:
+            refuse_unsafe()
+        except CodeRefused:
+            return None
+        address = login_address(person, row.address_hash)
+    else:
+        return None
+    return Recipient(address, f"{person.first_name} {person.last_name}", recheck_before_send=True) if address else None
 
 
 @mail_kind("konto.kod", priority=0, category="T")
 def _code_mail(params):
     row = LoginCode.get_or_none(LoginCode.id == params["code_id"])
-    return {"code": shown(code(row))} if row else None
+    if row is None:
+        return None
+    return {"code": shown(code(row)), "token": login_link_token(row) if row.purpose == "login" else None}
 
 
 def address_collisions(now=None):
@@ -350,9 +438,28 @@ def address_collisions(now=None):
     ).fetchone()[0]
 
 
+def record_queue_error():
+    """Keep just the three most recent errors across workers, outside the failed request's transaction."""
+    DB_PROXY.execute_sql(
+        "INSERT INTO mail_sender (id, code_queue_errors) VALUES (1, ARRAY[%s]::timestamptz[]) "
+        "ON CONFLICT (id) DO UPDATE SET code_queue_errors = "
+        "EXCLUDED.code_queue_errors || mail_sender.code_queue_errors[1:2]",
+        (_utcnow(),),
+    )
+
+
 def alarms(now=None):
     """The status view's alarms of code login (utils.mail.sender_alarms)."""
+    now = now or _utcnow()
+    since = now - timedelta(hours=1)
     found = []
+    sender = MailSender.get_or_none(MailSender.id == 1)
+    if sender and sender.code_limit_at and sender.code_limit_at > since:
+        found.append({"code": "kodinloggning_timtak", "message": f"Timtaket på {AN_HOUR} koder har stoppat utskick"})
+    if sender and sum(at > since for at in sender.code_queue_errors or []) >= 3:
+        found.append(
+            {"code": "kodinloggning_kofel", "message": "Flera förfrågningar om inloggningskod har misslyckats"}
+        )
     if closed(now):
         found.append(
             {"code": "kodinloggning_stangd", "message": "Kodinloggningen är stängd: för många felaktiga koder"}

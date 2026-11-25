@@ -4,6 +4,7 @@ import { fetchApi, ApiError } from "@/lib/api";
 import type { GenebankHerd } from "@/utils/saleRules";
 import type { ActionResult } from "../stamboken/(dashboard)/inkorg/actions";
 import {
+  reportLinkPath,
   SUBMIT_TIMEOUT_MS,
   type DraftData,
   type Father,
@@ -20,7 +21,7 @@ import {
 
 // The report actions of the page behind the personal link. The same four as the logged-in page, with the same
 // signatures so ReportForm can call either, but every call goes to the production API (the link works there only)
-// and none checks the mode cookie: a visitor with a link has no sb_mode.
+// and the report code authorizes the herd and year, also for a signed-in visitor.
 export type MineEntry = {
   code_id: number;
   herd: string;
@@ -32,28 +33,31 @@ const HERD = /^[A-Z]{1,3}[0-9]{1,6}$/;
 
 const refused = (detail: string): ActionResult<never> => ({
   ok: false,
-  problem: { status: 400, title: "Ogiltig begäran", detail },
+  problem: { status: 400, title: "Fel i adressen", detail },
 });
 
 function path(herd: string, year: number, tail: string) {
   if (!HERD.test(herd) || !Number.isInteger(year) || year < 2000 || year > 2100)
     return null;
-  return `/v2/arsrapport/besattning/${herd}/${year}${tail}`;
+  return reportLinkPath(`/v2/arsrapport/besattning/${herd}/${year}${tail}`);
 }
 
 async function call<T>(
   url: string | null,
   method: string,
   body?: unknown,
-  timeout?: number,
+  options?: { timeout?: number },
 ): Promise<ActionResult<T>> {
-  if (url === null) return refused("Ogiltig besättning eller år.");
+  if (url === null)
+    return refused(
+      "Besättningen eller året i adressen stämmer inte. Öppna rapporten från länken i mejlet eller från Min besättning.",
+    );
   try {
     const data = await fetchApi<T>(url, {
       method,
       forceProd: true,
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      ...(timeout ? { timeout } : {}),
+      ...options,
     });
     return { ok: true, data };
   } catch (e) {
@@ -109,7 +113,7 @@ export async function dryRun(herd: string, year: number, body: Submission) {
     path(herd, year, "/torrkorning"),
     "POST",
     body,
-    SUBMIT_TIMEOUT_MS,
+    { timeout: SUBMIT_TIMEOUT_MS },
   );
 }
 
@@ -118,12 +122,9 @@ export async function submitReport(
   year: number,
   body: Submission,
 ) {
-  return call<Receipt>(
-    path(herd, year, "/skicka"),
-    "POST",
-    body,
-    SUBMIT_TIMEOUT_MS,
-  );
+  return call<Receipt>(path(herd, year, "/skicka"), "POST", body, {
+    timeout: SUBMIT_TIMEOUT_MS,
+  });
 }
 
 export async function withdrawReport(
@@ -136,7 +137,7 @@ export async function withdrawReport(
     path(herd, year, "/dra-tillbaka"),
     "POST",
     { revision, reason: reason ?? null },
-    SUBMIT_TIMEOUT_MS,
+    { timeout: SUBMIT_TIMEOUT_MS },
   );
 }
 
@@ -169,7 +170,11 @@ export async function getGenebankHerds(
   );
   return res.ok
     ? { success: true as const, herds: res.data.herds }
-    : { success: false as const, error: res.problem.detail };
+    : {
+        success: false as const,
+        error: res.problem.detail,
+        status: res.problem.status,
+      };
 }
 
 // "Kullar under Y": as the logged-in page's actions, without `env` and `post`.

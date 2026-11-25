@@ -1,9 +1,9 @@
-{% block subject %}En kull är registrerad i {{ herd }}{% endblock %}
+{% block subject %}{{ namn }} har lagt till en kull i {{ herd }}{% endblock %}
 
 {% block body %}
 Hej!
 
-Kullen efter {{ mother }} född {{ birth_date }} är registrerad i Stamboken för besättning {{ herd }}. Den lades till i årsrapporten. Den finns kvar även om du drar tillbaka rapporten.
+{{ namn }} har lagt till kullen efter {{ mother }}, född {{ birth_date }}, i besättning {{ herd }} i årsrapporten. Den finns kvar även om du drar tillbaka rapporten.
 
-Var det inte du? Kontakta genbanksansvarig genom att svara på det här mejlet.
+Stämmer det inte? Kontakta genbanksansvarig genom att svara på det här mejlet.
 {% endblock %}

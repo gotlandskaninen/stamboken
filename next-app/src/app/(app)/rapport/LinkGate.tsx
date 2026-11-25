@@ -15,7 +15,7 @@ const EXPIRED_TEXT =
   "Sidan stängdes efter två timmar av säkerhetsskäl. Öppna länken i mejlet igen. Det du fyllt i är sparat.";
 // The manager's test mail links to /rapport#prov: the link form is tried in a real mail client, nothing is opened.
 const TEST_LINK_TEXT =
-  "Provlänken fungerar. I det riktiga mejlet öppnar länken besättningens årsrapport.";
+  "Det här var ett provmejl. Länken fungerar. I medlemmarnas mejl öppnar den deras årsrapport.";
 const COOKIES_TEXT =
   "Din webbläsare tog inte emot inloggningen. Öppna länken i en vanlig webbläsare, till exempel Chrome eller Safari.";
 

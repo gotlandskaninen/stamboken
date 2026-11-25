@@ -142,7 +142,7 @@ class TestReportVoid(ReportRightTest):
 
     def test_report_right_refuses_a_transfer_flow_sale(self):
         sale = record_herd_tracking(self.ind, self.herds[1], date(2025, 11, 1), "TRANSFER", self.owner, transfer_id=7)
-        with self.assertRaisesRegex(HerdTrackingForbidden, "överlåtelseflödet"):
+        with self.assertRaisesRegex(HerdTrackingForbidden, "kan inte ångras här"):
             self._void(sale, self.owner, frozenset({str(sale.operation_id)}))
 
     def test_report_undo_of_an_attestation_voids_it_by_the_report_rules(self):

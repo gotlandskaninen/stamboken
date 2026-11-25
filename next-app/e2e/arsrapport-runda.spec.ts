@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { takePaperForm } from "../e2e-shared/arsrapport";
 import { loginInline } from "../e2e-shared/auth";
 
 // A full yearly report round for 2025 on the data of `flask seed arsrapport` (synthetic herds G9001-G9004),
@@ -96,10 +97,7 @@ test("2. Uppfödaren skickar G9001 och G9004", async ({ page, context }) => {
 
 test("3. Hjälparen matar in G9002:s blankett", async ({ page, context }) => {
   await loginInline(page, context, USERS.helper);
-  await page.goto("/stamboken/inkorg");
-  await row(page, "G9002").getByRole("button", { name: "Jag tar den" }).click();
-  await page.getByRole("link", { name: "Mata in årsrapporten" }).click();
-  await page.waitForURL(/\/stamboken\/arsrapport\/G9002\/2025\?post=\d+/);
+  await takePaperForm(page, "G9002");
 
   // Nine of the twelve rabbits are on the form (G9002-2413 to 2421); the first two and the male are not.
   const entered = rows(page);

@@ -160,7 +160,7 @@ describe("SellRabbitDialog", () => {
       expect(screen.getByLabelText(/^Ort/)).toBeTruthy();
       expect(
         screen.getByText(
-          "Ge köparen överlåtelsebeviset. Där står föreningens information till köparen.",
+          "Ge köparen försäljningsbeviset. Där står föreningens information till köparen.",
         ),
       ).toBeTruthy();
     });

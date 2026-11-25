@@ -168,9 +168,14 @@ class RapportLinkTest(ArsrapportTest):
         self.addCleanup(setattr, limiter, "enabled", False)
         limiter.reset()
         self.addCleanup(limiter.reset)
-        statuses = [self.exchange().status_code for _ in range(21)]
-        self.assertEqual(statuses[:20], [200] * 20)
-        self.assertEqual(statuses[20], 429)
+        statuses = [self.exchange().status_code for _ in range(20)]
+        refused = self.exchange()
+        self.assertEqual(statuses, [200] * 20)
+        self.assertEqual(refused.status_code, 429)
+        self.assertEqual(
+            refused.get_json()["detail"],
+            "Du har öppnat länken för många gånger på kort tid. Vänta en minut och försök igen.",
+        )
 
     def test_user_session_survives_exchange(self):
         self.login("owner")
@@ -182,11 +187,11 @@ class RapportLinkTest(ArsrapportTest):
     def test_exchange_rotates_session_id(self):
         with self.client.session_transaction() as session:
             session["planted"] = 1
-        old = self.client.get_cookie("session").value
+        old = self.client.get_cookie(APP.config["SESSION_COOKIE_NAME"]).value
         self.exchange()
-        self.assertNotEqual(self.client.get_cookie("session").value, old)
+        self.assertNotEqual(self.client.get_cookie(APP.config["SESSION_COOKIE_NAME"]).value, old)
         other = APP.test_client(use_cookies=True)
-        other.set_cookie("session", old)
+        other.set_cookie(APP.config["SESSION_COOKIE_NAME"], old)
         self.assertEqual(other.get("/api/v2/rapport/mina").get_json(), [])
         self.assertNotIn("rapport", self.session(other))
 
@@ -194,25 +199,25 @@ class RapportLinkTest(ArsrapportTest):
         # load_user clears a revoked session before the handler runs; regenerate() alone skips an empty one.
         with self.client.session_transaction() as session:
             session["user_id"] = "a-revoked-session"  # without _user_id, before_request clears it when revoked
-        old = self.client.get_cookie("session").value
+        old = self.client.get_cookie(APP.config["SESSION_COOKIE_NAME"]).value
         with mock.patch("herdbook._session_revoked", return_value=True):
             self.assertEqual(self.exchange().status_code, 200)
-        self.assertNotEqual(self.client.get_cookie("session").value, old)
+        self.assertNotEqual(self.client.get_cookie(APP.config["SESSION_COOKIE_NAME"]).value, old)
         other = APP.test_client(use_cookies=True)
-        other.set_cookie("session", old)
+        other.set_cookie(APP.config["SESSION_COOKIE_NAME"], old)
         self.assertEqual(other.get("/api/v2/rapport/mina").get_json(), [])
         self.assertNotIn("rapport", self.session(other))
 
     def test_failed_rotation_grants_nothing_under_the_old_id(self):
         with self.client.session_transaction() as session:
             session["planted"] = 1
-        old = self.client.get_cookie("session").value
+        old = self.client.get_cookie(APP.config["SESSION_COOKIE_NAME"]).value
         with mock.patch.object(APP.session_interface, "regenerate", side_effect=RuntimeError("redis down")):
             response = self.exchange()
         self.assertEqual(response.status_code, 500)
         self.assertNotIn(self.token.split(".")[1], response.get_data(as_text=True))
         other = APP.test_client(use_cookies=True)
-        other.set_cookie("session", old)
+        other.set_cookie(APP.config["SESSION_COOKIE_NAME"], old)
         self.assertEqual(other.get("/api/v2/rapport/mina").get_json(), [])
         self.assertNotIn("rapport", self.session(other))
         self.assertNotIn("rapport", self.session())

@@ -81,16 +81,26 @@ describe("warningText", () => {
 });
 
 describe("noticeHref", () => {
+  it("only links to address review when the manager can see the rabbit number", () => {
+    expect(
+      noticeHref({
+        kind: "kopare_adresskontroll",
+        item_id: null,
+        individual_number: null,
+      }),
+    ).toBe("/stamboken/inskick");
+  });
+
   it("sends klar notices to Mina inskick", () => {
-    expect(noticeHref({ kind: "klar", item_id: 7 })).toBe(
-      "/stamboken/inskick#arende-7",
-    );
+    expect(
+      noticeHref({ kind: "klar", item_id: 7, individual_number: null }),
+    ).toBe("/stamboken/inskick#arende-7");
   });
 
   it("sends queue notices to the item in the inbox", () => {
-    expect(noticeHref({ kind: "ny_post", item_id: 7 })).toBe(
-      "/stamboken/inkorg/7",
-    );
+    expect(
+      noticeHref({ kind: "ny_post", item_id: 7, individual_number: null }),
+    ).toBe("/stamboken/inkorg/7");
   });
 });
 

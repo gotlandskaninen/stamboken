@@ -3,7 +3,7 @@
 import logging
 import os
 import re
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 from gunicorn.glogging import Logger
 
@@ -18,6 +18,13 @@ timeout = 120
 # fetch) can reuse them for parallel RSC data fetches without hitting
 # UND_ERR_SOCKET "other side closed" on the default 2s keepalive.
 keepalive = int(os.getenv("GUNICORN_KEEPALIVE", "75"))
+
+
+def pre_request(worker, req):
+    # Gunicorn discards hop-by-hop headers from WSGI. Set its own Connection: close before writing the body.
+    if req.method == "POST" and unquote(req.path) == "/api/v2/login/kod":
+        req.force_close()
+
 
 # Logging
 
@@ -43,18 +50,18 @@ SCHEDULER_LOCK = "/tmp/herdbook_scheduler.lock"
 
 
 # Must match _TOKEN in utils/log_masking.py; repeated because this file is loaded before the app is importable.
-_LINK_TOKEN = re.compile(r"(?<![A-Za-z0-9_-])(\d{1,19})\.[A-Za-z0-9_-]{22}(?![A-Za-z0-9_-])")
+_LINK_TOKEN = re.compile(r"((?<![A-Za-z0-9_-])\d{1,19}\.|/auth/kod#)[A-Za-z0-9_-]{22}(?![A-Za-z0-9_-])")
 
 
 class _TokenMaskFilter(logging.Filter):
     """Keeps link tokens in the request line out of the access log, and out of the error log's tracebacks."""
 
     def filter(self, record):
-        record.msg, record.args = _LINK_TOKEN.sub(r"\1.***", record.getMessage()), None
+        record.msg, record.args = _LINK_TOKEN.sub(r"\1***", record.getMessage()), None
         if record.exc_info and not record.exc_text:
             record.exc_text = logging.Formatter().formatException(record.exc_info)
         if record.exc_text:
-            record.exc_text = _LINK_TOKEN.sub(r"\1.***", record.exc_text)
+            record.exc_text = _LINK_TOKEN.sub(r"\1***", record.exc_text)
         return True
 
 

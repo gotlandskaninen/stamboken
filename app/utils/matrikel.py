@@ -1171,11 +1171,11 @@ def resolve_own_membership(user):
 # --------------------------------------------------------------------------
 # Kontokoppling — ONE lock-owning operation writes
 # member.user_id. Lock order everywhere: membership → user → person, all
-# FOR UPDATE. The invariant: a link never conveys herd access without an
-# explicit admin confirmation of exactly the herds it conveys.
+# FOR UPDATE. A link that grants herd access needs admin confirmation,
+# except when a main member creates her own account using a verified code.
 # --------------------------------------------------------------------------
 
-LINK_MODES = ("admin", "cli", "oauth")
+LINK_MODES = ("admin", "cli", "oauth", "matrikel_epost")
 
 
 class LinkError(Exception):
@@ -1236,7 +1236,7 @@ def _invalidate_genebanks(genebank_ids) -> None:
             logger.exception("cache invalidation failed for genebank %s after a user-link change", genebank_id)
 
 
-def _lock_membership(person_id: int) -> int:
+def lock_person_membership(person_id: int) -> int:
     """Lock the person's membership row FIRST — the root of the hierarchy that
     swap_main_member / create_grant and (from Step 5b) both status PATCH routes
     take. Returns the membership id; LinkError 404 if the person vanished."""
@@ -1249,7 +1249,7 @@ def _lock_membership(person_id: int) -> int:
 
 def _lock_for_link(person_id: int, user_id: int):
     """membership → user → person, all FOR UPDATE. Returns (person, user)."""
-    _lock_membership(person_id)
+    lock_person_membership(person_id)
     user = User.select().where(User.id == user_id).for_update().first()
     if user is None:
         raise LinkError("Hittades inte", f"Användaren {user_id} finns inte", status=404)
@@ -1262,20 +1262,21 @@ def _lock_for_detach(person_id: int):
     CURRENT user_id read under the membership lock — never a value captured
     before it: every linker takes the membership lock
     first, so user_id cannot move once we hold it. Returns (person, user | None)."""
-    _lock_membership(person_id)
+    lock_person_membership(person_id)
     current_user_id = Member.select(Member.user).where(Member.id == person_id).get().user_id
     user = User.select().where(User.id == current_user_id).for_update().first() if current_user_id else None
     person = Member.select().where(Member.id == person_id).for_update().get()
     return person, user
 
 
-def link_member_user(person_id, user_id, *, actor, mode, confirmed_herd_ids=None):
+def link_member_user(person_id, user_id, *, actor, mode, confirmed_herd_ids=None, invalidate=True):
     """THE writer of member.user_id. Opens its own transaction and
-    owns every lock — callers pass ids, never pre-locked rows.
+    owns every lock — callers pass ids, never pre-locked rows. A caller with an outer
+    transaction passes invalidate=False and invalidates the conveyed herds after its commit.
 
     Returns (person, conveyed). Raises LinkError (404/409 shapes) or
-    ConfirmRequired when the link would convey herd access and `mode` is
-    not "admin" or the admin did not confirm exactly that herd set. The
+    ConfirmRequired when the link would convey herd access without the
+    admin confirming exactly that herd set or a verified self-registration. The
     IntegrityError of idx_member_user_unique is mapped to a 409 (backstop).
     """
     if mode not in LINK_MODES:
@@ -1321,7 +1322,18 @@ def link_member_user(person_id, user_id, *, actor, mode, confirmed_herd_ids=None
             raise LinkError(AddressTaken.title, detail) from exc
         conveyed = link_access_delta(person, user)  # under the locks, right before the save
         conveyed_ids = {h["id"] for h in conveyed}
-        if conveyed_ids and (mode != "admin" or confirmed_herd_ids is None or set(confirmed_herd_ids) != conveyed_ids):
+        if mode == "matrikel_epost" and (
+            person.role != "huvudmedlem" or person.membership.membership_status == "inactive"
+        ):
+            raise LinkError(
+                "Kontot kan inte skapas",
+                "Bara huvudmedlemmen i ett aktivt eller väntande medlemskap kan skapa ett konto.",
+            )
+        if (
+            conveyed_ids
+            and mode != "matrikel_epost"
+            and (mode != "admin" or confirmed_herd_ids is None or set(confirmed_herd_ids) != conveyed_ids)
+        ):
             raise ConfirmRequired(conveyed)
         person.user = user
         try:
@@ -1334,7 +1346,8 @@ def link_member_user(person_id, user_id, *, actor, mode, confirmed_herd_ids=None
             person.membership,
             {"person_id": person.id, "user_id": user.id, "conveys_herd_ids": sorted(conveyed_ids), "source": mode},
         )
-    _invalidate_genebanks(h["genebank_id"] for h in conveyed)
+    if invalidate:
+        _invalidate_genebanks(h["genebank_id"] for h in conveyed)
     return person, conveyed
 
 

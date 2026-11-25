@@ -44,12 +44,12 @@ BUYER_GONE = "Köparens uppgifter är raderade, så försäljningen kan inte god
 TICKED = ("contact_consent_at", "membership_optin_at")
 
 
-def _stored_buyer(buyer, at):
+def _stored_buyer(buyer, at, sale_date):
     """
     The buyer as the sale takes it again at approval: the text fields and the two ticks, checked now, and when each
-    was ticked (`at`, the submission's time), which approval gives the BuyerContact in place of its own time.
+    was ticked (`at`, the submission's time).
     """
-    fields = buyer_contact_fields(buyer, address_required=True)
+    fields = buyer_contact_fields(buyer, sale_date, address_required=True)
     return {
         **{key: fields[key] for key in BUYER_TEXT_FIELDS},
         "contact_consent": buyer.get("contact_consent", False),
@@ -75,7 +75,9 @@ def _close_item(proposal, user, state):
         inbox.log_event(item, user, "lage", **{"from": previous, "to": state})
 
 
-def propose(report, submission, individual, *, to_herd, buyer, sale_date: date, buyer_removed=False) -> SaleProposal:
+def propose(
+    report, submission, individual, *, to_herd, buyer, sale_date: date, buyer_removed=False, locks_held=False
+) -> SaleProposal:
     """
     A pending sale of `individual` from the report's herd, to `to_herd` or, with None, to a buyer outside the
     genebank (then `buyer` is required unless already erased). Its `kontroll` item goes to the genebank's queue.
@@ -87,8 +89,14 @@ def propose(report, submission, individual, *, to_herd, buyer, sale_date: date, 
     if not buyer_removed and (to_herd is None) == (buyer is None):
         raise HerdTrackingInvalid("Ange köparens besättning, eller köparens namn och ort utanför genbanken.")
     at = submission.created_at  # when the seller sent it, and ticked the buyer's boxes
-    stored = _stored_buyer(buyer, at) if buyer is not None else None
+    stored = _stored_buyer(buyer, at, sale_date) if buyer is not None else None
     with DB_PROXY.atomic():
+        if stored and stored["email"] and not locks_held:
+            # Skicka already checked for erasure under these locks for the whole report.
+            arsrapport.lock_report(report.round, report.herd)
+            lock_individuals([individual.id])
+            if arsrapport.lock_sale_buyers({individual.id: stored}, proposal=True):
+                stored = None
         try:
             proposal = SaleProposal.create(
                 report=report.id,
@@ -214,9 +222,11 @@ def approve(proposal, user, *, now: datetime) -> HerdTracking:
             .order_by(*ht_order_desc())
             .first()
         )
-        ticked = {key: datetime.fromisoformat(buyer[key]) for key in TICKED if buyer and buyer.get(key)}
-        if ticked:  # the consent dates from the seller's tick, not from the approval
-            BuyerContact.update(**ticked).where(BuyerContact.id == row.holder_contact_id).execute()
+        if buyer and buyer.get("contact_consent_at"):
+            # Contact consent dates from submission. record_sale dates the membership opt-in from the sale.
+            BuyerContact.update(contact_consent_at=datetime.fromisoformat(buyer["contact_consent_at"])).where(
+                BuyerContact.id == row.holder_contact_id
+            ).execute()
         SaleProposal.update(herd_tracking_id=row.id).where(SaleProposal.id == proposal.id).execute()
         _close_item(proposal, user, "klar")
         for item_id in notices:  # fråga 19: one approval settles the buyer's notice too

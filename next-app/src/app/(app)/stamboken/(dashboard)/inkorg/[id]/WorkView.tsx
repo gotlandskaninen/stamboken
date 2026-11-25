@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
+import { useTranslation } from "react-i18next";
 import Link from "next/link";
 import { formatTime } from "@/lib/inkorg";
 import { useMode } from "@/lib/mode-context";
@@ -23,7 +24,6 @@ import {
   turn,
 } from "../image";
 import {
-  accountOrLink,
   ACTION_LABEL,
   canEditDocuments,
   canSave,
@@ -34,6 +34,8 @@ import {
   itemActions,
   manages,
   nextOpenDocument,
+  senderText,
+  shownAssignment,
   STATE_LABEL,
   waited,
   WARNING_LABEL,
@@ -47,7 +49,8 @@ import {
   type Rect,
 } from "../lib";
 import { fmtDate } from "../../arsrapport/lib";
-import { RowActions } from "../QueueControls";
+import { AssignItem } from "../QueueControls";
+import { focusCaseHeading, QueueUndoStatus, useQueueUndo } from "../QueueUndo";
 import { AskBreeder } from "./AskBreeder";
 import { CertificateForm } from "./CertificateForm";
 import { MailFacts, MailThread, SenderUnconfirmed } from "./MailFacts";
@@ -62,6 +65,8 @@ const EVENT_LABEL: Record<string, string> = {
   tagen: "Taget",
   overtagen: "Övertaget",
   tilldelad: "Tilldelat",
+  slappt: "Lades tillbaka",
+  angrad: "Ändringen ångrad",
   lage: "Nytt läge",
   dokument: "Dokument ändrat",
   sparad: "Sparat",
@@ -88,21 +93,6 @@ function eventText(e: InboxEvent): string {
   // The personal link has no account: the history names it instead (a purchase notice).
   if (e.kind === "inkommen" && d.via) return `${label} via ${d.via}`;
   return label;
-}
-
-// Who sent the item: its account, else the link or the account its arrival names (a purchase notice has no
-// sender_user: a link's history says `via`, an account's is the event's user), else the mail's address.
-function senderText(item: InboxDetail): string {
-  const arrived = item.events.find((e) => e.kind === "inkommen");
-  const via = arrived?.detail?.via;
-  return (
-    item.sender?.name ??
-    (typeof via === "string" ? via : null) ??
-    arrived?.user?.name ??
-    accountOrLink(item) ??
-    item.sender_address ??
-    "–"
-  );
 }
 
 // A purchase notice (4a Task 5) in the main column: the rabbit, both herds and the date, and the way to register
@@ -175,7 +165,12 @@ export function WorkView({
   herds: GenebankHerd[];
   people: Person[];
 }) {
+  const { t } = useTranslation();
   const mode = useMode();
+  const { offerUndo } = useQueueUndo();
+  useEffect(() => {
+    if (document.activeElement === document.body) focusCaseHeading();
+  }, [item.id]);
   // As RegisterRabbitDialog: demo reads from /api-test when it is configured.
   const apiBase =
     mode === "demo" && process.env.NEXT_PUBLIC_API_TEST_URL
@@ -293,9 +288,26 @@ export function WorkView({
     switch (action) {
       case "ta":
       case "arbeta_vidare":
-        return run(() => takeItem(id));
       case "ta_over":
-        return run(() => takeItem(id, true));
+        return run(
+          () =>
+            takeItem(
+              id,
+              action === "ta_over" ? shownAssignment(item) : undefined,
+            ),
+          ({ undo }) => {
+            focusCaseHeading();
+            offerUndo(
+              undo,
+              t(
+                action === "ta_over"
+                  ? "queueAssignment.takenOver"
+                  : "queueAssignment.taken",
+                { id },
+              ),
+            );
+          },
+        );
       case "oppna":
         return run(() => changeState(id, "tagen"));
       case "vantar_foralder":
@@ -383,7 +395,7 @@ export function WorkView({
             <dd>{item.assigned_to?.name ?? "ingen"}</dd>
             <dt>Inskickat av</dt>
             <dd>
-              {senderText(item)}
+              {senderText(item) ?? "–"}
               <SenderUnconfirmed item={item} />
             </dd>
             <MailFacts item={item} />
@@ -494,15 +506,10 @@ export function WorkView({
             )}
 
           {allActions.includes("tilldela") && (
-            <RowActions
-              id={item.id}
-              canTake={false}
-              canAssign
-              compact={false}
-              people={people}
-            />
+            <AssignItem id={item.id} people={people} />
           )}
 
+          <QueueUndoStatus />
           <details className={styles.history}>
             <summary>Historik ({item.events.length})</summary>
             <ol>

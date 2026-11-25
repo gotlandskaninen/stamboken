@@ -53,6 +53,7 @@ _TABLES_TO_TRUNCATE = [
     "inbox_event",
     "inbox_document",
     "inbox_item",
+    "mail_buyer_invitation",
     "mail_attempt",
     "mail_message",  # before herd, genebank, hbuser (nullable FKs)
     "mail_sender",  # no FK, so CASCADE never reaches it: a paused sender would leak into later tests
@@ -84,6 +85,7 @@ _TABLES_TO_TRUNCATE = [
     "herd",  # before membership (FK membership)
     "membership",
     "hbuser",
+    "account_rules_snapshot",
     "genebank",
 ]
 

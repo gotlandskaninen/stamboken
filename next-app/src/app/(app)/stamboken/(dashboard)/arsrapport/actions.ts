@@ -46,7 +46,7 @@ async function call<T>(
   url: string | null,
   method: string,
   body: unknown,
-  timeout?: number,
+  options?: { timeout?: number; isolateDemo?: boolean },
 ): Promise<ActionResult<T>> {
   if (url === null) return refused("Ogiltig besättning, år eller post.");
   if (parseMode((await cookies()).get(MODE_COOKIE)?.value) !== env)
@@ -55,7 +55,7 @@ async function call<T>(
     const data = await fetchApi<T>(url, {
       method,
       body: JSON.stringify(body),
-      ...(timeout ? { timeout } : {}),
+      ...options,
     });
     return { ok: true, data };
   } catch (e) {
@@ -111,7 +111,7 @@ export async function dryRun(
     path(herd, year, "/torrkorning", post),
     "POST",
     body,
-    SUBMIT_TIMEOUT_MS,
+    { timeout: SUBMIT_TIMEOUT_MS },
   );
 }
 
@@ -122,13 +122,9 @@ export async function submitReport(
   env: Mode,
   post?: number,
 ) {
-  return call<Receipt>(
-    env,
-    path(herd, year, "/skicka", post),
-    "POST",
-    body,
-    SUBMIT_TIMEOUT_MS,
-  );
+  return call<Receipt>(env, path(herd, year, "/skicka", post), "POST", body, {
+    timeout: SUBMIT_TIMEOUT_MS,
+  });
 }
 
 export async function withdrawReport(
@@ -144,7 +140,7 @@ export async function withdrawReport(
     path(herd, year, "/dra-tillbaka", post),
     "POST",
     { revision, reason: reason ?? null },
-    SUBMIT_TIMEOUT_MS,
+    { timeout: SUBMIT_TIMEOUT_MS },
   );
 }
 
@@ -232,6 +228,7 @@ export async function sendPurchasePhotos(
     path(herd, year, "/kop/inskick"),
     "POST",
     body,
+    { isolateDemo: true },
   );
 }
 

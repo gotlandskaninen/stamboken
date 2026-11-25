@@ -5,6 +5,7 @@ import {
   type Locator,
   type Page,
 } from "@playwright/test";
+import { inboxItemsForHerd, takePaperForm } from "../e2e-shared/arsrapport";
 import { loginInline as loginOnce } from "../e2e-shared/auth";
 
 // The yearly report 2025 as different kinds of users, on the synthetic Mellerud herds of `flask seed arsrapport`
@@ -124,19 +125,6 @@ async function storedReport(page: Page, herd: string) {
   );
   expect(res.ok()).toBe(true);
   return res.json();
-}
-
-async function takeItem(page: Page, herd: string) {
-  await page.goto("/stamboken/inkorg");
-  await row(page, herd)
-    .getByRole("button", { name: "Jag tar den" })
-    .first()
-    .click();
-  await page.getByRole("link", { name: "Mata in årsrapporten" }).click();
-  await page.waitForURL(
-    // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- herd is a seeded herd number, not user input
-    new RegExp(`/stamboken/arsrapport/${herd}/2025\\?post=\\d+`),
-  );
 }
 
 // Paper entry: the number goes in the search box, Enter makes a row; then its choice and weight.
@@ -480,7 +468,7 @@ test("7. Typ E: pappersblankett som hjälparen matar in", async ({
   context,
 }) => {
   await loginInline(page, context, USERS.helper);
-  await takeItem(page, "M9005");
+  await takePaperForm(page, "M9005");
 
   // The page reads no phone number from the register: the field is empty and the number is nowhere on it.
   await expect(page.locator("body")).not.toContainText("0700000005");
@@ -513,7 +501,7 @@ test("8. Typ F: rapporterad både digitalt och på papper", async ({
   // Spec 5.5 (Blankett efter digital rapport): the form says "redan rapporterad den ..." and the helper
   // archives the form, or changes the report with a reason. M9006 sent two forms: one is archived, one changes.
   await loginInline(page, context, USERS.helper);
-  await takeItem(page, "M9006");
+  await takePaperForm(page, "M9006");
   await expect(page.getByText(/^Redan rapporterad den /)).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Ändra rapporten" }),
@@ -529,14 +517,14 @@ test("8. Typ F: rapporterad både digitalt och på papper", async ({
   await expect(
     page.getByText("Blanketten för M9006 är arkiverad."),
   ).toBeVisible();
-  await expect(row(page, "M9006")).toHaveCount(1); // the second form
+  await expect(inboxItemsForHerd(page, "M9006")).toHaveCount(1); // the second form
   // The digital report stands.
   await loginInline(page, context, USERS.manager);
   expect((await storedReport(page, "M9006")).report.revision).toBe(1);
 
   // The second form says something else: 2415 died in October. The helper changes the report with a reason.
   await loginInline(page, context, USERS.helper);
-  await takeItem(page, "M9006");
+  await takePaperForm(page, "M9006");
   await page.getByLabel("Varför ändras rapporten?").fill("Pappret skiljer sig");
   await page.getByRole("button", { name: "Ändra rapporten" }).click();
   await expect(rows(page).first()).toBeVisible();
@@ -660,7 +648,7 @@ test("10. Paritet: samma svar på papper och digitalt ger samma data", async ({
   await submitted(page);
 
   await loginInline(page, context, USERS.helper);
-  await takeItem(page, "M9102");
+  await takePaperForm(page, "M9102");
   const order = [2415, 2411, 2412, 2413, 2414, 2520];
   for (const [k, n] of order.entries()) {
     const number = page.getByLabel("Nummer efter M9102-");

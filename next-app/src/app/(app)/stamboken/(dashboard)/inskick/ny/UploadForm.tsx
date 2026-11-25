@@ -1,6 +1,8 @@
 "use client";
 
 import { useRef, useState, useTransition } from "react";
+import { useTranslation } from "react-i18next";
+import { useMode } from "@/lib/mode-context";
 import { useRouter } from "next/navigation";
 import { Autocomplete, TextField } from "@mui/material";
 import type { GenebankHerd } from "@/utils/saleRules";
@@ -26,6 +28,8 @@ export function UploadForm({
   herdOptions?: GenebankHerd[];
 }) {
   const router = useRouter();
+  const mode = useMode();
+  const { t } = useTranslation();
   const { showSnackbar } = useSnackbar();
   const inputRef = useRef<HTMLInputElement>(null);
   const [herd, setHerd] = useState(herds.length === 1 ? herds[0] : "");
@@ -80,7 +84,7 @@ export function UploadForm({
       if (acceptWarnings) fd.set("accept_warnings", "1");
       let res: Awaited<ReturnType<typeof uploadIntyg>>;
       try {
-        res = await uploadIntyg(fd);
+        res = await uploadIntyg(fd, mode);
       } catch {
         // The connection dropped: the call itself rejects. The files stay chosen.
         return setError("Uppladdningen avbröts. Försök igen.");
@@ -106,6 +110,11 @@ export function UploadForm({
   return (
     <section className="sb-card">
       <div className={styles.cardBody}>
+        {mode === "demo" && (
+          <p className={styles.warn} role="note">
+            {t("codeLogin.demoUpload")}
+          </p>
+        )}
         {error && (
           <div role="alert" className={styles.error}>
             {error}

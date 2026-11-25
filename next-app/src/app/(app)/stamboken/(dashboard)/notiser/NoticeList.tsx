@@ -42,6 +42,9 @@ export function NoticeList({
               >
                 {n.text}
                 {n.item_id != null && ` (ärende ${n.item_id})`}
+                {n.individual_number != null &&
+                  n.kind !== "kopare_adresskontroll" &&
+                  ` (${n.individual_number})`}
               </Link>
               <div className="sb-meta">{formatTime(n.created_at)}</div>
             </li>
