@@ -124,6 +124,16 @@ jobs:
             -f .docker/api \
             .
 
+      # The test database is thrown away with the job: skip the disk flushes.
+      - name: Turn off fsync in the test database
+        run: |
+          docker exec ${{ job.services.postgres.id }} psql -U herdbook -d herdbook_test \
+            -c "ALTER SYSTEM SET fsync = off" \
+            -c "ALTER SYSTEM SET synchronous_commit = off" \
+            -c "ALTER SYSTEM SET full_page_writes = off" \
+            -c "SELECT pg_reload_conf()"
+          docker exec ${{ job.services.postgres.id }} psql -U herdbook -d herdbook_test -c "SHOW fsync"
+
       # pytest-split shares the tests out by the durations in
       # app/tests/.test_durations; tests missing there count as average.
       - name: Run tests in container
