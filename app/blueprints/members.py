@@ -49,6 +49,7 @@ from utils.matrikel import (
     is_anonymized,
     membership_recipient,
     parse_postal_fields,
+    query_matrikel_audit,
     set_member_email,
     set_membership_status,
     write_matrikel_audit,
@@ -225,6 +226,33 @@ def list_members():
             "page": page,
             "per_page": per_page,
         }
+    )
+
+
+@members_bp.route("/v2/members/audit", methods=["GET"])
+@json_login_required
+@matrikel_read_required
+def get_matrikel_audit():
+    """The matrikel's change log (#244). Filters: membership_id, action, actor (username or e-mail),
+    from and to (YYYY-MM-DD, both days included), page, per_page (at most 200)."""
+    try:
+        membership_id = _parse_int_arg("membership_id", None, maximum=2_147_483_647)
+        page = _parse_int_arg("page", 1, maximum=2_147_483_647)
+        per_page = _parse_int_arg("per_page", 50, maximum=200)
+        dates = {k: date.fromisoformat(request.args[k]) if request.args.get(k) else None for k in ("from", "to")}
+    except ValueError:
+        return problem(400, "Ogiltig parameter", "Sidor och id är heltal, datum skrivs ÅÅÅÅ-MM-DD.")
+    return jsonify(
+        query_matrikel_audit(
+            full_access=current_user.is_admin or current_user.is_matrikel_admin,
+            membership_id=membership_id,
+            action=request.args.get("action") or None,
+            actor=request.args.get("actor") or None,
+            date_from=dates["from"],
+            date_to=dates["to"],
+            page=page,
+            per_page=per_page,
+        )
     )
 
 

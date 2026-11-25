@@ -322,6 +322,72 @@ def redact_household_from_audits(membership: Membership) -> int:
     return touched
 
 
+def _drop_keys(node, keys):
+    if isinstance(node, dict):
+        return {k: _drop_keys(v, keys) for k, v in node.items() if k not in keys}
+    if isinstance(node, list):
+        return [_drop_keys(v, keys) for v in node]
+    return node
+
+
+def query_matrikel_audit(
+    *, full_access, membership_id=None, action=None, actor=None, date_from=None, date_to=None, page=1, per_page=50
+):
+    """The matrikel's change log for GET /v2/members/audit (#244), newest first.
+
+    `date_from` and `date_to` are dates, both days included. Without `full_access` (a gene bank manager) the payloads
+    lose what GET /v2/members/<id> does not show them: the organisation number and a person's notes. A row about an
+    anonymised person is redacted again on read, should a stored payload have escaped the erasure.
+    """
+    q = (
+        MatrikelAudit.select(MatrikelAudit, User, Membership)
+        .join(User, JOIN.LEFT_OUTER, on=(MatrikelAudit.actor == User.id))  # NULL actor: the nightly anonymisation
+        .switch(MatrikelAudit)
+        .join(Membership)
+    )
+    if membership_id:
+        q = q.where(MatrikelAudit.membership == membership_id)
+    if action:
+        q = q.where(MatrikelAudit.action == action)
+    if actor:
+        q = q.where((User.username == actor) | (User.email == actor))
+    if date_from:
+        q = q.where(MatrikelAudit.created_at >= date_from)
+    if date_to:
+        q = q.where(MatrikelAudit.created_at < date_to + timedelta(days=1))
+    total = q.count()
+    audits = list(q.order_by(MatrikelAudit.created_at.desc(), MatrikelAudit.id.desc()).paginate(page, per_page))
+
+    def person_of(payload):
+        return payload.get("person_id") or payload.get("new_person_id") or payload.get("main_member_id")
+
+    ids = {pid for a in audits if isinstance(pid := person_of(a.payload or {}), int)}
+    persons = {p.id: p for p in Member.select().where(Member.id.in_(list(ids)))} if ids else {}
+    rows = []
+    for a in audits:
+        payload = a.payload or {}
+        person = persons.get(person_of(payload))
+        if person is not None and is_anonymized(person):
+            payload, _ = _redact_node(payload)
+        if not full_access:
+            payload = _drop_keys(payload, {"organization_number"} | ({"notes"} if "person_id" in payload else set()))
+        rows.append(
+            {
+                "id": a.id,
+                "action": a.action,
+                "created_at": a.created_at.astimezone().isoformat(),
+                # the name audit_log's changed_by holds too
+                "actor": {"id": a.actor.id, "name": a.actor.username or a.actor.email} if a.actor_id else None,
+                "membership": {"id": a.membership_id, "member_number": a.membership.member_number},
+                "person": (
+                    {"id": person.id, "name": f"{person.first_name} {person.last_name}".strip()} if person else None
+                ),
+                "payload": payload,
+            }
+        )
+    return {"rows": rows, "total": total, "page": page, "per_page": per_page}
+
+
 VALID_PERSON_ROLES = ("huvudmedlem", "familjemedlem", "skotare")
 
 
