@@ -1,0 +1,211 @@
+"""Tests for flask members link-household (herds that several accounts own) and the owner-role guard."""
+
+import csv
+import os
+import re
+from tempfile import TemporaryDirectory
+
+import utils.data_access as da
+import utils.database as db
+from cli.members import members_cli
+from click.testing import CliRunner
+from flask.cli import ScriptInfo
+from herdbook import APP  # noqa: E402
+
+from tests.database_test import DatabaseTest  # noqa: E402
+
+HEADER = [
+    "First Name [Required]",
+    "Last Name [Required]",
+    "Email Address [Required]",
+    "Password Hash Function [UPLOAD ONLY]",
+    "Recovery Email",
+    "Home Secondary Email",
+    "Work Secondary Email",
+    "Mobile Phone",
+]
+NOTE = "godkänt av huvudmedlemmen muntligt eller per mejl, inhämtat av matrikelansvarig före 2026-11"
+
+
+class TestMembersLinkHousehold(DatabaseTest):
+    def setUp(self):
+        super().setUp()
+        self.runner = CliRunner()
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.workspace = os.path.join(self._tmp.name, "users.csv")
+        self.rows = []
+        self._n = 0
+
+    def _workspace_row(self, account, first, last, home="", recovery="", work=""):
+        self.rows.append([first, last, account, "SHA-1", recovery, home, work, "+46 70 000 00 00"])
+
+    def _run(self, *extra):
+        with open(self.workspace, "w", encoding="utf-8-sig", newline="") as f:
+            csv.writer(f).writerows([HEADER, *self.rows])
+        return self.runner.invoke(
+            members_cli,
+            ["link-household", "--workspace", self.workspace, *extra],
+            obj=ScriptInfo(create_app=lambda: APP),
+        )
+
+    def _plan_value(self):
+        match = re.search(r"^Kontrollvärde: ([0-9a-f]{16})$", self._run().output, re.M)
+        return match.group(1)
+
+    def _apply(self, plan=None):
+        plan = plan or self._plan_value()
+        return self._run("--apply", "--actor-user-id", str(self.admin.id), "--plan", plan)
+
+    def _household(self, number=901, first="Anna", last="Svensson"):
+        membership = db.Membership.create(member_number=number, membership_status="active")
+        main = db.Member.create(membership=membership, role="huvudmedlem", first_name=first, last_name=last)
+        herd = db.Herd.create(genebank=self.genebanks[0], herd=f"G{number}", membership=membership, is_active=True)
+        return membership, main, herd
+
+    def _account(self, fullname, owns=(), email=None):
+        self._n += 1
+        user = da.register_user(
+            email or f"konto{self._n}@example.org", "pass", username=f"k{self._n}", fullname=fullname
+        )
+        for herd in owns:
+            user.add_role("owner", herd.id)
+        return user
+
+    def _added(self, membership):
+        return list(db.Member.select().where(db.Member.membership == membership, db.Member.role == "familjemedlem"))
+
+    def _notices(self):
+        return list(db.MailMessage.select().where(db.MailMessage.kind == "medlemskap.tillagd"))
+
+    def test_main_member_linked_and_household_account_added_as_familjemedlem(self):
+        membership, main, herd = self._household()
+        anna = self._account("Anna Svensson", owns=[herd])
+        bo = self._account("Bo", owns=[herd], email="bo@example.org")
+        self._workspace_row("BO@example.org ", "Bo", "Svensson", home="bo.hemma@example.net", recovery="x@example.net")
+
+        plan = self._run()
+        self.assertEqual(plan.exit_code, 0, plan.output)
+        self.assertIn("Att koppla: 2", plan.output)
+        self.assertIn("ny familjemedlem i medlemskap", plan.output)
+        self.assertIn('"Bo Svensson" "bo.hemma@example.net" (Home Secondary Email)', plan.output)
+        self.assertNotIn("SHA-1", plan.output)
+        self.assertNotIn("+46", plan.output)
+        self.assertEqual(self._added(membership), [])
+
+        result = self._apply()
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("Kopplade: 2", result.output)
+        self.assertEqual(db.Member.get_by_id(main.id).user_id, anna.id)
+        [person] = self._added(membership)
+        self.assertEqual(
+            (person.first_name, person.last_name, person.email, person.user_id, person.notes),
+            ("Bo", "Svensson", "bo.hemma@example.net", bo.id, NOTE),
+        )
+        audit = db.MatrikelAudit.get(db.MatrikelAudit.action == "person_added")
+        self.assertEqual((audit.payload["person_id"], audit.actor_id), (person.id, self.admin.id))
+        [notice] = self._notices()
+        self.assertEqual(notice.recipient_id, person.id)
+
+        again = self._run()
+        self.assertIn("Att koppla: 0, Redan kopplade: 2, Till granskning: 0", again.output)
+
+    def test_recovery_email_when_home_secondary_is_empty(self):
+        membership, _, herd = self._household()
+        self._account("Anna Svensson", owns=[herd])
+        self._account("Bo Svensson", owns=[herd], email="bo@example.org")
+        self._workspace_row("bo@example.org", "Bo", "Svensson", recovery="bo.reserv@example.net", work="w@example.net")
+
+        result = self._apply()
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        [person] = self._added(membership)
+        self.assertEqual(person.email, "bo.reserv@example.net")
+
+    def test_google_email_finds_the_row(self):
+        membership, _, herd = self._household()
+        self._account("Anna Svensson", owns=[herd])
+        bo = self._account("Bo Svensson", owns=[herd], email="privat@example.org")
+        bo.google_email = "bo@gotlandskaninen.se"
+        bo.save()
+        self._workspace_row("bo@gotlandskaninen.se", "Bo", "Svensson", work="bo.jobb@example.net")
+
+        self.assertEqual(self._apply().exit_code, 0)
+        [person] = self._added(membership)
+        self.assertEqual((person.email, person.user_id), ("bo.jobb@example.net", bo.id))
+
+    def test_missing_row_or_secondary_address_is_listed(self):
+        membership, main, herd = self._household()
+        anna = self._account("Anna Svensson", owns=[herd])
+        no_row = self._account("Bo Svensson", owns=[herd], email="bo@example.org")
+        no_address = self._account("Cia Svensson", owns=[herd], email="cia@example.org")
+        self._workspace_row("cia@example.org", "Cia", "Svensson")
+
+        plan = self._run()
+        self.assertIn(f"G901: konto {no_row.id}: kontot finns inte i Workspace-exporten", plan.output)
+        self.assertIn(f"G901: konto {no_address.id}: Workspace-raden saknar reservadress", plan.output)
+
+        result = self._apply()
+
+        self.assertIn("Kopplade: 1", result.output)  # only the main member's own account
+        self.assertEqual(db.Member.get_by_id(main.id).user_id, anna.id)
+        self.assertEqual(self._added(membership), [])
+        self.assertEqual(self._notices(), [])
+
+    def test_address_another_member_logs_in_with_is_listed(self):
+        membership, _, herd = self._household()
+        other, _, _ = self._household(902, first="Eva", last="Ek")
+        db.Member.update(email="upptagen@example.net").where(db.Member.membership == other).execute()
+        self._account("Anna Svensson", owns=[herd])
+        bo = self._account("Bo Svensson", owns=[herd], email="bo@example.org")
+        self._workspace_row("bo@example.org", "Bo", "Svensson", home="upptagen@example.net")
+
+        plan = self._run()
+
+        self.assertIn(f"konto {bo.id}: en annan medlem loggar redan in med adressen (AddressTaken)", plan.output)
+        self._apply()
+        self.assertEqual(self._added(membership), [])
+
+    def test_role_account_and_account_in_two_memberships_are_listed(self):
+        membership, _, herd = self._household()
+        _, _, other_herd = self._household(902, first="Eva", last="Ek")
+        self._account("Anna Svensson", owns=[herd])
+        manager = self._account("Bo Svensson", owns=[herd], email="bo@example.org")
+        manager.add_role("manager", self.genebanks[0].id)
+        two = self._account("Cia Svensson", owns=[herd, other_herd], email="cia@example.org")
+        self._workspace_row("bo@example.org", "Bo", "Svensson", home="bo.hemma@example.net")
+        self._workspace_row("cia@example.org", "Cia", "Svensson", home="cia.hemma@example.net")
+
+        plan = self._run()
+
+        self.assertIn(f"konto {manager.id}: kontot har en roll", plan.output)
+        self.assertIn(f"konto {two.id}: kontot äger besättningar i flera medlemskap", plan.output)
+        self._apply()
+        self.assertEqual(self._added(membership), [])
+
+    def test_no_account_matching_the_main_member_writes_nothing(self):
+        membership, main, herd = self._household()
+        self._account("Bo Svensson", owns=[herd], email="bo@example.org")
+        self._account("Cia Svensson", owns=[herd], email="cia@example.org")
+        self._workspace_row("bo@example.org", "Bo", "Svensson", home="bo.hemma@example.net")
+
+        plan = self._run()
+
+        self.assertIn("G901: inget konto matchar huvudmedlemmen", plan.output)
+        self.assertIn("Att koppla: 0", plan.output)
+
+    def test_changed_plan_writes_nothing(self):
+        membership, main, herd = self._household()
+        self._account("Anna Svensson", owns=[herd])
+        self._account("Bo Svensson", owns=[herd], email="bo@example.org")
+        self._workspace_row("bo@example.org", "Bo", "Svensson", home="bo.hemma@example.net")
+        stale = self._plan_value()
+        self.rows[0][5] = "bo.annan@example.net"  # the export changed after the plan was read
+
+        result = self._apply(plan=stale)
+
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("planen har ändrats", result.output)
+        self.assertIsNone(db.Member.get_by_id(main.id).user_id)
+        self.assertEqual(self._added(membership), [])
