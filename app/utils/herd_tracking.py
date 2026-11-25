@@ -680,7 +680,7 @@ def sale_undo_denial(user, row, active_rows, transfer_herd_ids=None):
     if row.kind != "TRANSFER" or row.voided_at is not None:
         return "Bara en aktiv försäljning kan ångras."
     if row.transfer_id is not None:
-        return f"Överlåtelsen avbryts i överlåtelseflödet. {CONTACT_MANAGER}"
+        return f"Försäljningen kan inte ångras här. {CONTACT_MANAGER}"
     if (
         row.from_herd_id is None
         or row.from_herd.herd in OUTSIDE_GENEBANK_HERDS  # GX1/MX1 owners are never sellers
@@ -860,7 +860,7 @@ def report_void_denial(user, row, active_rows, individual, report_ops):
         return REPORT_LATER_ROW
     if row.kind == "TRANSFER":  # the seller's rules that do not depend on who or when (sale_undo_denial)
         if row.transfer_id is not None:
-            return f"Överlåtelsen avbryts i överlåtelseflödet. {CONTACT_MANAGER}"
+            return f"Försäljningen kan inte ångras här. {CONTACT_MANAGER}"
         if _has_dependent_breeding(row.individual_id, row):
             return "Kaninen har en parning eller kull registrerad efter försäljningen. Genbanksansvarig kan rätta."
     return None

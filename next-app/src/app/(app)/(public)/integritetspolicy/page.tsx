@@ -309,7 +309,7 @@ export default function IntegritetspolicyPage() {
           <Section title="När du köper en kanin av en medlem">
             <p>
               Köper du en genbankskanin av en medlem fyller ni i ett
-              överlåtelsebevis, och ägarbytet registreras i Stamboken Online.
+              försäljningsbevis, och ägarbytet registreras i Stamboken Online.
               Har du själv en genbanksbesättning registreras kaninen på den. Det
               som följer gäller dig som köper utan att ha en genbanksbesättning,
               också om du inte är medlem.

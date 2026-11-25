@@ -1,8 +1,5 @@
 # Undantag för scripts/check-ui-terms.sh: en rad per undantag, "sökväg:regex"
 # (sökväg från repo-roten, ERE som träffraden ska matcha). Kommentera varje rad.
-# Överlåtelsebeviset är papperets namn (ADR-0016), inte ordet för en försäljning.
-# Överlåtelsebevis är namnet som står tryckt på pappersblanketten köparen får, och blanketten hänvisar hit.
-next-app/src/app/(app)/stamboken/(dashboard)/arsrapport/PurchaseDialog.tsx:([Öö]verlåtelsebevis(et)?\b)
 # "förslag", "torrkörning" och "kodinnehavare" står inte i text till medlemmen i årsrapporten
 # (spec 5.1). Dagens träffar är andra funktioner: ett provparningsförslag och inläsningskönens
 # tolkningsförslag, som handläggaren ser och som inte är ett försäljningsförslag.

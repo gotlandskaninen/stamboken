@@ -16,7 +16,7 @@ from tests.test_inbox_mail import InboxMailTest  # noqa: E402
 
 NOW = datetime(2027, 11, 14, 3, 45, tzinfo=timezone.utc)
 MINUTE = timedelta(minutes=1)
-NOTE = "Överlåtelsebeviset till G9001-2512 saknas."  # synthetic
+NOTE = "Försäljningsbeviset till G9001-2512 saknas."  # synthetic
 
 
 class ReminderTest(InboxMailTest):

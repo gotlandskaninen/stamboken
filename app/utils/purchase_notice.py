@@ -47,14 +47,14 @@ KIND = "kopanmalan"
 _PURCHASE_LOCK = 0x48424B50  # "HBKP": classid of the advisory lock on a purchase of a rabbit into a herd
 MATCH_DAYS = 14  # mitt val: a notice and a sale proposal of the same rabbit this close in date are one sale
 NOT_IN_STAMBOKEN = (  # S7: the dialog then sends the photos (send_photos)
-    "Kaninen finns inte i Stamboken än. Skicka foto av intyget, och av överlåtelsebeviset om du har det. "
+    "Kaninen finns inte i Stamboken än. Skicka foto av intyget, och av försäljningsbeviset om du har det. "
     "Genbanksansvarig registrerar kaninen och för över den till dig."
 )
 BEVIS_FROM_YEAR = 2027
 PHOTO_TYPES = ("bevis", "intyg")  # what a notice's photo shows: the transfer proof, or the rabbit's certificate
 REGISTERED = "Köpet är registrerat"
 MAX_PHOTOS = 2  # S7: the certificate, and the transfer proof if the buyer has it
-PHOTO_REQUIRED = "Ladda upp ett foto av intyget eller överlåtelsebeviset."
+PHOTO_REQUIRED = "Ladda upp ett foto av intyget eller försäljningsbeviset."
 CASE_DAYS = 14  # S8: a closed item stays in the report's list this long
 
 
@@ -146,7 +146,7 @@ def _check_photo_type(doc_type, year):
         if doc_type != "intyg":
             raise ArsrapportError(400, "Ladda upp ett foto av intyget.", field="doc_type")
     elif doc_type not in PHOTO_TYPES:
-        raise ArsrapportError(400, "Välj om fotot visar överlåtelsebeviset eller intyget.", field="doc_type")
+        raise ArsrapportError(400, "Välj om fotot visar försäljningsbeviset eller intyget.", field="doc_type")
 
 
 def report_purchase(

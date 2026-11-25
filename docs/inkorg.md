@@ -152,7 +152,7 @@ Allt annat nekas med 409. `ny` och `vantar_uppfodare` kan inte sättas med `…/
    som finns. Visar intyget också en försäljning, registrera den nu (`…/overlat`): ett dokument som
    är klart går inte att spara eller sälja från.
 4. Bekräfta vridning och maskning (`…/maskning`). Kopian läggs på kaninen och dokumentet blir klart.
-5. Ett överlåtelsebevis: typen `bevis`, sedan `…/overlat`. Beviset blir klart med försäljningen.
+5. Ett försäljningsbevis: typen `bevis`, sedan `…/overlat`. Beviset blir klart med försäljningen.
 6. Ett foto som inte ska sparas: `dismissed: true`.
 7. När det sista dokumentet är klart eller avfärdat blir posten `klar`, och uppladdaren får en
    notis och ett mejl.
@@ -223,7 +223,7 @@ Kölistan och de flesta anrop som ändrar en post svarar med posten i listform:
 - Kölistan visar ämnet från det ursprungliga mejlet i `subject`, eller `null` när ämnet saknas.
   För matchad mejlavsändare finns medlemmens namn i `member_name`. Listan visar kontots eller medlemmens
   namn och annars ”okänd avsändare”. Avsändaradressen finns i detaljsvaret.
-- `missing_proof`: en försäljning har registrerats utan överlåtelsebevis ("bevis saknas").
+- `missing_proof`: en försäljning har registrerats utan försäljningsbevis ("bevis saknas").
 - `stalled`: "står still". Nattjobbet sätter den på en post som varit `tagen` i 14 dagar utan någon
   händelse (att öppna posten eller visa originalet räknas inte), och tar bort den när något har hänt.
   Genbanksansvariga i postens genbank får notisen `star_still`, en gång för varje gång posten stannar.
@@ -291,7 +291,7 @@ för en post med `ref_type` `sale_proposal`, vars statusvy avgör förslaget, oc
   (klart utan att något sparades).
 - `quality` och `warnings`: se [Ladda upp](#ladda-upp).
 - `duplicates`: andra dokument i kön med exakt samma bild. Visa en varning.
-- `doc_type`: `intyg` (standard), `bevis` (överlåtelsebevis), `arsblankett` eller `annat`.
+- `doc_type`: `intyg` (standard), `bevis` (försäljningsbevis), `arsblankett` eller `annat`.
 - `cert_format`: `null` eller `handskrivet` (det gröna, format 1), `datorskrivet` (format 2),
   `v1_pdf` (utskriven v1-PDF), `intyg_b` (det nya tomma intyget B), `digitalt_v2` (digitalt intyg
   med QR-kod).
@@ -848,7 +848,7 @@ En köpare utanför föreningen:
 **Vem:** handläggaren, med samma krav på posten som för `…/spara` men för alla dokumenttyper.
 En hjälpare får sälja kaniner i sin genbank som en ägare får.
 
-**Bevis.** Är dokumentet ett överlåtelsebevis (`doc_type: "bevis"`) blir det klart och kopplas
+**Bevis.** Är dokumentet ett försäljningsbevis (`doc_type: "bevis"`) blir det klart och kopplas
 till försäljningens rad (`herd_tracking_id`). Annars registreras försäljningen ändå, och posten
 får `missing_proof: true` ("bevis saknas"). Kommer beviset senare, eller är försäljningen redan
 registrerad någon annanstans (till exempel på kaninens sida), skickas det med `…/overlat` med samma

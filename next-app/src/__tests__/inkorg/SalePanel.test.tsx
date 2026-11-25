@@ -96,7 +96,7 @@ describe("SalePanel with a buyer outside the association", () => {
     ); // the queue keeps its compact fields
     expect(
       screen.getByText(
-        "Ge köparen överlåtelsebeviset. Där står föreningens information till köparen.",
+        "Ge köparen försäljningsbeviset. Där står föreningens information till köparen.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/sparas inte/)).toBeNull();
