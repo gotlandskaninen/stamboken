@@ -397,24 +397,13 @@ def _masked_actor_rows():
     return None if condition is None else fn.COALESCE(condition & self_service, False)
 
 
-def _erased_households(membership_ids) -> set[int]:
-    """The memberships whose household has ever been erased: a person_anonymized row after which no person was active.
-
-    anonymize_person() erases the household as its last active person goes, and writes no other marker. A person was
-    active at that moment if added before it and not ended by that day; an end the same day counts as before, which
-    errs towards masking.
-    """
-    if not membership_ids:
-        return set()
-    active_then = Member.select().where(
-        Member.membership == MatrikelAudit.membership,
-        Member.created_at <= MatrikelAudit.created_at,
-        Member.end_date.is_null() | (Member.end_date > fn.DATE(MatrikelAudit.created_at)),
-    )
-    rows = MatrikelAudit.select(MatrikelAudit.membership).where(
-        MatrikelAudit.membership.in_(list(membership_ids)),
-        MatrikelAudit.action == "person_anonymized",
-        ~fn.EXISTS(active_then),
+def _memberships_with_anonymised(membership_ids) -> set[int]:
+    """The memberships where any person has been anonymised. Their household values in the log may name her (a former
+    billing recipient, an address she shared), and the log cannot tell whose they were."""
+    rows = Member.select(Member.membership).where(
+        Member.membership.in_(list(membership_ids)),
+        Member.first_name == ANONYMIZED_FIRST_NAME,
+        Member.last_name == ANONYMIZED_LAST_NAME,
     )
     return {r.membership_id for r in rows}
 
@@ -438,8 +427,8 @@ def query_matrikel_audit(
     gene bank manager) the payloads lose what GET /v2/members/<id> does not show them: the organisation number and a
     person's notes. A row about an anonymised person is redacted again on read, should a stored payload have escaped
     the erasure, user_id included. An anonymised person's former account is shown as REDACTED_VALUE as actor on the
-    rows _masked_actor_rows() names, and the actor filter skips those rows. A membership whose household has ever
-    been erased has the values of HOUSEHOLD_PII_KEYS and payment_note masked in all its rows, for every role: the keys
+    rows _masked_actor_rows() names, and the actor filter skips those rows. A membership where any person has been
+    anonymised has the values of HOUSEHOLD_PII_KEYS and payment_note masked in all its rows, for every role: the keys
     stay, so the change shows, and today's values are on the membership page.
     """
     masked = _masked_actor_rows()
@@ -480,7 +469,7 @@ def query_matrikel_audit(
 
     ids = {pid for a in audits if isinstance(pid := person_of(a.payload or {}), int)}
     persons = {p.id: p for p in Member.select().where(Member.id.in_(list(ids)))} if ids else {}
-    erased = _erased_households({a.membership_id for a in audits})
+    erased = _memberships_with_anonymised({a.membership_id for a in audits})
     rows = []
     for a in audits:
         payload = a.payload or {}

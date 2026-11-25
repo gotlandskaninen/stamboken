@@ -226,10 +226,32 @@ class TestMatrikelAudit(MatrikelApiTest):
                 masked = matrikel.REDACTED_VALUE
                 self.assertEqual(newest, {"before": {"notes": masked}, "after": {"notes": masked}})
 
-    def test_household_with_an_active_person_is_not_masked(self):
-        self._billing_row(minutes_before_now=5)
-        _mk_person(self.ms, "Vera", "Testsson", role="familjemedlem")
+    def test_former_billing_recipient_is_masked_while_others_stay(self):
+        """Codex #248 r7: the recipient changes, the old one is anonymised, the new one stays active."""
+        new_recipient = _mk_person(self.ms, "Vera", "Testsson", "vera@example.com", role="familjemedlem")
+        matrikel.write_matrikel_audit(
+            self.admin,
+            "membership_updated",
+            self.ms,
+            {
+                "before": {"billing_name": "Tova Testsson", "billing_email": "tova.faktura@example.com"},
+                "after": {"billing_name": "Vera Testsson", "billing_email": "vera@example.com"},
+            },
+        )
         matrikel.anonymize_person(db.Member.get_by_id(self.person.id), self.matrikel_user)
+        self.assertIsNone(db.Member.get_by_id(new_recipient.id).end_date)  # the household is not erased
+        for username in ("man", "admin"):
+            with self.subTest(username=username):
+                self.client.get("/api/logout")
+                self.login(username)
+                text = self.get(f"membership_id={self.ms.id}&action=membership_updated").get_data(as_text=True)
+                for value in ("Tova", "tova.faktura", "Vera Testsson", "vera@example.com"):
+                    self.assertNotIn(value, text)
+
+    def test_membership_without_anonymised_person_is_not_masked(self):
+        self._billing_row()
+        _mk_person(self.ms, "Vera", "Testsson", role="familjemedlem")
+        db.Member.update(end_date=date.today()).where(db.Member.id == self.person.id).execute()  # ended, not erased
         self.login("man")
         self.assertIn("Fakturagatan 9", self.get(f"membership_id={self.ms.id}").get_data(as_text=True))
 
