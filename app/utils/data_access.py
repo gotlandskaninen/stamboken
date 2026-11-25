@@ -41,6 +41,7 @@ from utils.database import Herd  # isort: skip
 from utils.database import HerdTracking  # isort: skip
 from utils.database import Individual  # isort: skip
 from utils.database import Member  # isort: skip
+from utils.database import Membership  # isort: skip
 from utils.database import User  # isort: skip
 from utils.database import Weight  # isort: skip
 from utils.database import next_individual_number  # isort: skip
@@ -1172,14 +1173,35 @@ def _is_int_id(value):
     return isinstance(value, int) and not isinstance(value, bool)
 
 
-def _in_herd_membership(user_id, herd_id):
-    """Whether the account is linked to an active person in the membership the herd belongs to (the user row is
-    locked by the caller, and every link and unlink locks it too)."""
-    return (
+def _owner_refused(user_id, herd_id):
+    """Checked only when the owner role is granted (existing owner roles stay): the reason the account may not own the
+    herd, or None when it is linked to an active person in the herd's active membership. The caller holds the user
+    row lock, which every link and unlink takes too."""
+    herd = Herd.get_or_none(Herd.id == int(herd_id))
+    if herd is None or herd.membership_id is None:
+        return ValidationError(
+            "herd-without-membership",
+            "Besättningen är inte kopplad till något medlemskap. "
+            "Koppla den i matrikeln innan du ger rollen besättningsägare.",
+        )
+    in_membership = (
         Member.select()
-        .join(Herd, on=(Herd.membership == Member.membership))
-        .where(Herd.id == int(herd_id), Member.user == user_id, Member.end_date.is_null(True))
+        .join(Membership)
+        .where(
+            Member.membership == herd.membership_id,
+            Member.user == user_id,
+            Member.end_date.is_null(True),
+            Membership.membership_status == "active",
+        )
         .exists()
+    )
+    if in_membership:
+        return None
+    return ValidationError(
+        "owner-requires-person",
+        "Rollen besättningsägare kan bara ges till ett konto som är kopplat till en person "
+        "(huvudmedlem, familjemedlem eller skötare) i besättningens medlemskap, och medlemskapet måste vara aktivt. "
+        "Koppla kontot till en person i medlemskapet först.",
     )
 
 
@@ -1301,13 +1323,9 @@ def update_role(operation, user_uuid=None, skip_role_check=False):
                     target_user.remove_role(operation["role"], operation.get(target))
                     updated = True
                 elif not has_role and operation["action"] == "add":
-                    if operation["role"] == "owner" and not _in_herd_membership(target_user.id, operation["herd"]):
-                        raise ValidationError(
-                            "owner-requires-person",
-                            "Rollen besättningsägare kan bara ges till ett konto som är kopplat till en person "
-                            "(huvudmedlem, familjemedlem eller skötare) i besättningens medlemskap. "
-                            "Koppla kontot till en person i medlemskapet först.",
-                        )
+                    if operation["role"] == "owner":
+                        if refused := _owner_refused(target_user.id, operation["herd"]):
+                            raise refused
                     if (
                         operation["role"] in ROLE_LEVELS
                         and not settings.service.allow_role_password_login
