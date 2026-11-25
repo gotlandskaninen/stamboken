@@ -14,7 +14,16 @@ vi.mock("@/redux/api/apiSlice", () => ({
 type ChartProps = {
   options: {
     yaxis: { labels: { formatter: (v: number) => string } };
-    tooltip: { y: { formatter: (v: number | null) => string } };
+    tooltip: {
+      y: {
+        formatter: (
+          v: number | null,
+          opts?: { dataPointIndex: number },
+        ) => string;
+      };
+    };
+    markers: { discrete: { dataPointIndex: number }[] };
+    annotations: { xaxis: unknown[] };
   };
   series: { name: string; data: (number | null)[] }[];
 };
@@ -30,7 +39,7 @@ import TrendChart from "@/components/genetics/TrendChart";
 
 const NBSP = "\u00a0";
 
-const year = (y: number, ne: number | null) => ({
+const year = (y: number, ne: number | null, n: number | null = 40) => ({
   year: y,
   snapshot_date: `${y + 1}-04-01`,
   population_size: 300,
@@ -38,6 +47,8 @@ const year = (y: number, ne: number | null) => ({
   mean_inbreeding: 0.0251,
   mean_kinship: 0.0302,
   effective_population_size: ne,
+  ne_se: ne == null ? null : 4.4,
+  ne_n: ne == null ? 0 : n,
   founder_equivalents: 21.74,
   data_quality: "high",
 });
@@ -66,6 +77,8 @@ describe("TrendChart", () => {
     renderChart([year(2024, 71.04), year(2025, 70.66)]);
     expect(chart?.series).toEqual([{ name: "Ne", data: [71.04, 70.66] }]);
     expect(chart?.options.yaxis.labels.formatter(70.66)).toBe("71");
+    // Never undefined: an update with annotations undefined drops the axes in ApexCharts.
+    expect(chart?.options.annotations).toEqual({ xaxis: [] });
 
     fireEvent.click(
       screen.getByRole("button", { name: "Medelsläktskap (MK)" }),
@@ -78,6 +91,22 @@ describe("TrendChart", () => {
     fireEvent.click(screen.getByRole("button", { name: "FE" }));
     expect(chart?.series).toEqual([{ name: "FE", data: [21.74, 21.74] }]);
     expect(chart?.options.yaxis.labels.formatter(21.74)).toBe("21,7");
+  });
+
+  it("shows Ne with its uncertainty and marks years from few rabbits hollow", () => {
+    renderChart([year(2015, 15.2, 12), year(2016, 14.3, 29), year(2017, 30.6)]);
+    const { tooltip, markers } = chart!.options;
+    expect(tooltip.y.formatter(15.2, { dataPointIndex: 0 })).toBe(
+      "15 ± 4, 12 kaniner",
+    );
+    expect(markers.discrete.map((m) => m.dataPointIndex)).toEqual([0, 1]);
+    expect(
+      screen.getByText("Ihålig punkt: osäker skattning, färre än 30 kaniner."),
+    ).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "FE" }));
+    expect(chart!.options.markers.discrete).toEqual([]);
+    expect(screen.queryByText(/Ihålig punkt/)).toBeNull();
   });
 
   it("says the values are on their way when no year has Ne yet", () => {

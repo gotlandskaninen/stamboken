@@ -2505,6 +2505,7 @@ def population_metrics(g_id):
     - mean_equiv_gen: Average equivalent complete generations
     - mean_full_gen: Average full generations
     - mean_max_gen: Average maximum generations
+    - reference_start: ISO date from which life signs count for the reference population
     """
     try:
         genebank_id = int(g_id)
@@ -2515,7 +2516,9 @@ def population_metrics(g_id):
             return jsonify({"status": "error", "message": "Åtkomst nekad"}), 403
 
         metrics = get_population_metrics(genebank_id)
-        return jsonify(metrics)
+        # Outside the memo: the start moves with the date (a round closing), not with the pedigree.
+        start = genetics.live_start(datetime.date.today())
+        return jsonify({**metrics, "reference_start": start.isoformat()})
     except Exception as ex:
         APP.logger.error(f"Could not calculate population metrics: {ex}")
         return jsonify({"error": "Error calculating population metrics"}), 500

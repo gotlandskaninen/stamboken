@@ -53,6 +53,7 @@ from utils.pedigree_math import band_for, mk_to_reference
 from utils.reference_population import (
     CURRENT_DEFINITION,
     live_members,
+    live_start,  # noqa: F401 — the population-metrics endpoint reports it
     reference_population_start,  # noqa: F401 — re-exported for existing callers
 )
 from utils.reference_population import members as population_members
@@ -795,6 +796,8 @@ def get_genetics_trends(genebank_id: int, start_year: int | None = None, end_yea
             "mean_inbreeding": row.mean_inbreeding,
             "mean_kinship": row.mean_kinship,
             "effective_population_size": row.effective_population_size,
+            "ne_se": row.ne_se,
+            "ne_n": row.ne_n,
             "founder_equivalents": row.founder_equivalents,
             "data_quality": row.data_quality,
             "definition_version": row.definition_version,
@@ -911,6 +914,7 @@ def _history_rows_on(snap, version, births, years):
         mk = mk_to_reference(snap.sire, snap.dam, snap.F, mask)
         mean_mk = float(mk[0][mask].mean()) if mk is not None else None
         member_ids = [snap.ids[i] for i in np.flatnonzero(mask)]
+        ne = calculate_realised_ne(snap.F[mask], snap.gen_equiv[mask])
         out.append(
             {
                 "report_year": year,
@@ -923,7 +927,9 @@ def _history_rows_on(snap, version, births, years):
                 "mean_kinship": mean_mk,
                 "fge": 1.0 / (2.0 * mean_mk) if mean_mk else None,
                 "founder_equivalents": _founder_equivalents(sire, dam, founders, mask) if member_ids else None,
-                "effective_population_size": calculate_realised_ne(snap.F[mask], snap.gen_equiv[mask])["ne"],
+                "effective_population_size": ne["ne"],
+                "ne_se": ne["ne_se"],
+                "ne_n": ne["ne_n"],
                 "population_size": sum(1 for b in births.values() if b is None or b <= as_of),
                 "data_quality": "high" if year >= 2015 else "medium" if year >= 2005 else "low",
             }

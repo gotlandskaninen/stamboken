@@ -6,12 +6,13 @@ import { ThemeProvider, createTheme } from "@mui/material/styles";
 const metricsQuery = vi.fn();
 const foundersQuery = vi.fn();
 const atRiskQuery = vi.fn();
+const trendsQuery = vi.fn(() => ({ data: [] as object[], isLoading: false }));
 
 vi.mock("@/redux/api/apiSlice", () => ({
   useFetchPopulationMetricsQuery: () => metricsQuery(),
   useFetchFounderStatisticsQuery: () => foundersQuery(),
   useFetchFoundersAtRiskQuery: () => atRiskQuery(),
-  useFetchGeneticsTrendsQuery: () => ({ data: [], isLoading: false }),
+  useFetchGeneticsTrendsQuery: () => trendsQuery(),
 }));
 
 import OverviewTab from "@/components/genetics/OverviewTab";
@@ -85,7 +86,8 @@ describe("OverviewTab", () => {
     expect(screen.getByText("75 ± 5")).toBeDefined();
     expect(screen.getByText("26,3")).toBeDefined();
     expect(screen.getByText("2,6 %")).toBeDefined();
-    expect(screen.getByText("under 5 %")).toBeDefined();
+    expect(screen.getByText("stängda år: –")).toBeDefined(); // no closed year yet
+    expect(screen.queryByText(/under 5|5–10|över 10/)).toBeNull();
     // The card and the table count the same founderdjur.
     expect(
       screen.getByText(
@@ -100,18 +102,37 @@ describe("OverviewTab", () => {
     expect(screen.queryByText(/81/)).toBeNull();
   });
 
-  it("bands MK on the value as shown", () => {
-    for (const [mk, shown, band] of [
-      [0.0494, "4,9 %", "under 5 %"],
-      [0.0499, "5,0 %", "5–10 %"],
-      [0.1004, "10,0 %", "5–10 %"],
-      [0.1012, "10,1 %", "över 10 %"],
-    ] as const) {
-      renderTab({ m: { ...metrics, mean_kinship: mk } });
-      expect(screen.getByText(shown)).toBeDefined();
-      expect(screen.getByText(band)).toBeDefined();
-      cleanup();
-    }
+  it("compares the two latest closed years on one rule, without a verdict", () => {
+    trendsQuery.mockReturnValueOnce({
+      data: [
+        { year: 2023, mean_kinship: 0.022 },
+        { year: 2024, mean_kinship: 0.0289 },
+        { year: 2025, mean_kinship: 0.0302 },
+      ],
+      isLoading: false,
+    });
+    renderTab();
+    expect(screen.getByText("2,6 %")).toBeDefined(); // today
+    expect(
+      screen.getByText("2024: 2,9 % · 2025: 3,0 % (stängda år)"),
+    ).toBeDefined();
+    cleanup();
+
+    trendsQuery.mockReturnValueOnce({
+      data: [{ year: 2025, mean_kinship: null }],
+      isLoading: false,
+    });
+    renderTab();
+    expect(screen.getByText("2025: – (stängt år)")).toBeDefined();
+  });
+
+  it("states the reference window's first day in Swedish", () => {
+    renderTab({ m: { ...metrics, reference_start: "2025-01-01" } });
+    expect(
+      screen.getByText(
+        "levande, med intyg, i en aktiv besättning, rapporterade sedan 1 januari 2025",
+      ),
+    ).toBeDefined();
   });
 
   it("shows – and a sentence for an empty genebank, never a healthy zero", () => {

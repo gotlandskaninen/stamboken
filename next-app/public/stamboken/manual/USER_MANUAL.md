@@ -967,27 +967,32 @@ första anropet och kan ta upp till en minut.
    1 %, och om hur många founderdjur som har bara 1 bärare kvar. Finns det founderdjur
    utan bärare i beräkningen men med möjliga bärare att leta upp, får de en egen rad. En
    bock betyder att läget är bra, en varningstriangel att du ska hålla ögonen på det och
-   ett utropstecken att något behöver göras. **Se vilka** går till tabellen Founderdjurens läge. Sedan
-   kommer nyckeltalen **Kaniner i beräkningen**, **Effektiv populationsstorlek (Ne)**
-   (målet är minst 50, helst 100), **Effektivt antal founderdjur (FE)** och
-   **Medelsläktskap (MK)**, diagrammet **Founderdjur med störst andel av generna**,
-   rutan **Inavel** med genomsnittlig inavel (F) och inavelsökning per generation (ΔF),
-   **Genetiska trender** med ett mått i taget och tabellen **Founderdjurens läge**.
-   Tabellen visar först founderdjuren med 1 bärare kvar, sedan de utan bärare som har
-   kaniner att leta efter (kaniner utan dödsdatum som inte är med i beräkningen), sedan
-   2–3 bärare och Liten andel. Knappen **Visa N till** visar resten: Ok och de utan
-   bärare där det inte finns någon kanin att leta efter. Numren på founderdjuren och
-   bärarna är länkar till kaninernas sidor. Founderdjur är rasens
-   ursprungsdjur, kaniner utan kända föräldrar i stamboken. Korten visar läget i dag;
-   trenden har ett värde per stängd årsrapportering.
+   ett utropstecken att något behöver göras. **Se vilka** går till tabellen
+   Founderdjurens läge. Sedan kommer nyckeltalen **Kaniner i beräkningen** (med datumet
+   som räkningen börjar från), **Effektiv populationsstorlek (Ne)** (målet är minst 50,
+   helst 100), **Effektivt antal founderdjur (FE)** och **Medelsläktskap (MK)**. Det
+   finns ingen gräns för vad som är ett högt medelsläktskap, så kortet visar i stället
+   de två senaste stängda åren under dagens tal; de räknas på varje års kaniner och
+   jämförs med varandra, inte med dagens tal. Sedan kommer diagrammet **Founderdjur med
+   störst andel av generna**, rutan **Inavel** med genomsnittlig inavel (F) och
+   inavelsökning per generation (ΔF), **Genetiska trender** med ett mått i taget och
+   tabellen **Founderdjurens läge**. Tabellen visar först founderdjuren med 1 bärare
+   kvar, sedan de utan bärare som har kaniner att leta efter (kaniner utan dödsdatum som
+   inte är med i beräkningen), sedan 2–3 bärare och Liten andel. Knappen **Visa N till**
+   visar resten: Ok och de utan bärare där det inte finns någon kanin att leta efter.
+   Numren på founderdjuren och bärarna är länkar till kaninernas sidor. Founderdjur är
+   rasens ursprungsdjur, kaniner utan kända föräldrar i stamboken. Korten visar läget i
+   dag; trenden har ett värde per stängd årsrapportering. I trenden för Ne är en ihålig
+   punkt en osäker skattning, från färre än 30 kaniner; för musen över punkten så syns
+   Ne med osäkerheten och antalet kaniner.
 3. **Avelsprioritet** – kaninerna sorterade efter hur viktiga de är för aveln:
    **Högsta**, **Hög** eller **Övriga**. Tabellen har **Individnummer** (en länk till
    kaninens sida), **Namn**, **Besättning** (en länk till besättningens sida, med
    uppfödarens kontaktuppgifter), **Kön**, **Född**, **Ovanliga gener (0–100)**, **Unika
    gener** och **Skäl**, som står i sin helhet. Knapparna **Högsta (N)**, **Hög (N)** och
-   **Övriga (N)** slår av och på nivåerna; en bock visar vilka som är på. **Sortera per besättning** samlar varje
-   besättnings kaniner inom varje nivå, så att du ser vilka uppfödare du ska kontakta om
-   kaninerna med högsta prioritet. **Ladda ner CSV** sparar listan med de nivåer som är
+   **Övriga (N)** slår av och på nivåerna; en bock visar vilka som är på. **Sortera per
+   besättning** samlar varje besättnings kaniner inom varje nivå, så att du ser vilka
+   uppfödare du ska kontakta om kaninerna med högsta prioritet. **Ladda ner CSV** sparar listan med de nivåer som är
    på och i den ordning som Sortera per besättning ger, med svenska rubriker, i en fil
    som Excel öppnar. Varje nedladdning loggas i aktivitetsloggen: vem, när och vilka
    kaniner som fanns i filen. I testmiljön går listan inte att ladda ner. På en smal
@@ -997,7 +1002,8 @@ första anropet och kan ta upp till en minut.
    (1 = utmärkt, 6 = dålig) och **Skäl**.
 
 Panelen **Förklaringar** på varje flik förklarar förkortningarna och vilka kaniner som är
-med i beräkningen. Frågetecknen vid rubrikerna ger samma text som verktygstips; du når
+med i beräkningen. Regeln för vilka kaniner som räknas är preliminär tills styrelsen har
+beslutat. Frågetecknen vid rubrikerna ger samma text som verktygstips; du når
 dem också med tabbtangenten. Står det under Genetiska trender att värdena för Ne räknas
 fram, laddar du om sidan om en stund.
 

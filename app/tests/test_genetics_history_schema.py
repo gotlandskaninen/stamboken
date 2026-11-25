@@ -23,6 +23,8 @@ class TestGeneticsHistorySchema(DatabaseTest):
             "pedigree_version",
             "fge",
             "effective_population_size",
+            "ne_se",
+            "ne_n",
         ):
             self.assertIn(name, cols)
 
@@ -43,14 +45,17 @@ class TestGeneticsHistorySchema(DatabaseTest):
         self.assertIn((33, 34), db.MIGRATIONS)
 
     def test_replay_54_to_55_adds_the_history_ne(self):
-        """A database stamped at 54 gets the nullable Ne column; replaying again changes nothing."""
+        """A database stamped at 54 gets nullable Ne, standard error and N columns; a second replay changes nothing."""
         self.addCleanup(db.check_migrations)
         rewind_migrations(55)
-        db.DATABASE.execute_sql(f'ALTER TABLE "{self.table}" DROP COLUMN IF EXISTS effective_population_size')
+        for name in ("effective_population_size", "ne_se", "ne_n"):
+            db.DATABASE.execute_sql(f'ALTER TABLE "{self.table}" DROP COLUMN IF EXISTS {name}')
 
         db.check_migrations()
         cols = {c.name: c for c in db.DATABASE.get_columns(self.table)}
-        self.assertTrue(cols["effective_population_size"].null)
+        for name, data_type in (("effective_population_size", "real"), ("ne_se", "real"), ("ne_n", "integer")):
+            self.assertTrue(cols[name].null, name)
+            self.assertEqual(cols[name].data_type, data_type, name)
 
         rewind_migrations(55)  # the column is there now: the replay must not add it twice
         db.check_migrations()

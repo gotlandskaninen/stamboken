@@ -24,6 +24,14 @@ const Chart = dynamic(() => import("react-apexcharts"), {
 
 type MetricKey = "ne" | "fe" | "mk" | "f";
 
+// Fewer rabbits than this behind a year's Ne give a shaky estimate (rp.MIN_HISTORY_MEMBERS).
+const RELIABLE_NE_N = 30;
+
+const neWithUncertainty = (d: TrendDataPoint) =>
+  `${decimal(d.effective_population_size as number)}` +
+  (d.ne_se != null ? ` ± ${decimal(d.ne_se)}` : "") +
+  (d.ne_n != null ? `, ${decimal(d.ne_n)} kaniner` : "");
+
 // One metric at a time: two units never share a plot.
 const metrics: Record<
   MetricKey,
@@ -67,6 +75,17 @@ const TrendChart = ({ genebankId }: TrendChartProps) => {
   const metric = metrics[metricKey];
   const values = data.map((d) => d[metric.key] as number | null);
   const known = values.filter((v) => v != null).length;
+  // Ne only: years estimated from few rabbits get a hollow marker.
+  const shaky =
+    metricKey === "ne"
+      ? data.flatMap((d, i) =>
+          d.effective_population_size != null &&
+          d.ne_n != null &&
+          d.ne_n < RELIABLE_NE_N
+            ? [i]
+            : [],
+        )
+      : [];
   const categories = data.map((d) => d.year.toString());
   const firstReliableYear = data.find((d) => d.data_quality !== "low")?.year;
   const hasLowQuality =
@@ -84,7 +103,16 @@ const TrendChart = ({ genebankId }: TrendChartProps) => {
     grid: { borderColor: theme.palette.line.faint },
     theme: { mode: theme.palette.mode },
     stroke: { width: 2, curve: "straight" },
-    markers: { size: 4 },
+    markers: {
+      size: 4,
+      discrete: shaky.map((i) => ({
+        seriesIndex: 0,
+        dataPointIndex: i,
+        size: 4,
+        fillColor: theme.palette.background.paper,
+        strokeColor: theme.palette.skog.main,
+      })),
+    },
     xaxis: {
       categories,
       title: { text: "År" },
@@ -104,12 +132,19 @@ const TrendChart = ({ genebankId }: TrendChartProps) => {
     colors: [theme.palette.skog.main],
     tooltip: {
       y: {
-        formatter: (v: number | null) => (v == null ? "–" : metric.format(v)),
+        formatter: (v: number | null, opts?: { dataPointIndex: number }) =>
+          v == null
+            ? "–"
+            : metricKey === "ne" && opts
+              ? neWithUncertainty(data[opts.dataPointIndex])
+              : metric.format(v),
       },
     },
-    annotations: hasLowQuality
-      ? {
-          xaxis: [
+    // Always an object: an update with annotations undefined makes ApexCharts throw
+    // (it reads annotations.images) and drop the axes.
+    annotations: {
+      xaxis: hasLowQuality
+        ? [
             {
               x: categories[0],
               x2: String(firstReliableYear),
@@ -119,9 +154,9 @@ const TrendChart = ({ genebankId }: TrendChartProps) => {
                 style: { fontSize: "10px" },
               },
             },
-          ],
-        }
-      : undefined,
+          ]
+        : [],
+    },
     legend: { show: false },
   };
 
@@ -168,6 +203,16 @@ const TrendChart = ({ genebankId }: TrendChartProps) => {
           <Typography variant="body2" color="textSecondary">
             Inga värden för {metric.name} de här åren ännu. Efter en uppdatering
             räknas de fram i bakgrunden, så ladda om sidan om en stund.
+          </Typography>
+        )}
+
+        {shaky.length > 0 && (
+          <Typography
+            variant="caption"
+            color="textSecondary"
+            sx={{ mt: 1, display: "block" }}
+          >
+            Ihålig punkt: osäker skattning, färre än {RELIABLE_NE_N} kaniner.
           </Typography>
         )}
 

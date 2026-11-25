@@ -157,13 +157,16 @@ def _alive_by_note(row: dict, as_of: date) -> bool:
     return as_of < birth + timedelta(days=MAX_RABBIT_AGE_DAYS)
 
 
+def live_start(today: date, definition: ReferenceDefinition = CURRENT_DEFINITION) -> date:
+    """First day of today's window: life signs from this date on count for live membership."""
+    if definition.window == "round_start":
+        return reference_population_start(today)
+    return today - timedelta(days=definition.rolling_days)
+
+
 def live_members(genebank_id: int, today: date, definition: ReferenceDefinition = CURRENT_DEFINITION) -> set[str]:
     """Today's reference population under ``definition``."""
-    if definition.window == "round_start":
-        start = reference_population_start(today)
-    else:
-        start = today - timedelta(days=definition.rolling_days)
-    return members(genebank_id, start=start, as_of=today, live=True)
+    return members(genebank_id, start=live_start(today, definition), as_of=today, live=True)
 
 
 def history_as_of(report_year: int) -> date | None:

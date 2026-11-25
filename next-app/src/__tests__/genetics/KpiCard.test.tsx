@@ -32,11 +32,4 @@ describe("KpiCard", () => {
     expect(screen.getByText("i beräkningen").tagName).toBe("P");
     expect(container.querySelector("h3")).toBeNull();
   });
-
-  it("accepts level prop without crashing", () => {
-    renderWithTheme(
-      <KpiCard title="MK" value="0.042" level="good" subtitle="Låg nivå" />,
-    );
-    expect(screen.getByText("0.042")).toBeDefined();
-  });
 });

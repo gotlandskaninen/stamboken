@@ -17,7 +17,10 @@ export const FOUNDERDJUR =
   "Founderdjur: rasens ursprungsdjur, kaniner utan kända föräldrar i stamboken.";
 
 export const IN_CALCULATION =
-  "Kaniner med intyg som lever, inte är kastrerade och står i en aktiv besättning i genbanken (inte GX1 eller MX1), och som har fötts, sålts eller årsrapporterats sedan 1 januari det år som den senast stängda årsrapporteringen gäller. Nyckeltalen och tabellerna räknas på dem; trenden räknar varje år på det årets kaniner.";
+  "Kaniner med intyg som lever, inte är kastrerade och står i en aktiv besättning i genbanken (inte GX1 eller MX1), och som har fötts, sålts eller årsrapporterats sedan 1 januari det år som den senast stängda årsrapporteringen gäller. Nyckeltalen och tabellerna räknas på dem; trenden räknar varje år på det årets kaniner. Regeln är preliminär tills styrelsen har beslutat.";
+
+export const MK_TEXT =
+  "Hur nära släkt kaninerna i beräkningen i genomsnitt är med varandra, i procent. Det är också den andel av founderdjurens genetiska variation som har gått förlorad. Lägre är bättre, men det finns ingen gräns för vad som är högt: talet stiger ju mer av stamtavlan som är känd, så jämför med tidigare år.";
 
 const founderdjur = {
   term: "Founderdjur",
@@ -52,8 +55,8 @@ const descriptions: Record<
     },
     {
       term: "Medelsläktskap (MK)",
-      description:
-        "Hur nära släkt kaninerna i beräkningen i genomsnitt är med varandra, i procent. Det är också den andel av founderdjurens genetiska variation som har gått förlorad. Lägre är bättre.",
+      description: MK_TEXT,
+      source: "FAO 2023, s. 12 (talet stiger med känd stamtavla)",
     },
     {
       term: "Inavelskoefficient (F)",
@@ -73,8 +76,7 @@ const descriptions: Record<
     {
       term: "Avelsprioritet",
       description:
-        "Högsta: enda kaninen i beräkningen med gener från ett founderdjur, eller ett medelsläktskap på eller under gränsen för de 5\u00a0% minst släkta. Hög: på eller under gränsen för de 25\u00a0% minst släkta, bland de 25\u00a0% med flest unika gener, eller bär gener från ett founderdjur med liten andel av generna (under hälften av en jämn fördelning). Övriga: resten.",
-      source: "Ballou och Lacy 1995 (rangordning efter medelsläktskap)",
+        "Högsta: enda kaninen i beräkningen med gener från ett founderdjur, eller ett medelsläktskap på eller under gränsen för de 5\u00a0% minst släkta. Hög: på eller under gränsen för de 25\u00a0% minst släkta, bland de 25\u00a0% med flest unika gener, eller bär gener från ett founderdjur med liten andel av generna (under hälften av en jämn fördelning). Övriga: resten. Nivåerna är Stambokens egen regel, inte en vedertagen standard: gränserna är andelar av kaninerna, så ungefär 5\u00a0% hamnar alltid i Högsta och minst 25\u00a0% i Hög, hur genbanken än mår.",
     },
     {
       term: "Ovanliga gener (0–100)",
