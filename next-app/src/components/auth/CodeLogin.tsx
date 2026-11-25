@@ -184,6 +184,13 @@ export function LoginLink({ enabled }: { enabled: boolean }) {
   );
 }
 
+// The next step for each error, so the member is never left without a way on.
+const NEXT_STEP: Record<string, [href: string, label: string]> = {
+  expired: ["/auth/sign-in", "codeLogin.newCode"],
+  accountConflict: ["/auth/sign-in", "codeLogin.back"],
+  rulesChanged: ["#kontoregler", "codeLogin.toRules"],
+};
+
 export function CreateAccount({
   rules,
   returnTo,
@@ -199,6 +206,7 @@ export function CreateAccount({
   const [error, setError] = useState("");
   const [created, setCreated] = useState(false);
   const [pending, start] = useTransition();
+  const checkbox = useRef<HTMLInputElement>(null);
   if (created)
     return (
       <main className={styles.page}>
@@ -209,19 +217,34 @@ export function CreateAccount({
         </Link>
       </main>
     );
+  const next = NEXT_STEP[error];
   return (
     <main className={`${styles.page} ${styles.reading}`}>
+      <p className={styles.back}>
+        <Link href="/auth/sign-in">{t("codeLogin.back")}</Link>
+      </p>
       <h1>{t("codeLogin.create")}</h1>
+      <p className={styles.status}>{t("codeLogin.confirmed")}</p>
       <p>{t("codeLogin.accountPurpose")}</p>
       {rules ? (
         <>
-          <p className={styles.lead}>{t("codeLogin.readFirst")}</p>
+          <p className={styles.lead}>
+            {t("codeLogin.readFirst")}{" "}
+            <a href="#godkann">{t("codeLogin.toAccept")}</a>
+          </p>
           {children}
           <form
+            id="godkann"
             className={`${styles.form} ${styles.accept}`}
+            // The button stays usable, so a press without the tick explains itself.
+            noValidate
             onSubmit={(event) => {
               event.preventDefault();
-              if (!accepted) return;
+              if (!accepted) {
+                setError("acceptFirst");
+                checkbox.current?.focus();
+                return;
+              }
               setError("");
               start(async () => {
                 const result = await createMemberAccount(
@@ -237,40 +260,48 @@ export function CreateAccount({
               });
             }}
           >
-            <p className={styles.again}>
-              {t("codeLogin.rulesAgain")}{" "}
-              <Link href="/kontoregler">{t("codeLogin.rulesPage")}</Link>
-            </p>
             <label className={styles.check}>
               <input
+                ref={checkbox}
                 type="checkbox"
                 checked={accepted}
                 required
-                onChange={(event) =>
-                  setAcceptedHash(event.target.checked ? rules.sha256 : null)
-                }
-              />{" "}
+                aria-describedby={error ? "godkann-fel" : undefined}
+                onChange={(event) => {
+                  setAcceptedHash(event.target.checked ? rules.sha256 : null);
+                  if (error === "acceptFirst") setError("");
+                }}
+              />
               {t("codeLogin.accept")}
             </label>
-            {error && <p role="alert">{t(`codeLogin.${error}`)}</p>}
-            <button
-              className="sb-btn"
-              type="submit"
-              disabled={pending || !accepted}
-            >
+            {error && (
+              <p id="godkann-fel" role="alert" className={styles.alert}>
+                {t(`codeLogin.${error}`)}
+                {next && (
+                  <>
+                    {" "}
+                    <Link href={next[0]}>{t(next[1])}</Link>
+                  </>
+                )}
+              </p>
+            )}
+            <button className="sb-btn" type="submit" disabled={pending}>
               {t("codeLogin.create")}
             </button>
           </form>
+          <p>
+            {t("codeLogin.rulesAgain")}{" "}
+            <Link href="/kontoregler">{t("codeLogin.rules")}</Link>
+          </p>
         </>
       ) : (
-        <p role="alert">{t("codeLogin.rulesMissing")}</p>
+        <p role="alert" className={styles.alert}>
+          {t("codeLogin.rulesMissing")}
+        </p>
       )}
       <p>
         {t("codeLogin.privacyIntro")}{" "}
         <Link href="/dataskydd">{t("codeLogin.privacy")}</Link>
-      </p>
-      <p>
-        <Link href="/auth/sign-in">{t("codeLogin.back")}</Link>
       </p>
     </main>
   );

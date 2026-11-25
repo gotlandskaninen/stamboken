@@ -3,6 +3,41 @@ import { convertLexicalToPlaintext } from "@payloadcms/richtext-lexical/plaintex
 import { getPayload } from "payload";
 import config from "@payload-config";
 
+type LexicalNode = {
+  type?: string;
+  format?: number | string;
+  fields?: { linkType?: string };
+  children?: LexicalNode[];
+};
+// Bold and italic only: their words are the plain text's words.
+const PLAIN_FORMATS = 1 | 2;
+function sameWordsAsText(node: LexicalNode): boolean {
+  switch (node.type) {
+    case "text":
+      return (Number(node.format ?? 0) & ~PLAIN_FORMATS) === 0;
+    case "linebreak":
+      return true;
+    case "link":
+      return (
+        node.fields?.linkType === "custom" &&
+        (node.children ?? []).every(sameWordsAsText)
+      );
+    default:
+      return false;
+  }
+}
+// Rich text is shown with its formatting only when the member reads exactly
+// the words that are hashed: paragraphs of plain, bold or italic text, line
+// breaks and links to a typed address. Anything else (images, quotes,
+// headings, lists, strikethrough, links to CMS pages) is shown as the plain
+// text that is hashed.
+function formattable(content: SerializedEditorState) {
+  return (content.root?.children ?? []).every(
+    (node: LexicalNode) =>
+      node.type === "paragraph" && (node.children ?? []).every(sameWordsAsText),
+  );
+}
+
 // Match the current public document to its exact version. A newer draft, an
 // old publication under a former slug, or a removed page cannot supply rules.
 export async function getAccountRules() {
@@ -28,7 +63,10 @@ export async function getAccountRules() {
     function ruleText(content?: SerializedEditorState | null): Section {
       const text = content ? convertLexicalToPlaintext({ data: content }) : "";
       if (/[\p{L}\p{N}]/u.test(text)) hasRuleText = true;
-      return { content: content ?? undefined, text };
+      return {
+        content: content && formattable(content) ? content : undefined,
+        text,
+      };
     }
     const sections = (page.layout ?? []).flatMap((block): Section[] => {
       switch (block.blockType) {

@@ -20,6 +20,20 @@ beforeEach(() => {
   vi.resetAllMocks();
 });
 
+// The words a reader sees in rendered markup, with block ends as blank lines.
+function shownText(markup: string) {
+  return markup
+    .replace(/<br\s*\/?>/g, "\n")
+    .replace(/<\/(h2|p)>/g, "\n\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&quot;/g, '"')
+    .replace(/&#x27;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .trim();
+}
+
 describe("published account rules revision", () => {
   const paragraph = (text: string) => ({
     root: {
@@ -95,7 +109,13 @@ describe("published account rules revision", () => {
           },
           {
             type: "paragraph",
-            children: [text("Läs "), link("/dataskydd", "policyn"), text(".")],
+            children: [
+              text("Läs "),
+              link("/dataskydd", "policyn"),
+              text("."),
+              { type: "linebreak" },
+              text("Andra raden, ”citerad” och 'enkel'.", 2),
+            ],
           },
         ],
       },
@@ -123,14 +143,98 @@ describe("published account rules revision", () => {
     expect(markup).toContain("<strong>Kontot är ditt eget.</strong>");
     expect(markup).toContain('href="mailto:test@example.org"');
     expect(markup).toContain('href="/dataskydd"');
-    // What the member reads is, word for word, what the digest covers.
-    const shown = markup
-      .replace(/<\/(h2|p)>/g, "\n\n")
-      .replace(/<[^>]+>/g, "")
-      .replace(/&amp;/g, "&")
-      .trim();
-    expect(shown).toBe(response.text);
+    expect(markup).toContain("<em>");
+    expect(shownText(markup)).toBe(response.text);
   });
+  // Content whose rendering would show other words than the plain text: an
+  // image with its caption, a struck-out negation, a quote that the plain
+  // text runs together, a link to a CMS page, a heading and a list.
+  it.each([
+    [
+      "upload",
+      {
+        type: "upload",
+        value: {
+          url: "/media/regel.png",
+          mimeType: "image/png",
+          caption: "Kontakta styrelsen först.",
+        },
+      },
+    ],
+    [
+      "strikethrough",
+      {
+        type: "paragraph",
+        children: [
+          { type: "text", text: "Du får " },
+          { type: "text", text: "inte", format: 4 },
+          { type: "text", text: " dela kontot." },
+        ],
+      },
+    ],
+    [
+      "quote",
+      { type: "quote", children: [{ type: "text", text: "ditt lösenord" }] },
+    ],
+    [
+      "internal link",
+      {
+        type: "paragraph",
+        children: [
+          {
+            type: "link",
+            fields: { linkType: "internal", doc: { value: 4 } },
+            children: [{ type: "text", text: "sidan" }],
+          },
+        ],
+      },
+    ],
+    [
+      "heading",
+      {
+        type: "heading",
+        tag: "h1",
+        children: [{ type: "text", text: "Rubrik" }],
+      },
+    ],
+    [
+      "list",
+      {
+        type: "list",
+        listType: "number",
+        children: [
+          { type: "listitem", children: [{ type: "text", text: "Ett" }] },
+        ],
+      },
+    ],
+  ])(
+    "shows the hashed plain text instead of rich text with %s",
+    async (_name, node) => {
+      const content = {
+        root: {
+          children: [
+            {
+              type: "paragraph",
+              children: [{ type: "text", text: "Dela aldrig", format: 1 }],
+            },
+            node,
+          ],
+        },
+      };
+      db.find.mockResolvedValue({
+        docs: [{ ...page, layout: [{ blockType: "richText", content }] }],
+      });
+      db.findVersions.mockResolvedValue({ docs: [{ id: 8 }] });
+      const form = await CreateAccountPage({
+        searchParams: Promise.resolve({}),
+      });
+      const { text } = await (await GET()).json();
+      const markup = renderToStaticMarkup(form.props.children);
+      expect(markup).not.toMatch(/<(strong|img|s|blockquote|h1|ol|a)\b/);
+      expect(markup).not.toContain("Kontakta styrelsen");
+      expect(shownText(markup)).toBe(text);
+    },
+  );
   it.each([[], [{ ...page, layout: [] }]])(
     "does not accept a missing or empty publication",
     async (...docs) => {

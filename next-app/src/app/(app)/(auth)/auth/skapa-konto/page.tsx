@@ -4,7 +4,6 @@ import { cookies } from "next/headers";
 import { RichText } from "@payloadcms/richtext-lexical/react";
 import { CreateAccount } from "@/components/auth/CodeLogin";
 import styles from "@/components/auth/code-login.module.css";
-import { richTextConverters } from "@/components/blocks/richTextConverters";
 import { getAccountRules } from "@/lib/account-rules";
 import { codeLoginEnabled } from "@/lib/code-login-enabled";
 
@@ -23,8 +22,8 @@ export default async function CreateAccountPage({
     sha256: createHash("sha256").update(rules.text, "utf8").digest("hex"),
   };
   const { return_to } = await searchParams;
-  // The CMS formatting (bold openings, links) of the same sections whose
-  // plain text is hashed above.
+  // Each section shows either its CMS formatting, when that has the same
+  // words as the hashed plain text, or the hashed plain text itself.
   return (
     <CreateAccount rules={displayed ?? undefined} returnTo={return_to}>
       {rules && (
@@ -33,14 +32,14 @@ export default async function CreateAccountPage({
           {rules.subtitle && <p>{rules.subtitle}</p>}
           {rules.sections.map(({ content, text }, index) =>
             content ? (
-              <RichText
-                key={index}
-                data={content}
-                converters={richTextConverters}
-                disableContainer
-              />
+              <RichText key={index} data={content} disableContainer />
             ) : (
-              <p key={index}>{text}</p>
+              text
+                ?.split("\n\n")
+                .filter(Boolean)
+                .map((paragraph, part) => (
+                  <p key={`${index}-${part}`}>{paragraph}</p>
+                ))
             ),
           )}
         </section>
