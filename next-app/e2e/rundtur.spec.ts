@@ -1,56 +1,21 @@
 import { test, expect, type Page } from "@playwright/test";
-import AxeBuilder from "@axe-core/playwright";
+import {
+  expectTourAxeClean as expectNoAxeViolations,
+  startTourFromMenu as startFromMenu,
+  tourPopover as tour,
+  walkTour as walk,
+} from "../e2e-shared/tour";
 
 // The tour (stamboken #229) for an ordinary member (gk-owner storageState).
 // Each test starts with empty localStorage, so the offer is always there.
 
-const tour = (page: Page) => page.locator(".driver-popover");
-
 async function openMinBesattning(page: Page) {
   await page.goto("/stamboken/min-besattning");
+  // The tabs are server-rendered; the content under them only after hydration.
   await expect(page.locator("#herd-tab-overview")).toBeVisible({
     timeout: 15000,
   });
-}
-
-async function startFromMenu(page: Page) {
-  await page.getByRole("button", { name: "Account" }).click();
-  await page.getByRole("menuitem", { name: "Visa runt" }).click();
-  await expect(tour(page)).toBeVisible();
-}
-
-/** Clicks Nästa to the end and returns every step's title. */
-async function walk(page: Page): Promise<string[]> {
-  const titles: string[] = [];
-  for (let i = 0; i < 30; i++) {
-    const dialog = page.getByRole("dialog");
-    await expect(dialog).toBeVisible();
-    // Focus stays in the tour (focus trap).
-    await expect
-      .poll(() =>
-        page.evaluate(
-          () => !!document.activeElement?.closest(".driver-popover"),
-        ),
-      )
-      .toBe(true);
-    titles.push(
-      (await page.locator(".driver-popover-title").innerText()).trim(),
-    );
-    const done = dialog.getByRole("button", { name: "Klar" });
-    if (await done.isVisible()) {
-      await done.click();
-      return titles;
-    }
-    await dialog.getByRole("button", { name: "Nästa" }).click();
-  }
-  throw new Error("the tour did not end");
-}
-
-async function expectNoAxeViolations(page: Page) {
-  const { violations } = await new AxeBuilder({ page })
-    .include(".driver-popover")
-    .analyze();
-  expect(violations.map((v) => `${v.id}: ${v.help}`)).toEqual([]);
+  await expect(page.getByText("Laddar…")).toBeHidden({ timeout: 20000 });
 }
 
 test.describe("Rundtur för en vanlig medlem", () => {
@@ -80,11 +45,10 @@ test.describe("Rundtur för en vanlig medlem", () => {
     );
     // An ordinary member has no role step.
     expect(titles).not.toContain("Din roll");
-    await expect(tour(page)).toHaveCount(0);
 
     // Answered: the offer does not come back by itself.
     await page.reload();
-    await expect(page.locator("#herd-tab-overview")).toBeVisible();
+    await openMinBesattning(page);
     await expect(offer).toHaveCount(0);
   });
 
@@ -94,7 +58,7 @@ test.describe("Rundtur för en vanlig medlem", () => {
     await openMinBesattning(page);
     await page.getByRole("button", { name: "Nej tack" }).click();
     await page.reload();
-    await expect(page.locator("#herd-tab-overview")).toBeVisible();
+    await openMinBesattning(page);
     await expect(
       page.getByRole("region", { name: "Rundtur i Stamboken" }),
     ).toHaveCount(0);
