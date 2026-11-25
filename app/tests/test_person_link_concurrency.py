@@ -12,7 +12,6 @@ import utils.matrikel as matrikel
 from blueprints import members as members_routes
 from blueprints import memberships as memberships_routes
 from herdbook import APP
-from utils.members import try_auto_link_member
 
 from tests.database_test import _USE_POSTGRES
 from tests.test_person_link_api import LinkApiBase
@@ -53,23 +52,6 @@ class TestLinkRaces(LinkApiBase):
     def _assert_no_silent_conveyance(self):
         for row in db.MatrikelAudit.select().where(db.MatrikelAudit.action == "person_user_linked"):
             self.assertEqual(row.payload["conveys_herd_ids"], [])
-
-    def test_manual_link_vs_oauth_auto_link(self):
-        # The OAuth path only fires for a @gotlandskaninen.se login (utils/members.py domain guard).
-        workspace = da.register_user("erik@gotlandskaninen.se", "pass", username="erik.ws")
-        other = db.Member.create(
-            membership=self.ms,
-            first_name="Erik",
-            last_name="Ws",
-            role="skotare",
-            workspace_email="erik@gotlandskaninen.se",
-        )
-        family_id, other_id, user_id, admin_id = self.family.id, other.id, workspace.id, self.admin.id
-        self._race(
-            lambda: matrikel.link_member_user(family_id, user_id, actor=db.User.get_by_id(admin_id), mode="admin"),
-            lambda: try_auto_link_member(db.Member.get_by_id(other_id), db.User.get_by_id(user_id)),
-        )
-        self.assertEqual(db.Member.select().where(db.Member.user == user_id).count(), 1)
 
     def test_manual_link_vs_cli_link(self):
         family_id, skotare_id, user_id, admin_id = self.family.id, self.skotare.id, self.account.id, self.admin.id

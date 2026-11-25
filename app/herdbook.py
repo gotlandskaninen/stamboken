@@ -49,7 +49,6 @@ from flask_login import (
 from flask_session import Session
 from flask_talisman import Talisman
 from limits import parse as parse_limit
-from peewee import fn
 from utils.cert_acess import (
     check_certificate_s3,
     create_pdf_response,
@@ -84,7 +83,6 @@ from utils import inbox_purge  # isort:skip
 from utils import buyer_contact  # isort:skip
 from utils import tyck_till  # isort:skip
 from utils.inbox_interpreter import interpret_next  # isort:skip
-from utils.members import try_auto_link_member  # isort:skip
 from utils.matrikel import anonymize_ended_persons  # isort:skip
 from utils.legacy_compat import course_message, is_legacy_host, legacy_classroom_url, legacy_hosts, refusal  # isort:skip
 from extensions import session_redis  # isort:skip
@@ -1616,33 +1614,6 @@ def _storable_google_email(verified_email):
     return da.storable_google_email(verified_email, (utils.external_auth.google_idtoken() or {}).get("hd"))
 
 
-def _link_member_if_any(user, verified_email) -> None:
-    """
-    Auto-link a Member to this freshly-authenticated User by matching the
-    address the identity provider just verified against
-    Member.workspace_email (the provisioned login, NOT the contact email).
-    Never User.email: any user can rewrite that through
-    PATCH /api/manage/user/. No verified address, no link.
-    Case-insensitive — the unique index is on LOWER(workspace_email) and
-    Google may deliver different casing.
-
-    Takes NO locks and opens NO transaction: the write goes through
-    link_member_user(), which owns membership → user → person FOR UPDATE
-    itself and re-checks everything under them, so this
-    unlocked probe only picks a candidate. The domain guard
-    (@gotlandskaninen.se only) lives inside try_auto_link_member.
-    """
-    if not verified_email:
-        return
-    unlinked = (
-        db.Member.select()
-        .where((fn.LOWER(db.Member.workspace_email) == verified_email.lower()) & (db.Member.user.is_null(True)))
-        .first()
-    )
-    if unlinked:
-        try_auto_link_member(unlinked, user)  # owns its own transaction + locks
-
-
 # [Next.js] Google OAuth token-verifiering
 @APP.route("/api/auth/google", methods=["POST"])
 @limiter.limit("10 per minute")  # Limit OAuth attempts
@@ -1730,10 +1701,6 @@ def google_token_login():
             # carries user_id without flask-login's _user_id.
             establish_session(user, "google", generation, on_domain=True)  # the domain's hd and address, above
             da.auth_log.info("Login ok: Google, user id=%s", user.id)
-            # Phase 8: link a pre-provisioned Member to this OAuth-verified
-            # user. get_user() re-fetches from the DB, so a newly granted
-            # owner role is visible in this same response.
-            _link_member_if_any(user, email)
             return get_user()
         else:
             # User doesn't exist with this Google ID
@@ -1809,10 +1776,6 @@ def external_login_handler(service):
             return "null"
         da.auth_log.info("Login ok: %s, user id=%s", service, user.id)
         establish_session(user, service, generation, on_domain=da.on_role_domain(verified_email))
-        # Phase 8: auto-link Member on OAuth completion, then reload so the
-        # profile save below writes fresh privileges — saving this stale
-        # in-memory instance would clobber the just-granted owner role.
-        _link_member_if_any(user, verified_email)
         # Reload unfiltered: fetch_user_info hides an account deactivated mid-login (the
         # provider calls above can take long), and the profile save below writes only
         # the profile columns of an active account (_save_google_profile).
@@ -1918,10 +1881,6 @@ def external_login_handler(service):
     # FIXME: this is how we "really" log in the user
     if user.validated:
         establish_session(user, service, generation, on_domain=da.on_role_domain(verified_email))
-        # Phase 8: auto-link Member on first OAuth login of an auto-
-        # registered user (domain guard lives in try_auto_link_member).
-        # google_details() returns only an email_verified address.
-        _link_member_if_any(user, verified_email)
         return_to = session.pop("return_to_after_oauth", None)  # Get the return_to url and remove it from the session
         if return_to:
             return redirect(_safe_redirect_url(return_to))

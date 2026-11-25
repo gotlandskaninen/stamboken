@@ -263,7 +263,7 @@ def create_test_users():
                 workspace_email=None,
                 membership=membership,
                 role="huvudmedlem",
-                user=test_member,  # direct link, NOT via auto-link helper
+                user=test_member,  # direct link
             )
             print("  Created linked Member for test-member")
         elif existing.role != "huvudmedlem":

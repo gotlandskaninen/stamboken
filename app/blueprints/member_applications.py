@@ -14,8 +14,6 @@ from peewee import IntegrityError, fn
 
 # DB_PROXY is the runtime proxy that data_access.py uses; importing the
 # module-level DATABASE symbol directly will be None at call time.
-# Note: try_auto_link_member is NOT imported here. Auto-link only
-# happens in the OAuth callback (app/herdbook.py), never at approve time.
 from utils.database import BILLING_FIELDS, DB_PROXY, Genebank, Member, MemberApplication
 from utils.login_code import AddressTaken, reserve_login_address
 from utils.mail import enqueue_mail, queue_application_mails
@@ -323,10 +321,8 @@ def approve_application(app_id: int):
                 ref=("member_application", a.id),
             )
 
-            # Member.user_id is intentionally left NULL. Per the auto-link
-            # policy, linking to an existing User requires proof of email
-            # ownership in the same auth session — only Google OAuth login
-            # satisfies that.
+            # Member.user_id is intentionally left NULL: an administrator
+            # links the account in the matrikel.
     except IntegrityError:
         # Defensive: unique member_number index — cannot fire while all
         # numbers come from the serialized counter, but a 409 beats a 500.

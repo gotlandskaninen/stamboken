@@ -2136,7 +2136,7 @@ class AuditLog(BaseModel):
 class Member(BaseModel):
     """
     Person row under a Membership (Member Model v2). Linked to User via
-    `user` FK when auto-linking matches an existing account. Membership-
+    `user` FK, set by an administrator in the matrikel. Membership-
     level facts (number, status, address, consent) live on Membership.
     """
 
@@ -2150,8 +2150,7 @@ class Member(BaseModel):
     user = ForeignKeyField(User, null=True, backref="member_records")
     # `workspace_email` is the PROVISIONED login email
     # (firstname.lastname@gotlandskaninen.se), set by Phase 9 after
-    # Workspace account provisioning. The auto-link helper matches
-    # User.email == Member.workspace_email — never against contact email.
+    # Workspace account provisioning. Stored only; sign-in does not link by it.
     workspace_email = CharField(max_length=255, null=True)
     # When `email` starts to count for login (utils.matrikel.set_member_email); NULL: at once.
     email_login_from = TimestampTZField(null=True)
@@ -5125,7 +5124,7 @@ def _create_member_indexes():
     )
 
     # One user ↔ at most one person row (Phase 19). Replaces the
-    # non-unique auto-link lookup index; partial so unlinked rows stay free.
+    # non-unique lookup index; partial so unlinked rows stay free.
     # Index ONLY — init() runs at every API start and must never rewrite data;
     # the duplicate-link preflight lives in
     # _apply_phase19_schema_changes() (migration path). A pre-v29 database

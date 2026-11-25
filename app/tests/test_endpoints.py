@@ -536,7 +536,6 @@ class TestEndpoints(FlaskTest):
             mock.patch("utils.external_auth.google_userinfo", return_value=None),
             mock.patch("utils.external_auth.google_idtoken", return_value=None),
             mock.patch("herdbook.login_user"),
-            mock.patch("herdbook._link_member_if_any"),
             mock.patch.object(APP.session_interface, "regenerate", create=True),
         ):
             response = client.get("/api/login/google", base_url=self.OAUTH_SITE)

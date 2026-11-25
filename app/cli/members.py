@@ -51,7 +51,7 @@ Rules (Member Model v2 design spec):
 - The member-number counter is raised to the highest imported number.
 - gdpr_consented_at is NEVER fabricated: MATR2026 has no consent column,
   so imported persons always have NULL.
-- Import never sets Member.user and never calls the auto-link helper.
+- Import never sets Member.user and never links by address.
 - Except for friexemplar, a main member's address becomes a login address: when
   another person holds it, the whole group fails and is listed as an error.
 
