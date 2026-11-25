@@ -26,6 +26,7 @@ vi.mock("@/app/(app)/medlem/matrikel/actions", () => ({
   revokeGrant: vi.fn(),
   setMainMember: vi.fn(),
   unlinkPersonUser: vi.fn(),
+  reactivatePerson: vi.fn(),
   updatePerson: vi.fn(),
 }));
 vi.mock("@/components/SnackbarProvider", () => ({
@@ -36,7 +37,10 @@ vi.mock("@/contexts/NotificationContext", () => ({
 }));
 
 import { PersonsCard } from "@/app/(app)/medlem/matrikel/[id]/PersonsCard";
-import { updatePerson } from "@/app/(app)/medlem/matrikel/actions";
+import {
+  reactivatePerson,
+  updatePerson,
+} from "@/app/(app)/medlem/matrikel/actions";
 import type {
   MembershipDetail,
   Person,
@@ -306,5 +310,36 @@ describe("PersonsCard — rollval vid redigering", () => {
     expect(
       within(screen.getByRole("dialog")).queryByLabelText("Roll"),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("PersonsCard — Avsluta och Återaktivera", () => {
+  const openMenu = (name: RegExp) =>
+    fireEvent.click(
+      within(row(name)).getByRole("button", { name: /Fler åtgärder/ }),
+    );
+
+  it("calls the action Avsluta, not Ta bort", () => {
+    render(<PersonsCard membership={MEMBERSHIP} canEdit />);
+    openMenu(/Bo Olinkad/);
+    expect(
+      screen.getByRole("menuitem", { name: "Avsluta" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Ta bort" })).toBeNull();
+  });
+
+  it("reactivates an ended person after confirming", async () => {
+    vi.mocked(reactivatePerson).mockResolvedValue({ ok: true });
+    render(<PersonsCard membership={MEMBERSHIP} canEdit />);
+    openMenu(/David Avslutad/);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Återaktivera" }));
+    fireEvent.click(screen.getByRole("button", { name: "Bekräfta" }));
+    await waitFor(() => expect(reactivatePerson).toHaveBeenCalledWith(1, 14));
+  });
+
+  it("offers no Återaktivera for an active person", () => {
+    render(<PersonsCard membership={MEMBERSHIP} canEdit />);
+    openMenu(/Bo Olinkad/);
+    expect(screen.queryByRole("menuitem", { name: "Återaktivera" })).toBeNull();
   });
 });

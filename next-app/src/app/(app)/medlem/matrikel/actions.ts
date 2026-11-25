@@ -152,6 +152,19 @@ export async function removePerson(
   }
 }
 
+export async function reactivatePerson(
+  membershipId: number,
+  personId: number,
+): Promise<ActionResult> {
+  try {
+    await fetchApi(`/v2/persons/${personId}/reactivate`, { method: "POST" });
+    revalidateMatrikel(membershipId);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
 export async function anonymizePerson(
   membershipId: number,
   personId: number,

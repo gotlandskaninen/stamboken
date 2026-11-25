@@ -18,6 +18,7 @@ import {
   addPerson,
   anonymizePerson,
   createGrant,
+  reactivatePerson,
   removePerson,
   renewGrant,
   revokeGrant,
@@ -235,11 +236,19 @@ export function PersonsCard({
     });
   const confirmRemove = (p: Person) =>
     setConfirm({
-      title: "Ta bort person?",
-      text: "Personen avslutas (mjuk borttagning) och alla besättningsåtkomster återkallas i samma transaktion.",
+      title: "Avsluta person?",
+      text: "Personen avslutas i medlemskapet och alla besättningsåtkomster återkallas. Raden finns kvar i historiken och kan återaktiveras, men åtkomsterna kommer inte tillbaka och ett kopplat konto kopplas loss vid återaktivering.",
       run: () => removePerson(membership.id, p.id),
-      errorTitle: "Kunde inte ta bort personen",
-      success: "Person borttagen",
+      errorTitle: "Kunde inte avsluta personen",
+      success: "Person avslutad",
+    });
+  const confirmReactivate = (p: Person) =>
+    setConfirm({
+      title: "Återaktivera person?",
+      text: "Personen blir aktiv i medlemskapet igen med sin tidigare roll. Åtkomster och konto kopplas inte tillbaka.",
+      run: () => reactivatePerson(membership.id, p.id),
+      errorTitle: "Kunde inte återaktivera personen",
+      success: "Person återaktiverad",
     });
   const confirmAnonymize = (p: Person) =>
     setConfirm({
@@ -452,7 +461,17 @@ export function PersonsCard({
               confirmRemove(menuPerson);
             }}
           >
-            Ta bort
+            Avsluta
+          </MenuItem>
+        )}
+        {menuPerson && menuPerson.end_date !== null && (
+          <MenuItem
+            onClick={() => {
+              closeMenu();
+              confirmReactivate(menuPerson);
+            }}
+          >
+            Återaktivera
           </MenuItem>
         )}
         {menuPerson && (

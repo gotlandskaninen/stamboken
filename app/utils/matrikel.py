@@ -425,6 +425,46 @@ def soft_delete_person(member, actor):
         )
 
 
+def reactivate_person(member, actor):
+    """Undo soft_delete_person for an ended, not anonymized person: clear end_date, audit it.
+
+    Same lock order as the other person writers (membership, then the linked user, then the person).
+    The grants stay revoked and a linked account is detached, so reactivating never restores access
+    on its own. Raises ValueError for an anonymized, still active or inactive-membership person, or
+    a second active huvudmedlem; AddressTaken when a main member's address now belongs to someone else.
+    """
+    with DB_PROXY.atomic():
+        person, _user = _lock_for_detach(member.id)
+        membership = Membership.select().where(Membership.id == person.membership_id).get()
+        if is_anonymized(person):
+            raise ValueError("En anonymiserad person kan inte återaktiveras")
+        if person.end_date is None:
+            raise ValueError("Personen är redan aktiv")
+        if membership.membership_status == "inactive":
+            raise ValueError("Kan inte återaktivera personer i ett inaktivt medlemskap")
+        if (
+            person.role == "huvudmedlem"
+            and Member.select()
+            .where(Member.membership == membership.id, Member.role == "huvudmedlem", Member.end_date.is_null(True))
+            .exists()
+        ):
+            raise ValueError("Medlemskapet har redan en aktiv huvudmedlem")
+        unlinked = None
+        if person.user_id is not None:
+            unlinked = _detach_user_locked(person, actor=actor, mode="reactivate")
+        person.end_date = None
+        person.save()
+        if person.role == "huvudmedlem":
+            reserve_holder(person.id)
+        write_matrikel_audit(
+            actor,
+            "person_reactivated",
+            membership,
+            {"person_id": person.id, "role": person.role, "unlinked_user_id": unlinked},
+        )
+    return person
+
+
 def swap_main_member(membership, new_main, actor):
     """Atomically demote the current active huvudmedlem and promote `new_main`.
 

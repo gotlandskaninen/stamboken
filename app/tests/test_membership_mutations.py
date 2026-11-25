@@ -95,6 +95,41 @@ class TestMatrikelDomainFunctions(DatabaseTest):
         with self.assertRaises(ValueError):
             matrikel.swap_main_member(self.membership, other_main, self.admin)
 
+    def test_reactivate_person_restores_active_row(self):
+        before = db.Member.get_by_id(self.family.id)
+        matrikel.soft_delete_person(self.family, self.admin)
+        matrikel.reactivate_person(self.family, self.admin)
+        after = db.Member.get_by_id(self.family.id)
+        self.assertIsNone(after.end_date)
+        self.assertEqual((after.role, after.email), (before.role, before.email))
+        self.assertTrue(db.MatrikelAudit.select().where(db.MatrikelAudit.action == "person_reactivated").exists())
+
+    def test_reactivate_person_refuses_anonymized_and_active(self):
+        with self.assertRaises(ValueError):
+            matrikel.reactivate_person(self.family, self.admin)  # still active
+        matrikel.anonymize_person(self.family, self.admin)
+        with self.assertRaises(ValueError):
+            matrikel.reactivate_person(self.family, self.admin)
+        self.assertIsNotNone(db.Member.get_by_id(self.family.id).end_date)
+
+    def test_reactivate_person_detaches_account(self):
+        user = da.register_user("fam@example.com", "pass", username="fam")
+        self.family.user = user
+        self.family.save()
+        matrikel.soft_delete_person(self.family, self.admin)
+        matrikel.reactivate_person(self.family, self.admin)
+        self.assertIsNone(db.Member.get_by_id(self.family.id).user_id)
+
+    def test_reactivate_main_member_refused_when_address_taken(self):
+        # An ended huvudmedlem whose address another main member now holds.
+        db.Member.update(end_date=datetime.now().date()).where(db.Member.membership == self.membership).execute()
+        db.Member.update(role="huvudmedlem").where(db.Member.id == self.family.id).execute()
+        _, other, _ = _make_membership(7)
+        db.Member.update(email="frank@example.com").where(db.Member.id == other.id).execute()
+        with self.assertRaises(matrikel.AddressTaken):
+            matrikel.reactivate_person(self.family, self.admin)
+        self.assertIsNotNone(db.Member.get_by_id(self.family.id).end_date)
+
     def test_anonymize_person(self):
         user = da.register_user("fam@example.com", "pass", username="fam")
         self.family.user = user
@@ -770,6 +805,16 @@ class TestPersonMutationEndpoints(MatrikelAdminTestBase):
         resp = self.patch_json(f"/api/v2/persons/{self.family.id}", {"role": "skotare"})
         self.assertEqual(resp.status_code, 200, resp.data)
         self.assertEqual(db.Member.get_by_id(self.family.id).role, "skotare")
+
+    def test_reactivate_endpoint(self):
+        self.login()
+        self.assertEqual(self.client.post(f"/api/v2/persons/{self.family.id}/reactivate").status_code, 409)  # active
+        self.assertEqual(self.client.delete(f"/api/v2/persons/{self.family.id}").status_code, 200)
+        resp = self.client.post(f"/api/v2/persons/{self.family.id}/reactivate")
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertIsNone(db.Member.get_by_id(self.family.id).end_date)
+        self.client.post(f"/api/v2/persons/{self.family.id}/anonymize")
+        self.assertEqual(self.client.post(f"/api/v2/persons/{self.family.id}/reactivate").status_code, 409)
 
     def test_patch_person_promote_second_main_409(self):
         resp = self.patch_json(f"/api/v2/persons/{self.family.id}", {"role": "huvudmedlem"})
