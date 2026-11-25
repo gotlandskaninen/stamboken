@@ -1719,50 +1719,41 @@ class TestYearlyReportOwnerContracts(FlaskTest):
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.get_json()["status"], "error")
 
-    def test_post_report_with_round(self):
-        """Create a round then POST a yearly report against it."""
-        with self.app as ctx:
-            self.login(ctx, self.admin)
-            round_id = db.YearlyReportRound.create(
-                report_year=2025,
-                start_date=date(2025, 1, 1),
-                end_date=date(2025, 12, 31),
-                is_active=True,
-                created_by=self.admin,
-            ).id
-            # POST yearly report for herd
-            response = ctx.post(
-                f"/api/herd/{self.herds[0].herd}/yearlyreport",
-                json={
-                    "round_id": round_id,
-                },
-            )
-            # Should return success or error with status key
-            data = response.get_json()
-            self.assertIn("status", data)
+    def test_post_is_gone(self):
+        """ADR-0020: sending a yearly report answers 410 and stores nothing, for admin, owner and viewer, for an
+        active round and an unknown herd."""
+        round_id = db.YearlyReportRound.create(
+            report_year=2025,
+            start_date=date(2025, 1, 1),
+            end_date=date(2025, 12, 31),
+            is_active=True,
+            created_by=self.admin,
+        ).id
+        gone = {"status": "error", "message": "Årsrapporten skickas nu i nya Stamboken."}
+        for user in (self.admin, self.owner, self.viewer):
+            with self.app as ctx:
+                ctx.get("/api/logout")  # the client keeps the previous user's session
+                self.login(ctx, user)
+                for herd in (self.herds[0].herd, "G9999"):
+                    with self.subTest(user=user.email, herd=herd):
+                        response = ctx.post(f"/api/herd/{herd}/yearlyreport", json={"report_round_id": round_id})
+                        self.assertEqual((response.status_code, response.get_json()), (410, gone))
+        self.assertEqual(db.YearlyHerdReport.select().count(), 0)
 
-    def test_get_report_after_post(self):
-        """Create round, POST report, then GET it."""
+    def test_get_returns_a_stored_report(self):
+        round_ = db.YearlyReportRound.create(
+            report_year=2024, start_date=date(2024, 1, 1), end_date=date(2024, 12, 31), created_by=self.admin
+        )
+        db.YearlyHerdReport.create(
+            herd=self.herds[0], report_date=date(2024, 12, 31), generated_by=self.admin, name="2024", data="{}",
+            publish=False, publish_tel=False, publish_email=False, publish_address=False, round=round_,
+        )  # fmt: skip
         with self.app as ctx:
             self.login(ctx, self.admin)
-            round_id = db.YearlyReportRound.create(
-                report_year=2024,
-                start_date=date(2024, 1, 1),
-                end_date=date(2024, 12, 31),
-                is_active=True,
-                created_by=self.admin,
-            ).id
-            # POST a report
-            ctx.post(
-                f"/api/herd/{self.herds[0].herd}/yearlyreport",
-                json={
-                    "round_id": round_id,
-                },
-            )
-            # GET it back
-            response = ctx.get(f"/api/herd/{self.herds[0].herd}/yearlyreport?round_id={round_id}")
-            data = response.get_json()
-            self.assertIn("status", data)
+            response = ctx.get(f"/api/herd/{self.herds[0].herd}/yearlyreport?round_id={round_.id}")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["status"], "success")
+        self.assertIn("report", response.get_json())
 
 
 # ============================================================================

@@ -83,6 +83,7 @@ Regler för dagligt arbete:
 | Lägga till och ändra besättning | `POST /api/manage/herd`, `PATCH /api/manage/herd` | Min besättning och adminsidan för besättningar | #134 (planerad) |
 | Skapa och ändra konton, ge roller, sätta lösenord | `POST /api/manage/user/`, `POST`/`PATCH`/`UPDATE /api/manage/user/<id>`, `POST`/`PATCH`/`UPDATE /api/manage/role`, `POST /api/manage/setpassword/` och `/<id>` | Adminsidan Användare. Medlemmen skapar sitt konto själv med kodinloggningen. Genbanksansvariga gör det inte längre, admin gör det (Jonas 2026-11-25). Eget lösenordsbyte försvinner; det fungerade bara för admin | #223 |
 | Årsrapportens rundor | `POST /api/manage/yearly_report_round`, `PATCH`/`DELETE /api/manage/yearly_report_round/<id>` | Årsrapportens rundor i nya Stamboken | #223 |
+| Skicka årsrapport | `POST /api/herd/<h_id>/yearlyreport` | Årsrapport i nya Stamboken | #236 |
 
 ### Konsekvenser
 
