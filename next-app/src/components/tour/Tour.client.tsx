@@ -111,8 +111,10 @@ export function TourProvider({ children }: { children: React.ReactNode }) {
           title: t(`tour.steps.${step.id}.title`),
           // driver.js sets this as HTML: every text is escaped.
           description:
-            `<p>${escapeHtml(t(`tour.steps.${step.id}.text`))}</p>` +
-            `<p><a href="${escapeHtml(step.href)}">${escapeHtml(t("tour.more"))}</a></p>`,
+            `<p>${escapeHtml(t(`tour.steps.${step.textKey}`))}</p>` +
+            (step.href
+              ? `<p><a href="${escapeHtml(step.href)}">${escapeHtml(t("tour.more"))}</a></p>`
+              : ""),
         },
       })),
       animate: !still,

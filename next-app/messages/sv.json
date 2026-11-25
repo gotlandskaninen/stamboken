@@ -707,7 +707,8 @@
       },
       "matrikelPage": {
         "title": "Matrikeln",
-        "text": "Här söker du fram ett medlemskap. Klicka på det för att se och ändra uppgifterna."
+        "text": "Här söker du fram ett medlemskap. Klicka på det för att se och ändra uppgifterna.",
+        "textRead": "Här söker du fram ett medlemskap och ser uppgifterna."
       },
       "arsrapport": {
         "title": "Årsrapport",

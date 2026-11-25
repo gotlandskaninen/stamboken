@@ -25,8 +25,24 @@ test("the tour adds the role and matrikel steps for a genbanksansvarig", async (
   await expectTourAxeClean(page);
 
   const titles = await walkTour(page, async (title, dialog) => {
-    if (title === "Din roll")
+    if (title === "Din roll") {
       await expect(dialog).toContainText("Adminpanelen och Matrikel");
+      await expect(
+        dialog.getByRole("link", { name: "Läs mer" }),
+      ).toHaveAttribute(
+        "href",
+        "/stamboken-online/manual#adminpanelen-för-genbanksansvarig",
+      );
+    }
+    // A genbanksansvarig only reads the register: no "ändra", no guide link
+    // (the guide is not theirs and answers 404).
+    if (title === "Matrikeln") {
+      await expect(dialog).toContainText("ser uppgifterna");
+      await expect(dialog).not.toContainText("ändra");
+      await expect(dialog.getByRole("link", { name: "Läs mer" })).toHaveCount(
+        0,
+      );
+    }
   });
   expect(titles).toEqual(
     expect.arrayContaining(["Matrikeln", "Din roll", "Tyck till"]),

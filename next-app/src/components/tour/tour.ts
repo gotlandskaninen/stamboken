@@ -7,11 +7,38 @@ export interface TourStep {
   id: string;
   /** CSS selector; the first visible match is highlighted. */
   target: string;
-  /** Link into the manual or the matrikel guide. */
-  href: string;
+  /** Link into the manual or the matrikel guide; null: no link for this user. */
+  href: string | ((user: UserContext) => string | null);
+  /** The text's key under tour.steps when it depends on the user. */
+  text?: (user: UserContext) => string;
   /** Only for users with this role; everyone when left out. */
   when?: (user: UserContext) => boolean;
 }
+
+/** A step as this user sees it, with its target on the page. */
+export interface ShownStep {
+  id: string;
+  target: string;
+  element: Element;
+  href: string | null;
+  textKey: string;
+}
+
+const GUIDE_PATH = "/medlem/guide";
+
+// Same test as the matrikel page's canEdit and the guide's canReadGuide
+// (guide.ts reads the disk, so it cannot be imported here).
+const keepsMatrikel = (user: UserContext) =>
+  user.is_admin || user.is_matrikel_admin;
+
+// Adminpanelen differs per role: the admin's screens, the genbanksansvarig's
+// screens, or for a matrikeladmin only the member register.
+const adminHref = (user: UserContext) =>
+  user.is_admin
+    ? `${MANUAL_PATH}#adminpanel`
+    : user.is_manager?.length
+      ? `${MANUAL_PATH}#adminpanelen-för-genbanksansvarig`
+      : `${GUIDE_PATH}#matrikeln`;
 
 // The top nav hides on small screens; its links are then behind the menu button.
 const nav = (key: string) => `[data-tour="nav-${key}"], [data-tour="menu"]`;
@@ -42,12 +69,17 @@ export const TOUR_STEPS: TourStep[] = [
   {
     id: "adminPage",
     target: '[data-tour="admin-cards"]',
-    href: `${MANUAL_PATH}#adminpanelen-för-genbanksansvarig`,
+    href: adminHref,
+    when: isMemberAdmin,
   },
   {
     id: "matrikelPage",
     target: '[data-tour="matrikel"]',
-    href: "/medlem/guide#matrikeln",
+    // Those who only read the register cannot edit and get no guide (404).
+    href: (user) => (keepsMatrikel(user) ? `${GUIDE_PATH}#matrikeln` : null),
+    text: (user) =>
+      keepsMatrikel(user) ? "matrikelPage.text" : "matrikelPage.textRead",
+    when: isMemberAdmin,
   },
   {
     id: "arsrapport",
@@ -75,7 +107,7 @@ export const TOUR_STEPS: TourStep[] = [
   {
     id: "roles",
     target: '[data-tour="user-menu"]',
-    href: `${MANUAL_PATH}#adminpanelen-för-genbanksansvarig`,
+    href: adminHref,
     // Everyone who sees Adminpanelen in the menu (admin, genbanksansvarig,
     // matrikeladmin) also sees Matrikel there.
     when: isMemberAdmin,
@@ -102,11 +134,14 @@ export function visibleTarget(
 export function stepsFor(
   user: UserContext,
   find: (selector: string) => Element | null = visibleTarget,
-): Array<TourStep & { element: Element }> {
+): ShownStep[] {
   return TOUR_STEPS.flatMap((step) => {
     if (step.when && !step.when(user)) return [];
     const element = find(step.target);
-    return element ? [{ ...step, element }] : [];
+    if (!element) return [];
+    const href = typeof step.href === "function" ? step.href(user) : step.href;
+    const textKey = step.text?.(user) ?? `${step.id}.text`;
+    return [{ id: step.id, target: step.target, element, href, textKey }];
   });
 }
 

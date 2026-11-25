@@ -707,7 +707,8 @@
       },
       "matrikelPage": {
         "title": "Member register",
-        "text": "Search for a membership here. Click it to see and change the details."
+        "text": "Search for a membership here. Click it to see and change the details.",
+        "textRead": "Search for a membership here and see its details."
       },
       "arsrapport": {
         "title": "Annual report",

@@ -704,7 +704,8 @@
       },
       "matrikelPage": {
         "title": "Mitgliederverzeichnis",
-        "text": "Suchen Sie hier eine Mitgliedschaft. Klicken Sie darauf, um die Angaben zu sehen und zu ändern."
+        "text": "Suchen Sie hier eine Mitgliedschaft. Klicken Sie darauf, um die Angaben zu sehen und zu ändern.",
+        "textRead": "Hier suchen Sie eine Mitgliedschaft und sehen die Angaben."
       },
       "arsrapport": {
         "title": "Jahresbericht",
