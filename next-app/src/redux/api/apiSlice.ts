@@ -229,6 +229,7 @@ export interface PopulationMetrics {
   mean_equiv_gen: number;
   mean_full_gen: number;
   mean_max_gen: number;
+  reference_start?: string | null; // ISO date life signs count from; null: no snapshot; absent: an older API
 }
 
 export interface FounderStatistics {
@@ -281,7 +282,9 @@ export interface TrendDataPoint {
   active_count: number;
   mean_inbreeding: number;
   mean_kinship: number;
-  effective_population_size: number | null; // computed on-the-fly via rolling regression
+  effective_population_size: number | null; // realised Ne over the year's members, like the card
+  ne_se: number | null; // its standard error
+  ne_n: number | null; // rabbits behind it (more than one equivalent generation)
   founder_equivalents: number;
   data_quality: "high" | "medium" | "low";
 }

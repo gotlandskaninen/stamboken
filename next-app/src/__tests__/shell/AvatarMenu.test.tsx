@@ -199,4 +199,37 @@ describe("AvatarMenu", () => {
       }),
     ).not.toBeInTheDocument();
   });
+
+  it("remembers a confirmed switch to testmiljön for the Kom igång list", async () => {
+    localStorage.clear();
+    mocks.user = userFixture({ v2_prod_access: true });
+    mocks.mode = "prod";
+    openMenu();
+    fireEvent.click(
+      screen.getByRole("menuitem", { name: "Byt till testmiljön" }),
+    );
+    expect(localStorage.getItem("sb-onboarding-tried-demo")).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Ja, byt till testmiljön" }),
+    );
+    await vi.waitFor(() =>
+      expect(localStorage.getItem("sb-onboarding-tried-demo")).toBe("1"),
+    );
+    expect(mocks.setMode).toHaveBeenCalledWith("demo");
+  });
+
+  it("does not mark testmiljön when switching to riktiga stamboken", async () => {
+    localStorage.clear();
+    mocks.user = userFixture({ v2_prod_access: true });
+    mocks.mode = "demo";
+    openMenu();
+    fireEvent.click(
+      screen.getByRole("menuitem", { name: "Byt till riktiga stamboken" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Ja, byt till riktiga stamboken" }),
+    );
+    await vi.waitFor(() => expect(mocks.refresh).toHaveBeenCalled());
+    expect(localStorage.getItem("sb-onboarding-tried-demo")).toBeNull();
+  });
 });

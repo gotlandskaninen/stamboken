@@ -146,8 +146,10 @@ test("medlemskapets sida, adress och betalning", async ({ page }) => {
   await dialog.getByLabel("Efternamn").fill("Exempel");
   await shot(page, "lagg-till-person");
   await dialog.getByRole("button", { name: "Spara" }).click();
-  await expect(page.getByText("Person tillagd")).toBeVisible();
-  await expect(page.getByText("Person tillagd")).toBeHidden({ timeout: 15000 });
+  await expect(page.getByText("Person tillagd", { exact: true })).toBeVisible();
+  await expect(page.getByText("Person tillagd", { exact: true })).toBeHidden({
+    timeout: 15000,
+  });
 
   await page
     .getByRole("button", { name: "Fler åtgärder för Olle Exempel" })

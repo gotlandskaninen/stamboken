@@ -75,7 +75,7 @@ from utils.individual_commands import purge_command_free_text  # isort:skip
 from utils.log_masking import TokenMaskFilter  # isort:skip
 from utils.mail import purge_old_mail, send_pending  # isort:skip
 from utils import login_code  # isort:skip
-from utils.matrikel import purge_previous_addresses  # isort:skip
+from utils.matrikel import purge_matrikel_audit_values, purge_previous_addresses  # isort:skip
 from utils import inbox  # isort:skip
 from utils.inbox import queue_digests  # isort:skip
 from utils.arsrapport_invite import send_due_invitations  # isort:skip
@@ -283,6 +283,10 @@ def _purge_command_free_text():
             APP.logger.info("Purged %s previous addresses", purge_previous_addresses(now))
         except Exception:  # pylint: disable=broad-except
             APP.logger.exception("Purging the previous addresses failed")
+        try:
+            APP.logger.info("Purged contact values from %s matrikel log rows", purge_matrikel_audit_values(now))
+        except Exception:  # pylint: disable=broad-except
+            APP.logger.exception("Purging the matrikel log values failed")
         count = purge_command_free_text(now)
         APP.logger.info("Purged free text from %s command log rows", count)
     finally:
@@ -2517,6 +2521,7 @@ def population_metrics(g_id):
     - mean_equiv_gen: Average equivalent complete generations
     - mean_full_gen: Average full generations
     - mean_max_gen: Average maximum generations
+    - reference_start: ISO date the snapshot's reference population counts life signs from
     """
     try:
         genebank_id = int(g_id)
@@ -2526,7 +2531,12 @@ def population_metrics(g_id):
         if not user or not (user.is_admin or genebank_id in (user.is_manager or [])):
             return jsonify({"status": "error", "message": "Åtkomst nekad"}), 403
 
-        metrics = get_population_metrics(genebank_id)
+        # One pinned snapshot for the numbers and their date. The date is added after the memo,
+        # so it is right whatever the memo is keyed on; the cached dict is copied, never changed.
+        with _pinned_snapshot(genebank_id) as snap:
+            metrics = dict(get_population_metrics(genebank_id))
+        start = snap.reference_start if snap is not None else None
+        metrics["reference_start"] = start.isoformat() if start else None
         return jsonify(metrics)
     except Exception as ex:
         APP.logger.error(f"Could not calculate population metrics: {ex}")

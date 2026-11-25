@@ -3,7 +3,8 @@
 // i stället den klistrade flikraden (rotad i Översikt → /stamboken/admin),
 // och varje sida som inte är en flikdestination har en "← …"-tillbakalänk.
 // The post-mutation redirect-to-list half of this spec is asserted where the
-// mutations live (05 profile edit, 11 herd edit, 12 create, 13 gb name).
+// mutations live (11 herd edit, 12 create, 13 gb name); the account page
+// stays put after a save instead (05, #249).
 import { test, expect } from "@playwright/test";
 import { loginAs, ADMIN } from "./helpers/auth";
 import {

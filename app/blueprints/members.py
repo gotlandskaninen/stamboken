@@ -49,6 +49,7 @@ from utils.matrikel import (
     is_anonymized,
     membership_recipient,
     parse_postal_fields,
+    query_matrikel_audit,
     set_member_email,
     set_membership_status,
     write_matrikel_audit,
@@ -225,6 +226,48 @@ def list_members():
             "page": page,
             "per_page": per_page,
         }
+    )
+
+
+def _id_arg(name: str):
+    """An optional id or number, 1 to int4 max. Unlike _parse_int_arg nothing is clamped: 0 must not mean 1."""
+    raw = request.args.get(name)
+    if not raw:
+        return None
+    if not (raw.isascii() and raw.isdigit() and 1 <= int(raw) <= 2_147_483_647):
+        raise ValueError(f"{name} måste vara ett positivt heltal")
+    return int(raw)
+
+
+@members_bp.route("/v2/members/audit", methods=["GET"])
+@json_login_required
+@matrikel_read_required
+def get_matrikel_audit():
+    """The matrikel's change log (#244). Filters: membership_id (the member page's link), member_number (the number
+    the rows show), action, actor (username or e-mail, any case),
+    from and to (YYYY-MM-DD, both days included), page, per_page (at most 200)."""
+    try:
+        membership_id = _id_arg("membership_id")
+        member_number = _id_arg("member_number")
+        page = _parse_int_arg("page", 1, maximum=2_147_483_647)
+        per_page = _parse_int_arg("per_page", 50, maximum=200)
+        dates = {k: date.fromisoformat(request.args[k]) if request.args.get(k) else None for k in ("from", "to")}
+    except ValueError:
+        return problem(
+            400, "Ogiltig parameter", "Medlemsnummer, id och sidor är positiva heltal. Datum skrivs ÅÅÅÅ-MM-DD."
+        )
+    return jsonify(
+        query_matrikel_audit(
+            full_access=current_user.is_admin or current_user.is_matrikel_admin,
+            membership_id=membership_id,
+            member_number=member_number,
+            action=request.args.get("action") or None,
+            actor=request.args.get("actor") or None,
+            date_from=dates["from"],
+            date_to=dates["to"],
+            page=page,
+            per_page=per_page,
+        )
     )
 
 

@@ -13,54 +13,80 @@ import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 
 type TabName = "overview" | "priorities" | "breeding";
 
-const descriptions: Record<TabName, { term: string; description: string }[]> = {
+export const FOUNDERDJUR =
+  "Founderdjur: rasens ursprungsdjur, kaniner utan kända föräldrar i stamboken.";
+
+export const IN_CALCULATION =
+  "Kaniner med intyg som lever, inte är kastrerade och står i en aktiv besättning i genbanken (inte GX1 eller MX1), och som har fötts, sålts eller årsrapporterats sedan 1 januari det år som den senast stängda årsrapporteringen gäller. Nyckeltalen och tabellerna räknas på dem; trenden räknar varje år på det årets kaniner. Regeln är preliminär tills styrelsen har beslutat.";
+
+export const MK_TEXT =
+  "Hur nära släkt kaninerna i beräkningen i genomsnitt är med varandra, i procent. Det är också den andel av founderdjurens genetiska variation som har gått förlorad. Lägre är bättre, men det finns ingen gräns för vad som är högt: talet stiger ju mer av stamtavlan som är känd, så jämför med tidigare år.";
+
+const founderdjur = {
+  term: "Founderdjur",
+  description:
+    "Rasens ursprungsdjur: kaniner utan kända föräldrar i stamboken. En bärare av ett founderdjur är en kanin i beräkningen som har gener från det.",
+};
+
+const inCalculation = {
+  term: "Kaniner i beräkningen",
+  description: IN_CALCULATION,
+};
+
+const descriptions: Record<
+  TabName,
+  { term: string; description: string; source?: string }[]
+> = {
   overview: [
+    founderdjur,
+    inCalculation,
     {
-      term: "Ne — Effektiv populationsstorlek",
+      term: "Effektiv populationsstorlek (Ne)",
       description:
-        "Antal individer i en ideal population som ger samma genetiska drift som den verkliga populationen. Skattas från varje djurs inavelsökning per generation (Gutiérrez m.fl. 2008), över referenspopulationen, och beskriver takten sedan stamboken började. Riktmärken: FAO anger minst 50 på kort sikt; Frankham m.fl. 2014 minst 100.",
+        "Hur stor en idealisk population skulle vara för att förlora genetisk variation lika långsamt som genbanken. Ju större, desto bättre. Räknas från hur mycket inaveln har ökat per generation hos varje kanin, sedan stamboken började. Mål: minst 50, helst 100.",
+      source:
+        "Gutiérrez m.fl. 2008 (beräkningen), FAO (minst 50), Frankham m.fl. 2014 (minst 100)",
     },
     {
-      term: "FGE — Founder genome-ekvivalenter",
+      term: "Effektivt antal founderdjur (FE)",
       description:
-        "Antal founders som skulle ge samma genetiska diversitet om de bidrog lika mycket. Baserat på gene drop-simulering (Lacy 1989). Högre FGE = bättre bevarad diversitet.",
+        "Så många founderdjur som, om alla hade lämnat lika stor andel av generna, skulle ge samma spridning av generna som i dag. Ju högre FE, desto jämnare är generna fördelade. En okänd förälder till en kanin med bara en känd förälder räknas som ett eget founderdjur, så FE kan bli större än antalet founderdjur i tabellen.",
+      source: "Lacy 1989",
     },
     {
-      term: "Diversitetsförlust",
-      description:
-        "Andel av grundarnas genetiska variation som gått förlorad (= medelsläktskap i referenspopulationen). Motsvarar 1 − GD = 1/(2·FGE).",
+      term: "Medelsläktskap (MK)",
+      description: MK_TEXT,
+      source: "FAO 2023, s. 12 (talet stiger med känd stamtavla)",
     },
     {
-      term: "MK — Genomsnittlig medelkinship",
+      term: "Inavelskoefficient (F)",
       description:
-        "Medelvärde av parvisa kinship-koefficienter bland aktiva individer. Lågt MK innebär mer genetisk diversitet i populationen.",
+        "Hur inavlad en kanin är, i procent. Den blir högre ju närmare släkt föräldrarna är. Sidan visar genomsnittet för kaninerna i beräkningen.",
     },
     {
-      term: "ΔF — Inavelsökningstakt per generation",
+      term: "Inavelsökning per generation (ΔF)",
       description:
-        "Hur snabbt inavel ökar per generation. FAO rekommenderar ΔF < 0.01 (1 %). Medelvärde av varje djurs inavelsökning per generation i referenspopulationen (Gutiérrez m.fl. 2008).",
-    },
-    {
-      term: "F — Inavelskoefficient",
-      description:
-        "Sannolikhet att två alleler på ett locus är identiska genom härstamning (identical by descent). Beräknas med Hendersons tabulärmetod.",
+        "Hur mycket inaveln ökar per generation, i genomsnitt för kaninerna i beräkningen. Mål: under 1\u00a0%.",
+      source: "Gutiérrez m.fl. 2008 (beräkningen), FAO (under 1\u00a0%)",
     },
   ],
   priorities: [
+    founderdjur,
+    inCalculation,
     {
-      term: "Genetiskt värde",
+      term: "Avelsprioritet",
       description:
-        "Inverterad MK-percentil (0–100). Individer med högt genetiskt värde har låg medelkinship, dvs. de är genetiskt ovanliga och därför värdefulla för bevarandearbetet.",
+        "Högsta: enda kaninen i beräkningen med gener från ett founderdjur, eller ett medelsläktskap på eller under gränsen för de 5\u00a0% minst släkta. Hög: på eller under gränsen för de 25\u00a0% minst släkta, bland de 25\u00a0% med flest unika gener, eller bär gener från ett founderdjur med liten andel av generna (under hälften av en jämn fördelning). Övriga: resten. Nivåerna är Stambokens egen regel, inte en vedertagen standard. Gränserna räknas fram ur kaninerna i genbanken, och varje kanin jämförs med dem; hur många som hamnar på varje nivå beror på genbanken.",
     },
     {
-      term: "Genomunikhet",
+      term: "Ovanliga gener (0–100)",
       description:
-        "Sannolikhet att individen bär alleler som inte finns hos andra i populationen. Beräknas från gene drop-simulering. Hög genomunikhet = individen har unika genetiska bidrag.",
+        "Hur stor andel av kaninerna i beräkningen som är mer släkt med resten än den här kaninen. 100 betyder minst släkt, alltså mest ovanliga gener.",
     },
     {
-      term: "Prioritetsnivåer",
+      term: "Unika gener",
       description:
-        "Kritisk: enda bärare av en founder-linje eller MK under 5:e percentilen. Viktig: MK under 25:e percentilen, hög genomunikhet, eller bärare av underrepresenterad founder. Normal: övriga.",
+        "Sannolikheten att kaninen bär genvarianter från founderdjuren som ingen annan kanin i beräkningen bär, enligt en simulering av hur generna ärvs genom stamtavlan.",
     },
   ],
   breeding: [
@@ -110,7 +136,19 @@ const GeneticsInfoPanel = ({ tab }: GeneticsInfoPanelProps) => {
                 >
                   {item.term}
                 </TableCell>
-                <TableCell>{item.description}</TableCell>
+                <TableCell>
+                  {item.description}
+                  {item.source && (
+                    <Typography
+                      variant="caption"
+                      component="p"
+                      color="textSecondary"
+                      sx={{ mt: 0.5 }}
+                    >
+                      Källa: {item.source}
+                    </Typography>
+                  )}
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>

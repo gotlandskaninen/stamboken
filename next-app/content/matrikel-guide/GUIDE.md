@@ -178,7 +178,9 @@ besättningens genbank, kan du klicka på den och komma till besättningens sida
 adminpanelen. Under besättningarna finns knappen **Koppla besättning** (se
 [Koppla en besättning](#koppla-en-besättning)).
 
-Därunder finns **Personer** och **Medlemskap**.
+Därunder finns **Personer**, **Medlemskap** och **Historik**. **Historik** visar
+de tio senaste ändringarna av medlemskapet och dess personer: när, vem och vad.
+Administratören når hela listan med **Visa hela historiken**.
 
 ![Ett medlemskap](medlemskap.png)
 

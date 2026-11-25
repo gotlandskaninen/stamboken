@@ -26,7 +26,13 @@ function renderTab(expectedOffspringF: number | null | undefined) {
   // Empty result once a query has been made (skipToken before "Beräkna")
   suggestionsQuery.mockImplementation((params: unknown) =>
     typeof params === "object"
-      ? { data: [], isLoading: false, isFetching: false, error: undefined }
+      ? {
+          data: [],
+          currentData: [],
+          isLoading: false,
+          isFetching: false,
+          error: undefined,
+        }
       : { data: undefined, isLoading: false, isFetching: false },
   );
   return render(
@@ -66,7 +72,7 @@ describe("BreedingSuggestionsTab", () => {
     );
     expect(
       screen.getByText(
-        "Inga par klarar taket 9.0 %. Förväntad inavel vid slumpparning i rasen är 9.0 %. Höj taket för att få förslag.",
+        "Inga par klarar taket 9,0 %. Förväntad inavel vid slumpparning i rasen är 9,0 %. Höj taket för att få förslag.",
       ),
     ).toBeTruthy();
   });
@@ -87,7 +93,7 @@ describe("BreedingSuggestionsTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Beräkna" }));
     expect(
       screen.getByText(
-        "Inga par hittades under taket 6.3 %. Höj taket för att få förslag.",
+        "Inga par hittades under taket 6,3 %. Höj taket för att få förslag.",
       ),
     ).toBeTruthy();
   });
@@ -108,8 +114,105 @@ describe("BreedingSuggestionsTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Beräkna" }));
     expect(
       screen.getByText(
-        "Inga par klarar taket 25.0 %. Förväntad inavel vid slumpparning i rasen är 30.0 %.",
+        "Inga par klarar taket 25,0 %. Förväntad inavel vid slumpparning i rasen är 30,0 %.",
       ),
     ).toBeTruthy();
+  });
+});
+
+describe("BreedingSuggestionsTab errors", () => {
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  const renderWithError = (error: object) => {
+    const refetch = vi.fn();
+    metricsQuery.mockReturnValue({ data: { expected_offspring_f: 0.03 } });
+    suggestionsQuery.mockImplementation((params: unknown) =>
+      typeof params === "object"
+        ? {
+            data: undefined,
+            isLoading: false,
+            isFetching: false,
+            error,
+            refetch,
+          }
+        : { data: undefined, isLoading: false, isFetching: false, refetch },
+    );
+    render(
+      <ThemeProvider theme={theme}>
+        <BreedingSuggestionsTab genebankId={1} />
+      </ThemeProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Beräkna" }));
+    return refetch;
+  };
+
+  it("names a missing access, not the sexes, for 403", () => {
+    renderWithError({ status: 403 });
+    expect(screen.getByText(/inte behörighet/)).toBeTruthy();
+    expect(screen.queryByText(/könsdata|hanar eller honor/)).toBeNull();
+  });
+
+  it("offers a retry for a failed computation", () => {
+    const refetch = renderWithError({ status: 500 });
+    expect(
+      screen.getByText(
+        "Beräkningen gick inte att hämta. Försök igen om en stund.",
+      ),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Försök igen" }));
+    expect(refetch).toHaveBeenCalled();
+  });
+
+  it("drops the previous answer's pairs when a lower cap is denied", () => {
+    const pair = {
+      sire_id: "G1-2301",
+      dam_id: "G1-2302",
+      expected_f: 0.1,
+      delta_gd: 0.001,
+      mate_suitability_index: 3,
+      reasons: [],
+    };
+    metricsQuery.mockReturnValue({ data: { expected_offspring_f: 0.03 } });
+    // RTK Query keeps `data` from the 12 % answer while 5 % loads and after it fails;
+    // `currentData` is only ever the answer for the submitted parameters.
+    let phase: "loading" | "denied" = "loading";
+    suggestionsQuery.mockImplementation((params: unknown) => {
+      const cap = (params as { maxInbreeding?: number })?.maxInbreeding;
+      if (typeof params !== "object") return { data: undefined };
+      if (cap === 0.12) return { data: [pair], currentData: [pair] };
+      return phase === "loading"
+        ? { data: [pair], currentData: undefined, isFetching: true }
+        : {
+            data: [pair],
+            currentData: undefined,
+            error: { status: 403 },
+            refetch: vi.fn(),
+          };
+    });
+    const { rerender } = render(
+      <ThemeProvider theme={theme}>
+        <BreedingSuggestionsTab genebankId={1} />
+      </ThemeProvider>,
+    );
+    fireEvent.change(capField(), { target: { value: "0.12" } });
+    fireEvent.click(screen.getByRole("button", { name: "Beräkna" }));
+    expect(screen.getByText("G1-2301")).toBeTruthy();
+
+    fireEvent.change(capField(), { target: { value: "0.05" } });
+    fireEvent.click(screen.getByRole("button", { name: "Beräkna" }));
+    expect(screen.queryByText("G1-2301")).toBeNull(); // loading the 5 % answer
+
+    phase = "denied";
+    rerender(
+      <ThemeProvider theme={theme}>
+        <BreedingSuggestionsTab genebankId={1} />
+      </ThemeProvider>,
+    );
+    expect(screen.getByText(/inte behörighet/)).toBeTruthy();
+    expect(screen.queryByText("G1-2301")).toBeNull();
+    expect(screen.queryByText(/Inga par/)).toBeNull();
   });
 });
