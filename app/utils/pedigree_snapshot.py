@@ -265,8 +265,11 @@ def _schedule(genebank_id, key=None):
         return fut
 
 
-def snapshot_status(genebank_id):
-    """(snapshot | None, stale): the current snapshot, or the previous one while a rebuild runs."""
+def snapshot_status(genebank_id, wait=True):
+    """(snapshot | None, stale): the current snapshot, or the previous one while a rebuild runs.
+
+    A cold start waits for its build unless `wait` is false; it then only starts it.
+    """
     pinned_snap = (_pinned.get() or {}).get(genebank_id)
     if pinned_snap is not None:
         return pinned_snap, False
@@ -284,7 +287,7 @@ def snapshot_status(genebank_id):
     fut = _schedule(genebank_id, key)
     if snap is not None:
         return snap, True
-    if fut is not None:
+    if fut is not None and wait:
         fut.result()  # cold start: wait for the one build (it runs on its own connection)
     snap = _snapshots.get(genebank_id)
     return snap, snap is not None and snap.key != key

@@ -7,8 +7,9 @@ import {
 } from "@reduxjs/toolkit/query/react";
 import { User } from "@/types/auth";
 import { sessionExpired } from "@/redux/slices/authSlice";
-import { readModeCookieClient } from "@/lib/mode";
+import { readModeCookieClient, type Mode } from "@/lib/mode";
 import type { TestbreedRequest, TestbreedResponse } from "@/lib/provparning";
+import { rememberAccessDenial } from "./geneticsAccess";
 
 // NEXT_PUBLIC_* is inlined into the client bundle at build time, so this is a
 // client-visible presence signal — the browser-side equivalent of lib/api.ts's
@@ -257,6 +258,13 @@ export interface BreedingSuggestion {
   reasons: string[];
 }
 
+// The cached genetics queries take the dataset's mode with the genebank: they
+// are kept an hour, and demo and production rows must never share an entry.
+export interface GeneticsArg {
+  genebankId: number;
+  mode: Mode;
+}
+
 export interface BreedingSuggestionsParams {
   genebankId: number;
   maxPairs?: number;
@@ -440,52 +448,57 @@ export const apiSlice = createApi({
     // genetic-priorities and breeding-suggestions wrap with {status, data}
     // The dashboard's queries keep their data for an hour after the tab
     // unmounts; the tabs refetch on mount, so a revisit shows it at once.
-    fetchPopulationMetrics: builder.query<PopulationMetrics, number>({
-      query: (genebankId) => ({
+    fetchPopulationMetrics: builder.query<PopulationMetrics, GeneticsArg>({
+      query: ({ genebankId }) => ({
         url: `/${genebankId}/population-metrics/`,
         timeout: 120000,
       }),
       keepUnusedDataFor: 3600,
+      onQueryStarted: rememberAccessDenial,
       providesTags: ["Genetics"],
     }),
-    fetchFounderStatistics: builder.query<FounderStatistics, number>({
-      query: (genebankId) => ({
+    fetchFounderStatistics: builder.query<FounderStatistics, GeneticsArg>({
+      query: ({ genebankId }) => ({
         url: `/${genebankId}/founder-statistics/`,
         timeout: 120000,
       }),
       keepUnusedDataFor: 3600,
+      onQueryStarted: rememberAccessDenial,
       providesTags: ["Genetics"],
     }),
-    fetchGeneticPriorities: builder.query<GeneticPriority[], number>({
-      query: (genebankId) => ({
+    fetchGeneticPriorities: builder.query<GeneticPriority[], GeneticsArg>({
+      query: ({ genebankId }) => ({
         url: `/${genebankId}/genetic-priorities/`,
         timeout: 120000,
       }),
       keepUnusedDataFor: 3600,
+      onQueryStarted: rememberAccessDenial,
       transformResponse: (response: {
         status: string;
         data: GeneticPriority[];
       }) => response.data,
       providesTags: ["Genetics"],
     }),
-    fetchFoundersAtRisk: builder.query<FounderAtRisk[], number>({
-      query: (genebankId) => ({
+    fetchFoundersAtRisk: builder.query<FounderAtRisk[], GeneticsArg>({
+      query: ({ genebankId }) => ({
         url: `/${genebankId}/founders-at-risk/`,
         timeout: 120000,
       }),
       keepUnusedDataFor: 3600,
+      onQueryStarted: rememberAccessDenial,
       transformResponse: (response: {
         status: string;
         data: FounderAtRisk[];
       }) => response.data,
       providesTags: ["Genetics"],
     }),
-    fetchGeneticsTrends: builder.query<TrendDataPoint[], number>({
-      query: (genebankId) => ({
+    fetchGeneticsTrends: builder.query<TrendDataPoint[], GeneticsArg>({
+      query: ({ genebankId }) => ({
         url: `/${genebankId}/genetics-trends/`,
         timeout: 10000,
       }),
       keepUnusedDataFor: 3600,
+      onQueryStarted: rememberAccessDenial,
       transformResponse: (response: {
         status: string;
         data: TrendDataPoint[];

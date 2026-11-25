@@ -1982,8 +1982,9 @@ def calculate_genetic_priorities(
         if len(carriers) == 1:
             sole_carrier_of[carriers[0]] = founder_id
 
-    # Find underrepresented founders (avg contribution < 50% of equal share)
-    underrep_founders = set()
+    # Find underrepresented founders (avg contribution < 50% of equal share), in pedigree order:
+    # the reason below names the first one carried, the same in every process.
+    underrep_founders = []
     if founders and equal_share > 0:
         for founder_id in founders:
             total_contrib = 0.0
@@ -1993,7 +1994,7 @@ def calculate_genetic_priorities(
                     total_contrib += contrib[founder_id]
             avg_contrib = total_contrib / len(active) if active else 0.0
             if avg_contrib < equal_share * 0.5:
-                underrep_founders.add(founder_id)
+                underrep_founders.append(founder_id)
 
     # Compute results
     results = []

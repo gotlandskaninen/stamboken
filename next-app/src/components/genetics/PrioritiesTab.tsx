@@ -12,6 +12,7 @@ import {
 import HelpTooltip from "./HelpTooltip";
 import GeneticsInfoPanel from "./GeneticsInfoPanel";
 import { queryView, StaleNote } from "./queryView";
+import { useMode } from "@/lib/mode-context";
 import { translateReasons } from "@/utils/translateReasons";
 
 const FilterChip = styled(MuiChip)<{ selected: boolean }>`
@@ -34,15 +35,19 @@ interface PrioritiesTabProps {
 }
 
 const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
+  const mode = useMode();
   const {
     data: priorities,
     loading,
     failed,
     stale,
   } = queryView(
-    useFetchGeneticPrioritiesQuery(genebankId, {
-      refetchOnMountOrArgChange: true,
-    }),
+    useFetchGeneticPrioritiesQuery(
+      { genebankId, mode },
+      {
+        refetchOnMountOrArgChange: true,
+      },
+    ),
   );
 
   const [filters, setFilters] = useState({

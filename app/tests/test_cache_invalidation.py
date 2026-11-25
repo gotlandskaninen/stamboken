@@ -150,6 +150,43 @@ class TestQueueWarmUp(unittest.TestCase):
         assert mock_gs.ps._close_db_connection.call_count == 3  # the thread holds no connection between runs
 
 
+class TestColdBuildDoesNotHoldUpTheWarmUps(unittest.TestCase):
+    """A cold genebank whose build hangs is skipped when the budget runs out; the next one is warmed."""
+
+    def setUp(self):
+        from utils import pedigree_snapshot as ps
+
+        ci._get_genetics_service()  # its import installs the real source: before the fake one
+        self.ps, saved = ps, (ps._key_fn, ps._load_fn)
+        ps.reset_for_tests()
+        release = threading.Event()
+
+        def load(genebank_id):
+            if genebank_id == 1:
+                release.wait(10)  # genebank 1's cold build hangs
+            return ("k",), [{"number": "A", "sex": None, "father_number": None, "mother_number": None}], {"A"}
+
+        ps.set_source(key_fn=lambda _gb: ("k",), load_fn=load)
+
+        def restore():
+            release.set()  # before draining the builds
+            ps.reset_for_tests()
+            ps._key_fn, ps._load_fn = saved
+            set_cache_and_functions(memoized_funcs=[], breeding_suggestions_func=None)
+
+        self.addCleanup(restore)
+
+    def test_a_hanging_cold_build_lets_the_next_genebank_warm(self):
+        warmed = []
+        set_cache_and_functions(memoized_funcs=[warmed.append], breeding_suggestions_func=None)
+        started = time.monotonic()
+        with patch.object(ci, "BUILD_WAIT_SECONDS", 0.5):
+            _recompute_genebank(1)
+            _recompute_genebank(2)
+        assert time.monotonic() - started < 5
+        assert warmed == [2]
+
+
 class TestRecompute(unittest.TestCase):
     """The debounced warm-up computes on the snapshot the write asked for, not the retained one."""
 

@@ -17,6 +17,7 @@ vi.mock("@/components/genetics/FoundersAtRiskPanel", () => ({
 }));
 
 import OverviewTab from "@/components/genetics/OverviewTab";
+import { ModeProvider } from "@/lib/mode-context";
 
 describe("OverviewTab", () => {
   afterEach(() => {
@@ -39,7 +40,9 @@ describe("OverviewTab", () => {
     });
     render(
       <ThemeProvider theme={createTheme()}>
-        <OverviewTab genebankId={2} />
+        <ModeProvider mode="prod">
+          <OverviewTab genebankId={2} />
+        </ModeProvider>
       </ThemeProvider>,
     );
     expect(screen.getByText(/Beräknar genetiska nyckeltal/)).toBeTruthy();

@@ -19,6 +19,7 @@ import {
   TrendDataPoint,
 } from "@/redux/api/apiSlice";
 import { queryView, StaleNote } from "./queryView";
+import { useMode } from "@/lib/mode-context";
 
 const Chart = dynamic(() => import("react-apexcharts"), {
   ssr: false,
@@ -31,10 +32,14 @@ interface TrendChartProps {
 }
 
 const TrendChart = ({ genebankId }: TrendChartProps) => {
+  const mode = useMode();
   const { data, loading, failed, stale } = queryView(
-    useFetchGeneticsTrendsQuery(genebankId, {
-      refetchOnMountOrArgChange: true,
-    }),
+    useFetchGeneticsTrendsQuery(
+      { genebankId, mode },
+      {
+        refetchOnMountOrArgChange: true,
+      },
+    ),
   );
   const theme = useTheme();
 

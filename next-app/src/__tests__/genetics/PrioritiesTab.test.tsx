@@ -11,6 +11,7 @@ vi.mock("@/redux/api/apiSlice", () => ({
 }));
 
 import PrioritiesTab from "@/components/genetics/PrioritiesTab";
+import { ModeProvider } from "@/lib/mode-context";
 
 const theme = createTheme();
 const cached = [
@@ -27,7 +28,9 @@ function renderTab(state: Record<string, unknown>) {
   prioritiesQuery.mockReturnValue(state);
   return render(
     <ThemeProvider theme={theme}>
-      <PrioritiesTab genebankId={1} />
+      <ModeProvider mode="prod">
+        <PrioritiesTab genebankId={1} />
+      </ModeProvider>
     </ThemeProvider>,
   );
 }
@@ -47,9 +50,10 @@ describe("PrioritiesTab", () => {
 
   it("refetches on mount and keeps the cached rows on screen meanwhile", () => {
     renderTab({ data: cached, currentData: cached, isFetching: true });
-    expect(prioritiesQuery).toHaveBeenCalledWith(1, {
-      refetchOnMountOrArgChange: true,
-    });
+    expect(prioritiesQuery).toHaveBeenCalledWith(
+      { genebankId: 1, mode: "prod" },
+      { refetchOnMountOrArgChange: true },
+    );
     expect(banner()).toBeNull();
     expect(rows()).toBeTruthy();
   });

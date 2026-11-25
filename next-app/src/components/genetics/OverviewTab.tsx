@@ -25,6 +25,7 @@ import HelpTooltip from "./HelpTooltip";
 import TrendChart from "./TrendChart";
 import FoundersAtRiskPanel from "./FoundersAtRiskPanel";
 import { queryView, StaleNote } from "./queryView";
+import { useMode } from "@/lib/mode-context";
 import type { Theme } from "@mui/material/styles";
 
 const Chart = dynamic(() => import("react-apexcharts"), {
@@ -83,16 +84,23 @@ const FounderChart = ({
 const ThemedFounderChart = withTheme(FounderChart);
 
 const OverviewTab = ({ genebankId }: OverviewTabProps) => {
+  const mode = useMode();
   // Both views belong to the selected genebank: its KPIs never mix with another's.
   const metricsView = queryView(
-    useFetchPopulationMetricsQuery(genebankId, {
-      refetchOnMountOrArgChange: true,
-    }),
+    useFetchPopulationMetricsQuery(
+      { genebankId, mode },
+      {
+        refetchOnMountOrArgChange: true,
+      },
+    ),
   );
   const foundersView = queryView(
-    useFetchFounderStatisticsQuery(genebankId, {
-      refetchOnMountOrArgChange: true,
-    }),
+    useFetchFounderStatisticsQuery(
+      { genebankId, mode },
+      {
+        refetchOnMountOrArgChange: true,
+      },
+    ),
   );
   const metrics = metricsView.data;
   const founders = foundersView.data;

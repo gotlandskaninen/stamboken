@@ -13,15 +13,23 @@ vi.mock("@/redux/api/apiSlice", () => ({
 }));
 
 import BreedingSuggestionsTab from "@/components/genetics/BreedingSuggestionsTab";
+import { ModeProvider } from "@/lib/mode-context";
 
 const theme = createTheme();
 
-function renderTab(expectedOffspringF: number | null | undefined) {
+function renderTab(
+  expectedOffspringF: number | null | undefined,
+  metricsState: Record<string, unknown> = {},
+) {
+  const data =
+    expectedOffspringF === undefined
+      ? undefined
+      : { expected_offspring_f: expectedOffspringF };
   metricsQuery.mockReturnValue({
-    data:
-      expectedOffspringF === undefined
-        ? undefined
-        : { expected_offspring_f: expectedOffspringF },
+    data,
+    currentData: data,
+    isFetching: false,
+    ...metricsState,
   });
   // Empty result once a query has been made (skipToken before "Beräkna")
   suggestionsQuery.mockImplementation((params: unknown) =>
@@ -31,7 +39,9 @@ function renderTab(expectedOffspringF: number | null | undefined) {
   );
   return render(
     <ThemeProvider theme={theme}>
-      <BreedingSuggestionsTab genebankId={1} />
+      <ModeProvider mode="prod">
+        <BreedingSuggestionsTab genebankId={1} />
+      </ModeProvider>
     </ThemeProvider>,
   );
 }
@@ -43,6 +53,23 @@ describe("BreedingSuggestionsTab", () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+  });
+
+  it("refreshes the metrics and waits for them before an automatic cap is sent", () => {
+    renderTab(0.09, { isFetching: true }); // an hour-old value is cached
+    expect(metricsQuery).toHaveBeenCalledWith(
+      { genebankId: 1, mode: "prod" },
+      { refetchOnMountOrArgChange: true },
+    );
+    const calculate = screen.getByRole("button", { name: "Beräkna" });
+    expect((calculate as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(capField(), { target: { value: "0.1" } }); // a typed cap does not wait
+    expect((calculate as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("treats the expected F as unknown when its refresh failed", () => {
+    renderTab(0.09, { error: { status: 500 } });
+    expect(capField().value).toBe("0.0625");
   });
 
   it("defaults the cap to the breed's expected offspring F when it is higher", () => {

@@ -26,6 +26,8 @@ import {
 } from "@/redux/api/apiSlice";
 import HelpTooltip from "./HelpTooltip";
 import GeneticsInfoPanel from "./GeneticsInfoPanel";
+import { queryView } from "./queryView";
+import { useMode } from "@/lib/mode-context";
 import { translateReasons } from "@/utils/translateReasons";
 
 function getMsiColor(msi: number): "success" | "warning" | "error" {
@@ -52,7 +54,16 @@ const BreedingSuggestionsTab = ({
   const [editedMaxInbreeding, setMaxInbreeding] = useState<number | null>(null);
   const [maxPerMale, setMaxPerMale] = useState(3);
 
-  const { data: metrics } = useFetchPopulationMetricsQuery(genebankId);
+  const metricsQuery = useFetchPopulationMetricsQuery(
+    { genebankId, mode: useMode() },
+    { refetchOnMountOrArgChange: true },
+  );
+  const metricsView = queryView(metricsQuery);
+  // Only a value this visit confirmed: after a failed or denied refresh the
+  // expected F is unknown, and the cap falls back to its base.
+  const metrics = metricsView.stale ? undefined : metricsView.data;
+  // An automatic cap waits for that value; a typed one does not.
+  const capPending = editedMaxInbreeding === null && metricsQuery.isFetching;
   const expectedOffspringF = metrics?.expected_offspring_f ?? null;
   // Explicit null from the API: no male or no female in the reference population
   const lacksSexes = metrics != null && metrics.expected_offspring_f === null;
@@ -151,7 +162,7 @@ const BreedingSuggestionsTab = ({
           <Button
             variant="contained"
             onClick={handleCalculate}
-            disabled={isFetching}
+            disabled={isFetching || capPending}
           >
             {isFetching ? "Beräknar..." : "Beräkna"}
           </Button>

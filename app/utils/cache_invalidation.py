@@ -224,14 +224,23 @@ def _recompute_genebank(genebank_id: int):
     logger.info(f"Debounce firing: recomputing metrics for genebank {genebank_id}")
     gs = _get_genetics_service()
     deadline = time.monotonic() + BUILD_WAIT_SECONDS
+    snap = None
     try:
         # A write during the running build needs one more; a failing build must not spin.
         for _ in range(3):
-            if not gs.snapshot_status(genebank_id)[1]:  # reading the status schedules the build a moved key needs
+            # Starts the build a moved key (or a cold start) needs, and never waits on it untimed.
+            snap, stale = gs.snapshot_status(genebank_id, wait=False)
+            if snap is not None and not stale:
                 break
             gs.ps.wait_for_builds(genebank_id, timeout=max(deadline - time.monotonic(), 0))
+        else:
+            snap = gs.snapshot_status(genebank_id, wait=False)[0]
     except Exception:  # pylint: disable=broad-except
         logger.warning("Snapshot build for genebank %s not done; warming the current one", genebank_id, exc_info=True)
+    if snap is None:
+        # Still cold: the bodies would wait on that build untimed and hold up the next genebank.
+        logger.warning("No snapshot of genebank %s within the budget; its warm-up is skipped", genebank_id)
+        return
 
     for func in _memoized_functions:
         try:
