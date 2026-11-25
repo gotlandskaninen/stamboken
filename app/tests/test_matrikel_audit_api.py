@@ -361,3 +361,32 @@ class TestMatrikelAudit(MatrikelApiTest):
         found = self.get("actor=handlaggare").get_json()
         self.assertEqual(sorted(r["action"] for r in found["rows"]), ["person_user_linked", "person_user_unlinked"])
         self.assertEqual(found["total"], 2)
+
+    def test_handler_actions_inside_the_link_span_keep_the_name(self):
+        """Codex #248 r6: only self-service is hers while linked; a status change is the handler's."""
+        handler = da.register_user("handlaggare.post@example.com", "pass", username="handlaggare")
+        matrikel.link_member_user(self.person.id, handler.id, actor=self.matrikel_user, mode="admin")
+        matrikel.write_matrikel_audit(
+            handler,
+            "membership_status_changed",
+            self.ms,
+            {"before": {"membership_status": "active"}, "after": {"membership_status": "inactive"}},
+        )
+        matrikel.write_matrikel_audit(  # her self-service, in the same span
+            handler, "kontakt_andrad", self.ms, {"person_id": self.person.id, "fields": ["phone"], "source": "profil"}
+        )
+        matrikel.unlink_member_user(self.person.id, actor=self.matrikel_user)
+        matrikel.anonymize_person(db.Member.get_by_id(self.person.id), self.matrikel_user)
+        self.login()
+        rows = self.get(f"membership_id={self.ms.id}").get_json()["rows"]
+        actors = {
+            r["action"]: r["actor"]["name"]
+            for r in rows
+            if r["action"] in ("membership_status_changed", "kontakt_andrad")
+        }
+        self.assertEqual(
+            actors, {"membership_status_changed": "handlaggare", "kontakt_andrad": matrikel.REDACTED_VALUE}
+        )
+        found = self.get("actor=handlaggare").get_json()
+        self.assertEqual([r["action"] for r in found["rows"]], ["membership_status_changed"])
+        self.assertEqual(found["total"], 1)

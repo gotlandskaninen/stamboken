@@ -342,9 +342,9 @@ def _masked_actor_rows():
 
     The erasure detaches the account but empties it only when it was still linked; one unlinked before keeps its name.
     It may be a handler's account, linked by mistake and since corrected, so the mask covers only what she did with
-    it: her household's rows while the account was linked to her. Before and after, the account acts as itself and
-    keeps its name, also on rows about her. Every link and detach writes person_user_(un)linked with both ids, which
-    gives the spans.
+    it: the self-service actions in her household while the account was linked to her. Handler actions in that span,
+    and everything before and after it, keep the account's name, also on rows about her. Every link and detach
+    writes person_user_(un)linked with both ids, which gives the spans.
     """
     links = list(
         MatrikelAudit.select(
@@ -362,31 +362,39 @@ def _masked_actor_rows():
             Member.last_name == ANONYMIZED_LAST_NAME,
         )
     }
-    # (person, account) -> [(membership, linked at or None, her own link?, unlinked at or None)]
-    spans = {}
+    spans = {}  # (person, account) -> [(membership, linked at or None, unlinked at or None)]
     for a in links:
         person, account = (a.payload or {}).get("person_id"), (a.payload or {}).get("user_id")
         if person not in erased or not isinstance(account, int):
             continue
         pair = spans.setdefault((person, account), [])
         if a.action == "person_user_linked":
-            own = (a.payload or {}).get("source") not in ("admin", "cli")  # oauth, matrikel_epost: she linked it
-            pair.append((a.membership_id, a.created_at, own, None))
-        elif pair and pair[-1][3] is None and pair[-1][1] is not None:
-            pair[-1] = (*pair[-1][:3], a.created_at)
+            pair.append((a.membership_id, a.created_at, None))
+        elif pair and pair[-1][2] is None and pair[-1][1] is not None:
+            pair[-1] = (*pair[-1][:2], a.created_at)
         else:  # linked before the log began
-            pair.append((a.membership_id, None, False, a.created_at))
+            pair.append((a.membership_id, None, a.created_at))
+    source = MatrikelAudit.payload["source"]
+    # What the member's own routes write: /members/me (kontakt_andrad, source profil), /my-membership (persons and
+    # grants) and her own link (oauth, matrikel_epost). The rest is a handler's, as are unlinks, also inside a span.
+    # shortcut: the admin routes write person_added, person_removed and grant_* too, without a source; a handler
+    # whose account was linked to her in the same span is masked there. Add a source if that ever matters.
+    self_service = (
+        MatrikelAudit.action.in_(("person_added", "person_removed", "grant_created", "grant_renewed", "grant_revoked"))
+        | ((MatrikelAudit.action == "kontakt_andrad") & (source == "profil"))
+        | ((MatrikelAudit.action == "person_user_linked") & source.in_(("oauth", "matrikel_epost")))
+    )
     condition = None
     for (_person, account), pair in spans.items():
-        for membership, start, own, end in pair:
+        for membership, start, end in pair:
             row = (MatrikelAudit.actor == account) & (MatrikelAudit.membership == membership)
-            # A handler's link and every unlink (admin or the erasure) are acts on her, not hers: the ends are open.
             if start is not None:
-                row &= MatrikelAudit.created_at >= start if own else MatrikelAudit.created_at > start
+                row &= MatrikelAudit.created_at >= start
             if end is not None:
                 row &= MatrikelAudit.created_at < end
             condition = row if condition is None else condition | row
-    return condition
+    # COALESCE: a payload without "source" gives NULL, which ~condition in the actor filter would drop
+    return None if condition is None else fn.COALESCE(condition & self_service, False)
 
 
 def _erased_households(membership_ids) -> set[int]:
