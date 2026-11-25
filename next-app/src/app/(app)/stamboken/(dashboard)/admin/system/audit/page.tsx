@@ -36,6 +36,7 @@ const FILTER_KEYS = [
 const MATRIKEL_FILTER_KEYS = [
   "action",
   "actor",
+  "member_number",
   "membership_id",
   "from",
   "to",
@@ -111,6 +112,7 @@ async function matrikelAudit(sp: Record<string, string | undefined>) {
         filters={{
           action: sp.action ?? "",
           actor: sp.actor ?? "",
+          member_number: sp.member_number ?? "",
           membership_id: sp.membership_id ?? "",
           from: sp.from ?? "",
           to: sp.to ?? "",

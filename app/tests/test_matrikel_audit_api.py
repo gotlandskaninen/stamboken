@@ -124,6 +124,9 @@ class TestMatrikelAudit(MatrikelApiTest):
             return [r["action"] for r in resp.get_json()["rows"]]
 
         self.assertEqual(actions(f"membership_id={self.ms.id}"), ["person_removed", "membership_updated"])
+        self.assertEqual(actions("member_number=41"), ["person_removed", "membership_updated"])
+        self.assertEqual(actions("member_number=42"), ["membership_retired"])
+        self.assertEqual(actions(f"member_number=41&membership_id={self.other_ms.id}"), [])
         self.assertEqual(actions("action=membership_retired"), ["membership_retired"])
         self.assertEqual(actions("actor=matrikel"), ["person_removed"])
         self.assertEqual(actions("to=2025-01-10"), ["membership_updated"])  # the whole day
@@ -133,6 +136,6 @@ class TestMatrikelAudit(MatrikelApiTest):
         self.assertEqual((page["total"], page["page"], page["per_page"]), (3, 2, 1))
         self.assertEqual([r["action"] for r in page["rows"]], ["person_removed"])
         self.assertEqual(self.get("per_page=999").get_json()["per_page"], 200)
-        for bad in ("from=igar", "page=x", "membership_id=y"):
+        for bad in ("from=igar", "page=x", "membership_id=y", "member_number=z"):
             with self.subTest(bad=bad):
                 self.assertEqual(self.get(bad).status_code, 400)

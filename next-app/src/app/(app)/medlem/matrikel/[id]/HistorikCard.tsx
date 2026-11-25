@@ -15,10 +15,13 @@ import type { MatrikelAuditPage } from "../types";
  */
 export function HistorikCard({
   membershipId,
+  memberNumber,
   history,
   isAdmin,
 }: {
   membershipId: number;
+  /** The list filters on the number the rows show; the id only when there is none. */
+  memberNumber: number | null;
   /** null: loggen gick inte att läsa. */
   history: MatrikelAuditPage | null;
   isAdmin: boolean;
@@ -29,7 +32,11 @@ export function HistorikCard({
         <h3 className={`sb-h6 ${ds["ad-card-title"]}`}>Historik</h3>
         {isAdmin && history && history.total > 0 ? (
           <Link
-            href={`/stamboken/admin/system/audit?source=matrikel&membership_id=${membershipId}`}
+            href={`/stamboken/admin/system/audit?source=matrikel&${
+              memberNumber
+                ? `member_number=${memberNumber}`
+                : `membership_id=${membershipId}`
+            }`}
             className="sb-btn sb-btn-ghost sb-btn-sm"
           >
             Visa hela historiken ({history.total})

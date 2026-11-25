@@ -33,7 +33,8 @@ const rows: MatrikelAuditRow[] = [
 const filters = {
   action: "",
   actor: "adminkonto",
-  membership_id: "5",
+  member_number: "99",
+  membership_id: "",
   from: "",
   to: "",
 };
@@ -80,9 +81,28 @@ it("keeps the source and the filters in the form and the page links", () => {
   expect(
     container.querySelector('input[type="hidden"][name="source"]'),
   ).toHaveValue("matrikel");
+  expect(screen.getByLabelText("Medlemsnummer")).toHaveValue("99");
+  expect(
+    container.querySelector('input[name="membership_id"]'),
+  ).not.toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Nästa" })).toHaveAttribute(
     "href",
-    "/stamboken/admin/system/audit?source=matrikel&actor=adminkonto&membership_id=5&page=3",
+    "/stamboken/admin/system/audit?source=matrikel&actor=adminkonto&member_number=99&page=3",
   );
   expect(screen.getByText("Sida 2 av 3")).toBeInTheDocument();
+});
+
+it("keeps the member page's membership id through a new filter", () => {
+  const { container } = render(
+    <MatrikelAuditClient
+      rows={rows}
+      total={1}
+      page={1}
+      perPage={50}
+      filters={{ ...filters, member_number: "", membership_id: "5" }}
+    />,
+  );
+  expect(
+    container.querySelector('input[type="hidden"][name="membership_id"]'),
+  ).toHaveValue("5");
 });

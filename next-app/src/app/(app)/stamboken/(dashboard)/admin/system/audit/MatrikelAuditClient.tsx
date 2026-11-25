@@ -18,6 +18,8 @@ import styles from "../../admin.module.css";
 export type MatrikelFilters = {
   action: string;
   actor: string;
+  member_number: string;
+  /** Set only by the member page's link for a membership without a number. */
   membership_id: string;
   from: string;
   to: string;
@@ -187,6 +189,13 @@ export function MatrikelAuditClient({
       <div className={`sb-card ${ds["ad-grid"]}`}>
         <form method="get" className={ds["ad-grid-toolbar"]}>
           <input type="hidden" name="source" value="matrikel" />
+          {filters.membership_id && (
+            <input
+              type="hidden"
+              name="membership_id"
+              value={filters.membership_id}
+            />
+          )}
           <TextField
             select
             name="action"
@@ -209,9 +218,9 @@ export function MatrikelAuditClient({
             size="small"
           />
           <TextField
-            name="membership_id"
-            label="Medlemskapets id"
-            defaultValue={filters.membership_id}
+            name="member_number"
+            label="Medlemsnummer"
+            defaultValue={filters.member_number}
             size="small"
           />
           <TextField

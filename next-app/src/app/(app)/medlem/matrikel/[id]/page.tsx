@@ -104,6 +104,7 @@ export default async function MembershipDetailPage({
           ) : null}
           <HistorikCard
             membershipId={membership.id}
+            memberNumber={membership.member_number}
             history={history}
             isAdmin={Boolean(user?.is_admin)}
           />

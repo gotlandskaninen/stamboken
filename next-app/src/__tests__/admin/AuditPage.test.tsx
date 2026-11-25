@@ -27,11 +27,12 @@ it("reads the matrikel's log with its own filters under source=matrikel (#244)",
   await renderPage({
     source: "matrikel",
     action: "person_updated",
+    member_number: "99",
     membership_id: "5",
     table: "hbuser",
   });
   expect(fetchApi).toHaveBeenCalledWith(
-    "/v2/members/audit?action=person_updated&membership_id=5",
+    "/v2/members/audit?action=person_updated&member_number=99&membership_id=5",
     { forceProd: true },
   );
   expect(

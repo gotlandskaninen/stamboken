@@ -37,7 +37,14 @@ const history: MatrikelAuditPage = {
 };
 
 it("lists time, actor, action, person and changed fields", () => {
-  render(<HistorikCard membershipId={5} history={history} isAdmin={false} />);
+  render(
+    <HistorikCard
+      membershipId={5}
+      memberNumber={99}
+      history={history}
+      isAdmin={false}
+    />,
+  );
   expect(screen.getByRole("heading", { name: "Historik" })).toBeInTheDocument();
   expect(
     screen.getByText("2026-11-20 09:05:00 · matrikelkonto"),
@@ -53,10 +60,37 @@ it("lists time, actor, action, person and changed fields", () => {
 
 it("links the full list and the account only for admin", () => {
   const { rerender } = render(
-    <HistorikCard membershipId={5} history={history} isAdmin={false} />,
+    <HistorikCard
+      membershipId={5}
+      memberNumber={99}
+      history={history}
+      isAdmin={false}
+    />,
   );
   expect(screen.queryByRole("link")).not.toBeInTheDocument();
-  rerender(<HistorikCard membershipId={5} history={history} isAdmin />);
+  rerender(
+    <HistorikCard
+      membershipId={5}
+      memberNumber={99}
+      history={history}
+      isAdmin
+    />,
+  );
+  expect(
+    screen.getByRole("link", { name: "Visa hela historiken (12)" }),
+  ).toHaveAttribute(
+    "href",
+    "/stamboken/admin/system/audit?source=matrikel&member_number=99",
+  );
+  // A membership without a number (friexemplar) is filtered by its id.
+  rerender(
+    <HistorikCard
+      membershipId={5}
+      memberNumber={null}
+      history={history}
+      isAdmin
+    />,
+  );
   expect(
     screen.getByRole("link", { name: "Visa hela historiken (12)" }),
   ).toHaveAttribute(
@@ -73,6 +107,7 @@ it("says so when the log is empty or cannot be read", () => {
   const { rerender } = render(
     <HistorikCard
       membershipId={5}
+      memberNumber={99}
       history={{ ...history, rows: [], total: 0 }}
       isAdmin
     />,
@@ -81,7 +116,9 @@ it("says so when the log is empty or cannot be read", () => {
     screen.getByText("Inga ändringar är loggade ännu."),
   ).toBeInTheDocument();
   expect(screen.queryByRole("link")).not.toBeInTheDocument();
-  rerender(<HistorikCard membershipId={5} history={null} isAdmin />);
+  rerender(
+    <HistorikCard membershipId={5} memberNumber={99} history={null} isAdmin />,
+  );
   expect(
     screen.getByText("Historiken kunde inte läsas just nu."),
   ).toBeInTheDocument();

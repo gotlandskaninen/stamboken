@@ -331,7 +331,16 @@ def _drop_keys(node, keys):
 
 
 def query_matrikel_audit(
-    *, full_access, membership_id=None, action=None, actor=None, date_from=None, date_to=None, page=1, per_page=50
+    *,
+    full_access,
+    membership_id=None,
+    member_number=None,
+    action=None,
+    actor=None,
+    date_from=None,
+    date_to=None,
+    page=1,
+    per_page=50,
 ):
     """The matrikel's change log for GET /v2/members/audit (#244), newest first.
 
@@ -347,6 +356,8 @@ def query_matrikel_audit(
     )
     if membership_id:
         q = q.where(MatrikelAudit.membership == membership_id)
+    if member_number:
+        q = q.where(Membership.member_number == member_number)
     if action:
         q = q.where(MatrikelAudit.action == action)
     if actor:

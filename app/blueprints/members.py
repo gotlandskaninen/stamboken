@@ -233,10 +233,12 @@ def list_members():
 @json_login_required
 @matrikel_read_required
 def get_matrikel_audit():
-    """The matrikel's change log (#244). Filters: membership_id, action, actor (username or e-mail),
+    """The matrikel's change log (#244). Filters: membership_id (the member page's link), member_number (the number
+    the rows show), action, actor (username or e-mail),
     from and to (YYYY-MM-DD, both days included), page, per_page (at most 200)."""
     try:
         membership_id = _parse_int_arg("membership_id", None, maximum=2_147_483_647)
+        member_number = _parse_int_arg("member_number", None, maximum=2_147_483_647)
         page = _parse_int_arg("page", 1, maximum=2_147_483_647)
         per_page = _parse_int_arg("per_page", 50, maximum=200)
         dates = {k: date.fromisoformat(request.args[k]) if request.args.get(k) else None for k in ("from", "to")}
@@ -246,6 +248,7 @@ def get_matrikel_audit():
         query_matrikel_audit(
             full_access=current_user.is_admin or current_user.is_matrikel_admin,
             membership_id=membership_id,
+            member_number=member_number,
             action=request.args.get("action") or None,
             actor=request.args.get("actor") or None,
             date_from=dates["from"],

@@ -1245,7 +1245,7 @@ Samma sak går att göra från användarens sida med rollen Genbanksansvarig.
 
 Matrikelns ändringar (medlemskap, personer, konton och åtkomster) finns under
 **Matrikeln** överst på sidan. Där filtrerar du på **Åtgärd**, **Utförd av**,
-**Medlemskapets id**, **Från** och **Till**. Uppgifter om en anonymiserad person
+**Medlemsnummer**, **Från** och **Till**. Uppgifter om en anonymiserad person
 står som [borttagen].
 
 ### Logga ut alla användare
