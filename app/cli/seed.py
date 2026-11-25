@@ -23,7 +23,6 @@ import logging
 import os
 import re
 import shutil
-import tempfile
 import uuid
 from collections import Counter, defaultdict
 from datetime import date, timedelta
@@ -1084,7 +1083,10 @@ def _fargatlas_paket():
         return False
     os.makedirs(os.path.dirname(target), exist_ok=True)
     # Built beside the target and renamed into place, so a seed that stops halfway leaves no package behind.
-    build = tempfile.mkdtemp(prefix=".fargatlas-", dir=os.path.dirname(target))
+    # A folder of its own with the umask's mode (not mkdtemp's 0700, which would keep a real package from being
+    # copied over it on a dev host).
+    build = os.path.join(os.path.dirname(target), f".fargatlas-{uuid.uuid4().hex}")
+    os.mkdir(build)
     farger = {}
     for id_, _, name, _ in ATLAS_FARGER:
         foton = []
@@ -1108,7 +1110,6 @@ def _fargatlas_paket():
     }
     with open(os.path.join(build, os.path.basename(MANIFEST)), "w", encoding="utf-8") as out:
         json.dump({**paket, "farger": farger}, out, ensure_ascii=False, indent=1)
-    os.chmod(build, 0o755)  # mkdtemp's 0700 would keep a real package from being copied over it on a dev host
     try:
         os.rename(build, target)
     except OSError:  # a package arrived meanwhile: it stays, and the build goes
