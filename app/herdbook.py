@@ -167,7 +167,7 @@ APP.config.update(
     CACHE_DEFAULT_TIMEOUT=300,
     UPLOAD_FOLDER=UPLOAD_DIR,
     PROFILE_UPLOAD_FOLDER=os.path.join(UPLOAD_DIR, "profiler"),
-    MAX_CONTENT_LENGTH=11 * 1024 * 1024,  # JSON and forms; the upload routes raise it per request, before the body is read
+    MAX_CONTENT_LENGTH=11 * 1024 * 1024,  # JSON, forms and the profile picture; larger uploads raise it per request
 )
 
 

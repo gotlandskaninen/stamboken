@@ -47,7 +47,8 @@ Det är grinden: ingen separat flagga slår funktionen på eller av.
    som kommer förbi låset: högst 20 per timme och IP, så att avvisade bilder
    inte kan avkodas obegränsat.
 5. Ett inskick åt gången per gunicorn-process (annars 503). Bilderna (högst
-   fyra, JPEG, PNG, WebP eller HEIC) kodas om utan EXIF.
+   fyra, JPEG, PNG, WebP eller HEIC) kodas om utan EXIF och skalas till högst
+   2000 bildpunkter på längsta sidan, som i dialogen, eftersom mejlet bär alla bilder.
 6. Issuen skapas (efter ett uppslag i båda reposen, publikt först, på en issue
    vars sista rad är `Referens: tt-<8 hex>`, så att ett omförsök efter ett
    förlorat svar inte ger en dublett; hittas en issue gäller dess repo och
