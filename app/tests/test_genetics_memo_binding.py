@@ -1,5 +1,6 @@
 """A result computed on snapshot v is cached under v even if v+1 is published meanwhile."""
 
+import unittest
 from datetime import date, timedelta
 from unittest.mock import patch
 
@@ -152,6 +153,7 @@ class TestMemoFollowsTheInputs(DatabaseTest):
         before, after = self._rebuilt()
         self.assertNotEqual(herdbook._memo_key(after), herdbook._memo_key(before))
         self.assertEqual(self._calls()["get_genetic_priorities"], calls["get_genetic_priorities"] + 1)
+        return before, after
 
     def test_herd_tracking_note_keeps_the_key(self):
         row = self.attestations[0]
@@ -239,13 +241,39 @@ class TestMemoFollowsTheInputs(DatabaseTest):
             "death date": lambda: (
                 db.Individual.update(death_date=date(2026, 11, 1)).where(db.Individual.id == self.female.id).execute()
             ),
-            "membership-changing herd tracking": lambda: ht_row(
-                "ATTESTATION",
-                individual=make_individual(self.herd, "G1-F2", date(2024, 6, 1)),
-                herd=self.herd,
-                herd_tracking_date=date(2025, 12, 31),
-            ),
         }
         for name, write in cases.items():
             with self.subTest(name):
                 self._assert_recomputed(write)
+
+    def test_membership_alone_moves_the_key(self):
+        """An existing animal gains a life sign in the window: the same pedigree rows, one more member."""
+        candidate = make_individual(self.herd, "G1-F2", date(2024, 6, 1))  # certified, no life sign: not a member
+        self._rebuilt()
+        before, after = self._assert_recomputed(
+            lambda: ht_row("ATTESTATION", individual=candidate, herd=self.herd, herd_tracking_date=date(2025, 12, 31))
+        )
+        self.assertEqual(after.ids, before.ids)
+        self.assertEqual(set(after.ref_ids) - set(before.ref_ids), {"G1-F2"})
+
+
+class TestMemoKeyCoversTheBody(unittest.TestCase):
+    """The memoized bodies live in herdbook.py, outside CODE_VERSION: a changed body misses the old entries."""
+
+    BODIES = {
+        "_get_population_metrics_cached": (),
+        "_get_founder_statistics_cached": (),
+        "_get_founders_at_risk_cached": (),
+        "_get_genetic_priorities_cached": (),
+        "_get_breeding_suggestions_cached": (20, 0.0625, 3, 1),
+    }
+
+    def test_a_changed_body_changes_the_key(self):
+        with patch.dict(herdbook.APP.extensions["cache"], {herdbook.CACHE: SimpleCache()}):
+            for name, params in self.BODIES.items():
+                with self.subTest(name):
+                    body = getattr(herdbook, name)
+                    key = body.make_cache_key(body.uncached, 1, "content-key", *params)
+                    with patch("inspect.getsource", return_value="def body(): return 'changed'"):
+                        changed = body.make_cache_key(body.uncached, 1, "content-key", *params)
+                    self.assertNotEqual(changed, key)

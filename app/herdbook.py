@@ -562,6 +562,8 @@ def rate_limit_exceeded(error):  # pylint: disable=unused-argument
 KINSHIP_LIFETIME = 300
 # Keyed on the snapshot's content (_memo_key), so a long life never serves changed inputs. Bounded by
 # Redis memory, which has no maxmemory: about 110 KiB per memoized pedigree state of a large genebank.
+# Its bodies are memoized with source_check: herdbook.py is outside genetics.CODE_VERSION, and a
+# deploy that changes a body (what it passes on) must miss the week-old entries.
 DASHBOARD_LIFETIME = 7 * 24 * 3600
 
 
@@ -2371,7 +2373,7 @@ def get_population_metrics(g_id):
     return _on_snapshot(g_id, _get_population_metrics_cached)
 
 
-@CACHE.memoize(timeout=DASHBOARD_LIFETIME)
+@CACHE.memoize(timeout=DASHBOARD_LIFETIME, source_check=True)
 def _get_population_metrics_cached(g_id, snap_key):  # pylint: disable=unused-argument
     return genetics.get_population_metrics(g_id)
 
@@ -2381,7 +2383,7 @@ def get_founder_statistics(g_id):
     return _on_snapshot(g_id, _get_founder_statistics_cached)
 
 
-@CACHE.memoize(timeout=DASHBOARD_LIFETIME)
+@CACHE.memoize(timeout=DASHBOARD_LIFETIME, source_check=True)
 def _get_founder_statistics_cached(g_id, snap_key):  # pylint: disable=unused-argument
     return genetics.get_founder_statistics(g_id)
 
@@ -2391,7 +2393,7 @@ def get_founders_at_risk(g_id):
     return _on_snapshot(g_id, _get_founders_at_risk_cached, eligible=True)
 
 
-@CACHE.memoize(timeout=DASHBOARD_LIFETIME)
+@CACHE.memoize(timeout=DASHBOARD_LIFETIME, source_check=True)
 def _get_founders_at_risk_cached(g_id, snap_key):  # pylint: disable=unused-argument
     return genetics.get_founders_at_risk(g_id)
 
@@ -2401,7 +2403,7 @@ def get_genetic_priorities(g_id):
     return _on_snapshot(g_id, _get_genetic_priorities_cached)
 
 
-@CACHE.memoize(timeout=DASHBOARD_LIFETIME)
+@CACHE.memoize(timeout=DASHBOARD_LIFETIME, source_check=True)
 def _get_genetic_priorities_cached(g_id, snap_key):  # pylint: disable=unused-argument
     return genetics.get_genetic_priorities(g_id)
 
@@ -2411,7 +2413,7 @@ def get_breeding_suggestions(g_id, max_pairs=20, max_inbreeding=0.0625, max_per_
     return _on_snapshot(g_id, _get_breeding_suggestions_cached, max_pairs, max_inbreeding, max_per_male, max_per_female)
 
 
-@CACHE.memoize(timeout=DASHBOARD_LIFETIME)
+@CACHE.memoize(timeout=DASHBOARD_LIFETIME, source_check=True)
 def _get_breeding_suggestions_cached(g_id, snap_key, max_pairs, max_inbreeding, max_per_male, max_per_female):  # pylint: disable=unused-argument
     return genetics.get_breeding_suggestions(
         g_id,

@@ -1,12 +1,15 @@
 """Tests for cache invalidation module."""
 
+import threading
 import time
 import unittest
 from unittest.mock import MagicMock, patch
 
+import utils.cache_invalidation as ci
 from utils.cache_invalidation import (
     BUILD_WAIT_SECONDS,
     _handle_invalidation_message,
+    _queue_warm_up,
     _recompute_genebank,
     get_genebank_ids_for_individual,
     poll_debounce_keys,
@@ -80,7 +83,7 @@ class TestDebouncePolling(unittest.TestCase):
     """Test the debounce polling mechanism."""
 
     @patch("utils.cache_invalidation._redis_client")
-    @patch("utils.cache_invalidation._recompute_genebank")
+    @patch("utils.cache_invalidation._queue_warm_up")
     def test_fires_after_delay(self, mock_recompute, mock_redis):
         """Debounce fires recomputation when timestamp is old enough."""
         mock_redis.keys.return_value = ["debounce:1"]
@@ -92,9 +95,9 @@ class TestDebouncePolling(unittest.TestCase):
         mock_redis.delete.assert_called_once_with("debounce:1")
 
     @patch("utils.cache_invalidation._redis_client")
-    @patch("utils.cache_invalidation._recompute_genebank")
+    @patch("utils.cache_invalidation._queue_warm_up")
     def test_claims_every_due_key_before_warming_any(self, mock_recompute, mock_redis):
-        """Genebank 1's build outlasts genebank 2's key: both are warmed all the same."""
+        """A key that expires while genebank 1's warm-up is queued: both are warmed all the same."""
         due = str(int(time.time()) - 31)
         store = {"debounce:1": due, "debounce:2": due}
         mock_redis.keys.return_value = list(store)
@@ -110,7 +113,7 @@ class TestDebouncePolling(unittest.TestCase):
         assert [c.args[0] for c in mock_recompute.call_args_list] == [1, 2]
 
     @patch("utils.cache_invalidation._redis_client")
-    @patch("utils.cache_invalidation._recompute_genebank")
+    @patch("utils.cache_invalidation._queue_warm_up")
     def test_waits_during_window(self, mock_recompute, mock_redis):
         """Debounce does not fire while within the delay window."""
         mock_redis.keys.return_value = ["debounce:1"]
@@ -119,6 +122,32 @@ class TestDebouncePolling(unittest.TestCase):
         poll_debounce_keys()
 
         mock_recompute.assert_not_called()
+
+
+class TestQueueWarmUp(unittest.TestCase):
+    """Warm-ups run on one thread of their own, so the 5 s scheduler job never waits on a build."""
+
+    @patch("utils.cache_invalidation.genetics_service")
+    @patch("utils.cache_invalidation._recompute_genebank")
+    def test_one_waiting_warm_up_per_genebank(self, mock_recompute, mock_gs):
+        started, release = threading.Event(), threading.Event()
+
+        def slow(genebank_id):
+            if not started.is_set():
+                started.set()
+                release.wait(5)
+
+        mock_recompute.side_effect = slow
+        _queue_warm_up(1)  # runs, waiting on its build
+        assert started.wait(5)
+        _queue_warm_up(1)  # the running one may predate this write: queued behind it
+        _queue_warm_up(1)  # one is already waiting: it will read the latest snapshot
+        _queue_warm_up(2)
+        release.set()
+        ci._warm_up_executor.submit(lambda: None).result(5)  # one thread, in order: all done
+
+        assert [c.args[0] for c in mock_recompute.call_args_list] == [1, 1, 2]
+        assert mock_gs.ps._close_db_connection.call_count == 3  # the thread holds no connection between runs
 
 
 class TestRecompute(unittest.TestCase):

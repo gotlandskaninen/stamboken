@@ -105,9 +105,8 @@ describe("PrioritiesTab", () => {
     expect(failedAlert()).toBeTruthy();
     expect(rows()).toBeNull();
     cleanup();
-    renderTab({ ...denied, error: { status: 401 } });
-    expect(failedAlert()).toBeNull(); // the session-expired flow takes over, as before
-    expect(staleNote()).toBeNull();
-    expect(rows()).toBeNull();
+    const { container } = renderTab({ ...denied, error: { status: 401 } });
+    // The session-expired flow takes over: no alert, no empty table behind it.
+    expect(container.innerHTML).toBe("");
   });
 });

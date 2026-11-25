@@ -11,6 +11,7 @@ changed inputs simply miss the cache, and unchanged ones keep hitting it.
 import logging
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import redis
 
@@ -27,8 +28,11 @@ _redis_url: str | None = None  # Stored for creating pub/sub client
 PUBSUB_CHANNEL = "herdbook:cache:invalidate"
 DEBOUNCE_DELAY_SECONDS = 30
 BUILD_WAIT_SECONDS = 300  # a large pedigree's snapshot build can outlast the debounce
-# Outlives a debounce poll that waits for builds and warms every genebank, so no pending key expires unwarmed.
-DEBOUNCE_KEY_SECONDS = 3600
+
+# Warm-ups run here, never in the 5 s scheduler job: one waits up to BUILD_WAIT_SECONDS for a build.
+_warm_up_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="genetics-warm-up")
+_warm_up_queued = {}  # genebank_id -> Future of its latest warm-up
+_warm_up_lock = threading.Lock()
 
 # Memoized function references — set by set_cache_and_functions()
 _memoized_functions: list = []
@@ -128,7 +132,7 @@ def trigger_invalidation(genebank_id: int):
         _redis_client.set(
             f"debounce:{genebank_id}",
             int(time.time()),
-            ex=DEBOUNCE_KEY_SECONDS,  # safety: a key nobody polls does not linger
+            ex=120,  # expire after 2min as safety
         )
         logger.info(f"Cache invalidation triggered for genebank {genebank_id}")
 
@@ -242,14 +246,36 @@ def _recompute_genebank(genebank_id: int):
             logger.warning(f"Failed to recompute breeding suggestions for genebank {genebank_id}: {e}")
 
 
+def _warm_up_quietly(genebank_id):
+    try:
+        _recompute_genebank(genebank_id)
+    except Exception:  # pylint: disable=broad-except
+        logger.exception("Genetics warm-up failed for genebank %s", genebank_id)
+    finally:
+        _get_genetics_service().ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _queue_warm_up(genebank_id):
+    """Queue a warm-up unless one for the genebank is still waiting to start.
+
+    A waiting one reads the latest snapshot when it starts; a running one may
+    predate the write, so another is queued behind it.
+    """
+    with _warm_up_lock:
+        fut = _warm_up_queued.get(genebank_id)
+        if fut is not None and not fut.running() and not fut.done():
+            return
+        _warm_up_queued[genebank_id] = _warm_up_executor.submit(_warm_up_quietly, genebank_id)
+
+
 def poll_debounce_keys():
     """
     Check for debounce keys ready to fire. Called every 5s by APScheduler on the leader.
 
     For each debounce:{genebank_id} key where now - timestamp >= 30s:
-    delete the key and run eager recomputation. Every due key is claimed
-    before any recompute: one genebank's wait for its build must not let
-    another's key expire.
+    delete the key and queue an eager recomputation. Every due key is
+    claimed before any warm-up is queued, and the job returns at once: the
+    warm-ups run on their own thread.
     """
     if _redis_client is None:
         return
@@ -275,7 +301,7 @@ def poll_debounce_keys():
             logger.warning(f"Error processing debounce key {key}: {e}")
 
     for genebank_id in due:
-        _recompute_genebank(genebank_id)
+        _queue_warm_up(genebank_id)
 
 
 def poll_genetics_version():

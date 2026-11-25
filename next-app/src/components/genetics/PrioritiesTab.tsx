@@ -144,6 +144,9 @@ const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
     );
   }
 
+  // A 401: nothing behind the session-expired modal, not an empty table.
+  if (!priorities) return null;
+
   return (
     <Box>
       {stale && <StaleNote />}
