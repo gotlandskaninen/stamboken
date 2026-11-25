@@ -123,8 +123,8 @@ class TestMembershipList(MatrikelApiTest):
         db.Herd.create(herd="G9003", genebank=self.genebanks[0], membership=self.ms2, is_active=False)
         self.login("man")
         rows = {r["id"]: r for r in self.client.get("/api/v2/members").get_json()["items"]}
-        self.assertEqual(rows[self.ms1.id]["active_herds"], [{"herd": "G9001", "genebank": "G"}])
-        self.assertEqual(rows[self.ms2.id]["active_herds"], [{"herd": "m9002", "genebank": "M"}])
+        self.assertEqual(rows[self.ms1.id]["active_herds"], [{"herd": "G9001", "letter": "G"}])
+        self.assertEqual(rows[self.ms2.id]["active_herds"], [{"herd": "m9002", "letter": "M"}])
         self.assertEqual(rows[self.ms3.id]["active_herds"], [])
         for letter, membership in (("G", self.ms1), ("M", self.ms2)):
             with self.subTest(letter=letter):

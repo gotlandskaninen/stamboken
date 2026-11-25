@@ -49,7 +49,7 @@ const columns: GridColDef<MembershipRow>[] = [
         row.active_herds === undefined
           ? "?"
           : row.active_herds
-              .filter((h) => h.genebank === letter)
+              .filter((h) => h.letter === letter)
               .map((h) => h.herd)
               .join(", ") || "—",
     }),

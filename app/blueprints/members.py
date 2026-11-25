@@ -209,7 +209,7 @@ def list_members():
             .order_by(Herd.herd)
         ):
             active_herds.setdefault(herd.membership_id, []).append(
-                {"herd": herd.herd, "genebank": herd.genebank.name[:1].upper()}
+                {"herd": herd.herd, "letter": herd.genebank.name[:1].upper()}
             )
 
     return jsonify(

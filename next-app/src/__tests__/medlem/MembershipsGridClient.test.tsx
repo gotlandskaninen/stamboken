@@ -57,9 +57,9 @@ const rows: MembershipRow[] = [
     city: "Visby",
     postal_address: "623 55 Visby",
     active_herds: [
-      { herd: "G9001", genebank: "G" },
-      { herd: "G9003", genebank: "G" },
-      { herd: "m9002", genebank: "M" },
+      { herd: "G9001", letter: "G" },
+      { herd: "G9003", letter: "G" },
+      { herd: "m9002", letter: "M" },
     ],
     persons: [
       {
