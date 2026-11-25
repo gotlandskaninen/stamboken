@@ -1,14 +1,16 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import {
   Autocomplete,
   Box,
+  Button,
   createFilterOptions,
   TextField,
   Typography,
 } from "@mui/material";
 import type { ColorOption } from "@/app/(app)/stamboken/(dashboard)/min-besattning/actions";
+import { FargKortDialog } from "@/components/fargatlas/FargKortDialog";
 
 interface ColorPickerProps {
   options: ColorOption[];
@@ -57,6 +59,7 @@ export function ColorPicker({
   label = "Färg",
   required,
 }: ColorPickerProps) {
+  const [showColor, setShowColor] = useState(false);
   // Free text when no official list could be loaded; the backend validates either way.
   if (options.length === 0 && !loading) {
     return (
@@ -84,38 +87,57 @@ export function ColorPicker({
   const shown = !found && selected ? [selected, ...options] : options;
 
   return (
-    <Autocomplete
-      options={shown}
-      value={selected as ColorOption}
-      disableClearable
-      loading={loading}
-      filterOptions={filter}
-      onChange={(_, v) => onChange(v.name)}
-      getOptionLabel={optionLabel}
-      isOptionEqualToValue={(a, b) =>
-        a.name === b.name && (a.id == null || b.id == null || a.id === b.id)
-      }
-      size="small"
-      fullWidth
-      data-genebank={genebank}
-      renderOption={({ key, ...props }, c) => (
-        <li key={key} {...props}>
-          <Box sx={{ minWidth: 0 }}>
-            <Typography variant="body2">{optionLabel(c)}</Typography>
-            {c.comment && (
-              <Typography
-                variant="caption"
-                sx={{ color: "text.secondary", display: "block" }}
-              >
-                {c.comment}
-              </Typography>
-            )}
-          </Box>
-        </li>
+    // Full width in a flex row (Registrera kanin) as the bare Autocomplete was, without growing in a flex column
+    <Box sx={{ width: "100%", minWidth: 0 }}>
+      <Autocomplete
+        options={shown}
+        value={selected as ColorOption}
+        disableClearable
+        loading={loading}
+        filterOptions={filter}
+        onChange={(_, v) => onChange(v.name)}
+        getOptionLabel={optionLabel}
+        isOptionEqualToValue={(a, b) =>
+          a.name === b.name && (a.id == null || b.id == null || a.id === b.id)
+        }
+        size="small"
+        fullWidth
+        data-genebank={genebank}
+        renderOption={({ key, ...props }, c) => (
+          <li key={key} {...props}>
+            <Box sx={{ minWidth: 0 }}>
+              <Typography variant="body2">{optionLabel(c)}</Typography>
+              {c.comment && (
+                <Typography
+                  variant="caption"
+                  sx={{ color: "text.secondary", display: "block" }}
+                >
+                  {c.comment}
+                </Typography>
+              )}
+            </Box>
+          </li>
+        )}
+        renderInput={(params) => (
+          <TextField {...params} label={label} required={required} />
+        )}
+      />
+      {selected?.id != null && (
+        <>
+          <Button
+            size="small"
+            onClick={() => setShowColor(true)}
+            sx={{ minHeight: 44, px: 0 }}
+          >
+            Visa färgen
+          </Button>
+          <FargKortDialog
+            id={selected.id}
+            open={showColor}
+            onClose={() => setShowColor(false)}
+          />
+        </>
       )}
-      renderInput={(params) => (
-        <TextField {...params} label={label} required={required} />
-      )}
-    />
+    </Box>
   );
 }

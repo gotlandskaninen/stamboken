@@ -25,7 +25,7 @@ på skärmen) och slutar med **Skärmarna** (vad varje sida innehåller).
     [sälja](#sälja-eller-flytta-en-kanin), [provpara](#provpara),
     [besättningsuppgifter](#uppdatera-besättningsuppgifter), [profil](#uppdatera-din-profil)
   - Skärmarna: [Min besättning](#min-besättning), [Kaninens sida](#kaninens-sida),
-    [Alla kaniner](#alla-kaniner), [Provparning](#provparning), [Min profil](#min-profil),
+    [Alla kaniner](#alla-kaniner), [Provparning](#provparning), [Färgatlas](#färgatlas), [Min profil](#min-profil),
     [Mina inskick](#mina-inskick), [Ladda upp intyg](#ladda-upp-intyg-skärmen), [Notiser](#notiser),
     [Verifiera intyg](#verifiera-intyg), [Ta bort köparens uppgifter](#ta-bort-köparens-uppgifter)
 - [Del 2 – Genbanksansvarig](#del-2--genbanksansvarig)
@@ -97,8 +97,9 @@ Felmeddelanden på sidan:
 
 ### Hitta i Stamboken
 
-Högst upp finns ett fält med fem länkar: **Min besättning**, **Alla kaniner**,
-**Genetik**, **Provparning** och **Profil**. På mobilen ligger de bakom
+Högst upp finns ett fält med länkarna **Min besättning**, **Alla kaniner**,
+**Genetik**, **Provparning**, **Färgatlas**, **Profil**, **Mina inskick** och
+**Årsrapport**, och **Inkorg** för den som arbetar i inläsningskön. På mobilen ligger de bakom
 menyknappen (tre streck) längst till vänster. Logotypen **Stamboken** tar dig alltid
 till Min besättning.
 
@@ -714,6 +715,19 @@ avkomman F: bra upp till N %, utred närmare upp till M %, över det hög inavel
 **Avelsråd** öppnar föreningens avelsråd. Se [Provpara](#provpara).
 
 ![Provparning](provparning-desktop.png)
+
+#### Färgatlas
+
+<!-- route: /stamboken/fargatlas -->
+
+Föreningens färgnummer i grupper efter bestämningsnyckeln, och mellerudskaninens
+nummer i en egen grupp. Varje färg har ett kort med foto, nummer, namn, beskrivning och vad
+som skiljer den från närliggande färger. Saknas foto står det "Foto saknas". Klicka på
+fotot för en större bild. **Skriv ut** ger grupperna på papper utan meny. Färgnumret
+anger grundfärgen, också när pälsen är rex: välj då **Rex** vid **Päls**.
+
+I färgvalet, när du registrerar eller redigerar en kanin, öppnar **Visa färgen**
+kortet för den färg som är vald.
 
 #### Min profil
 

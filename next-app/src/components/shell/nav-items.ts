@@ -37,6 +37,12 @@ export const NAV_ITEMS: {
     icon: "heart",
   },
   {
+    key: "fargatlas",
+    i18nKey: "sidebar.fargatlas",
+    href: "/stamboken/fargatlas",
+    icon: "palette",
+  },
+  {
     key: "profil",
     i18nKey: "sidebar.profil",
     href: "/stamboken/profil",

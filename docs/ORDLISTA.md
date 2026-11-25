@@ -103,6 +103,12 @@ efter "brokad på annat sätt", eller "sv/v" för mellerudskanin med holländart
 klofärg, bukfärg och avvikande hårlag är egna fält.\
 Kod: `color` (`Color`), `color_note`, `eye_color`, `claw_color`, `belly_color`, `hair_notes` · Legacy-manual: "Färganteckning" · Legacy: "Färg", "Färganteckning" · Nytt UI: samma
 
+**Färgatlas**\
+Föreningens färgnummer med foto och beskrivning, ordnade i grupper efter bestämningsnyckeln. Färgens
+nummer är dess id i Stamboken, och numret anger grundfärgen, också när pälsen är rex. Sidan Färgatlas
+i Stamboken visas bara för inloggade, och länken Visa färgen i färgvalet öppnar färgens kort.\
+Kod: `Color.id`, `/stamboken/fargatlas`, `/api/v2/fargatlas` (nyckeln och texterna ur atlaspaketet) · Legacy-manual: – · Legacy: – · Nytt UI: "Färgatlas", "Visa färgen", "Foto saknas"
+
 **Genbank**\
 Alla besättningar och alla kaniner av en ras i föreningens bevarandeprogram. Föreningen har två
 genbanker: gotlandskanin (besättningsnummer på G) och mellerudskanin (M). En enskild uppfödares

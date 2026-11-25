@@ -15,6 +15,7 @@ describe("NAV_ITEMS translations", () => {
       "Alla kaniner",
       "Genetik",
       "Provparning",
+      "Färgatlas",
       "Profil",
     ]);
   });
@@ -27,6 +28,7 @@ describe("NAV_ITEMS translations", () => {
       "All Rabbits",
       "Genetics",
       "Test mating",
+      "Colour atlas",
       "Profile",
     ]);
 

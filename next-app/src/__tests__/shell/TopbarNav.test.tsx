@@ -20,12 +20,13 @@ afterEach(() => {
 });
 
 describe("TopbarNav", () => {
-  it("exports exactly the five breeder dashboard destinations in order", () => {
+  it("exports exactly the six breeder dashboard destinations in order", () => {
     expect(NAV_ITEMS.map((item) => item.href)).toEqual([
       "/stamboken/min-besattning",
       "/stamboken/alla-kaniner",
       "/stamboken/genetik",
       "/stamboken/provparning",
+      "/stamboken/fargatlas",
       "/stamboken/profil",
     ]);
     expect(NAV_ITEMS.map((item) => item.i18nKey)).toEqual([
@@ -33,6 +34,7 @@ describe("TopbarNav", () => {
       "sidebar.allaKaniner",
       "sidebar.genetik",
       "sidebar.provparning",
+      "sidebar.fargatlas",
       "sidebar.profil",
     ]);
   });
@@ -58,7 +60,7 @@ describe("TopbarNav", () => {
     ).toBe(true);
   });
 
-  it("renders the five Swedish dashboard links, Mina inskick and Årsrapport in navigation order", () => {
+  it("renders the six Swedish dashboard links, Mina inskick and Årsrapport in navigation order", () => {
     render(<TopbarNav />);
 
     const navigation = screen.getByRole("navigation", {
@@ -77,6 +79,7 @@ describe("TopbarNav", () => {
       { name: "Alla kaniner", href: "/stamboken/alla-kaniner" },
       { name: "Genetik", href: "/stamboken/genetik" },
       { name: "Provparning", href: "/stamboken/provparning" },
+      { name: "Färgatlas", href: "/stamboken/fargatlas" },
       { name: "Profil", href: "/stamboken/profil" },
       { name: "Mina inskick", href: "/stamboken/inskick" },
       { name: "Årsrapport", href: "/stamboken/arsrapport" },

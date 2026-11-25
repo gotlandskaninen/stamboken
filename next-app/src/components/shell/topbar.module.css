@@ -64,7 +64,8 @@
   font-weight: 500;
   color: var(--sb-ink-3);
   text-decoration: none;
-  padding: 8px 12px;
+  /* 8px, not 12px: with Färgatlas the eight links wrapped to two lines at 1280px */
+  padding: 8px 8px;
   border-radius: var(--sb-r-2);
   transition: all var(--sb-dur-fast) var(--sb-ease);
 }
@@ -378,4 +379,11 @@
   line-height: 16px;
   border-radius: 999px;
   text-align: center;
+}
+
+/* A printed page is its content, without the menu. */
+@media print {
+  .topbar {
+    display: none;
+  }
 }
