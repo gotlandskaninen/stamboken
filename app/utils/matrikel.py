@@ -394,8 +394,8 @@ def query_matrikel_audit(
         )
     if date_from:
         q = q.where(MatrikelAudit.created_at >= date_from)
-    if date_to:
-        q = q.where(MatrikelAudit.created_at < date_to + timedelta(days=1))
+    if date_to:  # capped: the day after date.max overflows
+        q = q.where(MatrikelAudit.created_at < min(date_to, date(9998, 12, 31)) + timedelta(days=1))
     total = q.count()
     audits = list(q.order_by(MatrikelAudit.created_at.desc(), MatrikelAudit.id.desc()).paginate(page, per_page))
 

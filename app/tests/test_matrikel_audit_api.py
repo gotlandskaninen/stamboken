@@ -133,6 +133,7 @@ class TestMatrikelAudit(MatrikelApiTest):
         self.assertEqual(actions("to=2025-01-10"), ["membership_updated"])  # the whole day
         today = date.today().isoformat()
         self.assertEqual(actions(f"from={today}&to={today}"), ["membership_retired", "person_removed"])
+        self.assertEqual(len(actions("from=0001-01-01&to=9999-12-31")), 3)  # Opus #248: no OverflowError
         page = self.get("per_page=1&page=2").get_json()
         self.assertEqual((page["total"], page["page"], page["per_page"]), (3, 2, 1))
         self.assertEqual([r["action"] for r in page["rows"]], ["person_removed"])
