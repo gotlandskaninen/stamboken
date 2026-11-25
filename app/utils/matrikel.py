@@ -58,7 +58,7 @@ from utils.herd_contact import (
     on_person_leaving,
     snapshot_before_leaving,
 )
-from utils.inbox_purge import erase_person_from_inbox, remove_originals
+from utils.inbox_purge import erase_person_from_inbox, erase_user_from_inbox, remove_originals
 from utils.individual_commands import purge_command_free_text
 from utils.login_code import (
     AddressTaken,
@@ -658,7 +658,8 @@ def erase_unlinked_account(user_id, actor_id):
     removed after the commit. Refuses (LinkError) the caller's own account, an account already emptied, one with any
     role and one that a person in the register points to, ended or not: persons are handled in the register. A linker
     takes this row's lock before it writes member.user_id and refuses an inactive account, so the check holds.
-    The intake queue's items the account uploaded stay: erase_person_from_inbox needs a person.
+    What the account sent to the intake queue goes as for a person (erase_user_from_inbox), its files after the
+    commit.
     """
     if user_id == actor_id:
         raise LinkError("Ditt eget konto", "Du kan inte radera uppgifterna i kontot du är inloggad med.", type="self")
@@ -679,8 +680,10 @@ def erase_unlinked_account(user_id, actor_id):
         User.update(name_on_check_page=False).where(User.id == user.id).execute()
         forget_recipient("user", user.id)
         erase_account(user)  # `user` keeps the values read under the lock
+        originals = erase_user_from_inbox(user.id)
         pictures = profile_pictures_of(user)  # before the purge takes their names
         purge_user_audit_pii(user.id, user.username, user.email)  # last: it locks audit_log until the commit
+    remove_originals(originals)  # only after the commit: a row never names a removed file
     for name in pictures:
         remove_profile_picture(name)
 
