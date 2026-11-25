@@ -1962,7 +1962,7 @@ class TestUserAdminContracts(FlaskTest):
                         with self.subTest(user=user.email, method=method, url=url):
                             response = ctx.open(url, method=method, json=body)
                             self.assertEqual((response.status_code, response.get_json()), (410, expected))
-        anonymous = self.app.post("/api/manage/setpassword/", json={"newpassword": "ny"})
+        anonymous = APP.test_client().post("/api/manage/setpassword/", json={"newpassword": "ny"})  # a fresh client
         self.assertEqual((anonymous.status_code, anonymous.get_json()), (410, password))
         self.assertEqual(snapshot(), before)
 
