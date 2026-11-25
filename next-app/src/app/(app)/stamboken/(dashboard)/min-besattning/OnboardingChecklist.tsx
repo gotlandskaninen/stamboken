@@ -7,7 +7,7 @@ import type { Individual } from "@/redux/api/apiSlice";
 import { MANUAL_PATH } from "@/lib/constants";
 import { readModeCookieClient } from "@/lib/mode";
 import { useUser } from "@/lib/user-context";
-import { useStartTour } from "@/components/tour/Tour.client";
+import { useHideTourOffer, useStartTour } from "@/components/tour/Tour.client";
 import {
   MbCard,
   rabbitStatus,
@@ -101,9 +101,14 @@ export default function OnboardingChecklist({
 
   // Only the owner gets "your start animals"; a herd that has bred is not
   // new; a failed fetch shows nothing.
-  if (!user?.is_owner?.includes(herdNumber)) return null;
-  if (dismissed || !herd?.is_active || breedings === null) return null;
-  if (breedings.length > 0) return null;
+  const shown =
+    !!user?.is_owner?.includes(herdNumber) &&
+    !dismissed &&
+    !!herd?.is_active &&
+    breedings?.length === 0;
+  // One Visa runt on the page: the list's own replaces the offer.
+  useHideTourOffer(shown && !!startTour);
+  if (!shown || !herd || !breedings) return null;
 
   const individuals = herd.individuals ?? [];
   const steps = onboardingSteps(individuals, breedings);

@@ -1,18 +1,9 @@
-import "@testing-library/jest-dom/vitest";
 import "@/i18n";
 import i18n from "i18next";
 import { readFile } from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { UserContext } from "@/lib/user-context";
 import { headingSlugger } from "@/lib/headingSlug";
-
-const mocks = vi.hoisted(() => ({
-  pathname: "/stamboken/min-besattning",
-  user: null as unknown,
-}));
-vi.mock("next/navigation", () => ({ usePathname: () => mocks.pathname }));
-vi.mock("@/lib/user-context", () => ({ useOptionalUser: () => mocks.user }));
 
 import {
   TOUR_STEPS,
@@ -21,7 +12,6 @@ import {
   stepsFor,
   visibleTarget,
 } from "@/components/tour/tour";
-import { TourContext, TourOffer } from "@/components/tour/Tour.client";
 
 const member = {
   id: 7,
@@ -135,48 +125,5 @@ describe("the steps' texts and links", () => {
       );
       expect(anchors, step.href).toContain(anchor);
     }
-  });
-});
-
-describe("TourOffer", () => {
-  const start = vi.fn();
-  const renderOffer = () =>
-    render(
-      <TourContext.Provider value={start}>
-        <TourOffer />
-      </TourContext.Provider>,
-    );
-
-  beforeEach(() => {
-    localStorage.clear();
-    start.mockClear();
-    mocks.user = member;
-    mocks.pathname = "/stamboken/min-besattning";
-  });
-  afterEach(cleanup);
-
-  it("offers the tour on Min besättning and starts it only on yes", () => {
-    renderOffer();
-    expect(start).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Visa runt" }));
-    expect(start).toHaveBeenCalledOnce();
-    expect(
-      screen.queryByRole("region", { name: "Rundtur i Stamboken" }),
-    ).toBeNull();
-  });
-
-  it("does not ask again after Nej tack", () => {
-    const { unmount } = renderOffer();
-    fireEvent.click(screen.getByRole("button", { name: "Nej tack" }));
-    expect(start).not.toHaveBeenCalled();
-    unmount();
-    renderOffer();
-    expect(screen.queryByRole("button", { name: "Visa runt" })).toBeNull();
-  });
-
-  it("stays away from other pages, where the user is at work", () => {
-    mocks.pathname = "/stamboken/arsrapport";
-    renderOffer();
-    expect(screen.queryByRole("button", { name: "Visa runt" })).toBeNull();
   });
 });

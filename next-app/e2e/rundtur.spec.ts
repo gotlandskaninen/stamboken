@@ -123,6 +123,19 @@ test.describe("Rundtur för en vanlig medlem", () => {
     expect(titles).not.toContain("Kullar och parningar");
   });
 
+  test("starting from the menu answers the offer too", async ({ page }) => {
+    await openMinBesattning(page);
+    const offer = page.getByRole("region", { name: "Rundtur i Stamboken" });
+    await expect(offer).toBeVisible();
+    await startFromMenu(page);
+    // Gone at once, not only after the tour.
+    await expect(offer).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await page.reload();
+    await openMinBesattning(page);
+    await expect(offer).toHaveCount(0);
+  });
+
   test.describe("on a 375 px phone", () => {
     test.use({ viewport: { width: 375, height: 812 }, hasTouch: true });
 

@@ -733,6 +733,7 @@
         "title": "Tyck till",
         "text": "Missing something, or is something wrong? Press Tyck till and tell us. You can see the tour again with Show me around in your menu."
       }
-    }
+    },
+    "failed": "The tour could not start. Try again in a while."
   }
 }

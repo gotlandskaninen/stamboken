@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { flushSync } from "react-dom";
 import { usePathname } from "next/navigation";
 import { useTranslation } from "react-i18next";
 import { Alert } from "@mui/material";
@@ -8,12 +9,34 @@ import type { Driver } from "driver.js";
 import "driver.js/dist/driver.css";
 import "./tour.css";
 import { useOptionalUser } from "@/lib/user-context";
+import { useSnackbar } from "@/components/SnackbarProvider";
 import { answerOffer, shouldOffer, stepsFor } from "./tour";
 
-/** Starts the tour; null outside a TourProvider (then no button is shown). */
-export const TourContext = React.createContext<(() => void) | null>(null);
+interface Tour {
+  /** Starts the tour on the current page. */
+  start: () => void;
+  /** The first-login offer is still unanswered and nothing hides it. */
+  offerOpen: boolean;
+  /** Nej tack: saved at once. */
+  decline: () => void;
+  /** Hides the offer while another Visa runt button is on the page. */
+  hideOffer: (hidden: boolean) => void;
+}
 
-export const useStartTour = () => React.useContext(TourContext);
+/** null outside a TourProvider; then no Visa runt button is shown. */
+export const TourContext = React.createContext<Tour | null>(null);
+
+export const useStartTour = () => React.useContext(TourContext)?.start ?? null;
+
+/** While the calling component shows its own Visa runt, the offer hides. */
+export function useHideTourOffer(hidden: boolean) {
+  const hideOffer = React.useContext(TourContext)?.hideOffer;
+  React.useEffect(() => {
+    if (!hideOffer || !hidden) return;
+    hideOffer(true);
+    return () => hideOffer(false);
+  }, [hideOffer, hidden]);
+}
 
 const noSubscription = () => () => {};
 
@@ -30,28 +53,56 @@ const escapeHtml = (s: string) =>
 export function TourProvider({ children }: { children: React.ReactNode }) {
   const user = useOptionalUser();
   const { t } = useTranslation();
+  const { showSnackbar } = useSnackbar();
   const pathname = usePathname();
   const tour = React.useRef<Driver | null>(null);
+  // Bumped by every end: a start still loading driver.js sees it and stops.
+  const generation = React.useRef(0);
+  const [answered, setAnswered] = React.useState(false);
+  const [offerHidden, setOfferHidden] = React.useState(false);
+  // localStorage on the client, "no" on the server, so hydration matches.
+  const unanswered = React.useSyncExternalStore(
+    noSubscription,
+    () => !!user && shouldOffer(user.id),
+    () => false,
+  );
 
-  // A new page has other parts: end the tour rather than point at nothing.
-  const end = () => {
+  const end = React.useCallback(() => {
+    generation.current++;
     const running = tour.current;
     tour.current = null; // ended by us: leave focus where it is
     running?.destroy();
-  };
-  React.useEffect(() => end, [pathname]);
+  }, []);
+  // A new page has other parts: end the tour rather than point at nothing.
+  React.useEffect(() => end, [pathname, end]);
 
   const start = React.useCallback(async () => {
     if (!user) return;
+    end();
+    const mine = generation.current;
     // driver.js returns focus to the last focused element, which after Nästa
     // is a button in the closed popover. Return it to where the tour started,
     // read before the await below unmounts the offer, or to the menu when
     // that button is gone.
     const opener = document.activeElement;
-    const { driver } = await import("driver.js");
-    end();
+    let driver: typeof import("driver.js").driver;
+    try {
+      ({ driver } = await import("driver.js"));
+    } catch {
+      if (mine === generation.current) showSnackbar(t("tour.failed"), "error");
+      return;
+    }
+    // The page changed, or another start came, while driver.js loaded.
+    if (mine !== generation.current) return;
     const steps = stepsFor(user);
-    if (steps.length === 0) return;
+    if (steps.length === 0) {
+      showSnackbar(t("tour.failed"), "error");
+      return;
+    }
+    // The tour will run: it now counts as the answer to the offer. The offer
+    // leaves the page before driver.js measures it, so nothing shifts after.
+    answerOffer(user.id);
+    flushSync(() => setAnswered(true));
     const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const running = driver({
       steps: steps.map((step) => ({
@@ -98,9 +149,22 @@ export function TourProvider({ children }: { children: React.ReactNode }) {
     });
     tour.current = running;
     running.drive();
-  }, [user, t]);
+  }, [user, t, end, showSnackbar]);
 
-  return <TourContext.Provider value={start}>{children}</TourContext.Provider>;
+  const value = React.useMemo<Tour>(
+    () => ({
+      start,
+      offerOpen: !!user && unanswered && !answered && !offerHidden,
+      decline: () => {
+        if (user) answerOffer(user.id);
+        setAnswered(true);
+      },
+      hideOffer: setOfferHidden,
+    }),
+    [start, user, unanswered, answered, offerHidden],
+  );
+
+  return <TourContext.Provider value={value}>{children}</TourContext.Provider>;
 }
 
 /**
@@ -108,26 +172,12 @@ export function TourProvider({ children }: { children: React.ReactNode }) {
  * lands. It stays until the user answers, and never starts the tour itself.
  */
 export function TourOffer() {
-  const user = useOptionalUser();
-  const start = useStartTour();
+  const tour = React.useContext(TourContext);
   const pathname = usePathname();
   const { t } = useTranslation();
-  const [answered, setAnswered] = React.useState(false);
-  // localStorage on the client, "no" on the server, so hydration matches.
-  const unanswered = React.useSyncExternalStore(
-    noSubscription,
-    () => !!user && shouldOffer(user.id),
-    () => false,
-  );
 
-  if (answered || !unanswered || !user || !start) return null;
+  if (!tour?.offerOpen) return null;
   if (!pathname.startsWith("/stamboken/min-besattning")) return null;
-
-  const answer = (yes: boolean) => {
-    answerOffer(user.id);
-    setAnswered(true);
-    if (yes) start();
-  };
 
   return (
     <Alert
@@ -140,14 +190,14 @@ export function TourOffer() {
           <button
             type="button"
             className="sb-btn sb-btn-sm"
-            onClick={() => answer(true)}
+            onClick={tour.start}
           >
             {t("tour.start")}
           </button>
           <button
             type="button"
             className="sb-btn sb-btn-ghost sb-btn-sm"
-            onClick={() => answer(false)}
+            onClick={tour.decline}
           >
             {t("tour.noThanks")}
           </button>

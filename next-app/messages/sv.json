@@ -733,6 +733,7 @@
         "title": "Tyck till",
         "text": "Saknar du något, eller är något fel? Tryck på Tyck till och berätta. Rundturen kan du se igen med Visa runt i din meny."
       }
-    }
+    },
+    "failed": "Rundturen gick inte att starta. Försök igen om en stund."
   }
 }

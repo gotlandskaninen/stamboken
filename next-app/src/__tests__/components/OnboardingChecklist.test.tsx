@@ -153,8 +153,11 @@ describe("OnboardingChecklist", () => {
     expect(screen.queryByRole("button", { name: "Visa runt" })).toBeNull();
     cleanup();
     const start = vi.fn();
+    const hideOffer = vi.fn();
     render(
-      <TourContext.Provider value={start}>
+      <TourContext.Provider
+        value={{ start, offerOpen: false, decline: vi.fn(), hideOffer }}
+      >
         <OnboardingChecklist
           herd={{ is_active: true, individuals: [] }}
           breedings={[]}
@@ -164,6 +167,8 @@ describe("OnboardingChecklist", () => {
         />
       </TourContext.Provider>,
     );
+    // One Visa runt on the page: the offer hides while the list shows.
+    expect(hideOffer).toHaveBeenCalledWith(true);
     fireEvent.click(screen.getByRole("button", { name: "Visa runt" }));
     expect(start).toHaveBeenCalledOnce();
   });

@@ -730,6 +730,7 @@
         "title": "Tyck till",
         "text": "Fehlt etwas, oder stimmt etwas nicht? Drücken Sie auf Tyck till und schreiben Sie uns. Den Rundgang sehen Sie wieder über Rundgang in Ihrem Menü."
       }
-    }
+    },
+    "failed": "Der Rundgang konnte nicht starten. Versuchen Sie es später noch einmal."
   }
 }
