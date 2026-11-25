@@ -29,6 +29,7 @@ export interface OnboardingStep {
 export function onboardingSteps(
   individuals: Individual[],
   breedings: BreedingRecord[],
+  triedDemo = false,
 ): OnboardingStep[] {
   // Living, uncastrated breeding stock. Not "Aktiv": that needs a life sign
   // within 13 months, which a herd that has not bred may lack.
@@ -59,13 +60,23 @@ export function onboardingSteps(
       manual: "#registrera-en-parning",
       more: "Så registrerar du en parning",
     },
+    {
+      title: "Prova i testmiljön",
+      text: "Vill du prova utan att ändra något på riktigt? Byt till testmiljön i menyn. Där kan du klicka runt fritt, och allt återställs varje natt.",
+      done: triedDemo,
+      manual: "#testmiljön-och-riktiga-stamboken",
+      more: "Om testmiljön",
+    },
   ];
 }
+
+const TRIED_DEMO_KEY = "sb-onboarding-tried-demo";
 
 /**
  * Getting-started steps for a herd that has not bred yet (issue #41). Whether
  * a step is done comes from the herd's own data, so it holds across browsers
- * and logins; only "Stäng" is remembered per browser.
+ * and logins; only "Stäng" and the test environment step (#228) are
+ * remembered per browser.
  */
 export default function OnboardingChecklist({
   herd,
@@ -81,9 +92,10 @@ export default function OnboardingChecklist({
   onNewMating: () => void;
 }) {
   const user = useUser();
+  const mode = readModeCookieClient();
   // Per mode too: Stäng in the test environment must not hide the list in
   // the real stamboken (same origin, the mode is a cookie).
-  const key = `sb-onboarding-dismissed-${readModeCookieClient()}-${herdNumber}`;
+  const key = `sb-onboarding-dismissed-${mode}-${herdNumber}`;
   // Read per render, not once: the herd switcher changes herdNumber without
   // remounting. Min besättning renders tabs only after hydration, so reading
   // localStorage here cannot cause a markup mismatch.
@@ -94,6 +106,14 @@ export default function OnboardingChecklist({
   } catch {
     // unavailable storage: only this visit's Stäng counts
   }
+  // The test environment step: once seen in this browser, done in both modes.
+  let triedDemo = mode === "demo";
+  try {
+    if (triedDemo) localStorage.setItem(TRIED_DEMO_KEY, "1");
+    else triedDemo = localStorage.getItem(TRIED_DEMO_KEY) === "1";
+  } catch {
+    // unavailable storage: done only while in the test environment
+  }
 
   // Only the owner gets "your start animals"; a herd that has bred is not
   // new; a failed fetch shows nothing.
@@ -102,7 +122,7 @@ export default function OnboardingChecklist({
   if (breedings.length > 0) return null;
 
   const individuals = herd.individuals ?? [];
-  const steps = onboardingSteps(individuals, breedings);
+  const steps = onboardingSteps(individuals, breedings, triedDemo);
   // The mating form needs a doe in the herd; the buck may be borrowed.
   const hasDoe = individuals.some(
     (i) => i.sex === "female" && rabbitStatus(i) !== "Död",

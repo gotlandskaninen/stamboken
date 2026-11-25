@@ -60,7 +60,29 @@ describe("OnboardingChecklist", () => {
   it("shows the steps for an active herd that has not bred", () => {
     renderList({});
     expect(screen.getByText(TITLE)).toBeInTheDocument();
-    expect(screen.getAllByRole("listitem")).toHaveLength(3);
+    expect(screen.getAllByRole("listitem")).toHaveLength(4);
+  });
+
+  it("offers the test environment as a fourth step with a manual link", () => {
+    document.cookie = "sb_mode=prod";
+    renderList({});
+    const step = screen.getAllByRole("listitem")[3];
+    expect(step).toHaveTextContent("Prova i testmiljön");
+    expect(step).toHaveTextContent("Byt till testmiljön i menyn.");
+    expect(step).not.toHaveTextContent("Klart");
+    expect(screen.getByRole("link", { name: "Om testmiljön" })).toHaveAttribute(
+      "href",
+      "/stamboken-online/manual#testmiljön-och-riktiga-stamboken",
+    );
+  });
+
+  it("ticks the test environment step once this browser has been there", () => {
+    const { unmount } = renderList({});
+    expect(screen.getAllByRole("listitem")[3]).toHaveTextContent("Klart");
+    unmount();
+    document.cookie = "sb_mode=prod";
+    renderList({});
+    expect(screen.getAllByRole("listitem")[3]).toHaveTextContent("Klart");
   });
 
   it.each([
@@ -147,6 +169,7 @@ describe("OnboardingChecklist", () => {
   });
 
   it("marks done steps and drops their action", () => {
+    document.cookie = "sb_mode=prod";
     renderList({ herd: { is_active: true, individuals: [hane, hona] } });
     expect(screen.getAllByText("Klart")).toHaveLength(2);
     expect(screen.queryByRole("button", { name: "Till Kaniner" })).toBeNull();
