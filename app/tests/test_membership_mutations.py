@@ -766,6 +766,11 @@ class TestPersonMutationEndpoints(MatrikelAdminTestBase):
         self.assertEqual(resp.status_code, 409)
         self.assertEqual(db.Member.get_by_id(self.main.id).role, "huvudmedlem")
 
+    def test_patch_person_change_family_to_skotare(self):
+        resp = self.patch_json(f"/api/v2/persons/{self.family.id}", {"role": "skotare"})
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(db.Member.get_by_id(self.family.id).role, "skotare")
+
     def test_patch_person_promote_second_main_409(self):
         resp = self.patch_json(f"/api/v2/persons/{self.family.id}", {"role": "huvudmedlem"})
         self.assertEqual(resp.status_code, 409)

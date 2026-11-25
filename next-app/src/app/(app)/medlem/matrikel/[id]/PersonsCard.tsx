@@ -193,7 +193,14 @@ export function PersonsCard({
       });
     } else {
       run({
-        run: () => updatePerson(membership.id, editPersonId, payload),
+        run: () =>
+          updatePerson(
+            membership.id,
+            editPersonId,
+            editedPerson?.role === "huvudmedlem"
+              ? payload
+              : { ...payload, role: personForm.role },
+          ),
         errorTitle: "Kunde inte spara personen",
         success: "Person sparad",
       });
@@ -501,7 +508,7 @@ export function PersonsCard({
                 setPersonForm({ ...personForm, phone: e.target.value })
               }
             />
-            {editPersonId === null ? (
+            {editedPerson?.role !== "huvudmedlem" ? (
               <TextField
                 select
                 label="Roll"

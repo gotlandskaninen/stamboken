@@ -277,3 +277,34 @@ describe("PersonsCard — Konto column", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("PersonsCard — rollval vid redigering", () => {
+  it("lets a familjemedlem become skötare and sends the role", async () => {
+    vi.mocked(updatePerson).mockResolvedValue({ ok: true });
+    render(<PersonsCard membership={MEMBERSHIP} canEdit />);
+    fireEvent.click(
+      within(row(/Bo Olinkad/)).getByRole("button", { name: "Redigera" }),
+    );
+    const dialog = within(screen.getByRole("dialog"));
+    fireEvent.mouseDown(dialog.getByLabelText("Roll"));
+    fireEvent.click(screen.getByRole("option", { name: "Skötare" }));
+    fireEvent.click(dialog.getByRole("button", { name: "Spara" }));
+    await waitFor(() =>
+      expect(updatePerson).toHaveBeenCalledWith(
+        1,
+        12,
+        expect.objectContaining({ role: "skotare" }),
+      ),
+    );
+  });
+
+  it("shows no role select for the huvudmedlem", () => {
+    render(<PersonsCard membership={MEMBERSHIP} canEdit />);
+    fireEvent.click(
+      within(row(/Anna Linkad/)).getByRole("button", { name: "Redigera" }),
+    );
+    expect(
+      within(screen.getByRole("dialog")).queryByLabelText("Roll"),
+    ).not.toBeInTheDocument();
+  });
+});
