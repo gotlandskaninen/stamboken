@@ -130,6 +130,11 @@ class TestAdminEraseAccount(DatabaseTest):
         self.assertEqual((detail["email"], detail["is_active"]), (f"raderad-{user.id}", False))
         again = self._erase(user.id)
         self.assertEqual((again.status_code, again.get_json()["type"]), (409, "erased"))
+        activate = self.client.patch(f"/api/v2/admin/users/{user.id}/active", json={"active": True})
+        self.assertEqual(
+            (activate.status_code, activate.get_json()["detail"]),
+            (409, "Kontots uppgifter är raderade, så kontot kan inte aktiveras."),
+        )
 
     def test_an_account_with_a_role_is_refused(self):
         for level in ("viewer", "helper", "owner", "manager", "matrikel_admin", "admin"):
