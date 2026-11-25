@@ -162,6 +162,20 @@ const OverviewTab = ({ genebankId }: OverviewTabProps) => {
 
   if (!metrics || !founders) return null;
 
+  // No date means no snapshot (a failed build): the zeros are not an empty genebank.
+  // A snapshot with no members still has its date.
+  if (metrics.reference_start == null) {
+    return (
+      <GeneticsError
+        error={undefined}
+        onRetry={() => {
+          refetchMetrics();
+          refetchFounders();
+        }}
+      />
+    );
+  }
+
   // An empty genebank gets "–", never zeros that read as healthy (the API answers 0 there).
   const empty = metrics.n_active === 0;
   const ne = metrics.effective_population_size;

@@ -26,6 +26,7 @@ const metrics = {
   mean_kinship: 0.0258,
   mean_inbreeding: 0.0251,
   delta_f: 0.0067,
+  reference_start: "2025-01-01",
 };
 const founderStats = {
   n_founders: 81,
@@ -127,7 +128,7 @@ describe("OverviewTab", () => {
   });
 
   it("states the reference window's first day in Swedish", () => {
-    renderTab({ m: { ...metrics, reference_start: "2025-01-01" } });
+    renderTab();
     expect(
       screen.getByText(
         "levande, med intyg, i en aktiv besättning, rapporterade sedan 1 januari 2025",
@@ -155,6 +156,20 @@ describe("OverviewTab", () => {
     expect(screen.getAllByText("–").length).toBeGreaterThanOrEqual(5);
     expect(screen.queryByText(/under 5/)).toBeNull();
     expect(screen.queryByText(/0,0/)).toBeNull();
+  });
+
+  it("treats zeros without a date as a failed calculation, not an empty genebank", () => {
+    renderTab({
+      m: { ...metrics, n_active: 0, mean_kinship: 0, reference_start: null },
+    });
+    expect(
+      screen.getByText(
+        "Beräkningen gick inte att hämta. Försök igen om en stund.",
+      ),
+    ).toBeDefined();
+    expect(screen.queryByText(/inga kaniner i beräkningen/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Försök igen" }));
+    expect(refetch).toHaveBeenCalled();
   });
 
   it("names the cause of an error and retries", () => {

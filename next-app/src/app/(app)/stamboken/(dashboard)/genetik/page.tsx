@@ -135,7 +135,7 @@ function GenetikPage() {
           </TabPanel>
 
           <TabPanel value={activeTab} index="prioriteringar">
-            {/* keyed: filters and an export message belong to one genebank */}
+            {/* keyed: the previous genebank's rabbits, filters and export message never carry over */}
             <PrioritiesTab key={genebankId} genebankId={genebankId} />
           </TabPanel>
 

@@ -36,6 +36,20 @@ type MetricKey = "ne" | "fe" | "mk" | "f";
 // Fewer rabbits than this behind a year's Ne give a shaky estimate (rp.MIN_HISTORY_MEMBERS).
 const RELIABLE_NE_N = 30;
 
+// Why no year has an Ne. ne_n is null only on rows stored before Ne was (not recomputed
+// yet); 0 means no rabbit with more than one generation known; above 0, inaveln did not rise.
+function noNeText(data: TrendDataPoint[]): string {
+  if (data.every((d) => d.ne_n == null))
+    return "Inga värden för Ne de här åren ännu. Efter en uppdatering räknas de fram i bakgrunden, så ladda om sidan om en stund.";
+  const fewRabbits = data.some((d) => d.ne_n === 0);
+  const flat = data.some((d) => d.ne_n != null && d.ne_n > 0);
+  if (fewRabbits && flat)
+    return "Ne går inte att skatta för de här åren: vissa år har för få kaniner med känd stamtavla, och andra år har inaveln inte ökat.";
+  return flat
+    ? "Inaveln har inte ökat de här åren, så Ne går inte att skatta."
+    : "Ne kan inte skattas för de här åren: för få kaniner med känd stamtavla i de här åren.";
+}
+
 const neWithUncertainty = (d: TrendDataPoint) =>
   `${decimal(d.effective_population_size as number)}` +
   (d.ne_se != null ? ` ± ${decimal(d.ne_se)}` : "") +
@@ -79,7 +93,7 @@ const TrendChart = ({ genebankId }: TrendChartProps) => {
     return <GeneticsError error={error} onRetry={refetch} />;
   }
 
-  if (!data || data.length < 2) return null;
+  if (!data || data.length === 0) return null;
 
   const metric = metrics[metricKey];
   const values = data.map((d) => d[metric.key] as number | null);
@@ -198,7 +212,18 @@ const TrendChart = ({ genebankId }: TrendChartProps) => {
           </ToggleButtonGroup>
         </Box>
 
-        {known > 0 ? (
+        {known === 0 ? (
+          <Typography variant="body2" color="textSecondary">
+            {metricKey === "ne"
+              ? noNeText(data)
+              : `Inga värden för ${metric.name} de här åren.`}
+          </Typography>
+        ) : data.length < 2 ? (
+          <Typography variant="body2" color="textSecondary">
+            Diagrammet visas när det finns två stängda år. Värdet för{" "}
+            {data[0].year} står i tabellen nedan.
+          </Typography>
+        ) : (
           <Chart
             key={metricKey}
             options={options}
@@ -206,15 +231,6 @@ const TrendChart = ({ genebankId }: TrendChartProps) => {
             type="line"
             height={300}
           />
-        ) : (
-          <Typography variant="body2" color="textSecondary">
-            {metricKey !== "ne"
-              ? `Inga värden för ${metric.name} de här åren.`
-              : // ne_n is null only on rows stored before Ne was: they are not recomputed yet.
-                data.every((d) => d.ne_n == null)
-                ? "Inga värden för Ne de här åren ännu. Efter en uppdatering räknas de fram i bakgrunden, så ladda om sidan om en stund."
-                : "Ne kan inte skattas för de här åren: för få kaniner med känd stamtavla i de här åren."}
-          </Typography>
         )}
 
         {shaky.length > 0 && (
@@ -251,6 +267,7 @@ const TrendChart = ({ genebankId }: TrendChartProps) => {
 
         {/* The same values for keyboard and screen readers; the chart's tooltip needs a mouse. */}
         <Accordion
+          defaultExpanded={data.length < 2}
           disableGutters
           sx={{ mt: 2, "&::before": { display: "none" } }}
         >

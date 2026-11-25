@@ -53,7 +53,7 @@ inte en vedertagen standard (PMx rangordnar efter medelsläktskap inom kön och 
 klasser). Gränserna räknas fram ur kaninerna i genbanken och varje kanin jämförs med dem; hur många
 som hamnar på varje nivå beror på genbanken. Ordet Kritisk används inte, varken här eller om
 founderdjurens läge.\
-Kod: `calculate_genetic_priorities` (`priority`: `critical`, `important`, `normal`) · Legacy-manual: – · Legacy: – · Nytt UI: samma, "Högsta", "Hög", "Övriga" (workList.ts:66–68)
+Kod: `calculate_genetic_priorities` (`priority`: `critical`, `important`, `normal`) · Legacy-manual: – · Legacy: – · Nytt UI: samma, "Högsta", "Hög", "Övriga" (workList.ts:73–75)
 
 **Benring**\
 Ringen runt kaninens ben, med serie och löpnummer (till exempel GKF 123). De flesta kaniner tatueras
@@ -113,7 +113,7 @@ Hur stor en idealisk population skulle vara för att förlora genetisk variation
 genbanken; ju större, desto bättre. Stamboken räknar den från hur mycket inaveln har ökat per
 generation hos varje kanin i beräkningen (realiserad Ne, Gutiérrez m.fl. 2008), både för i dag och
 för varje stängt år i trenden. Visas som heltal. FAO anger minst 50, Frankham m.fl. 2014 minst 100.\
-Kod: `effective_population_size` (`calculate_realised_ne`) · Legacy-manual: – · Legacy: – · Nytt UI: samma, "Ne" (OverviewTab.tsx:208, Laget.tsx, TrendChart.tsx)
+Kod: `effective_population_size` (`calculate_realised_ne`) · Legacy-manual: – · Legacy: – · Nytt UI: samma, "Ne" (OverviewTab.tsx:222, Laget.tsx, TrendChart.tsx)
 
 **Founderdjur**\
 Rasens ursprungsdjur: kaniner utan kända föräldrar i stamboken. Bestämd form plural founderdjuren.
@@ -129,7 +129,7 @@ av generna som i dag (Lacy 1989). Ju högre FE, desto jämnare fördelning. Okä
 så FE kan bli större än antalet founderdjur med bärare. På
 skärmen heter måttet effektivt antal founderdjur och visas med en decimal. Det är inte samma mått
 som founder genome equivalents (FGE), som också räknar med att gener går förlorade av slumpen.\
-Kod: `founder_equivalents` · Legacy-manual: – · Legacy: – · Nytt UI: "Effektivt antal founderdjur (FE)" (OverviewTab.tsx:222), "FE" (TrendChart.tsx)
+Kod: `founder_equivalents` · Legacy-manual: – · Legacy: – · Nytt UI: "Effektivt antal founderdjur (FE)" (OverviewTab.tsx:236), "FE" (TrendChart.tsx)
 
 **Färg / färganteckning**\
 Färgen väljs ur genbankens lista med godkända färger; saknas färgen kontaktar du genbanksansvarig.
@@ -320,7 +320,7 @@ Det finns ingen gräns för vad som är ett högt medelsläktskap: talet stiger 
 känd (FAO 2023, CGRFA-19/23/10.2/Inf.4, s. 12), och tal räknade på olika uppsättningar kaniner går
 inte att jämföra. Genetiksidan visar därför dagens värde utan färg och, bredvid, de två senaste
 stängda åren, som båda räknas på respektive års kaniner.\
-Kod: `mean_kinship`, `inbreeding` · Legacy-manual: "släkt" · Legacy: "Genomsnittligt släktskap" · Nytt UI: "Medelsläktskap (MK)" på genetiksidan, i procent (OverviewTab.tsx:235), "kinship-koefficienten" under Parningsförslag
+Kod: `mean_kinship`, `inbreeding` · Legacy-manual: "släkt" · Legacy: "Genomsnittligt släktskap" · Nytt UI: "Medelsläktskap (MK)" på genetiksidan, i procent (OverviewTab.tsx:249), "kinship-koefficienten" under Parningsförslag
 
 **Släktträd / härstamning**\
 Släktträdet visar kaninens föräldrar, mor- och farföräldrar och längre bakåt. Härstamningen är

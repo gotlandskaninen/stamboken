@@ -10,6 +10,7 @@ const responses = vi.hoisted(() => ({
   founders: new Map<number, unknown>(),
   atRisk: new Map<number, unknown>(),
   trends: new Map<number, unknown>(),
+  priorities: new Map<number, unknown>(),
 }));
 
 vi.mock("@/redux/api/apiSlice", async () => {
@@ -30,6 +31,7 @@ vi.mock("@/redux/api/apiSlice", async () => {
     useFetchFounderStatisticsQuery: hook("founders"),
     useFetchFoundersAtRiskQuery: hook("atRisk"),
     useFetchGeneticsTrendsQuery: hook("trends"),
+    useFetchGeneticPrioritiesQuery: hook("priorities"),
   };
 });
 
@@ -54,11 +56,39 @@ vi.mock("next/navigation", async () => {
     },
   };
 });
+// Avelsprioritet reads the logged work-list route (useWorkList), with the same
+// keep-the-last-result behaviour as the RTK double above, in the view's mode.
+vi.mock("@/components/genetics/workList", async (original) => {
+  const { useRef } = await import("react");
+  return {
+    ...(await original<typeof import("@/components/genetics/workList")>()),
+    useWorkList: (genebankId: number) => {
+      const last = useRef<unknown>(undefined);
+      const now = responses.priorities.get(genebankId);
+      if (now !== undefined) last.current = now;
+      return {
+        data: last.current,
+        isLoading: last.current === undefined,
+        refetch: () => {},
+      };
+    },
+  };
+});
+vi.mock("@/lib/mode-context", () => ({ useMode: () => "prod" }));
 vi.mock("@/hooks/useAuth", () => ({
   default: () => ({ user: { is_admin: true, is_manager: [1] } }),
 }));
 vi.mock("next/dynamic", () => ({ default: () => () => null }));
-vi.mock("@/components/genetics/PrioritiesTab", () => ({ default: () => null }));
+// jsdom has no layout, so the real grid renders no cells: list the rabbits' numbers instead.
+vi.mock("@mui/x-data-grid", () => ({
+  DataGrid: ({ rows }: { rows: { individual_id: string }[] }) => (
+    <ul>
+      {rows.map((r) => (
+        <li key={r.individual_id}>{r.individual_id}</li>
+      ))}
+    </ul>
+  ),
+}));
 vi.mock("@/components/genetics/BreedingSuggestionsTab", () => ({
   default: () => null,
 }));
@@ -72,6 +102,7 @@ const metrics = (mk: number) => ({
   mean_kinship: mk,
   mean_inbreeding: 0.01,
   delta_f: 0.005,
+  reference_start: "2025-01-01",
 });
 const founders = {
   n_founders: 9,
@@ -151,5 +182,36 @@ describe("Genetik page, switching genebank", () => {
       screen.getByText("2024: 4,8 % · 2025: 5,0 % (stängda år)"),
     ).toBeDefined();
     expect(screen.getByText(/räknat på 1 founderdjur/)).toBeDefined();
+  });
+
+  it("never lists the old genebank's rabbits under Avelsprioritet", () => {
+    const rabbit = (individual_id: string) => ({
+      individual_id,
+      priority: "critical",
+      reasons: [],
+      genetic_value_score: 90,
+      genome_uniqueness: 0.1,
+    });
+    responses.metrics.set(1, metrics(0.012));
+    responses.founders.set(1, founders);
+    responses.priorities.set(1, [rabbit("G1-2301")]);
+    const page = () => (
+      <ThemeProvider theme={stambokenTheme}>
+        <GenetikPage />
+      </ThemeProvider>
+    );
+    const { rerender } = render(page());
+    fireEvent.click(screen.getByRole("tab", { name: "Avelsprioritet" }));
+    expect(screen.getByText("G1-2301")).toBeDefined();
+
+    // Mellerud's list is still being computed.
+    fireEvent.mouseDown(screen.getByRole("combobox"));
+    fireEvent.click(screen.getByRole("option", { name: "Mellerudskanin" }));
+    expect(screen.queryByText("G1-2301")).toBeNull();
+
+    responses.priorities.set(2, [rabbit("M1-2401")]);
+    rerender(page());
+    expect(screen.getByText("M1-2401")).toBeDefined();
+    expect(screen.queryByText("G1-2301")).toBeNull();
   });
 });
