@@ -1258,6 +1258,11 @@ Samma sak går att göra från användarens sida med rollen Genbanksansvarig.
 3. Klicka en rad för tabellen **Fält / Före / Efter**. **Visa rådata** visar hela
    posten före och efter.
 
+Matrikelns ändringar (medlemskap, personer, konton och åtkomster) finns under
+**Matrikeln** överst på sidan. Där filtrerar du på **Åtgärd**, **Utförd av**,
+**Medlemsnummer**, **Från** och **Till**. Uppgifter om en anonymiserad person
+står som [borttagen].
+
 ### Logga ut alla användare
 
 Använd detta om du misstänker att någon obehörig kommit åt ett konto.
@@ -1386,8 +1391,8 @@ var 30:e sekund. Under listan **Massutloggning** med knappen **Logga ut alla anv
 
 <!-- route: /stamboken/admin/system/audit -->
 
-Alla ändringar i databasen med filter och detaljer per rad, se
-[Söka i aktivitetsloggen](#söka-i-aktivitetsloggen). Kan loggen inte läsas visas
+Ändringarna i Stamboken och, under **Matrikeln**, i matrikeln, med filter och
+detaljer per rad, se [Söka i aktivitetsloggen](#söka-i-aktivitetsloggen). Kan loggen inte läsas visas
 "Kunde inte läsa aktivitetsloggen just nu." med **Försök igen**.
 
 ![Aktivitetslogg](admin-aktivitetslogg-desktop.png)

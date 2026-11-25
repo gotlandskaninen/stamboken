@@ -75,7 +75,7 @@ from utils.individual_commands import purge_command_free_text  # isort:skip
 from utils.log_masking import TokenMaskFilter  # isort:skip
 from utils.mail import purge_old_mail, send_pending  # isort:skip
 from utils import login_code  # isort:skip
-from utils.matrikel import purge_previous_addresses  # isort:skip
+from utils.matrikel import purge_matrikel_audit_values, purge_previous_addresses  # isort:skip
 from utils import inbox  # isort:skip
 from utils.inbox import queue_digests  # isort:skip
 from utils.arsrapport_invite import send_due_invitations  # isort:skip
@@ -283,6 +283,10 @@ def _purge_command_free_text():
             APP.logger.info("Purged %s previous addresses", purge_previous_addresses(now))
         except Exception:  # pylint: disable=broad-except
             APP.logger.exception("Purging the previous addresses failed")
+        try:
+            APP.logger.info("Purged contact values from %s matrikel log rows", purge_matrikel_audit_values(now))
+        except Exception:  # pylint: disable=broad-except
+            APP.logger.exception("Purging the matrikel log values failed")
         count = purge_command_free_text(now)
         APP.logger.info("Purged free text from %s command log rows", count)
     finally:
