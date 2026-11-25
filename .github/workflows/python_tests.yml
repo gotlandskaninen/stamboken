@@ -7,9 +7,85 @@ on:
     branches: [main, 'release/**']
 
 jobs:
-  test:
-    name: Run Python tests
+  # A PR that only touches Next.js, docs/ or Markdown outside app/ skips the
+  # suite. Pushes always run everything.
+  changes:
+    name: Python-relevant changes
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      python: ${{ steps.filter.outputs.python }}
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Decide whether the Python suite runs
+        id: filter
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if [ "$EVENT" != pull_request ]; then
+            echo python=true >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files="$RUNNER_TEMP/changed-files"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" \
+            --jq '.[] | .filename, (.previous_filename // empty)' >"$files"
+          cat "$files"
+          # The API lists at most 3000 files: run everything rather than trust a cut list.
+          if [ "$(wc -l <"$files")" -ge 3000 ]; then
+            echo python=true >>"$GITHUB_OUTPUT"
+          else
+            echo "python=$(scripts/python-relevant.sh <"$files")" >>"$GITHUB_OUTPUT"
+          fi
+          tail -n1 "$GITHUB_OUTPUT"
+
+  checks:
+    name: Script and nginx checks
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      # Shell tests for scripts/ and the compose files (R071/R072/R097).
+      # They need `docker compose config`.
+      - name: Run script tests
+        run: |
+          status=0
+          for t in scripts/tests/test-*.sh; do
+            echo "::group::$t"
+            bash "$t" || status=1
+            echo "::endgroup::"
+          done
+          exit "$status"
+
+      - name: Check nginx access log format
+        run: scripts/check-nginx-log-format.sh
+
+      - name: Check nginx config with the real vhosts
+        run: |
+          scripts/check-nginx-prod-config.sh
+          # Everything production mounts, then what the old container sees
+          # if a deploy stops after copying the files: no new mounts.
+          scripts/check-nginx-prod-config.sh nginx/production/herdbook-production.conf nginx/production/stamboken-legacy.conf nginx/production/gotlandskaninen.conf nginx/production/gotlandskaninen-www.conf
+          scripts/check-nginx-prod-config.sh nginx/production/herdbook-production.conf nginx/production/stamboken-legacy.conf
+          scripts/check-nginx-prod-config.sh nginx/herdbook-local-production.conf
+
+  pytest:
+    name: Pytest ${{ matrix.group }}/4
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [1, 2, 3, 4]
 
     services:
       postgres:
@@ -40,18 +116,6 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v6
 
-      # Shell tests for scripts/ and the compose files (R071/R072/R097).
-      # They need `docker compose config`.
-      - name: Run script tests
-        run: |
-          status=0
-          for t in scripts/tests/test-*.sh; do
-            echo "::group::$t"
-            bash "$t" || status=1
-            echo "::endgroup::"
-          done
-          exit "$status"
-
       - name: Build API test image
         run: |
           docker build \
@@ -60,20 +124,11 @@ jobs:
             -f .docker/api \
             .
 
-      - name: Check nginx access log format
-        run: scripts/check-nginx-log-format.sh
-
-      - name: Check nginx config with the real vhosts
-        run: |
-          scripts/check-nginx-prod-config.sh
-          # Everything production mounts, then what the old container sees
-          # if a deploy stops after copying the files: no new mounts.
-          scripts/check-nginx-prod-config.sh nginx/production/herdbook-production.conf nginx/production/stamboken-legacy.conf nginx/production/gotlandskaninen.conf nginx/production/gotlandskaninen-www.conf
-          scripts/check-nginx-prod-config.sh nginx/production/herdbook-production.conf nginx/production/stamboken-legacy.conf
-          scripts/check-nginx-prod-config.sh nginx/herdbook-local-production.conf
-
+      # pytest-split shares the tests out by the durations in
+      # app/tests/.test_durations; tests missing there count as average.
       - name: Run tests in container
         run: |
+          mkdir -p "$RUNNER_TEMP/durations"
           docker run \
             --network host \
             -e POSTGRES_HOST=localhost \
@@ -89,5 +144,38 @@ jobs:
             -e ALLOW_ROLE_PASSWORD_LOGIN=true \
             -e CI=true \
             -v "$PWD/nginx:/nginx:ro" \
+            -v "$RUNNER_TEMP/durations:/durations" \
             herdbook-api-test:latest \
-            pytest /app/tests/ -v --tb=short -n auto
+            pytest /app/tests/ -v --tb=short -n auto \
+              --splits 4 --group ${{ matrix.group }} --splitting-algorithm least_duration \
+              --durations-path /durations/test_durations.json --store-durations --clean-durations
+
+      # TEMPORARY: collect durations for the first committed durations file.
+      - name: Upload durations
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: durations-${{ matrix.group }}
+          path: ${{ runner.temp }}/durations/test_durations.json
+
+  # The ruleset requires this name. It passes when the suite was skipped on
+  # purpose, and fails when any part failed, was cancelled or did not start.
+  result:
+    name: Run Python tests
+    if: always()
+    needs: [changes, checks, pytest]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the results
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          PYTHON: ${{ needs.changes.outputs.python }}
+          CHECKS: ${{ needs.checks.result }}
+          PYTEST: ${{ needs.pytest.result }}
+        run: |
+          echo "changes=$CHANGES python=$PYTHON checks=$CHECKS pytest=$PYTEST"
+          [ "$CHANGES" = success ] || exit 1
+          if [ "$PYTHON" = true ]; then
+            [ "$CHECKS" = success ] && [ "$PYTEST" = success ]
+          else
+            echo "No Python-relevant changes: the suite was skipped."
+          fi
