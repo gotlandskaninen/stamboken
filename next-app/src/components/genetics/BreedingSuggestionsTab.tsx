@@ -26,7 +26,9 @@ import {
 } from "@/redux/api/apiSlice";
 import HelpTooltip from "./HelpTooltip";
 import GeneticsInfoPanel from "./GeneticsInfoPanel";
+import GeneticsError from "./GeneticsError";
 import { translateReasons } from "@/utils/translateReasons";
+import { decimal, percent } from "@/lib/genetics";
 
 function getMsiColor(msi: number): "success" | "warning" | "error" {
   if (msi <= 2) return "success";
@@ -40,8 +42,6 @@ interface BreedingSuggestionsTabProps {
 
 const BASE_MAX_INBREEDING = 0.0625;
 const MAX_INBREEDING_LIMIT = 0.25;
-
-const formatPercent = (value: number) => `${(value * 100).toFixed(1)} %`;
 
 const BreedingSuggestionsTab = ({
   genebankId,
@@ -71,12 +71,10 @@ const BreedingSuggestionsTab = ({
   const [queryParams, setQueryParams] =
     useState<BreedingSuggestionsParams | null>(null);
 
-  const {
-    data: suggestions,
-    isLoading,
-    isFetching,
-    error,
-  } = useFetchBreedingSuggestionsQuery(queryParams ?? skipToken);
+  // currentData: only the answer for the submitted parameters, never the previous one's pairs.
+  const { currentData, isLoading, isFetching, error, refetch } =
+    useFetchBreedingSuggestionsQuery(queryParams ?? skipToken);
+  const suggestions = error ? undefined : currentData;
 
   const usedCap = queryParams?.maxInbreeding ?? maxInbreeding;
   const raiseHint =
@@ -86,8 +84,8 @@ const BreedingSuggestionsTab = ({
   const emptyMessage = lacksSexes
     ? "Referenspopulationen saknar hanar eller honor, så inga par kan föreslås."
     : expectedOffspringF != null
-      ? `Inga par klarar taket ${formatPercent(usedCap)}. Förväntad inavel vid slumpparning i rasen är ${formatPercent(expectedOffspringF)}.${raiseHint}`
-      : `Inga par hittades under taket ${formatPercent(usedCap)}.${raiseHint}`;
+      ? `Inga par klarar taket ${percent(usedCap)}. Förväntad inavel vid slumpparning i rasen är ${percent(expectedOffspringF)}.${raiseHint}`
+      : `Inga par hittades under taket ${percent(usedCap)}.${raiseHint}`;
 
   const handleCalculate = () => {
     setQueryParams({
@@ -167,17 +165,7 @@ const BreedingSuggestionsTab = ({
 
       {isLoading && <Skeleton variant="rounded" height={400} />}
 
-      {error &&
-        !(
-          typeof error === "object" &&
-          "status" in error &&
-          (error as { status: unknown }).status === 401
-        ) && (
-          <Alert severity="error">
-            Kunde inte beräkna parningsförslag. Kontrollera att genbanken har
-            tillräckligt med aktiva individer med könsdata.
-          </Alert>
-        )}
+      {error && <GeneticsError error={error} onRetry={refetch} />}
 
       {suggestions && suggestions.length === 0 && (
         <Alert severity="info">{emptyMessage}</Alert>
@@ -223,13 +211,13 @@ const BreedingSuggestionsTab = ({
                       <TableCell>{s.sire_id}</TableCell>
                       <TableCell>{s.dam_id}</TableCell>
                       <TableCell align="right">
-                        {(s.expected_f * 100).toFixed(2)}%
+                        {percent(s.expected_f, 2)}
                       </TableCell>
                       <TableCell
                         align="right"
                         sx={{ color: s.delta_gd > 0 ? green[600] : "inherit" }}
                       >
-                        {s.delta_gd.toFixed(4)}
+                        {decimal(s.delta_gd, 4)}
                       </TableCell>
                       <TableCell align="center">
                         <Chip
@@ -240,7 +228,7 @@ const BreedingSuggestionsTab = ({
                       </TableCell>
                       <TableCell>
                         <Typography variant="body2" color="textSecondary">
-                          {translateReasons(s.reasons).join(", ")}
+                          {translateReasons(s.reasons).join("; ")}
                         </Typography>
                       </TableCell>
                     </TableRow>

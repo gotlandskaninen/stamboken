@@ -140,7 +140,9 @@ Personen blir huvudmedlem i det nya medlemskapet.
 Koharen**, hushållets **Besättningar** och hur många personer som har ett
 konto i Stamboken (**Kopplade konton**).
 
-Därunder finns **Personer** och **Medlemskap**.
+Därunder finns **Personer**, **Medlemskap** och **Historik**. **Historik** visar
+de tio senaste ändringarna av medlemskapet och dess personer: när, vem och vad.
+Administratören når hela listan med **Visa hela historiken**.
 
 ![Ett medlemskap](medlemskap.png)
 

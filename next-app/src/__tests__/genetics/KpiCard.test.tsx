@@ -24,17 +24,12 @@ describe("KpiCard", () => {
     expect(screen.getByText("Över rekommenderat")).toBeDefined();
   });
 
-  it("renders without subtitle", () => {
+  it("renders the value and sub-line as text, not as headings", () => {
     const { container } = renderWithTheme(
-      <KpiCard title="Count" value="100" />,
+      <KpiCard title="Count" value="100" subtitle="i beräkningen" />,
     );
-    expect(container.querySelector("h3")).toBeDefined();
-  });
-
-  it("accepts level prop without crashing", () => {
-    renderWithTheme(
-      <KpiCard title="MK" value="0.042" level="good" subtitle="Låg nivå" />,
-    );
-    expect(screen.getByText("0.042")).toBeDefined();
+    expect(screen.getByText("100").tagName).toBe("P");
+    expect(screen.getByText("i beräkningen").tagName).toBe("P");
+    expect(container.querySelector("h3")).toBeNull();
   });
 });

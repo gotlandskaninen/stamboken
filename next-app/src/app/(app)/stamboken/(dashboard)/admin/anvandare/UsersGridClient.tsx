@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { DataGrid, GridColDef, GridSortModel } from "@mui/x-data-grid";
@@ -31,7 +31,10 @@ function EmptyUsers() {
   return <div className={ds["ad-empty"]}>Inga användare matchar filtren.</div>;
 }
 
-const columns: GridColDef<UserRow>[] = [
+// `detailHref` carries the list's query to the account, for its back link (#249).
+const makeColumns = (
+  detailHref: (id: number) => string,
+): GridColDef<UserRow>[] => [
   {
     field: "id",
     headerName: "Nr",
@@ -45,7 +48,7 @@ const columns: GridColDef<UserRow>[] = [
     width: 130,
     renderCell: (params) => (
       <Link
-        href={`${LIST_PATH}/${params.row.id}`}
+        href={detailHref(params.row.id)}
         className={`${ds["ad-cell-mono"]} ${ds["ad-cell-link"]}`}
         onClick={(e) => e.stopPropagation()}
       >
@@ -129,11 +132,17 @@ export function UsersGridClient({
     [query, router],
   );
 
+  const detailHref = useCallback(
+    (id: number) => `${LIST_PATH}/${id}${query ? `?${query}` : ""}`,
+    [query],
+  );
+  const columns = useMemo(() => makeColumns(detailHref), [detailHref]);
+
   const handleRowClick = useCallback(
     (params: { row: UserRow }) => {
-      router.push(`${LIST_PATH}/${params.row.id}`);
+      router.push(detailHref(params.row.id));
     },
-    [router],
+    [detailHref, router],
   );
 
   return (

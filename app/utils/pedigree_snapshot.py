@@ -2,7 +2,7 @@
 
 The service supplies two hooks: key_fn(genebank_id) returns the key of the
 current state (cheap, read per request), load_fn(genebank_id) returns
-(key, rows, member_numbers[, recovery_eligible]) read consistently. Keys are compared for equality
+(key, rows, member_numbers[, recovery_eligible[, reference_start]]) read consistently. Keys are compared for equality
 only; a per-process build sequence decides which build wins.
 
 Stale-while-revalidate: a reader whose key moved on gets the
@@ -22,6 +22,7 @@ import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from datetime import date
 
 import numpy as np
 
@@ -64,6 +65,7 @@ class PedigreeSnapshot:
     fge: float | None
     band_cuts: tuple | None
     recovery_eligible: frozenset = frozenset()  # numbers plausibly alive and breedable, read with the pedigree
+    reference_start: date | None = None  # first day of the membership window, read with the members
     derived: dict = field(default_factory=dict, repr=False)
     _guard: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _name_locks: dict = field(default_factory=dict, repr=False)
@@ -107,7 +109,7 @@ class PedigreeSnapshot:
         return self.memo("reference_kinship", compute)
 
 
-def build_snapshot(genebank_id, rows, members, key, seq, recovery_eligible=frozenset()):
+def build_snapshot(genebank_id, rows, members, key, seq, recovery_eligible=frozenset(), reference_start=None):
     raw = [
         Individual(
             id=row["number"],
@@ -164,6 +166,7 @@ def build_snapshot(genebank_id, rows, members, key, seq, recovery_eligible=froze
         fge=fge,
         band_cuts=cuts,
         recovery_eligible=frozenset(recovery_eligible),
+        reference_start=reference_start,
     )
 
 

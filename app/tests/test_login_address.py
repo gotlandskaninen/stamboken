@@ -292,6 +292,14 @@ class TestSevenDays(SevenDaysTest):
         self.assert_about(self.previous()[old], timedelta(0))
         self.reserve(old, self.holder.id)  # only the other member holds it
 
+    def test_correcting_a_reactivated_unlinked_persons_email_ends_the_previous_address(self):
+        self.change("b@example.org", "self")
+        self.assert_about(self.previous()["a@example.org"], WEEK)
+        # Ended, unlinked and reactivated: active again, but no account and not a main member.
+        db.Member.update(user=None, role="familjemedlem", end_date=None).where(db.Member.id == self.person.id).execute()
+        self.change("c@example.org", "matrikel")
+        self.assert_about(self.previous()["a@example.org"], timedelta(0))
+
     def test_editing_a_friexemplars_email_expires_a_still_valid_previous_address(self):
         self.change("b@example.org", "self")
         # An existing friexemplar with a wait left over from its active membership.

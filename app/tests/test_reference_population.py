@@ -431,6 +431,6 @@ class TestDefinitionWiring(ReferencePopulationTest):
 
     def test_snapshot_load_uses_live_members(self):
         with patch.object(gs, "live_members", wraps=rp.live_members) as spy:
-            key, _rows, _members, _eligible = gs._read_snapshot_inputs(self.gb.id)
+            key, _rows, _members, _eligible, _start = gs._read_snapshot_inputs(self.gb.id)
 
         spy.assert_called_once_with(self.gb.id, key[1])
