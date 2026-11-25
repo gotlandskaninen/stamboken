@@ -1,7 +1,7 @@
 name: Manual screenshots
 
 # Takes every screenshot in the user manual and the matrikel guide against the
-# seeded CI stack, and uploads the ones that changed as an artifact. Run it
+# seeded CI stack, and uploads the ones whose pixels changed as an artifact. Run it
 # from the Actions tab (Run workflow) before each release tag; a session puts
 # the images in a PR. It also runs on a PR that changes the screenshot specs.
 # Never against prod or demo: docs/manual/README.md.
@@ -160,19 +160,19 @@ jobs:
             "select verification_token from digitalcertificatev2 where is_current order by id desc limit 1")
           [ -n "$MANUAL_CERT_UUID" ] || { echo "::error::The flows issued no certificate"; exit 1; }
           export MANUAL_CERT_UUID
-          pnpm exec playwright test --config playwright.manual-screenshots.config.ts --project=manual --update-snapshots=changed --reporter=line --output=test-results/manual
+          pnpm exec playwright test --config playwright.manual-screenshots.config.ts --project=manual --update-snapshots=all --reporter=line --output=test-results/manual
         working-directory: next-app
 
       - name: Take the matrikel guide's screenshots
         if: ${{ !cancelled() }}
-        run: pnpm exec playwright test --config playwright.manual-screenshots.config.ts --project=guide --update-snapshots=changed --reporter=line --output=test-results/guide
+        run: pnpm exec playwright test --config playwright.manual-screenshots.config.ts --project=guide --update-snapshots=all --reporter=line --output=test-results/guide
         working-directory: next-app
 
       # The list of changed images is also the list of sections to reread.
       # Last, so its herd and membership are in no other picture.
       - name: Take the code login's screenshots
         if: ${{ !cancelled() }}
-        run: pnpm exec playwright test --config playwright.manual-screenshots.config.ts --project=login --update-snapshots=changed --reporter=line --output=test-results/login
+        run: pnpm exec playwright test --config playwright.manual-screenshots.config.ts --project=login --update-snapshots=all --reporter=line --output=test-results/login
         working-directory: next-app
 
       - name: List changed images
@@ -182,9 +182,10 @@ jobs:
           mapfile -t changed < <(git -c core.quotePath=false status --porcelain --untracked-files=all -- "${dirs[@]}" | awk '/\.png$/ {print $2}')
           {
             echo "## Skärmbilder som ändrats (${#changed[@]})"
-            [ ${#changed[@]} -eq 0 ] || printf -- "- \`%s\`\n" "${changed[@]}"
             echo
-            echo "Läs om avsnitten som visar dem. Hämta bilderna under Artifacts (manual-screenshots)."
+            echo "Störst ändring först. Några hundra till några tusen pixlar på sidor med tider eller intygets kod är brus. Läs om avsnitten som visar resten. Hämta bilderna under Artifacts (manual-screenshots)."
+            echo
+            [ ${#changed[@]} -eq 0 ] || node next-app/e2e/manual/changed-pixels.mjs "${changed[@]}"
             for dir in "${dirs[@]}"; do
               doc=$(ls "$dir"/*.md)
               grep -oE '\]\([^)[:space:]]+\.png\)' "$doc" | sed -E 's/^\]\(//; s/\)$//' | sort -u |

@@ -278,10 +278,12 @@ friexemplar.
 
 - Ändrar du adressen gäller den nya genast, och den gamla slutar fungera för
   inloggning.
-- Varje ändring gör personens oanvända koder ogiltiga. Kan personen logga in
-  med adressen loggas kontot också ut överallt där det är inloggat. Vill du
-  logga ut ett konto i andra fall ber du administratören om **Logga ut
-  överallt**.
+- Byter du till en annan adress gör det personens oanvända koder ogiltiga.
+  Har personen ett konto kopplat till sin rad loggas kontot också ut överallt
+  där det är inloggat, också ett konto som loggar in med föreningskontot.
+  Undantaget är ett friexemplar. Ändrar du bara stora eller små bokstäver
+  händer inget av det. Vill du logga ut ett konto i andra fall ber du
+  administratören om **Logga ut överallt**.
 - En adress kan bara vara inloggningsadress för en person. Kan en annan person
   redan logga in med adressen går ändringen inte att spara. Stamboken visar då
   "En annan medlem kan redan logga in med e-postadressen". Samma slags besked

@@ -3,9 +3,9 @@ import { defineConfig } from "@playwright/test";
 /**
  * Skärmbilder till manualen (public/stamboken/manual/) och guiden för
  * matrikeln (content/matrikel-guide/). Bilderna är Playwrights
- * jämförelsebilder (toHaveScreenshot): med --update-snapshots=changed skrivs
- * bara de som skiljer sig från bilden i repot, så git status visar vilka
- * bilder (och därmed avsnitt) som har ändrats. Workflowet
+ * jämförelsebilder (toHaveScreenshot), som workflowet skriver om med
+ * --update-snapshots=all; git status visar de bilder (och därmed avsnitt) vars
+ * pixlar har ändrats. Workflowet
  * manual-screenshots.yml kör dem mot den seedade CI-stacken bakom en
  * nginx-proxy; se docs/manual/README.md. Aldrig mot prod eller demo.
  */
@@ -15,8 +15,7 @@ export default defineConfig({
   timeout: 120000,
   retries: 0,
   expect: {
-    // A changed picture is retried until this runs out before it is written.
-    timeout: 8000,
+    timeout: 20000,
     toHaveScreenshot: {
       animations: "disabled",
       caret: "hide",
@@ -41,6 +40,11 @@ export default defineConfig({
       snapshotPathTemplate:
         "{testDir}/../../public/stamboken/manual/{arg}{ext}",
     },
+    {
+      name: "guide",
+      testMatch: /[\\/]matrikel-guide-screenshots\.spec\.ts$/,
+      snapshotPathTemplate: "{testDir}/../../content/matrikel-guide/{arg}{ext}",
+    },
     // Last: its fixture adds a membership and a herd that the other pictures
     // must not show.
     {
@@ -48,11 +52,6 @@ export default defineConfig({
       testMatch: /[\\/]login-screenshots\.spec\.ts$/,
       snapshotPathTemplate:
         "{testDir}/../../public/stamboken/manual/{arg}{ext}",
-    },
-    {
-      name: "guide",
-      testMatch: /[\\/]matrikel-guide-screenshots\.spec\.ts$/,
-      snapshotPathTemplate: "{testDir}/../../content/matrikel-guide/{arg}{ext}",
     },
   ],
 });

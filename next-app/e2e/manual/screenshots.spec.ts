@@ -24,24 +24,6 @@ type Shot = {
   heading?: string;
 };
 
-// Pages that differ between two runs of the same commit (measured 2026-11-25):
-// times, the certificate's random token, the order of equal rabbits on the
-// genetics page, and a 1 px shift of the herd tabs after the flows. Up to this
-// many pixels count as unchanged there; every other page must match.
-const VARIES: Record<string, number> = {
-  "verifiera-intyg": 2500,
-  "admin-aktivitetslogg": 1500,
-  "admin-aktiva-anvandare": 1500,
-  "individ-andringshistorik": 1000,
-  "min-besattning-kaniner": 2500,
-  "genetik-oversikt": 5000,
-  "min-besattning-kullar": 2500,
-  "min-besattning-slakttrad": 2500,
-  kullista: 2500,
-  "ny-kull": 2500,
-  "ny-parning": 2500,
-};
-
 const SHOTS: Shot[] = [
   { name: "logga-in", role: "anonymous", path: "/auth/sign-in" },
   {
@@ -345,7 +327,6 @@ for (const shot of SHOTS) {
       await page.waitForTimeout(500);
       await expect(page).toHaveScreenshot(`${shot.name}-${suffix}.png`, {
         fullPage: shot.fullPage ?? false,
-        ...(VARIES[shot.name] && { maxDiffPixels: VARIES[shot.name] }),
       });
     });
   }

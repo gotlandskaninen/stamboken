@@ -64,16 +64,19 @@ bilder i manualen och guiden.
 
 Bilderna är Playwrights jämförelsebilder (`toHaveScreenshot`), och
 `playwright.manual-screenshots.config.ts` lägger dem bredvid manualen respektive
-guiden. Workflowet kör med `--update-snapshots=changed`, så bara bilder som skiljer
-sig från bilden i repot skrivs om. Jobbets sammanfattning listar dem, och bilder som
-manualen nämner men som saknas. Listan är också listan över avsnitt att läsa om. De
-ändrade bilderna laddas upp som artefakten `manual-screenshots`.
+guiden. Workflowet skriver om varje bild (`--update-snapshots=all`), så ingen bild
+blir kvar från en äldre version. Git ser bara de bilder vars pixlar har ändrats.
+Jobbets sammanfattning listar dem med antal ändrade pixlar, störst först
+(`e2e/manual/changed-pixels.mjs`), och bilder som manualen nämner men som saknas.
+Listan är också listan över avsnitt att läsa om. De ändrade bilderna laddas upp som
+artefakten `manual-screenshots`.
 
-Några sidor skiljer sig mellan två körningar av samma commit: tider, intygets
-slumpade kod, ordningen på lika rankade kaniner på genetiksidan och flikraden i Min
-besättning. De har en egen tolerans i specarna (`VARIES` i `screenshots.spec.ts`,
-argumentet `maxDiffPixels` i guidens spec), så att en körning utan ändrat gränssnitt
-ger en tom lista. Alla andra sidor måste stämma exakt.
+Några sidor skiljer sig mellan två körningar av samma commit, med några hundra till
+några tusen pixlar: tider (ansökningar, aktivitetslogg, aktiva användare,
+ändringshistorik), intygets slumpade kod, dagens datum i dialogerna för försäljning
+och död, ordningen på lika rankade kaniner på genetiksidan och flikraden i Min
+besättning. De står med i listan som små ändringar. Lägg in dem tillsammans med
+resten.
 
 Så förs bilderna in:
 
