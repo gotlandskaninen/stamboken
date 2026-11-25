@@ -167,8 +167,17 @@ test.describe("Rundtur för en vanlig medlem", () => {
     }) => {
       await openMinBesattning(page);
       await startTourFromMenu(page);
-      await expectTourAxeClean(page);
-      const titles = await walkTour(page);
+      const titles = await walkTour(page, async (title) => {
+        // The popover fits the screen.
+        const box = (await tourPopover(page).boundingBox())!;
+        expect(box.x).toBeGreaterThanOrEqual(0);
+        expect(box.x + box.width).toBeLessThanOrEqual(375);
+        if (title === "Årsrapport" || title === "Profil")
+          await expect(page.locator(".driver-active-element")).toHaveAttribute(
+            "data-tour",
+            "menu",
+          );
+      });
       expect(titles).toEqual(
         expect.arrayContaining(["Kaniner", "Årsrapport", "Profil"]),
       );

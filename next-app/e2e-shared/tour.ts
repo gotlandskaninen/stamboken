@@ -22,7 +22,8 @@ export async function startTourFromMenu(page: Page) {
 
 /**
  * Walks the tour with Nästa to Klar and returns every step's title. Waits for
- * the progress text per step, so a title is never read from the step before.
+ * the progress text per step, so a title is never read from the step before,
+ * and runs axe on every step.
  */
 export async function walkTour(
   page: Page,
@@ -47,6 +48,7 @@ export async function walkTour(
       await page.locator(".driver-popover-title").innerText()
     ).trim();
     titles.push(title);
+    await expectTourAxeClean(page);
     await onStep?.(title, dialog);
     await dialog
       .getByRole("button", { name: i === total ? "Klar" : "Nästa" })
