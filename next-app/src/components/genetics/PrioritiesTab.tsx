@@ -292,10 +292,12 @@ const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
       >
         Tabellen är bredare än skärmen. Dra i sidled för att se alla kolumner.
       </Typography>
-      <Box sx={{ height: 600, width: "100%" }}>
+      <Box sx={{ width: "100%" }}>
         <DataGrid
           rows={filteredRows}
           columns={columns}
+          // As tall as its page of rows: the page scrolls, not a box inside the table.
+          autoHeight
           initialState={{
             pagination: { paginationModel: { pageSize: 25, page: 0 } },
           }}
