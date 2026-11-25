@@ -85,11 +85,14 @@ const BreedingSuggestionsTab = ({
     useState<BreedingSuggestionsParams | null>(null);
   const queryParams = requestedParams?.mode === mode ? requestedParams : null;
 
+  // Every "Beräkna" asks the server: a cached answer may be one a denial hides.
   const suggestionsQuery = useFetchBreedingSuggestionsQuery(
     queryParams ?? skipToken,
+    { refetchOnMountOrArgChange: true },
   );
   const { isLoading, isFetching, error } = suggestionsQuery;
-  const { data: suggestions } = useQueryView(suggestionsQuery);
+  const suggestionsView = useQueryView(suggestionsQuery);
+  const suggestions = suggestionsView.data;
 
   const usedCap = queryParams?.maxInbreeding ?? maxInbreeding;
   const raiseHint =
@@ -103,13 +106,10 @@ const BreedingSuggestionsTab = ({
       : `Inga par hittades under taket ${formatPercent(usedCap)}.${raiseHint}`;
 
   const handleCalculate = () => {
-    setQueryParams({
-      genebankId,
-      mode,
-      maxPairs,
-      maxInbreeding,
-      maxPerMale,
-    });
+    const params = { genebankId, mode, maxPairs, maxInbreeding, maxPerMale };
+    if (JSON.stringify(params) === JSON.stringify(queryParams))
+      suggestionsQuery.refetch(); // the same calculation again
+    else setQueryParams(params);
   };
 
   return (
@@ -181,7 +181,12 @@ const BreedingSuggestionsTab = ({
 
       {isLoading && <Skeleton variant="rounded" height={400} />}
 
-      {error &&
+      {suggestionsView.denied && !isFetching ? (
+        <Alert severity="error">
+          Kunde inte hämta parningsförslag. Kontrollera att du har behörighet.
+        </Alert>
+      ) : (
+        error &&
         !(
           typeof error === "object" &&
           "status" in error &&
@@ -191,7 +196,8 @@ const BreedingSuggestionsTab = ({
             Kunde inte beräkna parningsförslag. Kontrollera att genbanken har
             tillräckligt med aktiva individer med könsdata.
           </Alert>
-        )}
+        )
+      )}
 
       {suggestions && suggestions.length === 0 && (
         <Alert severity="info">{emptyMessage}</Alert>

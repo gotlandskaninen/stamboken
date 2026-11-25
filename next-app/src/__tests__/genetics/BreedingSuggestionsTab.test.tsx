@@ -66,6 +66,7 @@ describe("BreedingSuggestionsTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Beräkna" }));
     expect(suggestionsQuery).toHaveBeenLastCalledWith(
       expect.objectContaining({ genebankId: 1, mode: "prod" }),
+      { refetchOnMountOrArgChange: true },
     );
     // The admin panel's switch re-renders the mounted tab in the other mode.
     rerender(
@@ -80,6 +81,7 @@ describe("BreedingSuggestionsTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Beräkna" }));
     expect(suggestionsQuery).toHaveBeenLastCalledWith(
       expect.objectContaining({ genebankId: 1, mode: "demo" }),
+      { refetchOnMountOrArgChange: true },
     );
   });
 
@@ -118,6 +120,7 @@ describe("BreedingSuggestionsTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Beräkna" }));
     expect(suggestionsQuery).toHaveBeenLastCalledWith(
       expect.objectContaining({ genebankId: 1, maxInbreeding: 0.09 }),
+      { refetchOnMountOrArgChange: true },
     );
     expect(
       screen.getByText(

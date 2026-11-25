@@ -288,4 +288,70 @@ describe("genetics cache", () => {
       requested("breeding-suggestions").map((url) => url.split("/")[1]),
     ).toEqual(["api-test", "api"]);
   });
+
+  it("hides rows asked for before a 403 that answer after it", async () => {
+    let answer: ((response: Response) => void) | undefined;
+    fetchMock.mockImplementationOnce(
+      () => new Promise<Response>((resolve) => (answer = resolve)),
+    );
+    render(tab(41, "prod")); // request A starts
+    await waitFor(() => expect(answer).toBeDefined());
+
+    fetchMock.mockResolvedValueOnce(failure(403));
+    await refetch(41, "prod", "fetchPopulationMetrics"); // revoked meanwhile
+    await act(async () => answer?.(priorities())); // A ends with a 200
+    expect(rows()).toBeNull();
+    expect(failedAlert()).toBeTruthy();
+
+    fetchMock.mockResolvedValueOnce(failure(500));
+    await refetch(41, "prod");
+    expect(rows()).toBeNull();
+
+    await new Promise((resolve) => setTimeout(resolve, 5)); // a later millisecond
+    fetchMock.mockResolvedValueOnce(priorities());
+    await refetch(41, "prod"); // asked for after the 403
+    expect(rows()).toBeTruthy();
+  });
+
+  it("asks the server again at each Beräkna once access is restored", async () => {
+    route({
+      "population-metrics": () => json({ expected_offspring_f: 0.03 }),
+      "breeding-suggestions": () =>
+        json({
+          status: "success",
+          data: [
+            {
+              sire_id: "S-1",
+              dam_id: "D-1",
+              expected_f: 0.01,
+              delta_gd: 0.001,
+              mate_suitability_index: 1,
+              reasons: [],
+            },
+          ],
+        }),
+    });
+    render(tab(42, "prod", BreedingSuggestionsTab));
+    const calculate = () =>
+      screen.getByRole("button", { name: "Beräkna" }) as HTMLButtonElement;
+    const pairsShown = () => screen.queryByText("S-1");
+    await waitFor(() => expect(calculate().disabled).toBe(false));
+    fireEvent.click(calculate());
+    await waitFor(() => expect(pairsShown()).toBeTruthy());
+
+    fetchMock.mockResolvedValueOnce(failure(403));
+    await refetch(42, "prod"); // the priorities tab is denied
+    expect(pairsShown()).toBeNull();
+    expect(screen.getByText(/Kunde inte hämta parningsförslag/)).toBeTruthy();
+
+    await new Promise((resolve) => setTimeout(resolve, 5)); // access restored later
+    for (const asked of [2, 3]) {
+      await waitFor(() => expect(calculate().disabled).toBe(false));
+      fireEvent.click(calculate()); // the same parameters
+      await waitFor(() =>
+        expect(requested("breeding-suggestions")).toHaveLength(asked),
+      );
+      await waitFor(() => expect(pairsShown()).toBeTruthy());
+    }
+  });
 });

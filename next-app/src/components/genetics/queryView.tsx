@@ -1,35 +1,36 @@
 import React from "react";
 import { Alert } from "@mui/material";
-import { accessDeniedAt, useAccessDenials } from "@/redux/api/geneticsAccess";
+import {
+  accessDeniedAt,
+  dataRequestedAt,
+  useAccessDenials,
+} from "@/redux/api/geneticsAccess";
 
 interface GeneticsQuery<T> {
   currentData?: T;
   isFetching: boolean;
   error?: unknown;
+  status?: string;
+  startedTimeStamp?: number;
+  endpointName?: string;
   originalArgs?: unknown;
-  fulfilledTimeStamp?: number;
 }
 
 /**
  * What a genetics panel shows for one query. Only the selected genebank's own
  * data (`currentData`; `data` still holds the previous genebank's after a
- * switch); nothing older than the last 401 (session) or 403 (this genebank in
- * this mode, from any genetics endpoint) until a newer success; and cached
- * data after any other failed refetch.
+ * switch); nothing asked for before the last 401 (session) or 403 (this
+ * genebank in this mode, from any genetics endpoint) until a success asked for
+ * after it; and cached data after any other failed refetch.
  */
-export function useQueryView<T>({
-  currentData,
-  isFetching,
-  error,
-  originalArgs,
-  fulfilledTimeStamp,
-}: GeneticsQuery<T>) {
+export function useQueryView<T>(query: GeneticsQuery<T>) {
+  const { currentData, isFetching, error, originalArgs } = query;
   useAccessDenials(); // a denial answered to another panel hides this one's rows too
   const status =
     error != null && typeof error === "object" && "status" in error
       ? (error as { status: unknown }).status
       : undefined;
-  const confirmed = fulfilledTimeStamp ?? 0;
+  const confirmed = dataRequestedAt(query) ?? 0;
   const denied = accessDeniedAt(originalArgs);
   const signedOut =
     status === 401 ||
@@ -43,6 +44,7 @@ export function useQueryView<T>({
     loading: data === undefined && isFetching,
     // Signed out: no error, the session-expired flow takes over.
     failed: !signedOut && data === undefined && (error != null || forbidden),
+    denied: forbidden && !signedOut, // this genebank's genetics, in this mode
     stale: error != null && data !== undefined,
   };
 }
