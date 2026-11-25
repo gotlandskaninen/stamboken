@@ -26,7 +26,7 @@ import {
 } from "@/redux/api/apiSlice";
 import HelpTooltip from "./HelpTooltip";
 import GeneticsInfoPanel from "./GeneticsInfoPanel";
-import { queryView } from "./queryView";
+import { useQueryView } from "./queryView";
 import { useMode } from "@/lib/mode-context";
 import { translateReasons } from "@/utils/translateReasons";
 
@@ -54,11 +54,12 @@ const BreedingSuggestionsTab = ({
   const [editedMaxInbreeding, setMaxInbreeding] = useState<number | null>(null);
   const [maxPerMale, setMaxPerMale] = useState(3);
 
+  const mode = useMode();
   const metricsQuery = useFetchPopulationMetricsQuery(
-    { genebankId, mode: useMode() },
+    { genebankId, mode },
     { refetchOnMountOrArgChange: true },
   );
-  const metricsView = queryView(metricsQuery);
+  const metricsView = useQueryView(metricsQuery);
   // Only a value this visit confirmed: after a failed or denied refresh the
   // expected F is unknown, and the cap falls back to its base.
   const metrics = metricsView.stale ? undefined : metricsView.data;
@@ -78,16 +79,17 @@ const BreedingSuggestionsTab = ({
       MAX_INBREEDING_LIMIT,
     );
 
-  // Only fetch when user clicks "Beräkna"
-  const [queryParams, setQueryParams] =
+  // Only fetch when user clicks "Beräkna"; a mode switch drops the calculation
+  // made in the other mode, so its pairs are never shown in this one.
+  const [requestedParams, setQueryParams] =
     useState<BreedingSuggestionsParams | null>(null);
+  const queryParams = requestedParams?.mode === mode ? requestedParams : null;
 
-  const {
-    data: suggestions,
-    isLoading,
-    isFetching,
-    error,
-  } = useFetchBreedingSuggestionsQuery(queryParams ?? skipToken);
+  const suggestionsQuery = useFetchBreedingSuggestionsQuery(
+    queryParams ?? skipToken,
+  );
+  const { isLoading, isFetching, error } = suggestionsQuery;
+  const { data: suggestions } = useQueryView(suggestionsQuery);
 
   const usedCap = queryParams?.maxInbreeding ?? maxInbreeding;
   const raiseHint =
@@ -103,6 +105,7 @@ const BreedingSuggestionsTab = ({
   const handleCalculate = () => {
     setQueryParams({
       genebankId,
+      mode,
       maxPairs,
       maxInbreeding,
       maxPerMale,

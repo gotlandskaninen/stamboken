@@ -1,12 +1,11 @@
 import React from "react";
 import { Alert } from "@mui/material";
-import { accessDeniedAt } from "@/redux/api/geneticsAccess";
+import { accessDeniedAt, useAccessDenials } from "@/redux/api/geneticsAccess";
 
 interface GeneticsQuery<T> {
   currentData?: T;
   isFetching: boolean;
   error?: unknown;
-  endpointName?: string;
   originalArgs?: unknown;
   fulfilledTimeStamp?: number;
 }
@@ -14,32 +13,36 @@ interface GeneticsQuery<T> {
 /**
  * What a genetics panel shows for one query. Only the selected genebank's own
  * data (`currentData`; `data` still holds the previous genebank's after a
- * switch), nothing that a 401 or 403 disowned until a newer success, and
- * cached data after any other failed refetch.
+ * switch); nothing older than the last 401 (session) or 403 (this genebank in
+ * this mode, from any genetics endpoint) until a newer success; and cached
+ * data after any other failed refetch.
  */
-export function queryView<T>({
+export function useQueryView<T>({
   currentData,
   isFetching,
   error,
-  endpointName,
   originalArgs,
   fulfilledTimeStamp,
 }: GeneticsQuery<T>) {
+  useAccessDenials(); // a denial answered to another panel hides this one's rows too
   const status =
     error != null && typeof error === "object" && "status" in error
       ? (error as { status: unknown }).status
       : undefined;
-  const deniedAt = accessDeniedAt(endpointName, originalArgs);
-  const disowned =
+  const confirmed = fulfilledTimeStamp ?? 0;
+  const denied = accessDeniedAt(originalArgs);
+  const signedOut =
     status === 401 ||
+    (denied.session !== undefined && confirmed <= denied.session);
+  const forbidden =
     status === 403 ||
-    (deniedAt !== undefined && (fulfilledTimeStamp ?? 0) <= deniedAt);
-  const data = disowned ? undefined : currentData;
+    (denied.genebank !== undefined && confirmed <= denied.genebank);
+  const data = signedOut || forbidden ? undefined : currentData;
   return {
     data,
     loading: data === undefined && isFetching,
-    // A 401 shows no error: the session-expired flow takes over.
-    failed: error != null && status !== 401 && data === undefined,
+    // Signed out: no error, the session-expired flow takes over.
+    failed: !signedOut && data === undefined && (error != null || forbidden),
     stale: error != null && data !== undefined,
   };
 }

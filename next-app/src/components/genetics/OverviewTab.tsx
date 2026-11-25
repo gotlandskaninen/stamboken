@@ -24,7 +24,7 @@ import GeneticsInfoPanel from "./GeneticsInfoPanel";
 import HelpTooltip from "./HelpTooltip";
 import TrendChart from "./TrendChart";
 import FoundersAtRiskPanel from "./FoundersAtRiskPanel";
-import { queryView, StaleNote } from "./queryView";
+import { useQueryView, StaleNote } from "./queryView";
 import { useMode } from "@/lib/mode-context";
 import type { Theme } from "@mui/material/styles";
 
@@ -86,7 +86,7 @@ const ThemedFounderChart = withTheme(FounderChart);
 const OverviewTab = ({ genebankId }: OverviewTabProps) => {
   const mode = useMode();
   // Both views belong to the selected genebank: its KPIs never mix with another's.
-  const metricsView = queryView(
+  const metricsView = useQueryView(
     useFetchPopulationMetricsQuery(
       { genebankId, mode },
       {
@@ -94,7 +94,7 @@ const OverviewTab = ({ genebankId }: OverviewTabProps) => {
       },
     ),
   );
-  const foundersView = queryView(
+  const foundersView = useQueryView(
     useFetchFounderStatisticsQuery(
       { genebankId, mode },
       {

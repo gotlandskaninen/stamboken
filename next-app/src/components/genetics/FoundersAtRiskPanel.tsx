@@ -18,7 +18,7 @@ import {
   useFetchFoundersAtRiskQuery,
   FounderAtRisk,
 } from "@/redux/api/apiSlice";
-import { queryView, StaleNote } from "./queryView";
+import { useQueryView, StaleNote } from "./queryView";
 import { useMode } from "@/lib/mode-context";
 
 const riskConfig: Record<
@@ -87,7 +87,7 @@ const FoundersAtRiskPanel = ({ genebankId }: FoundersAtRiskPanelProps) => {
     loading,
     failed,
     stale,
-  } = queryView(
+  } = useQueryView(
     useFetchFoundersAtRiskQuery(
       { genebankId, mode },
       {

@@ -11,7 +11,7 @@ import {
 } from "@/redux/api/apiSlice";
 import HelpTooltip from "./HelpTooltip";
 import GeneticsInfoPanel from "./GeneticsInfoPanel";
-import { queryView, StaleNote } from "./queryView";
+import { useQueryView, StaleNote } from "./queryView";
 import { useMode } from "@/lib/mode-context";
 import { translateReasons } from "@/utils/translateReasons";
 
@@ -41,7 +41,7 @@ const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
     loading,
     failed,
     stale,
-  } = queryView(
+  } = useQueryView(
     useFetchGeneticPrioritiesQuery(
       { genebankId, mode },
       {

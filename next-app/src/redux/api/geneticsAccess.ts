@@ -1,39 +1,57 @@
-import { defaultSerializeQueryArgs } from "@reduxjs/toolkit/query";
+import { useSyncExternalStore } from "react";
 
-// When each cached genetics entry last answered 401 or 403, by its cache key.
-// Its older data stays hidden until a newer success (queryView), whichever
-// component made the request and whatever error comes next.
-const deniedAt = new Map<string, number>();
+// Flask checks the same genebank access for every genetics endpoint, so a 403
+// from any of them disowns all of that genebank's genetics data in that mode,
+// and a 401 disowns everything this session fetched. Only answers newer than
+// the denial are shown again (useQueryView), whichever panel asked.
+const genebankDeniedAt = new Map<string, number>();
+let sessionDeniedAt: number | undefined;
+let version = 0;
+const listeners = new Set<() => void>();
 
-const entryKey = (endpointName: string | undefined, queryArgs: unknown) =>
-  defaultSerializeQueryArgs({
-    queryArgs,
-    endpointName: endpointName ?? "",
-    endpointDefinition: undefined as never, // unused by the default serializer
-  });
+const genebankKey = (arg: unknown) => {
+  const { mode, genebankId } = (arg ?? {}) as {
+    mode?: unknown;
+    genebankId?: unknown;
+  };
+  return `${mode}:${genebankId}`;
+};
 
-export const accessDeniedAt = (
-  endpointName: string | undefined,
-  arg: unknown,
-) => deniedAt.get(entryKey(endpointName, arg));
+/** When the session (401) and the argument's genebank in its mode (403) were last denied. */
+export const accessDeniedAt = (arg: unknown) => ({
+  session: sessionDeniedAt,
+  genebank: genebankDeniedAt.get(genebankKey(arg)),
+});
 
-/** onQueryStarted for the cached genetics endpoints: remembers a 401 or 403. */
+/** onQueryStarted for the genetics endpoints: remembers a 401 or 403. */
 export async function rememberAccessDenial(
   arg: unknown,
-  {
-    queryFulfilled,
-    getCacheEntry,
-  }: {
-    queryFulfilled: Promise<unknown>;
-    getCacheEntry: () => { endpointName?: string };
-  },
+  { queryFulfilled }: { queryFulfilled: Promise<unknown> },
 ) {
   try {
     await queryFulfilled;
   } catch (rejection) {
     const status = (rejection as { error?: { status?: unknown } }).error
       ?.status;
-    if (status === 401 || status === 403)
-      deniedAt.set(entryKey(getCacheEntry().endpointName, arg), Date.now());
+    if (status === 401) sessionDeniedAt = Date.now();
+    else if (status === 403) genebankDeniedAt.set(genebankKey(arg), Date.now());
+    else return;
+    version += 1;
+    listeners.forEach((listener) => listener());
   }
 }
+
+const subscribe = (listener: () => void) => {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+};
+
+/** Re-renders the caller when any genetics answer is denied. */
+export const useAccessDenials = () =>
+  useSyncExternalStore(
+    subscribe,
+    () => version,
+    () => version,
+  );

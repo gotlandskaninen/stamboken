@@ -34,7 +34,13 @@ function renderTab(
   // Empty result once a query has been made (skipToken before "Beräkna")
   suggestionsQuery.mockImplementation((params: unknown) =>
     typeof params === "object"
-      ? { data: [], isLoading: false, isFetching: false, error: undefined }
+      ? {
+          data: [],
+          currentData: [],
+          isLoading: false,
+          isFetching: false,
+          error: undefined,
+        }
       : { data: undefined, isLoading: false, isFetching: false },
   );
   return render(
@@ -53,6 +59,28 @@ describe("BreedingSuggestionsTab", () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+  });
+
+  it("drops the calculation made in the other mode", () => {
+    const { rerender } = renderTab(0.03);
+    fireEvent.click(screen.getByRole("button", { name: "Beräkna" }));
+    expect(suggestionsQuery).toHaveBeenLastCalledWith(
+      expect.objectContaining({ genebankId: 1, mode: "prod" }),
+    );
+    // The admin panel's switch re-renders the mounted tab in the other mode.
+    rerender(
+      <ThemeProvider theme={theme}>
+        <ModeProvider mode="demo">
+          <BreedingSuggestionsTab genebankId={1} />
+        </ModeProvider>
+      </ThemeProvider>,
+    );
+    expect(typeof suggestionsQuery.mock.lastCall?.[0]).toBe("symbol"); // skipToken
+    expect(screen.getByText(/Klicka "Beräkna"/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Beräkna" }));
+    expect(suggestionsQuery).toHaveBeenLastCalledWith(
+      expect.objectContaining({ genebankId: 1, mode: "demo" }),
+    );
   });
 
   it("refreshes the metrics and waits for them before an automatic cap is sent", () => {
