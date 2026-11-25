@@ -11,6 +11,8 @@ import {
 import { decimal, percent } from "@/lib/genetics";
 import HelpTooltip from "./HelpTooltip";
 import GeneticsInfoPanel from "./GeneticsInfoPanel";
+import { useQueryView, StaleNote } from "./queryView";
+import { useMode } from "@/lib/mode-context";
 import GeneticsError from "./GeneticsError";
 import { readableChip } from "./readableChip";
 import { translateReasons } from "@/utils/translateReasons";
@@ -40,12 +42,14 @@ interface PrioritiesTabProps {
 }
 
 const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
-  const {
-    data: priorities,
-    isLoading,
-    error,
-    refetch,
-  } = useFetchGeneticPrioritiesQuery(genebankId);
+  const mode = useMode();
+  const query = useFetchGeneticPrioritiesQuery(
+    { genebankId, mode },
+    {
+      refetchOnMountOrArgChange: true,
+    },
+  );
+  const { data: priorities, loading, failed, stale } = useQueryView(query);
 
   const [filters, setFilters] = useState({
     critical: true,
@@ -125,7 +129,7 @@ const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
     },
   ];
 
-  if (isLoading) {
+  if (loading) {
     return (
       <Box>
         <Alert severity="info" sx={{ mb: 4 }}>
@@ -136,12 +140,22 @@ const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
     );
   }
 
-  if (error) {
-    return <GeneticsError error={error} onRetry={refetch} />;
+  if (failed) {
+    // A denial seen by another genetics panel hides this too; it reads as no access.
+    return (
+      <GeneticsError
+        error={query.error ?? { status: 403 }}
+        onRetry={query.refetch}
+      />
+    );
   }
+
+  // A 401: nothing behind the session-expired modal, not an empty table.
+  if (!priorities) return null;
 
   return (
     <Box>
+      {stale && <StaleNote />}
       <GeneticsInfoPanel tab="priorities" />
       <Box
         sx={{

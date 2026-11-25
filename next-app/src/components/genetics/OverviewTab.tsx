@@ -32,6 +32,8 @@ import GeneticsInfoPanel, {
 import GeneticsError from "./GeneticsError";
 import TrendChart from "./TrendChart";
 import FoundersAtRiskPanel from "./FoundersAtRiskPanel";
+import { useQueryView, StaleNote } from "./queryView";
+import { useMode } from "@/lib/mode-context";
 import type { Theme } from "@mui/material/styles";
 
 const Chart = dynamic(() => import("react-apexcharts"), {
@@ -107,27 +109,40 @@ const FounderChart = ({
 const ThemedFounderChart = withTheme(FounderChart);
 
 const OverviewTab = ({ genebankId }: OverviewTabProps) => {
-  const {
-    data: metrics,
-    isLoading: metricsLoading,
-    error: metricsError,
-    refetch: refetchMetrics,
-  } = useFetchPopulationMetricsQuery(genebankId);
-
-  const {
-    data: founders,
-    isLoading: foundersLoading,
-    error: foundersError,
-    refetch: refetchFounders,
-  } = useFetchFounderStatisticsQuery(genebankId);
+  const mode = useMode();
+  // Both views belong to the selected genebank: its KPIs never mix with another's.
+  const metricsQuery = useFetchPopulationMetricsQuery(
+    { genebankId, mode },
+    { refetchOnMountOrArgChange: true },
+  );
+  const foundersQuery = useFetchFounderStatisticsQuery(
+    { genebankId, mode },
+    { refetchOnMountOrArgChange: true },
+  );
+  const metricsView = useQueryView(metricsQuery);
+  const foundersView = useQueryView(foundersQuery);
+  const metrics = metricsView.data;
+  const founders = foundersView.data;
+  const refetchMetrics = metricsQuery.refetch;
+  const refetchFounders = foundersQuery.refetch;
 
   // The founderdjur table's rows (the same request as the table below), so the
   // card and the table count the same animals. Until it arrives the count is left out.
-  const { data: founderRows } = useFetchFoundersAtRiskQuery(genebankId);
+  const founderRows = useQueryView(
+    useFetchFoundersAtRiskQuery(
+      { genebankId, mode },
+      { refetchOnMountOrArgChange: true },
+    ),
+  ).data;
   // The trend below shares this request; its last row is the last closed year.
-  const { data: trend } = useFetchGeneticsTrendsQuery(genebankId);
+  const trend = useQueryView(
+    useFetchGeneticsTrendsQuery(
+      { genebankId, mode },
+      { refetchOnMountOrArgChange: true },
+    ),
+  ).data;
 
-  if (metricsLoading || foundersLoading) {
+  if (metricsView.loading || foundersView.loading) {
     return (
       <React.Fragment>
         <Alert severity="info" sx={{ mb: 6 }}>
@@ -145,8 +160,9 @@ const OverviewTab = ({ genebankId }: OverviewTabProps) => {
     );
   }
 
-  const error = metricsError ?? foundersError;
-  if (error) {
+  if (metricsView.failed || foundersView.failed) {
+    // A denial seen by another genetics panel hides these too; it reads as no access.
+    const error = metricsQuery.error ?? foundersQuery.error ?? { status: 403 };
     return (
       <GeneticsError
         error={error}
@@ -183,6 +199,7 @@ const OverviewTab = ({ genebankId }: OverviewTabProps) => {
 
   return (
     <React.Fragment>
+      {(metricsView.stale || foundersView.stale) && <StaleNote />}
       <GeneticsInfoPanel tab="overview" />
       {empty && (
         <Alert severity="info" sx={{ mb: 6 }}>

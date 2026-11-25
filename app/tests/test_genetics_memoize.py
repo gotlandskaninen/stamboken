@@ -32,7 +32,12 @@ class TestGeneticsFailuresNotMemoized(unittest.TestCase):
                     wrapper = getattr(herdbook, wrapper_name)
                     g_id = 987650 + offset
                     results = [RuntimeError("pedigree cycle"), {"X": 0.25}, {"Y": 1.0}]
-                    snap = SimpleNamespace(genebank_id=g_id, key=(1, date.today(), 2, 1, "e"))  # no database here
+                    snap = SimpleNamespace(  # no database here
+                        genebank_id=g_id,
+                        key=(1, date.today(), 2, 1, "e"),
+                        fingerprint=f"inputs-{g_id}",
+                        eligible_fingerprint="eligible",
+                    )
                     with (
                         patch.object(herdbook.genetics, "snapshot", return_value=snap),
                         patch.object(herdbook.genetics, service_name, side_effect=results) as service,

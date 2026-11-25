@@ -6,22 +6,38 @@ import { ThemeProvider, createTheme } from "@mui/material/styles";
 const metricsQuery = vi.fn();
 const suggestionsQuery = vi.fn();
 
+// The answer is the current argument's own, as RTK Query's currentData after a fetch.
+const own = (r: { data?: unknown; isLoading?: boolean }) => ({
+  currentData: r.data,
+  isFetching: Boolean(r.isLoading),
+  ...r,
+});
+
 vi.mock("@/redux/api/apiSlice", () => ({
-  useFetchPopulationMetricsQuery: (...args: unknown[]) => metricsQuery(...args),
+  useFetchPopulationMetricsQuery: (...args: unknown[]) =>
+    own(metricsQuery(...args)),
   useFetchBreedingSuggestionsQuery: (...args: unknown[]) =>
-    suggestionsQuery(...args),
+    own(suggestionsQuery(...args)),
 }));
 
 import BreedingSuggestionsTab from "@/components/genetics/BreedingSuggestionsTab";
+import { ModeProvider } from "@/lib/mode-context";
 
 const theme = createTheme();
 
-function renderTab(expectedOffspringF: number | null | undefined) {
+function renderTab(
+  expectedOffspringF: number | null | undefined,
+  metricsState: Record<string, unknown> = {},
+) {
+  const data =
+    expectedOffspringF === undefined
+      ? undefined
+      : { expected_offspring_f: expectedOffspringF };
   metricsQuery.mockReturnValue({
-    data:
-      expectedOffspringF === undefined
-        ? undefined
-        : { expected_offspring_f: expectedOffspringF },
+    data,
+    currentData: data,
+    isFetching: false,
+    ...metricsState,
   });
   // Empty result once a query has been made (skipToken before "Beräkna")
   suggestionsQuery.mockImplementation((params: unknown) =>
@@ -37,7 +53,9 @@ function renderTab(expectedOffspringF: number | null | undefined) {
   );
   return render(
     <ThemeProvider theme={theme}>
-      <BreedingSuggestionsTab genebankId={1} />
+      <ModeProvider mode="prod">
+        <BreedingSuggestionsTab genebankId={1} />
+      </ModeProvider>
     </ThemeProvider>,
   );
 }
@@ -49,6 +67,47 @@ describe("BreedingSuggestionsTab", () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+  });
+
+  it("drops the calculation made in the other mode", () => {
+    const { rerender } = renderTab(0.03);
+    fireEvent.click(screen.getByRole("button", { name: "Beräkna" }));
+    expect(suggestionsQuery).toHaveBeenLastCalledWith(
+      expect.objectContaining({ genebankId: 1, mode: "prod" }),
+      { refetchOnMountOrArgChange: true },
+    );
+    // The admin panel's switch re-renders the mounted tab in the other mode.
+    rerender(
+      <ThemeProvider theme={theme}>
+        <ModeProvider mode="demo">
+          <BreedingSuggestionsTab genebankId={1} />
+        </ModeProvider>
+      </ThemeProvider>,
+    );
+    expect(typeof suggestionsQuery.mock.lastCall?.[0]).toBe("symbol"); // skipToken
+    expect(screen.getByText(/Klicka "Beräkna"/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Beräkna" }));
+    expect(suggestionsQuery).toHaveBeenLastCalledWith(
+      expect.objectContaining({ genebankId: 1, mode: "demo" }),
+      { refetchOnMountOrArgChange: true },
+    );
+  });
+
+  it("refreshes the metrics and waits for them before an automatic cap is sent", () => {
+    renderTab(0.09, { isFetching: true }); // an hour-old value is cached
+    expect(metricsQuery).toHaveBeenCalledWith(
+      { genebankId: 1, mode: "prod" },
+      { refetchOnMountOrArgChange: true },
+    );
+    const calculate = screen.getByRole("button", { name: "Beräkna" });
+    expect((calculate as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(capField(), { target: { value: "0.1" } }); // a typed cap does not wait
+    expect((calculate as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("treats the expected F as unknown when its refresh failed", () => {
+    renderTab(0.09, { error: { status: 500 } });
+    expect(capField().value).toBe("0.0625");
   });
 
   it("defaults the cap to the breed's expected offspring F when it is higher", () => {
@@ -69,6 +128,7 @@ describe("BreedingSuggestionsTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Beräkna" }));
     expect(suggestionsQuery).toHaveBeenLastCalledWith(
       expect.objectContaining({ genebankId: 1, maxInbreeding: 0.09 }),
+      { refetchOnMountOrArgChange: true },
     );
     expect(
       screen.getByText(
@@ -142,7 +202,9 @@ describe("BreedingSuggestionsTab errors", () => {
     );
     render(
       <ThemeProvider theme={theme}>
-        <BreedingSuggestionsTab genebankId={1} />
+        <ModeProvider mode="prod">
+          <BreedingSuggestionsTab genebankId={1} />
+        </ModeProvider>
       </ThemeProvider>,
     );
     fireEvent.click(screen.getByRole("button", { name: "Beräkna" }));
@@ -194,7 +256,9 @@ describe("BreedingSuggestionsTab errors", () => {
     });
     const { rerender } = render(
       <ThemeProvider theme={theme}>
-        <BreedingSuggestionsTab genebankId={1} />
+        <ModeProvider mode="prod">
+          <BreedingSuggestionsTab genebankId={1} />
+        </ModeProvider>
       </ThemeProvider>,
     );
     fireEvent.change(capField(), { target: { value: "0.12" } });
@@ -208,7 +272,9 @@ describe("BreedingSuggestionsTab errors", () => {
     phase = "denied";
     rerender(
       <ThemeProvider theme={theme}>
-        <BreedingSuggestionsTab genebankId={1} />
+        <ModeProvider mode="prod">
+          <BreedingSuggestionsTab genebankId={1} />
+        </ModeProvider>
       </ThemeProvider>,
     );
     expect(screen.getByText(/inte behörighet/)).toBeTruthy();

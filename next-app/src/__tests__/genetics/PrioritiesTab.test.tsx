@@ -5,8 +5,18 @@ import { ThemeProvider, createTheme } from "@mui/material/styles";
 
 const prioritiesQuery = vi.fn();
 
+// The answer is the current argument's own, as RTK Query's currentData after a fetch.
+const own = (r: { data?: unknown; isLoading?: boolean }) => ({
+  currentData: r.data,
+  isFetching: Boolean(r.isLoading),
+  ...r,
+});
+
+// The genetics hooks take the rendered mode with the genebank (ModeProvider in the app).
+vi.mock("@/lib/mode-context", () => ({ useMode: () => "prod" }));
+
 vi.mock("@/redux/api/apiSlice", () => ({
-  useFetchGeneticPrioritiesQuery: () => prioritiesQuery(),
+  useFetchGeneticPrioritiesQuery: () => own(prioritiesQuery()),
 }));
 
 // jsdom has no layout, so the real grid renders no cells. The stub renders each

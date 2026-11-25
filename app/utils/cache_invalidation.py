@@ -4,13 +4,14 @@ Cache invalidation for genetics data.
 Coordinates snapshot rebuilds across gunicorn workers using Redis pub/sub,
 debounced recomputation via Redis keys + APScheduler polling, and a leader
 poller on the global genetics version. Memoized results are keyed on the
-snapshot they were computed from, so nothing is ever deleted: a new genetics
-version simply misses the cache.
+content of the snapshot they were computed from, so nothing is ever deleted:
+changed inputs simply miss the cache, and unchanged ones keep hitting it.
 """
 
 import logging
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import redis
 
@@ -26,6 +27,12 @@ _redis_url: str | None = None  # Stored for creating pub/sub client
 
 PUBSUB_CHANNEL = "herdbook:cache:invalidate"
 DEBOUNCE_DELAY_SECONDS = 30
+BUILD_WAIT_SECONDS = 300  # a large pedigree's snapshot build can outlast the debounce
+
+# Warm-ups run here, never in the 5 s scheduler job: one waits up to BUILD_WAIT_SECONDS for a build.
+_warm_up_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="genetics-warm-up")
+_warm_up_queued = {}  # genebank_id -> Future of its latest warm-up
+_warm_up_lock = threading.Lock()
 
 # Memoized function references — set by set_cache_and_functions()
 _memoized_functions: list = []
@@ -210,9 +217,30 @@ def _recompute_genebank(genebank_id: int):
     """Eagerly recompute all memoized metrics for a genebank.
 
     Uses the function references injected via set_cache_and_functions()
-    instead of importing from herdbook to avoid circular imports.
+    instead of importing from herdbook to avoid circular imports. Waits for
+    a snapshot of the latest write first: warming the retained snapshot would
+    only hit its own memo and leave the new inputs to the first request.
     """
     logger.info(f"Debounce firing: recomputing metrics for genebank {genebank_id}")
+    gs = _get_genetics_service()
+    deadline = time.monotonic() + BUILD_WAIT_SECONDS
+    snap = None
+    try:
+        # A write during the running build needs one more; a failing build must not spin.
+        for _ in range(3):
+            # Starts the build a moved key (or a cold start) needs, and never waits on it untimed.
+            snap, stale = gs.snapshot_status(genebank_id, wait=False)
+            if snap is not None and not stale:
+                break
+            gs.ps.wait_for_builds(genebank_id, timeout=max(deadline - time.monotonic(), 0))
+        else:
+            snap = gs.snapshot_status(genebank_id, wait=False)[0]
+    except Exception:  # pylint: disable=broad-except
+        logger.warning("Snapshot build for genebank %s not done; warming the current one", genebank_id, exc_info=True)
+    if snap is None:
+        # Still cold: the bodies would wait on that build untimed and hold up the next genebank.
+        logger.warning("No snapshot of genebank %s within the budget; its warm-up is skipped", genebank_id)
+        return
 
     for func in _memoized_functions:
         try:
@@ -227,12 +255,36 @@ def _recompute_genebank(genebank_id: int):
             logger.warning(f"Failed to recompute breeding suggestions for genebank {genebank_id}: {e}")
 
 
+def _warm_up_quietly(genebank_id):
+    try:
+        _recompute_genebank(genebank_id)
+    except Exception:  # pylint: disable=broad-except
+        logger.exception("Genetics warm-up failed for genebank %s", genebank_id)
+    finally:
+        _get_genetics_service().ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _queue_warm_up(genebank_id):
+    """Queue a warm-up unless one for the genebank is still waiting to start.
+
+    A waiting one reads the latest snapshot when it starts; a running one may
+    predate the write, so another is queued behind it.
+    """
+    with _warm_up_lock:
+        fut = _warm_up_queued.get(genebank_id)
+        if fut is not None and not fut.running() and not fut.done():
+            return
+        _warm_up_queued[genebank_id] = _warm_up_executor.submit(_warm_up_quietly, genebank_id)
+
+
 def poll_debounce_keys():
     """
     Check for debounce keys ready to fire. Called every 5s by APScheduler on the leader.
 
     For each debounce:{genebank_id} key where now - timestamp >= 30s:
-    delete the key and run eager recomputation.
+    delete the key and queue an eager recomputation. Every due key is
+    claimed before any warm-up is queued, and the job returns at once: the
+    warm-ups run on their own thread.
     """
     if _redis_client is None:
         return
@@ -243,7 +295,7 @@ def poll_debounce_keys():
         return
 
     now = int(time.time())
-
+    due = []
     for key in keys:
         try:
             val = _redis_client.get(key)
@@ -253,9 +305,12 @@ def poll_debounce_keys():
             if now - timestamp >= DEBOUNCE_DELAY_SECONDS:
                 genebank_id = int(key.split(":")[1])
                 _redis_client.delete(key)
-                _recompute_genebank(genebank_id)
+                due.append(genebank_id)
         except (redis.RedisError, ValueError) as e:
             logger.warning(f"Error processing debounce key {key}: {e}")
+
+    for genebank_id in due:
+        _queue_warm_up(genebank_id)
 
 
 def poll_genetics_version():

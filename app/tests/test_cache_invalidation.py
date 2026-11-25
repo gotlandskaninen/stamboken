@@ -1,11 +1,16 @@
 """Tests for cache invalidation module."""
 
+import threading
 import time
 import unittest
 from unittest.mock import MagicMock, patch
 
+import utils.cache_invalidation as ci
 from utils.cache_invalidation import (
+    BUILD_WAIT_SECONDS,
     _handle_invalidation_message,
+    _queue_warm_up,
+    _recompute_genebank,
     get_genebank_ids_for_individual,
     poll_debounce_keys,
     set_cache_and_functions,
@@ -78,7 +83,7 @@ class TestDebouncePolling(unittest.TestCase):
     """Test the debounce polling mechanism."""
 
     @patch("utils.cache_invalidation._redis_client")
-    @patch("utils.cache_invalidation._recompute_genebank")
+    @patch("utils.cache_invalidation._queue_warm_up")
     def test_fires_after_delay(self, mock_recompute, mock_redis):
         """Debounce fires recomputation when timestamp is old enough."""
         mock_redis.keys.return_value = ["debounce:1"]
@@ -90,7 +95,25 @@ class TestDebouncePolling(unittest.TestCase):
         mock_redis.delete.assert_called_once_with("debounce:1")
 
     @patch("utils.cache_invalidation._redis_client")
-    @patch("utils.cache_invalidation._recompute_genebank")
+    @patch("utils.cache_invalidation._queue_warm_up")
+    def test_claims_every_due_key_before_warming_any(self, mock_recompute, mock_redis):
+        """A key that expires while genebank 1's warm-up is queued: both are warmed all the same."""
+        due = str(int(time.time()) - 31)
+        store = {"debounce:1": due, "debounce:2": due}
+        mock_redis.keys.return_value = list(store)
+        mock_redis.get.side_effect = store.get
+        mock_redis.delete.side_effect = lambda key: store.pop(key, None)
+
+        def slow_warm_up(genebank_id):
+            store.clear()  # every key left has expired meanwhile
+
+        mock_recompute.side_effect = slow_warm_up
+        poll_debounce_keys()
+
+        assert [c.args[0] for c in mock_recompute.call_args_list] == [1, 2]
+
+    @patch("utils.cache_invalidation._redis_client")
+    @patch("utils.cache_invalidation._queue_warm_up")
     def test_waits_during_window(self, mock_recompute, mock_redis):
         """Debounce does not fire while within the delay window."""
         mock_redis.keys.return_value = ["debounce:1"]
@@ -99,3 +122,102 @@ class TestDebouncePolling(unittest.TestCase):
         poll_debounce_keys()
 
         mock_recompute.assert_not_called()
+
+
+class TestQueueWarmUp(unittest.TestCase):
+    """Warm-ups run on one thread of their own, so the 5 s scheduler job never waits on a build."""
+
+    @patch("utils.cache_invalidation.genetics_service")
+    @patch("utils.cache_invalidation._recompute_genebank")
+    def test_one_waiting_warm_up_per_genebank(self, mock_recompute, mock_gs):
+        started, release = threading.Event(), threading.Event()
+
+        def slow(genebank_id):
+            if not started.is_set():
+                started.set()
+                release.wait(5)
+
+        mock_recompute.side_effect = slow
+        _queue_warm_up(1)  # runs, waiting on its build
+        assert started.wait(5)
+        _queue_warm_up(1)  # the running one may predate this write: queued behind it
+        _queue_warm_up(1)  # one is already waiting: it will read the latest snapshot
+        _queue_warm_up(2)
+        release.set()
+        ci._warm_up_executor.submit(lambda: None).result(5)  # one thread, in order: all done
+
+        assert [c.args[0] for c in mock_recompute.call_args_list] == [1, 1, 2]
+        assert mock_gs.ps._close_db_connection.call_count == 3  # the thread holds no connection between runs
+
+
+class TestColdBuildDoesNotHoldUpTheWarmUps(unittest.TestCase):
+    """A cold genebank whose build hangs is skipped when the budget runs out; the next one is warmed."""
+
+    def setUp(self):
+        from utils import pedigree_snapshot as ps
+
+        ci._get_genetics_service()  # its import installs the real source: before the fake one
+        self.ps, saved = ps, (ps._key_fn, ps._load_fn)
+        ps.reset_for_tests()
+        release = threading.Event()
+
+        def load(genebank_id):
+            if genebank_id == 1:
+                release.wait(10)  # genebank 1's cold build hangs
+            return ("k",), [{"number": "A", "sex": None, "father_number": None, "mother_number": None}], {"A"}
+
+        ps.set_source(key_fn=lambda _gb: ("k",), load_fn=load)
+
+        def restore():
+            release.set()  # before draining the builds
+            ps.reset_for_tests()
+            ps._key_fn, ps._load_fn = saved
+            set_cache_and_functions(memoized_funcs=[], breeding_suggestions_func=None)
+
+        self.addCleanup(restore)
+
+    def test_a_hanging_cold_build_lets_the_next_genebank_warm(self):
+        warmed = []
+        set_cache_and_functions(memoized_funcs=[warmed.append], breeding_suggestions_func=None)
+        started = time.monotonic()
+        with patch.object(ci, "BUILD_WAIT_SECONDS", 0.5):
+            _recompute_genebank(1)
+            _recompute_genebank(2)
+        assert time.monotonic() - started < 5
+        assert warmed == [2]
+
+
+class TestRecompute(unittest.TestCase):
+    """The debounced warm-up computes on the snapshot the write asked for, not the retained one."""
+
+    @patch("utils.cache_invalidation.genetics_service")
+    def test_waits_until_the_snapshot_is_current_before_warming(self, mock_gs):
+        """A write during the running build: that build is stale too, so wait for the next one."""
+        order = []
+        mock_gs.snapshot_status.side_effect = [(1, True), (2, True), (3, False)]
+        mock_gs.ps.wait_for_builds.side_effect = lambda _gb, timeout: order.append("wait")
+        set_cache_and_functions(
+            memoized_funcs=[MagicMock(side_effect=lambda _gb: order.append("warm"))],
+            breeding_suggestions_func=MagicMock(side_effect=lambda _gb: order.append("suggestions")),
+        )
+        _recompute_genebank(1)
+        assert order == ["wait", "wait", "warm", "suggestions"]
+        assert 0 < mock_gs.ps.wait_for_builds.call_args.kwargs["timeout"] <= BUILD_WAIT_SECONDS
+
+    @patch("utils.cache_invalidation.genetics_service")
+    def test_a_build_that_stays_stale_does_not_spin(self, mock_gs):
+        mock_gs.snapshot_status.return_value = (1, True)  # e.g. failing builds cooling down
+        func = MagicMock()
+        set_cache_and_functions(memoized_funcs=[func], breeding_suggestions_func=None)
+        _recompute_genebank(1)
+        assert mock_gs.ps.wait_for_builds.call_count == 3
+        func.assert_called_once_with(1)
+
+    @patch("utils.cache_invalidation.genetics_service")
+    def test_warms_the_current_snapshot_when_the_build_does_not_finish(self, mock_gs):
+        mock_gs.snapshot_status.return_value = (1, True)
+        mock_gs.ps.wait_for_builds.side_effect = TimeoutError
+        func = MagicMock()
+        set_cache_and_functions(memoized_funcs=[func], breeding_suggestions_func=None)
+        _recompute_genebank(1)
+        func.assert_called_once_with(1)
