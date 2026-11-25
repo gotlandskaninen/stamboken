@@ -1,8 +1,15 @@
 import React, { useMemo, useState } from "react";
+import Link from "next/link";
 import styled from "@emotion/styled";
 
-import { Box, Chip as MuiChip, Skeleton, Alert } from "@mui/material";
-import { DataGrid, GridColDef } from "@mui/x-data-grid";
+import {
+  Box,
+  Chip as MuiChip,
+  Skeleton,
+  Alert,
+  Typography,
+} from "@mui/material";
+import { DataGrid, GridColDef, GridSortModel } from "@mui/x-data-grid";
 
 import {
   useFetchGeneticPrioritiesQuery,
@@ -14,6 +21,14 @@ import GeneticsInfoPanel from "./GeneticsInfoPanel";
 import GeneticsError from "./GeneticsError";
 import { readableChip } from "./readableChip";
 import { translateReasons } from "@/utils/translateReasons";
+import {
+  PRIORITY_LABEL,
+  PRIORITY_ORDER,
+  byHerd,
+  downloadCsv,
+  prioritiesCsv,
+  sexLabel,
+} from "./workList";
 
 const RARE_GENES =
   "Hur stor andel av kaninerna i beräkningen som är mer släkt med resten än den här kaninen. 100 betyder minst släkt, alltså mest ovanliga gener.";
@@ -30,10 +45,16 @@ const priorityConfig: Record<
   string,
   { label: string; chipColor: "error" | "warning" | "default" }
 > = {
-  critical: { label: "Högsta", chipColor: "error" },
-  important: { label: "Hög", chipColor: "warning" },
-  normal: { label: "Övriga", chipColor: "default" },
+  critical: { label: PRIORITY_LABEL.critical, chipColor: "error" },
+  important: { label: PRIORITY_LABEL.important, chipColor: "warning" },
+  normal: { label: PRIORITY_LABEL.normal, chipColor: "default" },
 };
+
+const linkCell = (href: string, text: string) => (
+  <Link href={href} className="sb-link">
+    {text}
+  </Link>
+);
 
 interface PrioritiesTabProps {
   genebankId: number;
@@ -57,23 +78,67 @@ const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
     setFilters((prev) => ({ ...prev, [level]: !prev[level] }));
   };
 
+  // Per besättning: the rows in herd order within each level; the grid's own sort is cleared.
+  const [perHerd, setPerHerd] = useState(false);
+  const [sortModel, setSortModel] = useState<GridSortModel>([
+    { field: "priority", sort: "asc" },
+  ]);
+
   const filteredRows = useMemo(() => {
     if (!priorities) return [];
-    return priorities
-      .filter((p) => filters[p.priority as keyof typeof filters])
-      .map((p, index) => ({ ...p, id: p.individual_id || index }));
-  }, [priorities, filters]);
+    const shown = priorities.filter(
+      (p) => filters[p.priority as keyof typeof filters],
+    );
+    return (perHerd ? byHerd(shown) : shown).map((p, index) => ({
+      ...p,
+      id: p.individual_id || index,
+    }));
+  }, [priorities, filters, perHerd]);
 
   const columns: GridColDef[] = [
     {
       field: "individual_id",
       headerName: "Individnummer",
-      width: 150,
+      width: 125,
+      renderCell: ({ value }) =>
+        linkCell(`/stamboken/individ/${encodeURIComponent(value)}`, value),
+    },
+    {
+      field: "name",
+      headerName: "Namn",
+      width: 110,
+      valueFormatter: (value?: string | null) => value || "–",
+    },
+    {
+      field: "herd",
+      headerName: "Besättning",
+      width: 100,
+      renderCell: ({ value }) =>
+        value
+          ? linkCell(
+              `/stamboken/min-besattning?herd=${encodeURIComponent(value)}`,
+              value,
+            )
+          : "–",
+    },
+    {
+      field: "sex",
+      headerName: "Kön",
+      width: 70,
+      // undefined: the database no longer has the number; null: unknown sex.
+      valueFormatter: (value?: string | null) =>
+        value === undefined ? "–" : sexLabel(value),
+    },
+    {
+      field: "birth_date",
+      headerName: "Född",
+      width: 100,
+      valueFormatter: (value?: string | null) => value || "–",
     },
     {
       field: "priority",
       headerName: "Avelsprioritet",
-      width: 180,
+      width: 165,
       renderCell: (params) => {
         const config = priorityConfig[params.value] || priorityConfig.normal;
         return (
@@ -85,18 +150,14 @@ const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
           />
         );
       },
-      sortComparator: (v1, v2) => {
-        const order = { critical: 0, important: 1, normal: 2 };
-        return (
-          (order[v1 as keyof typeof order] ?? 3) -
-          (order[v2 as keyof typeof order] ?? 3)
-        );
-      },
+      sortComparator: (v1, v2) =>
+        (PRIORITY_ORDER[v1 as keyof typeof PRIORITY_ORDER] ?? 3) -
+        (PRIORITY_ORDER[v2 as keyof typeof PRIORITY_ORDER] ?? 3),
     },
     {
       field: "genetic_value_score",
       headerName: "Ovanliga gener (0–100)",
-      width: 190,
+      width: 195,
       type: "number",
       valueFormatter: (value: number) => (value != null ? decimal(value) : "–"),
       renderHeader: () => (
@@ -106,7 +167,7 @@ const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
     {
       field: "genome_uniqueness",
       headerName: "Unika gener",
-      width: 140,
+      width: 125,
       type: "number",
       valueFormatter: (value: number) => (value != null ? percent(value) : "–"),
       renderHeader: () => (
@@ -117,7 +178,8 @@ const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
       field: "reasons",
       headerName: "Skäl",
       flex: 1,
-      minWidth: 200,
+      minWidth: 260,
+      cellClassName: "skal",
       valueFormatter: (value: string[], row) =>
         Array.isArray(value)
           ? translateReasons(value, row.individual_id).join("; ") // the reasons contain commas
@@ -146,6 +208,9 @@ const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
       <Box
         sx={{
           mb: 2,
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "center",
         }}
       >
         {(
@@ -165,16 +230,56 @@ const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
             }
           />
         ))}
+        <Box sx={{ display: "flex", gap: 2, mb: 2, ml: { sm: "auto" } }}>
+          <button
+            type="button"
+            className={`sb-btn sb-btn-sm${perHerd ? "" : " sb-btn-secondary"}`}
+            aria-pressed={perHerd}
+            onClick={() => {
+              setSortModel(perHerd ? [{ field: "priority", sort: "asc" }] : []);
+              setPerHerd(!perHerd);
+            }}
+          >
+            Sortera per besättning
+          </button>
+          <button
+            type="button"
+            className="sb-btn sb-btn-sm sb-btn-secondary"
+            disabled={filteredRows.length === 0}
+            onClick={() =>
+              downloadCsv(
+                `avelsprioritet-genbank-${genebankId}-${new Date().toLocaleDateString("sv-SE")}.csv`,
+                prioritiesCsv(filteredRows),
+              )
+            }
+          >
+            Ladda ner CSV
+          </button>
+        </Box>
       </Box>
+      <Typography
+        variant="body2"
+        color="textSecondary"
+        sx={{ display: { xs: "block", sm: "none" }, mb: 1 }}
+      >
+        Tabellen är bredare än skärmen. Dra i sidled för att se alla kolumner.
+      </Typography>
       <Box sx={{ height: 600, width: "100%" }}>
         <DataGrid
           rows={filteredRows}
           columns={columns}
           initialState={{
             pagination: { paginationModel: { pageSize: 25, page: 0 } },
-            sorting: {
-              sortModel: [{ field: "priority", sort: "asc" }],
-            },
+          }}
+          sortModel={sortModel}
+          onSortModelChange={(model) => {
+            setSortModel(model);
+            if (model.length > 0) setPerHerd(false);
+          }}
+          // Skäl wraps instead of being cut off, so each row is as tall as its reasons.
+          getRowHeight={() => "auto"}
+          sx={{
+            "& .skal": { whiteSpace: "normal", lineHeight: 1.45, py: 1 },
           }}
           pageSizeOptions={[10, 25, 50]}
           disableRowSelectionOnClick

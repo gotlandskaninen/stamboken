@@ -2719,7 +2719,8 @@ def gene_drop_statistics(g_id):
 @login_required
 def genetic_priorities(g_id):
     """
-    Returns genetic conservation priorities for all active individuals.
+    Returns genetic conservation priorities for all active individuals,
+    with each rabbit's name, sex, birth date and current herd for the work list.
 
     Requires authentication and genebank manager/admin access.
     # [Next.js]
@@ -2733,7 +2734,10 @@ def genetic_priorities(g_id):
             return jsonify({"status": "error", "message": "Åtkomst nekad"}), 403
 
         priorities = get_genetic_priorities(genebank_id)
-        return jsonify({"status": "success", "data": priorities})
+        # Added fields (ADR-0006 rule 2), read fresh; new dicts, since the list may be the memo's own.
+        details = da.work_list_details([p["individual_id"] for p in priorities])
+        rows = [{**p, **details.get(p["individual_id"], {})} for p in priorities]
+        return jsonify({"status": "success", "data": rows})
     except Exception as ex:
         APP.logger.error(f"Could not calculate genetic priorities: {ex}")
         return jsonify({"error": "Error calculating genetic priorities"}), 500

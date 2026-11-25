@@ -1,6 +1,6 @@
 "use client";
 
-import React, { Suspense, useState } from "react";
+import React, { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 
 import {
@@ -20,7 +20,8 @@ import OverviewTab from "@/components/genetics/OverviewTab";
 import PrioritiesTab from "@/components/genetics/PrioritiesTab";
 import BreedingSuggestionsTab from "@/components/genetics/BreedingSuggestionsTab";
 
-type TabValue = "oversikt" | "prioriteringar" | "parningsforslag";
+const TABS = ["oversikt", "prioriteringar", "parningsforslag"] as const;
+type TabValue = (typeof TABS)[number];
 
 const genebankNames: Record<number, string> = {
   1: "Gotlandskanin",
@@ -53,34 +54,27 @@ function GenetikPage() {
   const { user } = useAuth();
   const searchParams = useSearchParams();
 
-  const initialTab = (searchParams.get("tab") as TabValue) || "oversikt";
-  const [activeTab, setActiveTab] = useState<TabValue>(initialTab);
+  // The URL holds the tab and the genebank: Back and Forward switch them, and a
+  // link opens the same view. Next feeds pushState and popstate into useSearchParams.
+  const tabParam = searchParams.get("tab");
+  const activeTab: TabValue = TABS.find((t) => t === tabParam) ?? "oversikt";
+  const genebankId: number | "" =
+    Number(searchParams.get("genebank")) || user?.is_manager?.[0] || "";
 
-  const genebankParam = searchParams.get("genebank");
-  const [genebankId, setGenebankId] = useState<number | "">(
-    genebankParam ? Number(genebankParam) : user?.is_manager?.[0] || "",
-  );
-
-  // Sync genebankId when navigating via sidebar links or when user data loads
-  React.useEffect(() => {
-    if (genebankParam) {
-      setGenebankId(Number(genebankParam));
-    } else if (genebankId === "" && user?.is_manager?.[0]) {
-      setGenebankId(user.is_manager[0]);
-    }
-  }, [genebankParam, user?.is_manager, genebankId]);
+  const pushParam = (key: string, value: string) => {
+    const url = new URL(window.location.href);
+    url.searchParams.set(key, value);
+    url.hash = ""; // "Se vilka" on Läget leaves the founder table's anchor
+    window.history.pushState(null, "", url.toString());
+  };
 
   // Genebanks the user can access
   const availableGenebanks: number[] = user?.is_admin
     ? [1, 2]
     : user?.is_manager || [];
 
-  const handleTabChange = (_: React.SyntheticEvent, newValue: TabValue) => {
-    setActiveTab(newValue);
-    const url = new URL(window.location.href);
-    url.searchParams.set("tab", newValue);
-    window.history.pushState(null, "", url.toString());
-  };
+  const handleTabChange = (_: React.SyntheticEvent, newValue: TabValue) =>
+    pushParam("tab", newValue);
 
   return (
     <React.Fragment>
@@ -94,7 +88,7 @@ function GenetikPage() {
             <Select
               value={genebankId}
               label="Genbank"
-              onChange={(e) => setGenebankId(e.target.value as number)}
+              onChange={(e) => pushParam("genebank", String(e.target.value))}
             >
               {availableGenebanks.map((id) => (
                 <MenuItem key={id} value={id}>

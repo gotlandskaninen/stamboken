@@ -2735,6 +2735,36 @@ def get_paginated_individuals(
         return {"items": [], "total_count": 0, "page": page, "per_page": per_page, "total_pages": 0}
 
 
+def work_list_details(numbers):
+    """Name, sex, birth date and current herd per individual number, in the explorer's form.
+
+    For the genetics work list. Read per request, never memoized with the priorities: a sale moves
+    the rabbit without changing the pedigree. A number the database no longer has is left out.
+    """
+    if not numbers:
+        return {}
+    wanted = Individual.select(Individual.id).where(Individual.number.in_(numbers))
+    holder = latest_ht_per_individual().where(HerdTracking.individual.in_(wanted)).alias("holder")
+    rows = (
+        Individual.select(Individual.number, Individual.name, Individual.sex, Breeding.birth_date, Herd.herd)
+        .join(Breeding, JOIN.LEFT_OUTER, on=(Individual.breeding == Breeding.id))
+        .switch(Individual)
+        .join(holder, JOIN.LEFT_OUTER, on=((holder.c.i_id == Individual.id) & (holder.c.rank == 1)))
+        .join(Herd, on=(Herd.id == fn.COALESCE(holder.c.herd, Individual.origin_herd_id)))
+        .where(Individual.number.in_(numbers), not_voided())
+        .dicts()
+    )
+    return {
+        r["number"]: {
+            "name": r["name"].strip() if r["name"] else None,
+            "sex": r["sex"],
+            "birth_date": r["birth_date"].strftime("%Y-%m-%d") if r["birth_date"] else None,
+            "herd": r["herd"],
+        }
+        for r in rows
+    }
+
+
 def get_all_genebanks():
     """
     Returns a list of all genebanks.

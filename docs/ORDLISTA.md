@@ -50,7 +50,7 @@ kanin vars medelsläktskap är på eller under gränsen för de 5 % minst släkt
 gränsen för de 25 % minst släkta, bland de 25 % med flest unika gener, eller bär gener från ett
 founderdjur som har liten andel av generna. Övriga är resten. Ordet Kritisk används inte, varken
 här eller om founderdjurens läge.\
-Kod: `calculate_genetic_priorities` (`priority`: `critical`, `important`, `normal`) · Legacy-manual: – · Legacy: – · Nytt UI: samma, "Högsta", "Hög", "Övriga" (PrioritiesTab.tsx:33–35)
+Kod: `calculate_genetic_priorities` (`priority`: `critical`, `important`, `normal`) · Legacy-manual: – · Legacy: – · Nytt UI: samma, "Högsta", "Hög", "Övriga" (workList.ts:12–14)
 
 **Benring**\
 Ringen runt kaninens ben, med serie och löpnummer (till exempel GKF 123). De flesta kaniner tatueras
@@ -110,7 +110,7 @@ Hur stor en idealisk population skulle vara för att förlora genetisk variation
 genbanken; ju större, desto bättre. Stamboken räknar den från hur mycket inaveln har ökat per
 generation hos varje kanin i beräkningen (realiserad Ne, Gutiérrez m.fl. 2008), både för i dag och
 för varje stängt år i trenden. Visas som heltal. FAO anger minst 50, Frankham m.fl. 2014 minst 100.\
-Kod: `effective_population_size` (`calculate_realised_ne`) · Legacy-manual: – · Legacy: – · Nytt UI: samma, "Ne" (OverviewTab.tsx:181, TrendChart.tsx)
+Kod: `effective_population_size` (`calculate_realised_ne`) · Legacy-manual: – · Legacy: – · Nytt UI: samma, "Ne" (OverviewTab.tsx:183, Laget.tsx, TrendChart.tsx)
 
 **Founderdjur**\
 Rasens ursprungsdjur: kaniner utan kända föräldrar i stamboken. Bestämd form plural founderdjuren.
@@ -118,7 +118,7 @@ En bärare av ett founderdjur är en kanin i beräkningen som har gener från de
 det först står på en skärm och under Förklaringar. Har en kanin bara en känd förälder räknas den
 okända föräldern som ett eget founderdjur i FE, men inte i antalet founderdjur. Skriv inte founder,
 grundare eller grunddjur.\
-Kod: `identify_founders` · Legacy-manual: – · Legacy: – · Nytt UI: samma, "Founderdjurens läge" (FoundersAtRiskPanel.tsx:128)
+Kod: `identify_founders` · Legacy-manual: – · Legacy: – · Nytt UI: samma, "Founderdjurens läge" (FoundersAtRiskPanel.tsx:169)
 
 **Founderdjursekvivalenter / effektivt antal founderdjur (FE)**\
 Så många founderdjur som, om alla hade lämnat lika stor andel av generna, skulle ge samma spridning
@@ -126,7 +126,7 @@ av generna som i dag (Lacy 1989). Ju högre FE, desto jämnare fördelning. Okä
 så FE kan bli större än antalet founderdjur med bärare. På
 skärmen heter måttet effektivt antal founderdjur och visas med en decimal. Det är inte samma mått
 som founder genome equivalents (FGE), som också räknar med att gener går förlorade av slumpen.\
-Kod: `founder_equivalents` · Legacy-manual: – · Legacy: – · Nytt UI: "Effektivt antal founderdjur (FE)" (OverviewTab.tsx:195), "FE" (TrendChart.tsx)
+Kod: `founder_equivalents` · Legacy-manual: – · Legacy: – · Nytt UI: "Effektivt antal founderdjur (FE)" (OverviewTab.tsx:197), "FE" (TrendChart.tsx)
 
 **Färg / färganteckning**\
 Färgen väljs ur genbankens lista med godkända färger; saknas färgen kontaktar du genbanksansvarig.
@@ -313,7 +313,7 @@ Kod: `butchered`, `death_note` · Legacy-manual: "slaktats" · Legacy: "slaktats
 Hur nära släkt två kaniner är, i procent. En avkommas inavelskoefficient är lika med släktskapen
 mellan föräldrarna. Medelsläktskap (MK) är en kanins genomsnittliga släktskap med de aktiva djuren
 i genbanken; ett lågt värde betyder att kaninen bär ovanliga gener som är viktiga att föra vidare.\
-Kod: `mean_kinship`, `inbreeding` · Legacy-manual: "släkt" · Legacy: "Genomsnittligt släktskap" · Nytt UI: "Medelsläktskap (MK)" på genetiksidan, i procent (OverviewTab.tsx:207), "kinship-koefficienten" under Parningsförslag
+Kod: `mean_kinship`, `inbreeding` · Legacy-manual: "släkt" · Legacy: "Genomsnittligt släktskap" · Nytt UI: "Medelsläktskap (MK)" på genetiksidan, i procent (OverviewTab.tsx:210), "kinship-koefficienten" under Parningsförslag
 
 **Släktträd / härstamning**\
 Släktträdet visar kaninens föräldrar, mor- och farföräldrar och längre bakåt. Härstamningen är

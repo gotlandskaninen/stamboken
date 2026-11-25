@@ -29,6 +29,7 @@ import GeneticsInfoPanel, {
 import GeneticsError from "./GeneticsError";
 import TrendChart from "./TrendChart";
 import FoundersAtRiskPanel from "./FoundersAtRiskPanel";
+import Laget from "./Laget";
 import type { Theme } from "@mui/material/styles";
 
 const Chart = dynamic(() => import("react-apexcharts"), {
@@ -161,6 +162,7 @@ const OverviewTab = ({ genebankId }: OverviewTabProps) => {
           Förklaringar.
         </Alert>
       )}
+      <Laget metrics={metrics} founders={founderRows} />
       <Grid
         container
         spacing={6}
