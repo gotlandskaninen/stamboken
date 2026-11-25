@@ -1,4 +1,5 @@
 import "@testing-library/jest-dom/vitest";
+import "@/i18n";
 import { afterEach, describe, it, expect, beforeEach, vi } from "vitest";
 import { cleanup, render, screen, fireEvent } from "@testing-library/react";
 const mocks = vi.hoisted(() => ({
@@ -11,6 +12,7 @@ vi.mock("@/lib/user-context", () => ({ useUser: () => mocks.user }));
 import OnboardingChecklist, {
   onboardingSteps,
 } from "@/app/(app)/stamboken/(dashboard)/min-besattning/OnboardingChecklist";
+import { TourContext } from "@/components/tour/Tour.client";
 
 const hane = { sex: "male", has_photo: false, is_active: true } as any;
 const hona = { sex: "female", has_photo: true, is_active: true } as any;
@@ -144,6 +146,26 @@ describe("OnboardingChecklist", () => {
     for (const step of onboardingSteps([], [])) {
       expect(ids).toContain(step.manual.slice(1));
     }
+  });
+
+  it("starts the tour from Visa runt when the page has a tour", () => {
+    renderList({});
+    expect(screen.queryByRole("button", { name: "Visa runt" })).toBeNull();
+    cleanup();
+    const start = vi.fn();
+    render(
+      <TourContext.Provider value={start}>
+        <OnboardingChecklist
+          herd={{ is_active: true, individuals: [] }}
+          breedings={[]}
+          herdNumber="G9999"
+          onGoTab={vi.fn()}
+          onNewMating={vi.fn()}
+        />
+      </TourContext.Provider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Visa runt" }));
+    expect(start).toHaveBeenCalledOnce();
   });
 
   it("marks done steps and drops their action", () => {

@@ -2,10 +2,12 @@
 
 import React from "react";
 import CheckRounded from "@mui/icons-material/CheckRounded";
+import { useTranslation } from "react-i18next";
 import type { Individual } from "@/redux/api/apiSlice";
 import { MANUAL_PATH } from "@/lib/constants";
 import { readModeCookieClient } from "@/lib/mode";
 import { useUser } from "@/lib/user-context";
+import { useStartTour } from "@/components/tour/Tour.client";
 import {
   MbCard,
   rabbitStatus,
@@ -81,6 +83,8 @@ export default function OnboardingChecklist({
   onNewMating: () => void;
 }) {
   const user = useUser();
+  const startTour = useStartTour();
+  const { t } = useTranslation();
   // Per mode too: Stäng in the test environment must not hide the list in
   // the real stamboken (same origin, the mode is a cookie).
   const key = `sb-onboarding-dismissed-${readModeCookieClient()}-${herdNumber}`;
@@ -181,6 +185,20 @@ export default function OnboardingChecklist({
             </li>
           ))}
         </ol>
+        {startTour && (
+          <div
+            className={`${styles["mb-onboarding-links"]} ${styles["mb-onboarding-tour"]}`}
+          >
+            <span>{t("tour.checklistLead")}</span>
+            <button
+              type="button"
+              className="sb-btn sb-btn-secondary sb-btn-sm"
+              onClick={startTour}
+            >
+              {t("tour.start")}
+            </button>
+          </div>
+        )}
       </MbCard>
     </div>
   );

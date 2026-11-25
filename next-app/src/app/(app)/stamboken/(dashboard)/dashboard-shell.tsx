@@ -8,6 +8,7 @@ import { DemoBanner } from "@/components/public/DemoBanner.client";
 import { ModeHtmlAttribute } from "@/components/public/ModeHtmlAttribute.client";
 import { WipBanner } from "@/components/public/WipBanner.client";
 import SessionExpiredModal from "@/components/auth/SessionExpiredModal";
+import { TourOffer, TourProvider } from "@/components/tour/Tour.client";
 import type { InboxCount } from "@/lib/inkorg";
 import styles from "@/components/shell/shell.module.css";
 
@@ -20,17 +21,20 @@ export function DashboardShell({
 }) {
   const mode = useMode();
   return (
-    <div className={styles.appShell}>
-      <ModeHtmlAttribute />
-      <Topbar inbox={inbox} />
-      <main className={styles.appMain}>
-        {mode === "demo" && <DemoBanner />}
-        <WipBanner />
-        {children}
-      </main>
-      <ShellFooter />
-      <TyckTillTab />
-      <SessionExpiredModal />
-    </div>
+    <TourProvider>
+      <div className={styles.appShell}>
+        <ModeHtmlAttribute />
+        <Topbar inbox={inbox} />
+        <main className={styles.appMain}>
+          {mode === "demo" && <DemoBanner />}
+          <WipBanner />
+          <TourOffer />
+          {children}
+        </main>
+        <ShellFooter />
+        <TyckTillTab />
+        <SessionExpiredModal />
+      </div>
+    </TourProvider>
   );
 }

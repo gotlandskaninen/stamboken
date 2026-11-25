@@ -676,7 +676,7 @@ export function IndividualDetail({
 
       <Grid container spacing={6}>
         {/* Sidebar / Header card */}
-        <Grid size={{ xs: 12, lg: 4 }}>
+        <Grid size={{ xs: 12, lg: 4 }} data-tour="rabbit-card">
           <IndividualCard
             individual={individual}
             geneticsSlot={geneticsSlot}

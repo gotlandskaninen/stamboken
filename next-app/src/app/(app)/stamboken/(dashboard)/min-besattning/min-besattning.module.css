@@ -687,6 +687,10 @@
   gap: 12px;
   align-items: start;
 }
+.mb-onboarding-tour {
+  padding-top: 16px;
+  border-top: 1px solid var(--sb-line-faint);
+}
 .mb-onboarding-steps li[data-done="true"] p {
   color: var(--sb-ink-3);
 }
