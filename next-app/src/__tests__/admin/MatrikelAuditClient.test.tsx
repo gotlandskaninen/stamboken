@@ -154,3 +154,18 @@ it("chips every changed field but diffs only those with values", () => {
   fireEvent.click(summary);
   expect(screen.getAllByRole("row")).toHaveLength(2); // header + e-mail
 });
+
+it("drops the membership id once a member number is set (Opus #248)", () => {
+  const { container } = render(
+    <MatrikelAuditClient
+      rows={rows}
+      total={1}
+      page={1}
+      perPage={50}
+      filters={{ ...filters, member_number: "99", membership_id: "5" }}
+    />,
+  );
+  expect(
+    container.querySelector('input[name="membership_id"]'),
+  ).not.toBeInTheDocument();
+});

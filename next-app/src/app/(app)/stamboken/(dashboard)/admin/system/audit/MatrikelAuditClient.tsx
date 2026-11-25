@@ -194,7 +194,7 @@ export function MatrikelAuditClient({
       <div className={`sb-card ${ds["ad-grid"]}`}>
         <form method="get" className={ds["ad-grid-toolbar"]}>
           <input type="hidden" name="source" value="matrikel" />
-          {filters.membership_id && (
+          {filters.membership_id && !filters.member_number && (
             <input
               type="hidden"
               name="membership_id"

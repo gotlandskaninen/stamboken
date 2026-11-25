@@ -36,7 +36,7 @@ it("reads the matrikel's log with its own filters under source=matrikel (#244)",
     table: "hbuser",
   });
   expect(fetchApi).toHaveBeenCalledWith(
-    "/v2/members/audit?action=person_updated&member_number=99&membership_id=5",
+    "/v2/members/audit?action=person_updated&member_number=99", // the number replaces the id (Opus #248)
     { forceProd: true },
   );
   expect(

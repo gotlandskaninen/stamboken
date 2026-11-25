@@ -68,6 +68,8 @@ function SourcePills({ matrikel }: { matrikel: boolean }) {
 }
 
 async function matrikelAudit(sp: Record<string, string | undefined>) {
+  // A typed member number replaces the member page's membership id.
+  if (sp.member_number) sp = { ...sp, membership_id: undefined };
   const qs = new URLSearchParams();
   for (const k of MATRIKEL_FILTER_KEYS) {
     if (sp[k]) qs.set(k, sp[k] as string);
