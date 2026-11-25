@@ -1673,7 +1673,7 @@ def _plan_household_links(workspace) -> tuple[list, list, int]:
             line = (
                 f"{'/'.join(codes)}: ny familjemedlem i medlemskap {membership_id}: "
                 f"{_q(data['first_name'] + ' ' + data['last_name'])} {_q(data['email'])} ({column}) "
-                f"-> konto {user.id} | {_account_detail(user)}"
+                f"-> konto {user.id} | {_account_detail(user)} | anteckning som skrivs: {_q(_HOUSEHOLD_NOTE)}"
             )
             owned = [herd_id for herd_id in herd_ids if user.id in owners.get(herd_id, {})]
             actions.append((codes, line, main, user, data, (main_user.id, owned)))

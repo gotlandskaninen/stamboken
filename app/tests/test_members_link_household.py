@@ -95,6 +95,7 @@ class TestMembersLinkHousehold(DatabaseTest):
         self.assertIn("Att koppla: 2", plan.output)
         self.assertIn("ny familjemedlem i medlemskap", plan.output)
         self.assertIn('"Bo Svensson" "bo.hemma@example.net" (Home Secondary Email)', plan.output)
+        self.assertIn(f'anteckning som skrivs: "{NOTE}"', plan.output)
         self.assertNotIn("SHA-1", plan.output)
         self.assertNotIn("+46", plan.output)
         self.assertEqual(self._added(membership), [])
