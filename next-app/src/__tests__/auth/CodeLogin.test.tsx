@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
@@ -111,6 +112,14 @@ it("shows the full rules and requires an explicit agreement to the displayed ver
     </CreateAccount>,
   );
   expect(screen.getByText("Hela regeltexten")).toBeVisible();
+  expect(screen.getByText(/kryssa sedan i rutan under dem/)).toBeVisible();
+  expect(screen.getByText(/e-postadress är bekräftad/)).toBeVisible();
+  expect(
+    screen.getByRole("link", { name: "Hoppa till rutan" }),
+  ).toHaveAttribute("href", "#godkann");
+  expect(
+    screen.getByRole("link", { name: "Regler för ditt konto" }),
+  ).toHaveAttribute("href", "/kontoregler");
   const privacyLink = screen.getByRole("link", { name: "Integritetspolicyn" });
   expect(privacyLink).toHaveAttribute("href", "/dataskydd");
   expect(privacyLink.closest("p")).toHaveTextContent(
@@ -122,8 +131,14 @@ it("shows the full rules and requires an explicit agreement to the displayed ver
   });
   expect(checkbox).not.toBeChecked();
   const submit = screen.getByRole("button", { name: "Skapa mitt konto" });
-  expect(submit).toBeDisabled();
+  // A press without the tick explains itself and leads to the box.
+  fireEvent.click(submit);
+  expect(screen.getByRole("alert")).toHaveTextContent("Kryssa först i rutan");
+  expect(checkbox).toHaveFocus();
+  expect(checkbox).toHaveAttribute("aria-describedby", "godkann-fel");
+  expect(actions.createMemberAccount).not.toHaveBeenCalled();
   fireEvent.click(checkbox);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   fireEvent.click(submit);
   await screen.findByText(/Ditt konto kopieras dit i natt/);
   expect(actions.createMemberAccount).toHaveBeenCalledWith(
@@ -145,13 +160,39 @@ it("clears the agreement when updated rules arrive after submission", async () =
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Reglerna har uppdaterats",
   );
+  expect(screen.getByRole("link", { name: "Läs reglerna" })).toHaveAttribute(
+    "href",
+    "#kontoregler",
+  );
   rerender(form("Nya regler", "b".repeat(64)));
   expect(screen.getByText("Nya regler")).toBeVisible();
   expect(screen.getByRole("checkbox")).not.toBeChecked();
-  expect(
-    screen.getByRole("button", { name: "Skapa mitt konto" }),
-  ).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Skapa mitt konto" }));
+  expect(screen.getByRole("alert")).toHaveTextContent("Kryssa först i rutan");
+  expect(actions.createMemberAccount).toHaveBeenCalledTimes(1);
 });
+it.each([
+  ["expired" as const, "Begär en ny kod"],
+  ["accountConflict" as const, "Till inloggningen"],
+])(
+  "gives the %s error a way on that keeps the destination",
+  async (error, name) => {
+    vi.mocked(actions.createMemberAccount).mockResolvedValue({ error });
+    render(
+      <CreateAccount
+        rules={{ version: "23", sha256: "a".repeat(64) }}
+        returnTo="/stamboken/inskick/ny"
+      />,
+    );
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button", { name: "Skapa mitt konto" }));
+    const alert = await screen.findByRole("alert");
+    expect(within(alert).getByRole("link", { name })).toHaveAttribute(
+      "href",
+      "/auth/sign-in?return_to=%2Fstamboken%2Finskick%2Fny",
+    );
+  },
+);
 it("explains a missing publication and provides no creation button", () => {
   render(<CreateAccount />);
   expect(screen.getByRole("alert")).toHaveTextContent(

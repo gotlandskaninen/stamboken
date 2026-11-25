@@ -92,7 +92,7 @@ med tabellen ovan:
 admin, ansok, api, api-test, cms-api, cms-graphql, auth, stamboken,
 stamboken-online, medlem, medlemsforum, rapport, bli-genbank, bli-genbanksbesattning,
 integritetspolicy, dataskydd, styrelsen, kopare, v2, uppladdningar, _next, static, favicon.ico,
-robots.txt, sitemap.xml, error, not-found, preview
+robots.txt, sitemap.xml, manifest.webmanifest, error, not-found, preview
 ```
 
 `cms-graphql` är reserverad eftersom Payload är konfigurerad med den sökvägen

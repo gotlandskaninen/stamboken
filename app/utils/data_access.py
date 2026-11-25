@@ -40,8 +40,7 @@ from utils.database import Genebank  # isort: skip
 from utils.database import Herd  # isort: skip
 from utils.database import HerdTracking  # isort: skip
 from utils.database import Individual  # isort: skip
-from utils.database import Member  # isort: skip
-from utils.database import Membership  # isort: skip
+from utils.database import Member, Membership  # isort: skip
 from utils.database import User  # isort: skip
 from utils.database import Weight  # isort: skip
 from utils.database import next_individual_number  # isort: skip
@@ -1418,27 +1417,48 @@ HERD_EDITABLE_FIELDS = {
 
 def _herd_owner_map():
     """
-    Map numeric Herd.id -> list of owning Users, in ONE pass over hbuser.
+    Map numeric Herd.id -> list of owning Users: one scan of hbuser for the
+    owner roles, then one query for the main members and one for their herds.
 
-    `_privileges` is a TEXT JSON column, so owner lookups cannot be done
+    `_privileges` is a TEXT JSON column, so owner roles cannot be found
     in SQL. One scan of the small hbuser table (hundreds of rows)
     replaces the per-herd scans a naive join-substitute would do.
 
     A herd can have MULTIPLE owners (legacy parity — e.g. museum herds
     and shared family herds); lists are sorted by user id for stable
-    output.
+    output. The owners are those of User.transfer_herd_ids: legacy owner
+    roles plus the active main member of the herd's membership (#214),
+    never a caretaker with a herd-access grant.
     """
     owners = {}
     for u in User.select().order_by(User.id):
         for p in u.privileges:
             if p.get("level") == "owner" and isinstance(p.get("herd"), int):
                 owners.setdefault(p["herd"], []).append(u)
+    mains = {}
+    for person in (
+        Member.select(Member.membership, User)
+        .join(User)
+        .switch(Member)
+        .join(Membership)
+        .where(
+            (Member.role == "huvudmedlem") & Member.end_date.is_null(True) & (Membership.membership_status == "active")
+        )
+    ):
+        mains.setdefault(person.membership_id, []).append(person.user)
+    for herd in Herd.select(Herd.id, Herd.membership).where(Herd.membership.in_(list(mains))):
+        herd_owners = owners.setdefault(herd.id, [])
+        known = {u.id for u in herd_owners}
+        herd_owners += [u for u in mains[herd.membership_id] if u.id not in known]
+        herd_owners.sort(key=lambda u: u.id)
     return owners
 
 
-def list_all_herds(user, *, genebank_id=None, active=None, has_owner=None, search=None, page=1, page_size=50):
+def list_all_herds(user, *also, genebank_id=None, active=None, has_owner=None, search=None, page=1, page_size=50):
     """
-    Admin-only cross-genebank herd list. Joins genebank name +
+    Adminpanel herd list: every genebank for admin, only the managed
+    genebanks for a manager (#214). With `also` (the snapshot's user next to
+    the session's), only the genebanks all of them may see. Joins genebank name +
     owner usernames. Sorted by genebank + the numeric part of the herd
     code (an earlier design said herd.name asc, but `name` is the CONTACT person
     and NULL/empty for hundreds of rows — that order made specific herds
@@ -1447,13 +1467,22 @@ def list_all_herds(user, *, genebank_id=None, active=None, has_owner=None, searc
     filters run BEFORE pagination so `total` and page sizes stay correct.
     Returns {"herds": [...], "total": N, "page": ..., "page_size": ...}.
     """
-    if not user.is_admin:
-        raise ValueError("admin-required")
+    scope = None  # every genebank
+    for u in (user, *also):
+        if u.is_admin:
+            continue
+        if not u.is_manager:
+            raise ValueError("manager-required")
+        scope = set(u.is_manager) if scope is None else scope & set(u.is_manager)
     q = Herd.select(Herd, Genebank).join(Genebank)
+    if scope is not None:
+        q = q.where(Herd.genebank.in_(list(scope)))
     if genebank_id is not None:
         q = q.where(Herd.genebank == genebank_id)
-    if active is not None:
-        q = q.where(Herd.is_active == active)
+    if active:
+        q = q.where(Herd.is_active == True)  # noqa: E712
+    elif active is not None:  # a NULL status shows as Inaktiv, so it is found here (#214)
+        q = q.where((Herd.is_active == False) | Herd.is_active.is_null(True))  # noqa: E712
     # Materialise before slicing: herd is a small table (~1200 rows) and
     # the owner/search filters can only run Python-side (TEXT JSON).
     herds = list(q)
@@ -1494,7 +1523,7 @@ def list_all_herds(user, *, genebank_id=None, active=None, has_owner=None, searc
                 "is_active": bool(h.is_active),
                 "genebank_id": h.genebank_id,
                 "genebank_name": h.genebank.name,
-                "owner_usernames": [o.username or o.email for o in herd_owners],
+                "owner_usernames": [o.username or o.fullname or o.email for o in herd_owners],
             }
         )
     return {"herds": rows, "total": total, "page": page, "page_size": page_size}

@@ -501,7 +501,7 @@ LOGIN.login_view = "/api/login/google"
 
 # Register domain-based Blueprints (ADR-0007)
 from blueprints import register_blueprints  # noqa: E402
-from blueprints.common import check_genebank_manager_access, contact_problem, problem  # noqa: E402
+from blueprints.common import check_genebank_manager_access, contact_problem, manager_required, problem  # noqa: E402
 
 register_blueprints(APP)
 
@@ -1226,34 +1226,47 @@ def _opt_bool_arg(name):
     return raw == "true"
 
 
+# [Next.js] Only the v2 adminpanel calls this GET, so its 403 → 200 for managers (#214) is an accepted exception
+# to ADR-0006; legacy uses the POST/PATCH above.
 @APP.route("/api/manage/herd", methods=["GET"])
 @login_required
+@manager_required
 def list_all_herds():
     """
-    List every herd for the adminpanel list page.
+    List the herds for the adminpanel list page.
 
     Query params: genebank_id (int), active (bool), has_owner (bool),
     q (free text — herd code/name/contact), page, page_size.
 
-    Auth: admin only. Manager(gb) lists their gb's herds via the
-    existing GET /api/genebank/<gb_id>.
+    Auth: admin, or manager(gb) — scoped to the genebanks they manage (#214).
     """
-    user = current_user
-    if not user.is_admin:
-        return problem(
-            403, "Admin-behörighet krävs", "Endast admin får lista alla besättningar.", type="admin-required"
-        )
-    return jsonify(
-        da.list_all_herds(
-            user,
-            genebank_id=request.args.get("genebank_id", type=int),
-            active=_opt_bool_arg("active"),
-            has_owner=_opt_bool_arg("has_owner"),
-            search=request.args.get("q"),
-            page=request.args.get("page", 1, type=int),
-            page_size=request.args.get("page_size", 50, type=int),
-        )
-    ), 200
+    # The session's user and the row in the snapshot must both pass, as in get_herd_for_admin: the first misses
+    # a role revoked since the session check, the second one granted after update_role revoked this session.
+    with db.snapshot_read():
+        user = da.fetch_user_info(current_user.uuid)
+        if user is None:
+            return unauthorized()
+        if not user.is_admin and not user.is_manager:
+            return problem(403, "Åtkomst nekad", "Du saknar behörighet för denna åtgärd.")
+        genebank_id = request.args.get("genebank_id", type=int)
+        if genebank_id is not None:
+            err = check_genebank_manager_access(current_user, genebank_id) or check_genebank_manager_access(
+                user, genebank_id
+            )
+            if err is not None:
+                return err
+        return jsonify(
+            da.list_all_herds(
+                current_user,
+                user,
+                genebank_id=genebank_id,
+                active=_opt_bool_arg("active"),
+                has_owner=_opt_bool_arg("has_owner"),
+                search=request.args.get("q"),
+                page=request.args.get("page", 1, type=int),
+                page_size=request.args.get("page_size", 50, type=int),
+            )
+        ), 200
 
 
 def _resolve_admin_herd(h_ref):

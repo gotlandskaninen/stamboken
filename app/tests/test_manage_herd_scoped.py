@@ -1,5 +1,6 @@
 """Scoped /api/manage/herd endpoints."""
 
+import utils.data_access as da
 import utils.database as db
 from herdbook import APP, limiter
 
@@ -57,13 +58,76 @@ class TestManageHerdScoped(DatabaseTest):
             haystack = f"{r['herd']} {r['herd_name'] or ''} {r['name'] or ''}".lower()
             self.assertIn(needle, haystack)
 
-    def test_manage_herd_list_manager_gets_403(self):
-        # Managers read their gb's herds via
-        # /api/genebank/<gb_id>; the cross-gb list is admin-only.
+    def test_manage_herd_list_manager_sees_only_own_genebank(self):
+        # #214: the manager's herd page needs the same search and filters as
+        # admin, so the list answers managers too, scoped to their genebanks.
         self.login("man", "pass")
         resp = self.client.get("/api/manage/herd")
-        self.assertEqual(resp.status_code, 403)
-        self.assertIn("application/problem+json", resp.content_type)
+        self.assertEqual(resp.status_code, 200, resp.data)
+        body = resp.get_json()
+        self.assertEqual(sorted(r["herd"] for r in body["herds"]), ["G1", "G2"])
+        self.assertEqual(body["total"], 2)
+
+    def test_manage_herd_list_manager_cannot_reach_other_genebank(self):
+        self.login("man", "pass")
+        other_gb = self.herds[2].genebank_id
+        for query in (f"genebank_id={other_gb}", f"genebank_id={other_gb}&q=M3"):
+            resp = self.client.get(f"/api/manage/herd?{query}")
+            self.assertEqual(resp.status_code, 403, query)  # ADR-0014: a named genebank is checked
+            self.assertIn("application/problem+json", resp.content_type)
+            self.assertNotIn("M3", resp.get_data(as_text=True))
+        resp = self.client.get("/api/manage/herd?q=M3")
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual((resp.get_json()["total"], resp.get_json()["herds"]), (0, []))
+        own = self.client.get(f"/api/manage/herd?genebank_id={self.herds[0].genebank_id}")
+        self.assertEqual(own.get_json()["total"], 2)
+
+    def test_manage_herd_list_viewer_owner_helper_and_matrikel_admin_get_403(self):
+        da.register_user("helper", "pass").add_role("helper", self.genebanks[0].id)
+        da.register_user("matrikel", "pass").add_role("matrikel_admin")
+        for username in ("spec", "owner", "helper", "matrikel"):
+            self.client = APP.test_client(use_cookies=True)
+            self.login(username, "pass")
+            resp = self.client.get("/api/manage/herd")
+            self.assertEqual(resp.status_code, 403, username)
+            self.assertIn("application/problem+json", resp.content_type)
+
+    def _codes(self, query):
+        body = self.client.get(f"/api/manage/herd?{query}").get_json()
+        self.assertEqual(body["total"], len(body["herds"]), query)
+        return {r["herd"]: r["owner_usernames"] for r in body["herds"]}
+
+    def test_manage_herd_list_owner_includes_the_main_member_not_a_caretaker(self):
+        # #214: an active main member with an account owns the membership's herd (transfer_herd_ids), a caretaker
+        # with a grant does not — the owner column and both filters agree with that.
+        membership = db.Membership.create(member_number=9)
+        main = da.register_user("main@example.invalid", "pass", username="huvud")
+        carer = da.register_user("carer@example.invalid", "pass", username="skotare")
+        db.Member.create(membership=membership, first_name="A", last_name="B", role="huvudmedlem", user=main)
+        family = db.Member.create(
+            membership=membership, first_name="C", last_name="B", role="familjemedlem", user=carer
+        )
+        db.Herd.update(membership=membership).where(db.Herd.id == self.herds[1].id).execute()
+        db.HerdAccessGrant.create(member=family, herd=self.herds[2], granted_by=self.admin)
+        self.login("admin", "pass")
+
+        self.assertEqual(self._codes("has_owner=true"), {"G1": ["owner"], "G2": ["huvud"]})
+        self.assertEqual(self._codes("has_owner=false"), {"M3": []})
+        detail = self.client.get(f"/api/manage/herd/{self.herds[1].herd}").get_json()
+        self.assertEqual([o["username"] for o in detail["owners"]], ["huvud"])
+
+    def test_manage_herd_list_owner_without_username_shows_the_name_before_the_email(self):
+        db.User.update(username=None, fullname="Olle Ägare").where(db.User.id == self.owner.id).execute()
+        self.login("admin", "pass")
+        self.assertEqual(self._codes("has_owner=true"), {"G1": ["Olle Ägare"]})
+
+    def test_manage_herd_list_inactive_includes_unknown_status(self):
+        # A NULL is_active row shows as Inaktiv, so the Inaktiva filter finds it.
+        db.Herd.update(is_active=None).where(db.Herd.id == self.herds[1].id).execute()
+        db.Herd.update(is_active=True).where(db.Herd.id != self.herds[1].id).execute()
+        self.login("admin", "pass")
+        self.assertEqual(set(self._codes("active=false")), {"G2"})
+        self.assertEqual(set(self._codes("active=true")), {"G1", "M3"})
 
     def test_manage_herd_detail_by_id(self):
         self.login("admin", "pass")
