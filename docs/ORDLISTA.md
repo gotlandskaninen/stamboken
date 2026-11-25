@@ -343,8 +343,8 @@ Kod: `voided_at`, `IndividualCommand` · Legacy-manual: – · Legacy: – · Ny
 Varje år bekräftar du att varje registrerad kanin finns kvar i din besättning vid årets slut, och
 besättningen lämnar en årsrapport (kullar, födda ungar, avelsdjur) som är grund för genbanksstödet.
 En kanin som inte årsrapporterats inom 13 månader blir inaktiv. Årsrapporten lämnas i Stamboken
-Online sedan 2024. I det nya gränssnittet är den inte byggd än: menyvalet Årsrapportera visar
-"Kommer snart".\
+Online sedan 2024. I det nya gränssnittet lämnas den under Årsrapport i menyn, eller på
+pappersblanketten; menyvalet Årsrapportera på kaninens sida visar fortfarande "Kommer snart".\
 Kod: `YearlyHerdReport`, `HerdTracking` (`kind` ATTESTATION) · Legacy-manual: "Årsrapportering", "Årsrapportera" · Legacy: "Årsrapport", "Årsrapportera" · Nytt UI: samma
 
 **Ändringshistorik**\

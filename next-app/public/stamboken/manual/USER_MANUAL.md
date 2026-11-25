@@ -1428,7 +1428,9 @@ till ett konto som loggar in med föreningskontot (Google, en adress som slutar 
 @gotlandskaninen.se). Annars står det "En roll kan bara ges till ett konto som loggar in
 med föreningens Google-konto. Kontot kopplar sitt Google-konto först." Kontot loggar
 sedan bara in med föreningskontot; kod och lösenord fungerar inte för det. Läsrätt och
-Besättningsägare kräver inget föreningskonto.
+Besättningsägare kräver inget föreningskonto. Besättningsägare kräver i stället att
+kontot är kopplat till en person i besättningens medlemskap, se
+[Byta ägare på en besättning](#byta-ägare-på-en-besättning).
 
 Tar du bort din egen administratörsroll frågar Stamboken "Ta bort din
 administratörsroll?" och loggar ut dig ur panelen. Den sista administratörsrollen går
@@ -1501,6 +1503,13 @@ Besättningsägare byter du så här:
    **Besättningsägare G1274**.
 3. Öppna den nya ägaren under **Användare**, välj **Roll** Besättningsägare, sök
    besättningen i **Besättning** och klicka **Lägg till roll**.
+
+Rollen går bara att ge när besättningen är kopplad till ett aktivt medlemskap och kontot
+är kopplat till en person i det (huvudmedlem, familjemedlem eller skötare). Annars
+står det "Besättningen är inte kopplad till något medlemskap. Koppla den i matrikeln
+innan du ger rollen besättningsägare." eller att kontot först ska kopplas till en
+person i medlemskapet. Båda kopplingarna görs i matrikeln. Roller som redan finns
+ligger kvar.
 
 ### Utse genbanksansvarig
 
