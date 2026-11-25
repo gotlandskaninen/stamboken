@@ -310,7 +310,8 @@ const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
             "& .skal": { whiteSpace: "normal", lineHeight: 1.45, py: 1 },
           }}
           pageSizeOptions={[10, 25, 50]}
-          // The chips are the filter, so the CSV holds exactly what the grid shows.
+          // The chips are the only filter. The CSV holds the chips' levels in the list's order
+          // (or per besättning), not in the order of a sort by clicking a column header.
           disableColumnFilter
           disableRowSelectionOnClick
           localeText={{

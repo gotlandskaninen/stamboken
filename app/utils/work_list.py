@@ -4,6 +4,7 @@ import csv
 import io
 import logging
 import re
+from decimal import ROUND_HALF_UP, Decimal
 
 import utils.data_access as da
 from utils.csv_safe import csv_safe
@@ -49,8 +50,13 @@ def select(rows, levels, per_herd):
     return rows
 
 
+def _fixed(x, digits):
+    """x with `digits` decimals and a decimal comma, rounded as the page's toLocaleString: a tie goes up."""
+    return str(Decimal(x).quantize(Decimal(10) ** -digits, rounding=ROUND_HALF_UP)).replace(".", ",")
+
+
 def _pct(value, digits):
-    return f"{float(value) * 100:.{digits}f}".replace(".", ",") + " %"
+    return _fixed(float(value) * 100, digits) + "\u00a0%"
 
 
 # The page's Swedish for the priority reasons (next-app/src/utils/translateReasons.ts); keep the two in step.
@@ -66,19 +72,19 @@ _REASONS = [
     (
         re.compile(r"^Mean kinship ([\d.]+) is below 5th percentile \(([\d.]+)\)$"),
         lambda own, mk, limit: (
-            f"Medelsläktskap {_pct(mk, 2)}, på eller under gränsen för de 5 % minst släkta ({_pct(limit, 2)})"
+            f"Medelsläktskap {_pct(mk, 2)}, på eller under gränsen för de 5\u00a0% minst släkta ({_pct(limit, 2)})"
         ),
     ),
     (
         re.compile(r"^Mean kinship ([\d.]+) is below 25th percentile \(([\d.]+)\)$"),
         lambda own, mk, limit: (
-            f"Medelsläktskap {_pct(mk, 2)}, på eller under gränsen för de 25 % minst släkta ({_pct(limit, 2)})"
+            f"Medelsläktskap {_pct(mk, 2)}, på eller under gränsen för de 25\u00a0% minst släkta ({_pct(limit, 2)})"
         ),
     ),
     (
         re.compile(r"^Genome uniqueness ([\d.]+) is above 75th percentile \(([\d.]+)\)$"),
         lambda own, gu, limit: (
-            f"Unika gener {_pct(gu, 1)}, över gränsen för de 25 % med flest unika gener ({_pct(limit, 1)})"
+            f"Unika gener {_pct(gu, 1)}, över gränsen för de 25\u00a0% med flest unika gener ({_pct(limit, 1)})"
         ),
     ),
     (
@@ -104,7 +110,7 @@ def swedish_reason(reason, own_number):
 def priorities_csv(rows):
     """The rows for Excel: BOM, semicolons, every cell quoted, text cells formula-safe."""
     buf = io.StringIO()
-    buf.write("﻿")
+    buf.write("\ufeff")
     writer = csv.writer(buf, delimiter=";", quoting=csv.QUOTE_ALL, lineterminator="\r\n")
     writer.writerow(HEADER)
     for r in rows:
@@ -118,8 +124,8 @@ def priorities_csv(rows):
                 SEX_LABEL.get(r["sex"], "Okänt") if "sex" in r else "",
                 csv_safe(r.get("birth_date")),
                 LEVEL_LABEL[r["priority"]],
-                f"{r['genetic_value_score']:.0f}",
-                f"{r['genome_uniqueness'] * 100:.1f}".replace(".", ","),
+                _fixed(r["genetic_value_score"], 0),
+                _fixed(r["genome_uniqueness"] * 100, 1),
                 csv_safe("; ".join(swedish_reason(reason, number) for reason in r["reasons"])),
             ]
         )

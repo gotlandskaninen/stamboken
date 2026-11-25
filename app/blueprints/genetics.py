@@ -25,6 +25,9 @@ def priorities_csv(genebank_id):
     Query: `levels` (comma-separated critical, important, normal; default all) and `per_herd=1`.
     Admin or the genebank's manager (ADR-0014). Refused in the demo, whose audit rows go at the nightly sync.
     """
+    if request.method == "HEAD":  # Flask sends HEAD to GET views; a HEAD must not log an export it never sends
+        body, status, headers = problem(405, "Metoden stöds inte", "Hämta filen med GET.")
+        return body, status, {**headers, "Allow": "GET"}
     refused = check_genebank_access(genebank_id)
     if refused:
         return refused

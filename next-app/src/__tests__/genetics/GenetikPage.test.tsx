@@ -39,9 +39,16 @@ vi.mock("@/components/genetics/OverviewTab", () => ({
     <p>Översikt för genbank {genebankId}</p>
   ),
 }));
-vi.mock("@/components/genetics/PrioritiesTab", () => ({
-  default: () => <p>Avelsprioritet visas</p>,
-}));
+const mounts = vi.hoisted(() => ({ n: 0 }));
+vi.mock("@/components/genetics/PrioritiesTab", async () => {
+  const { useState } = await import("react");
+  return {
+    default: function Priorities() {
+      const [mount] = useState(() => ++mounts.n);
+      return <p data-mount={mount}>Avelsprioritet visas</p>;
+    },
+  };
+});
 vi.mock("@/components/genetics/BreedingSuggestionsTab", () => ({
   default: () => <p>Parningsförslag visas</p>,
 }));
@@ -119,5 +126,17 @@ describe("Genetik page URL", () => {
     );
     expect(window.location.search).toBe("?tab=prioriteringar&genebank=2");
     expect(screen.getByText("Avelsprioritet visas")).toBeDefined();
+  });
+
+  it("starts Avelsprioritet afresh for another genebank, so no message stays behind", () => {
+    open("?genebank=1&tab=prioriteringar", { is_manager: [], is_admin: true });
+    const first = screen.getByText("Avelsprioritet visas").dataset.mount;
+    fireEvent.mouseDown(screen.getByRole("combobox"));
+    fireEvent.click(
+      within(screen.getByRole("listbox")).getByText("Mellerudskanin"),
+    );
+    expect(screen.getByText("Avelsprioritet visas").dataset.mount).not.toBe(
+      first,
+    );
   });
 });

@@ -133,7 +133,8 @@ function GenetikPage() {
           </TabPanel>
 
           <TabPanel value={activeTab} index="prioriteringar">
-            <PrioritiesTab genebankId={genebankId} />
+            {/* keyed: filters and an export message belong to one genebank */}
+            <PrioritiesTab key={genebankId} genebankId={genebankId} />
           </TabPanel>
 
           <TabPanel value={activeTab} index="parningsforslag">

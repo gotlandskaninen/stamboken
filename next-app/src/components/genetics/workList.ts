@@ -70,7 +70,10 @@ export async function downloadExport(url: string): Promise<string | null> {
   const a = document.createElement("a");
   a.href = href;
   a.download = name;
+  // In the document while clicked (Firefox needs that); the blob lives until the download has started.
+  document.body.appendChild(a);
   a.click();
-  setTimeout(() => URL.revokeObjectURL(href)); // after the click has started the download
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(href), 10_000);
   return null;
 }

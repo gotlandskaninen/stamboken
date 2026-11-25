@@ -94,6 +94,7 @@ describe("downloadExport", () => {
       .spyOn(HTMLAnchorElement.prototype, "click")
       .mockImplementation(function (this: HTMLAnchorElement) {
         expect(this.download).toBe("avelsprioritet-genbank-1-2026-11-25.csv");
+        expect(document.body.contains(this)).toBe(true);
       });
     URL.createObjectURL = vi.fn(() => "blob:x");
     URL.revokeObjectURL = vi.fn();
@@ -111,8 +112,10 @@ describe("downloadExport", () => {
     );
     expect(await downloadExport("/x.csv")).toBeNull();
     expect(click).toHaveBeenCalled();
+    expect(document.querySelector("a[download]")).toBeNull();
+    vi.advanceTimersByTime(5_000);
     expect(URL.revokeObjectURL).not.toHaveBeenCalled();
-    vi.runAllTimers();
+    vi.advanceTimersByTime(5_000);
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:x");
     vi.unstubAllGlobals();
   });

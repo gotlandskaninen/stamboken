@@ -109,7 +109,8 @@ const OverviewTab = ({ genebankId }: OverviewTabProps) => {
 
   // The founderdjur table's rows (the same request as the table below), so the
   // card and the table count the same animals. Until it arrives the count is left out.
-  const { data: founderRows } = useFetchFoundersAtRiskQuery(genebankId);
+  const { data: founderRows, error: founderError } =
+    useFetchFoundersAtRiskQuery(genebankId);
 
   if (metricsLoading || foundersLoading) {
     return (
@@ -162,7 +163,11 @@ const OverviewTab = ({ genebankId }: OverviewTabProps) => {
           Förklaringar.
         </Alert>
       )}
-      <Laget metrics={metrics} founders={founderRows} />
+      {/* While the founder table shows an error, "Se vilka" would have nothing to go to. */}
+      <Laget
+        metrics={metrics}
+        founders={founderError ? undefined : founderRows}
+      />
       <Grid
         container
         spacing={6}

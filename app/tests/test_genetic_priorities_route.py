@@ -9,6 +9,7 @@ from unittest.mock import patch
 os.environ.setdefault("AUTHCONFIGFILE", os.path.join(os.path.dirname(__file__), "auth.ini.test"))
 
 import utils.database as db  # noqa: E402
+import utils.pedigree_snapshot as ps  # noqa: E402
 import utils.settings as settings  # noqa: E402
 import utils.work_list as work_list  # noqa: E402
 from herdbook import APP, limiter  # noqa: E402
@@ -184,6 +185,40 @@ class TestPrioritiesExport(RouteTest):
         self.assertEqual(self._export(self.genebanks[0], [], "?levels=critical,kritisk").status_code, 400)
         self.assertEqual(self._audit(), [])
 
+    def test_head_answers_without_a_row(self):
+        self._login(self.manager)
+        with patch.dict(APP.extensions, {"genetic_priorities": lambda g_id: [_priority("G1-2111")]}):
+            res = self.client.head(EXPORT.format(self.genebanks[0].id))
+        self.assertEqual(res.status_code, 405)
+        self.assertEqual(res.headers["Allow"], "GET")
+        self.assertEqual(self._audit(), [])
+
+    def test_no_file_when_the_audit_row_fails(self):
+        self._login(self.manager)
+        with (
+            patch("blueprints.genetics.log_export", side_effect=RuntimeError("audit down")),
+            patch.dict(APP.config, {"PROPAGATE_EXCEPTIONS": False}),
+        ):
+            res = self._export(self.genebanks[0], [_priority("G1-2111")])
+        self.assertEqual(res.status_code, 500)
+        self.assertNotIn("Individnummer", res.get_data(as_text=True))
+        self.assertNotIn("G1-2111", res.get_data(as_text=True))
+
+    def test_reads_the_priorities_herdbook_hands_over(self):
+        # Unpatched: without APP.extensions["genetic_priorities"] in herdbook.py this answers 500.
+        ps.reset_for_tests()
+        self.addCleanup(ps.reset_for_tests)
+        self._login(self.manager)
+        res = self.client.get(EXPORT.format(self.genebanks[0].id))
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.get_data(as_text=True).startswith('\ufeff"Individnummer";'))
+
+    def test_an_export_row_cannot_be_reverted_and_answers_404(self):
+        self._login(self.manager)
+        self.assertEqual(self._export(self.genebanks[0], [_priority("G1-2111")]).status_code, 200)
+        (row,) = self._audit()
+        self.assertEqual(self.client.post(f"/api/audit-log/{row.id}/revert", json={}).status_code, 404)
+
 
 class TestWorkListOrder(unittest.TestCase):
     def test_per_herd_keeps_the_levels_and_puts_g9_before_g10(self):
@@ -196,6 +231,23 @@ class TestWorkListOrder(unittest.TestCase):
         picked = work_list.select(rows, ["critical", "important"], per_herd=True)
         self.assertEqual([r["individual_id"] for r in picked], ["d", "c", "b", "a"])
         self.assertEqual([r["individual_id"] for r in work_list.select(rows, ["critical"], False)], ["b", "c", "d"])
+
+    def test_ties_round_up_as_on_the_page(self):
+        csv_text = work_list.priorities_csv(
+            [
+                {
+                    **_priority("G1-1", reasons=["Genome uniqueness 0.1225 is above 75th percentile (0.0125)"]),
+                    "genetic_value_score": 12.5,
+                    "genome_uniqueness": 0.1225,
+                }
+            ]
+        )
+        row = list(csv.reader(csv_text[1:].splitlines(), delimiter=";"))[1]
+        self.assertEqual(row[6:8], ["13", "12,3"])
+        self.assertEqual(
+            row[8],
+            "Unika gener 12,3\u00a0%, över gränsen för de 25\u00a0% med flest unika gener (1,3\u00a0%)",
+        )
 
     def test_reasons_read_as_on_the_page(self):
         self.assertEqual(

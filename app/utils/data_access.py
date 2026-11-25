@@ -3912,7 +3912,7 @@ def get_audit_genebank_id(table_name, record_id):
         return None
     try:
         return lookup(record_id)
-    except (DoesNotExist, AttributeError):
+    except (DoesNotExist, AttributeError, ValueError):  # ValueError: a marker row such as an export's
         return None
 
 

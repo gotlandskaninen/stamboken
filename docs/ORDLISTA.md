@@ -110,7 +110,7 @@ Hur stor en idealisk population skulle vara för att förlora genetisk variation
 genbanken; ju större, desto bättre. Stamboken räknar den från hur mycket inaveln har ökat per
 generation hos varje kanin i beräkningen (realiserad Ne, Gutiérrez m.fl. 2008), både för i dag och
 för varje stängt år i trenden. Visas som heltal. FAO anger minst 50, Frankham m.fl. 2014 minst 100.\
-Kod: `effective_population_size` (`calculate_realised_ne`) · Legacy-manual: – · Legacy: – · Nytt UI: samma, "Ne" (OverviewTab.tsx:183, Laget.tsx, TrendChart.tsx)
+Kod: `effective_population_size` (`calculate_realised_ne`) · Legacy-manual: – · Legacy: – · Nytt UI: samma, "Ne" (OverviewTab.tsx:188, Laget.tsx, TrendChart.tsx)
 
 **Founderdjur**\
 Rasens ursprungsdjur: kaniner utan kända föräldrar i stamboken. Bestämd form plural founderdjuren.
@@ -126,7 +126,7 @@ av generna som i dag (Lacy 1989). Ju högre FE, desto jämnare fördelning. Okä
 så FE kan bli större än antalet founderdjur med bärare. På
 skärmen heter måttet effektivt antal founderdjur och visas med en decimal. Det är inte samma mått
 som founder genome equivalents (FGE), som också räknar med att gener går förlorade av slumpen.\
-Kod: `founder_equivalents` · Legacy-manual: – · Legacy: – · Nytt UI: "Effektivt antal founderdjur (FE)" (OverviewTab.tsx:197), "FE" (TrendChart.tsx)
+Kod: `founder_equivalents` · Legacy-manual: – · Legacy: – · Nytt UI: "Effektivt antal founderdjur (FE)" (OverviewTab.tsx:202), "FE" (TrendChart.tsx)
 
 **Färg / färganteckning**\
 Färgen väljs ur genbankens lista med godkända färger; saknas färgen kontaktar du genbanksansvarig.
@@ -313,7 +313,7 @@ Kod: `butchered`, `death_note` · Legacy-manual: "slaktats" · Legacy: "slaktats
 Hur nära släkt två kaniner är, i procent. En avkommas inavelskoefficient är lika med släktskapen
 mellan föräldrarna. Medelsläktskap (MK) är en kanins genomsnittliga släktskap med de aktiva djuren
 i genbanken; ett lågt värde betyder att kaninen bär ovanliga gener som är viktiga att föra vidare.\
-Kod: `mean_kinship`, `inbreeding` · Legacy-manual: "släkt" · Legacy: "Genomsnittligt släktskap" · Nytt UI: "Medelsläktskap (MK)" på genetiksidan, i procent (OverviewTab.tsx:210), "kinship-koefficienten" under Parningsförslag
+Kod: `mean_kinship`, `inbreeding` · Legacy-manual: "släkt" · Legacy: "Genomsnittligt släktskap" · Nytt UI: "Medelsläktskap (MK)" på genetiksidan, i procent (OverviewTab.tsx:215), "kinship-koefficienten" under Parningsförslag
 
 **Släktträd / härstamning**\
 Släktträdet visar kaninens föräldrar, mor- och farföräldrar och längre bakåt. Härstamningen är
