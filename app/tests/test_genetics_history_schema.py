@@ -4,7 +4,7 @@ import unittest
 
 import utils.database as db
 
-from tests.database_test import DatabaseTest
+from tests.database_test import DatabaseTest, rewind_migrations
 
 
 class TestGeneticsHistorySchema(DatabaseTest):
@@ -16,7 +16,14 @@ class TestGeneticsHistorySchema(DatabaseTest):
 
     def test_history_has_versioned_columns(self):
         cols = {c.name for c in db.DATABASE.get_columns(self.table)}
-        for name in ("report_year", "as_of", "definition_version", "pedigree_version", "fge"):
+        for name in (
+            "report_year",
+            "as_of",
+            "definition_version",
+            "pedigree_version",
+            "fge",
+            "effective_population_size",
+        ):
             self.assertIn(name, cols)
 
     def test_unique_index_on_genebank_report_year_only(self):
@@ -34,6 +41,21 @@ class TestGeneticsHistorySchema(DatabaseTest):
         self.assertIn((31, 32), db.MIGRATIONS)
         self.assertIn((32, 33), db.MIGRATIONS)
         self.assertIn((33, 34), db.MIGRATIONS)
+
+    def test_replay_54_to_55_adds_the_history_ne(self):
+        """A database stamped at 54 gets the nullable Ne column; replaying again changes nothing."""
+        self.addCleanup(db.check_migrations)
+        rewind_migrations(55)
+        db.DATABASE.execute_sql(f'ALTER TABLE "{self.table}" DROP COLUMN IF EXISTS effective_population_size')
+
+        db.check_migrations()
+        cols = {c.name: c for c in db.DATABASE.get_columns(self.table)}
+        self.assertTrue(cols["effective_population_size"].null)
+
+        rewind_migrations(55)  # the column is there now: the replay must not add it twice
+        db.check_migrations()
+        max_version = db.SchemaHistory.select(db.fn.MAX(db.SchemaHistory.version)).scalar()
+        self.assertEqual(max_version, db.CURRENT_SCHEMA_VERSION)
 
 
 if __name__ == "__main__":

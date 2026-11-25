@@ -13,3 +13,5 @@ next-app/src/components/genetics/BreedingSuggestionsTab.tsx:(parningsförslag|f�
 # kodkommentarer om rollen genbanksansvarig utan genbank, inte text till användaren.
 next-app/src/app/(app)/stamboken/(dashboard)/admin/_components/navConfig.ts:\(utan genbank\)
 next-app/src/app/(app)/stamboken/(dashboard)/admin/layout.tsx:falls back to "din genbank"
+# API-sökvägen /founder-statistics/ (och kommentaren om den) är ingen text till användaren.
+next-app/src/redux/api/apiSlice.ts:founder-statistics

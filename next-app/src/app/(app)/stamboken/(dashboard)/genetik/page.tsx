@@ -87,7 +87,7 @@ function GenetikPage() {
       <Masthead
         eyebrow="Stamboken"
         title="Genetik"
-        meta="Populationsgenetisk analys och avelsrekommendationer"
+        meta="Genbankens genetiska läge och vilka kaniner som är viktigast att avla på"
         actions={
           <FormControl size="small" sx={{ minWidth: 200 }}>
             <InputLabel>Genbank</InputLabel>
@@ -112,7 +112,7 @@ function GenetikPage() {
         <>
           <Tabs value={activeTab} onChange={handleTabChange}>
             <Tab label="Översikt" value="oversikt" />
-            <Tab label="Prioriteringar" value="prioriteringar" />
+            <Tab label="Avelsprioritet" value="prioriteringar" />
             <Tab label="Parningsförslag" value="parningsforslag" />
           </Tabs>
 

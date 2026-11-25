@@ -24,7 +24,11 @@ import utils.database as db
 import utils.genetics_service as gs
 import utils.pedigree_snapshot as ps
 import utils.reference_population as rp
-from utils.genetics import calculate_average_founder_contributions, calculate_founder_equivalents
+from utils.genetics import (
+    calculate_average_founder_contributions,
+    calculate_founder_equivalents,
+    calculate_population_metrics,
+)
 
 from tests.database_test import DatabaseTest
 from tests.genetics_fixtures import rows_from_arrays, synthetic_pedigree
@@ -428,6 +432,32 @@ class TestHistoryFounderEquivalents(HistoryTest):
         self.assertTrue(absent_somewhere)  # some founder contributes nothing to some year
         self.assertNotEqual(rows[-1]["founder_equivalents"], rows[-1]["active_count"])  # not the trivial case
 
+    def test_effective_population_size_is_the_cards_estimator_over_the_years_members(self):
+        """Each year's Ne is what population metrics (the card) gives over that year's members."""
+        _, rows = gs.desired_history_rows(self.gb.id, TODAY)
+        snap = ps.build_snapshot(self.gb.id, gs.fetch_pedigree_rows(self.gb.id), set(), key=("t",), seq=0)
+
+        by_year = {}
+        for r in rows:
+            start, as_of = rp.history_window(r["report_year"])
+            members = rp.members(self.gb.id, start=start, as_of=as_of, live=False)
+            card = calculate_population_metrics(snap.individuals, population_ids=[i for i in snap.ids if i in members])
+            by_year[r["report_year"]] = (r["effective_population_size"], card["effective_population_size"])
+
+        # 2021 and 2022: no member has more than one equivalent generation, so neither gives an Ne.
+        self.assertEqual(by_year[2021], (None, None))
+        self.assertEqual(by_year[2022], (None, None))
+        stored, card = by_year[2023]
+        self.assertIsNotNone(card)  # the inbred grandchild
+        np.testing.assert_allclose(stored, card, rtol=1e-12)
+
+        gs.reconcile_history(self.gb.id, today=TODAY)
+        stored_rows = {r.report_year: r.effective_population_size for r in self.rows()}
+        self.assertIsNone(stored_rows[2021])
+        self.assertEqual(np.float32(stored_rows[2023]), np.float32(card))  # REAL column
+        trend = {r["year"]: r["effective_population_size"] for r in gs.get_genetics_trends(self.gb.id)}
+        self.assertEqual(trend, stored_rows)
+
     def test_one_unknown_parent_is_a_founder_of_its_own(self):
         """A, then X (sire A, dam unknown), sorted; the history pass gives FE 2 like the live one (was 4)."""
         fe = gs._founder_equivalents([-1, 0], [-1, -1], np.array([0]), np.array([False, True]))
@@ -447,10 +477,14 @@ class TestTrendsAndScheduling(HistoryTest):
         values.update(kw)
         return db.GeneticMetricsHistory.create(**values)
 
-    def _fresh_state(self, age):
+    def _fresh_state(self, age, algorithm_version=gs.ALGORITHM_VERSION):
         db.GeneticsHistoryState.delete().execute()
         db.GeneticsHistoryState.create(
-            genebank=self.gb.id, checked_at=datetime.now(timezone.utc) - age, version=1, definition_version=3
+            genebank=self.gb.id,
+            checked_at=datetime.now(timezone.utc) - age,
+            version=1,
+            definition_version=3,
+            algorithm_version=algorithm_version,
         )
 
     def test_trends_keys_year_mapping_and_filtering(self):
@@ -507,6 +541,17 @@ class TestTrendsAndScheduling(HistoryTest):
             gs.maybe_reconcile_in_background(self.gb.id)
             gs._reconcile_executor.submit(lambda: None).result(WAIT)
         reconcile.assert_not_called()
+
+    def test_fresh_state_from_an_older_formula_starts_a_reconcile(self):
+        """Right after a formula change the stored years are recomputed, not after the next stale check."""
+        self._fresh_state(timedelta(hours=1), algorithm_version=gs.ALGORITHM_VERSION - 1)
+        with (
+            patch.object(gs, "reconcile_history", return_value="replaced") as reconcile,
+            patch.object(gs.ps, "_close_db_connection"),
+        ):
+            gs.maybe_reconcile_in_background(self.gb.id)
+            gs._reconcile_executor.submit(lambda: None).result(WAIT)
+        reconcile.assert_called_once_with(self.gb.id)
 
     def test_cli_commands_call_reconcile(self):
         from herdbook import APP, genetics_cli

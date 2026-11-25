@@ -74,8 +74,8 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # the herd's contact from the member register, herd.contact_member and herd.contact_pending (50) +
 # the yearly report v2 (51) + organization name and number on membership (52) +
 # notice.individual and buyer_contact.erased_email_hash (53) +
-# acceptance of the account rules (54).
-CURRENT_SCHEMA_VERSION = 54
+# acceptance of the account rules (54) + each history year's realised Ne (55).
+CURRENT_SCHEMA_VERSION = 55
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -2021,9 +2021,8 @@ class SchemaHistory(BaseModel):
 class GeneticMetricsHistory(BaseModel):
     """One row per closed report year, fully derived; replaced on reconcile.
 
-    Ne (effective population size) is NOT stored — it is computed on-the-fly
-    in get_genetics_trends() using a rolling ln(1-F̄) regression over the
-    stored mean_inbreeding values.
+    ``effective_population_size`` is the realised Ne over the year's members, the
+    estimator the dashboard card uses for today (genetics.calculate_realised_ne).
     """
 
     id = AutoField(primary_key=True)
@@ -2039,6 +2038,7 @@ class GeneticMetricsHistory(BaseModel):
     mean_kinship = FloatField(null=True)
     founder_equivalents = FloatField(null=True)
     fge = FloatField(null=True)
+    effective_population_size = FloatField(null=True)
     data_quality = CharField(max_length=10)  # "high", "medium", "low"
     created_at = DateTimeField(default=datetime.now)
 
@@ -4935,6 +4935,18 @@ def migrate_53_to_54():
         ).execute()
 
 
+def migrate_54_to_55():
+    """History rows store each year's realised Ne; the trend drew a rolling ln(1 - F) regression instead."""
+    with DATABASE.atomic():
+        table = GeneticMetricsHistory._meta.table_name
+        # A replay from below 16 creates the table from the current model, column included.
+        if "effective_population_size" not in {c.name for c in DATABASE.get_columns(table)}:
+            migrate(DATABASE_MIGRATOR.add_column(table, "effective_population_size", FloatField(null=True)))
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=55, comment="history: realised Ne per report year", applied=datetime.now()
+        ).execute()
+
+
 def migrate_21_to_22():
     """Add litter_number to Breeding table and backfill from minted numbers."""
     with DATABASE.atomic():
@@ -5426,6 +5438,7 @@ MIGRATIONS = {
     (51, 52): migrate_51_to_52,  # legal entity on membership
     (52, 53): migrate_52_to_53,  # notice.individual, buyer_contact.erased_email_hash
     (53, 54): migrate_53_to_54,  # account rules acceptance
+    (54, 55): migrate_54_to_55,  # realised Ne per history year
 }
 
 
@@ -5514,7 +5527,8 @@ def _run_migrations():
         # A bootstrap has no migration comment. Every buyer 50 (even before erased_email_hash) added
         # notice.individual_id; running 51–53 afterwards still never adds main's missing herd contact columns.
         if (
-            current_version is not None and current_version >= 50
+            current_version is not None
+            and current_version >= 50
             and not {"contact_member_id", "contact_pending"} <= {c.name for c in DATABASE.get_columns("herd")}
             and "individual_id" in {c.name for c in DATABASE.get_columns("notice")}
         ):

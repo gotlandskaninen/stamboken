@@ -42,6 +42,7 @@ from utils.genetics import (
     calculate_offspring_inbreeding_fast,
     calculate_pedigree_completeness,
     calculate_population_metrics,
+    calculate_realised_ne,
     founder_equivalents_of,
     gene_drop_simulation,
     identify_founders,
@@ -62,10 +63,10 @@ logger = logging.getLogger("herdbook.genetics")
 REFERENCE_DEFINITION_VERSION = CURRENT_DEFINITION.version
 
 # Bumped when a formula changes a published number (1: FE counts phantom parents;
-# GU counts carriers).
+# GU counts carriers; 2: history stores each year's realised Ne).
 # Part of the snapshot key, so the shared memo is never served across it, and of the
 # history watermark, so the next reconcile recomputes the stored years (0 = before versioning).
-ALGORITHM_VERSION = 1
+ALGORITHM_VERSION = 2
 
 
 def reference_population_numbers(genebank_id: int, start_date: date | None = None) -> set[str]:
@@ -739,55 +740,6 @@ def _founders_at_risk_of(snap):
     return result
 
 
-def _compute_rolling_ne(rows: list[dict], window: int = 10, generation_interval: float = 2.0) -> None:
-    """Compute rolling Ne from stored yearly mean_inbreeding using log regression.
-
-    Uses ln(1 - F̄) regression against year (Wright-Malécot model):
-        ln(1 - F_t) ≈ -ΔF * t  →  Ne = 1 / (2 * ΔF_per_generation)
-
-    Modifies rows in place, overriding effective_population_size.
-    """
-    min_points = 5
-
-    for i, row in enumerate(rows):
-        start_idx = max(0, i - window + 1)
-        window_rows = rows[start_idx : i + 1]
-
-        years = []
-        ln_vals = []
-        for w in window_rows:
-            f = w.get("mean_inbreeding")
-            if f is None or f <= 0.0 or f >= 1.0:
-                continue
-            years.append(float(w["year"]))
-            ln_vals.append(np.log(1.0 - f))
-
-        if len(years) < min_points:
-            row["effective_population_size"] = None
-            continue
-
-        x = np.array(years)
-        y = np.array(ln_vals)
-        x_mean = x.mean()
-        ss_xx = np.dot(x - x_mean, x - x_mean)
-        if ss_xx < 1e-9:
-            beta = 0.0
-        else:
-            beta = np.dot(x - x_mean, y - y.mean()) / ss_xx
-
-        # β should be negative (F increasing → ln(1-F) decreasing)
-        # ΔF per year ≈ -β, ΔF per generation = -β * L
-        delta_f_per_gen = -beta * generation_interval
-
-        ne_cap = 10000.0
-        if delta_f_per_gen > 1e-6:
-            ne = min(1.0 / (2.0 * delta_f_per_gen), ne_cap)
-        else:
-            # F stable or decreasing — Ne effectively very large
-            ne = ne_cap
-        row["effective_population_size"] = round(ne, 1)
-
-
 HISTORY_STALE_AFTER = timedelta(hours=26)
 _reconcile_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="history-reconcile")
 _reconcile_inflight = {}
@@ -805,9 +757,13 @@ def _reconcile_quietly(genebank_id):
 
 
 def maybe_reconcile_in_background(genebank_id):
-    """Queue a history reconcile when the last check is older than HISTORY_STALE_AFTER."""
+    """Queue a history reconcile when the last check is older than HISTORY_STALE_AFTER or used an older formula."""
     state = GeneticsHistoryState.get_or_none(GeneticsHistoryState.genebank == genebank_id)
-    if state is not None and datetime.now(timezone.utc) - state.checked_at < HISTORY_STALE_AFTER:
+    if (
+        state is not None
+        and state.algorithm_version >= ALGORITHM_VERSION
+        and datetime.now(timezone.utc) - state.checked_at < HISTORY_STALE_AFTER
+    ):
         return
     with _reconcile_lock:  # check-and-submit is atomic: one queued reconcile per genebank and worker
         fut = _reconcile_inflight.get(genebank_id)
@@ -817,24 +773,20 @@ def maybe_reconcile_in_background(genebank_id):
 
 
 def get_genetics_trends(genebank_id: int, start_year: int | None = None, end_year: int | None = None) -> list[dict]:
-    """Fetch stored trend data per report year and compute rolling Ne from mean_inbreeding."""
+    """Stored trend data per report year."""
     maybe_reconcile_in_background(genebank_id)
-
-    # Fetch extra years before start_year so rolling window has enough data
-    window = 10
-    fetch_start = start_year - window if start_year else None
 
     query = (
         GeneticMetricsHistory.select()
         .where(GeneticMetricsHistory.genebank == genebank_id)
         .order_by(GeneticMetricsHistory.report_year)
     )
-    if fetch_start:
-        query = query.where(GeneticMetricsHistory.report_year >= fetch_start)
+    if start_year:
+        query = query.where(GeneticMetricsHistory.report_year >= start_year)
     if end_year:
         query = query.where(GeneticMetricsHistory.report_year <= end_year)
 
-    rows = [
+    return [
         {
             "year": row.report_year,
             "snapshot_date": row.as_of.strftime("%Y-%m-%d"),
@@ -842,23 +794,13 @@ def get_genetics_trends(genebank_id: int, start_year: int | None = None, end_yea
             "active_count": row.active_count,
             "mean_inbreeding": row.mean_inbreeding,
             "mean_kinship": row.mean_kinship,
-            "effective_population_size": None,  # computed below
+            "effective_population_size": row.effective_population_size,
             "founder_equivalents": row.founder_equivalents,
             "data_quality": row.data_quality,
             "definition_version": row.definition_version,
         }
         for row in query
     ]
-
-    # Ne is computed on-the-fly from stored mean_inbreeding using a rolling
-    # ln(1-F̄) regression (Wright-Malécot model), not stored in the DB.
-    _compute_rolling_ne(rows, window=window)
-
-    # Trim pre-fetched rows if start_year was specified
-    if start_year:
-        rows = [r for r in rows if r["year"] >= start_year]
-
-    return rows
 
 
 # Advisory lock ids, + genebank_id.
@@ -953,7 +895,9 @@ def _history_rows_on(snap, version, births, years):
     """History rows on a built pedigree snapshot (its own membership is ignored).
 
     Years start at the first one with at least ``rp.MIN_HISTORY_MEMBERS``
-    members; later small years stay.
+    members; later small years stay. Ne is the card's estimator over the year's
+    members (calculate_realised_ne): None when no member has more than one
+    equivalent generation or inbreeding did not increase.
     """
     sire, dam = snap.sire.tolist(), snap.dam.tolist()
     founders = np.array([snap.index[f] for f in identify_founders(snap.individuals)], dtype=np.int64)
@@ -979,6 +923,7 @@ def _history_rows_on(snap, version, births, years):
                 "mean_kinship": mean_mk,
                 "fge": 1.0 / (2.0 * mean_mk) if mean_mk else None,
                 "founder_equivalents": _founder_equivalents(sire, dam, founders, mask) if member_ids else None,
+                "effective_population_size": calculate_realised_ne(snap.F[mask], snap.gen_equiv[mask])["ne"],
                 "population_size": sum(1 for b in births.values() if b is None or b <= as_of),
                 "data_quality": "high" if year >= 2015 else "medium" if year >= 2005 else "low",
             }
