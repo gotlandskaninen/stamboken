@@ -32,8 +32,9 @@ export type MembershipRow = Organization & {
   city: string | null;
   postal_address: string | null;
   persons: MembershipListPerson[];
-  /** The membership's active herds and the initial of each one's genebank (G/M). */
-  active_herds: { herd: string; genebank: string }[];
+  /** The membership's active herds and the initial of each one's genebank (G/M).
+   *  Missing from an older API during a rolling deploy: the columns show it as unknown. */
+  active_herds?: { herd: string; genebank: string }[];
 };
 
 export type Grant = {

@@ -192,6 +192,13 @@ describe("MembershipsGridClient", () => {
     expect(screen.getByText("m9002")).toBeInTheDocument();
   });
 
+  it("keeps the other columns when an older API sends no active_herds", () => {
+    const { active_herds: _, ...oldShape } = rows[0];
+    render(<MembershipsGridClient rows={[oldShape]} total={1} />);
+    expect(screen.getByText("Anna Lindqvist")).toBeInTheDocument();
+    expect(screen.getAllByText("?")).toHaveLength(2); // G and M unknown, not "—" (none)
+  });
+
   it("navigates to the membership detail page on row click", () => {
     render(<MembershipsGridClient rows={rows} total={3} />);
     fireEvent.click(screen.getByText("Bertil Ek"));

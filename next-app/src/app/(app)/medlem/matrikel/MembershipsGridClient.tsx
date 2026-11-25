@@ -46,10 +46,12 @@ const columns: GridColDef<MembershipRow>[] = [
       width: 90,
       cellClassName: ds["ad-cell-mono"],
       valueGetter: (_value, row) =>
-        row.active_herds
-          .filter((h) => h.genebank === letter)
-          .map((h) => h.herd)
-          .join(", ") || "—",
+        row.active_herds === undefined
+          ? "?"
+          : row.active_herds
+              .filter((h) => h.genebank === letter)
+              .map((h) => h.herd)
+              .join(", ") || "—",
     }),
   ),
   {
