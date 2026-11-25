@@ -119,8 +119,9 @@ i webbläsaren.
 ### Visa runt
 
 Rundturen pekar ut de viktigaste delarna av sidan du är på, en i taget. Varje steg har
-en kort text och en länk hit till manualen. Du startar den med **Visa runt** i
-avatarmenyn, eller i rutan "Kom igång med din besättning" på Min besättning.
+en kort text. De flesta steg har också en länk **Läs mer** hit till manualen, eller till
+guiden för matrikeln. Du startar rundturen med **Visa runt** i avatarmenyn, eller i rutan
+"Kom igång med din besättning" på Min besättning.
 
 - **Nästa** och **Tillbaka** flyttar mellan stegen.
 - **Klar** på sista steget, krysset **Stäng rundturen** eller Esc avslutar.
@@ -128,7 +129,8 @@ avatarmenyn, eller i rutan "Kom igång med din besättning" på Min besättning.
   flikarna, och på en kanins sida för att se foto och intyg.
 
 Första gången du kommer till Min besättning frågar Stamboken om du vill se rundturen.
-Svarar du **Nej tack** frågar den inte igen. Valet sparas i webbläsaren.
+Svarar du **Nej tack**, eller har du redan sett rundturen, frågar den inte igen. Valet
+sparas i webbläsaren.
 
 ### Tyck till
 
