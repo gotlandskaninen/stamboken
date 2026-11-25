@@ -66,3 +66,33 @@ it.each([true, false])(
     }
   },
 );
+
+it("shows each herd's own status and links the herds the reader may open (#214)", async () => {
+  fetchApi.mockResolvedValue({
+    ...org,
+    herds: [
+      {
+        id: 3,
+        herd: "G9001",
+        herd_name: null,
+        genebank_id: 1,
+        is_active: true,
+      },
+      {
+        id: 4,
+        herd: "M9002",
+        herd_name: null,
+        genebank_id: 2,
+        is_active: null,
+      },
+    ],
+  });
+  getUser.mockResolvedValue({ is_admin: false, is_manager: [1] });
+  render(await MembershipDetailPage({ params: Promise.resolve({ id: "1" }) }));
+  expect(screen.getByRole("link", { name: "G9001 · aktiv" })).toHaveAttribute(
+    "href",
+    "/stamboken/admin/besattningar/G9001",
+  );
+  expect(screen.getByText("M9002 · inaktiv")).not.toHaveAttribute("href");
+  expect(screen.queryByRole("link", { name: /M9002/ })).toBeNull();
+});

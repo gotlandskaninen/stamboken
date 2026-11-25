@@ -142,7 +142,10 @@ export type MembershipDetail = BillingAddress &
     joined_date: string | null;
     notes: string | null;
     persons: Person[];
-    herds: MembershipHerd[];
+    herds: (MembershipHerd & {
+      genebank_id: number;
+      is_active: boolean | null;
+    })[];
   };
 
 // Default page size for the matrikel list — the RSC page uses it whenever the

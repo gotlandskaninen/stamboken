@@ -76,7 +76,15 @@ const MEMBERSHIP: MembershipDetail = {
   payment_note: null,
   joined_date: "2019-03-01",
   notes: null,
-  herds: [{ id: 3, herd: "G1274", herd_name: "Solhaga" }],
+  herds: [
+    {
+      id: 3,
+      herd: "G1274",
+      herd_name: "Solhaga",
+      genebank_id: 1,
+      is_active: true,
+    },
+  ],
   persons: [
     person({
       id: 11,
