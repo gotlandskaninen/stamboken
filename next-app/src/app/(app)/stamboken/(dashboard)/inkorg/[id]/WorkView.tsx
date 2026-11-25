@@ -49,6 +49,7 @@ import {
   type Rect,
 } from "../lib";
 import { fmtDate } from "../../arsrapport/lib";
+import { AccountRef } from "../AccountRef";
 import { AssignItem } from "../QueueControls";
 import { focusCaseHeading, QueueUndoStatus, useQueueUndo } from "../QueueUndo";
 import { AskBreeder } from "./AskBreeder";
@@ -392,10 +393,20 @@ export function WorkView({
             <dt>Läge</dt>
             <dd>{STATE_LABEL[item.state] ?? item.state}</dd>
             <dt>Handläggare</dt>
-            <dd>{item.assigned_to?.name ?? "ingen"}</dd>
+            <dd>
+              {item.assigned_to ? (
+                <AccountRef person={item.assigned_to} user={user} />
+              ) : (
+                "ingen"
+              )}
+            </dd>
             <dt>Inskickat av</dt>
             <dd>
-              {senderText(item) ?? "–"}
+              {item.sender ? (
+                <AccountRef person={item.sender} user={user} />
+              ) : (
+                (senderText(item) ?? "–")
+              )}
               <SenderUnconfirmed item={item} />
             </dd>
             <MailFacts item={item} />
@@ -516,7 +527,12 @@ export function WorkView({
               {item.events.map((e) => (
                 <li key={e.id}>
                   {formatTime(e.at)} · {eventText(e)}
-                  {e.user ? ` · ${e.user.name}` : ""}
+                  {e.user && (
+                    <>
+                      {" · "}
+                      <AccountRef person={e.user} user={user} />
+                    </>
+                  )}
                 </li>
               ))}
             </ol>

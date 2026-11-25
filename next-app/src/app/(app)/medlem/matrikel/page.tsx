@@ -38,6 +38,10 @@ export default async function MembershipsListPage({
   const qs = new URLSearchParams();
   if (sp.search) qs.set("search", sp.search);
   if (sp.status) qs.set("status", sp.status);
+  // Only a single G or M reaches the API and the select (?active_herd=G&active_herd=M is an array).
+  const activeHerd =
+    sp.active_herd === "G" || sp.active_herd === "M" ? sp.active_herd : "";
+  if (activeHerd) qs.set("active_herd", activeHerd);
   qs.set("per_page", String(perPage));
   qs.set("page", String(requestedPage));
   const body = await fetchApi<ListResponse>(`/v2/members?${qs.toString()}`);
@@ -103,6 +107,21 @@ export default async function MembershipsListPage({
                     {MEMBERSHIP_STATUS[s].label}
                   </MenuItem>
                 ))}
+              </Select>
+            </FormControl>
+            <FormControl size="small" className={ds["ad-filter"]}>
+              <span className={ds["ad-filter-label"]} id="mat-f-herd">
+                Aktiv besättning
+              </span>
+              <Select
+                name="active_herd"
+                defaultValue={activeHerd}
+                aria-labelledby="mat-f-herd"
+                sx={{ width: 190 }}
+              >
+                <MenuItem value="">Alla</MenuItem>
+                <MenuItem value="G">G – Gotlandskanin</MenuItem>
+                <MenuItem value="M">M – Mellerudskanin</MenuItem>
               </Select>
             </FormControl>
             <input type="hidden" name="per_page" value={perPage} />

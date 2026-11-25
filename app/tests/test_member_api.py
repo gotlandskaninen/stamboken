@@ -116,6 +116,24 @@ class TestMembershipList(MatrikelApiTest):
         self.assertEqual(len(data["items"]), 2)
         self.assertEqual(data["total"], 3)
 
+    def test_active_herds_and_filter(self):
+        """#214: the G/M columns — the membership's active herds, split and filtered by genebank, not code letter."""
+        db.Herd.create(herd="G9001", genebank=self.genebanks[0], membership=self.ms1, is_active=True)
+        db.Herd.create(herd="m9002", genebank=self.genebanks[1], membership=self.ms2, is_active=True)
+        db.Herd.create(herd="G9003", genebank=self.genebanks[0], membership=self.ms2, is_active=False)
+        self.login("man")
+        rows = {r["id"]: r for r in self.client.get("/api/v2/members").get_json()["items"]}
+        self.assertEqual(rows[self.ms1.id]["active_herds"], [{"herd": "G9001", "letter": "G"}])
+        self.assertEqual(rows[self.ms2.id]["active_herds"], [{"herd": "m9002", "letter": "M"}])
+        self.assertEqual(rows[self.ms3.id]["active_herds"], [])
+        for letter, membership in (("G", self.ms1), ("M", self.ms2)):
+            with self.subTest(letter=letter):
+                data = self.client.get(f"/api/v2/members?active_herd={letter}").get_json()
+                self.assertEqual([r["id"] for r in data["items"]], [membership.id])
+        for bad in ("X", "g", "GM"):
+            with self.subTest(bad=bad):
+                self.assertEqual(self.client.get(f"/api/v2/members?active_herd={bad}").status_code, 400)
+
 
 class TestMembershipDetailAndPatch(MatrikelApiTest):
     def setUp(self):
@@ -1095,6 +1113,41 @@ class TestAddressListExport(MatrikelApiTest):
             ],
         )
 
+    def test_organization_with_care_of(self):
+        """An organization is the recipient with "c/o" its active huvudmedlem, and is sent without one too."""
+        org = _mk_membership(
+            number=7,
+            organization_name="Testföreningen",
+            organization_number="552222-0002",
+            address="Föreningsgatan 1",
+            postal_code="222 22",
+        )
+        _mk_person(org, "Kim", "Kontakt")
+        headless = _mk_membership(status="friexemplar", organization_name="Testbiblioteket", address="Bokgatan 1")
+        _mk_person(headless, "Ex", "Kontakt", end_date=date.today())
+        # An imported friexemplar: the organization's name sits in the contact's name.
+        self.free.organization_name = "Biblioteket i Visby"
+        self.free.save()
+        self.login("matrikel")
+        resp = self.client.get("/api/v2/members/address-list")
+        self.assertNotIn("552222", resp.get_data(as_text=True))
+        names = {r[2]: r[1] for r in self._rows()[1:]}
+        self.assertEqual(names["Föreningsgatan 1"], "Testföreningen, c/o Kim Kontakt")
+        self.assertEqual(names["Bokgatan 1"], "Testbiblioteket")
+        self.assertEqual(names["Biblioteksgatan 1"], "Biblioteket i Visby")
+
+    def test_huvudmedlem_named_even_with_a_higher_id(self):
+        ms = _mk_membership(number=8, address="Fgatan 1", postal_code="333 33")
+        _mk_person(ms, "Fia", "F", role="familjemedlem")
+        _mk_person(ms, "Fred", "F")
+        self.login("matrikel")
+        self.assertIn(["8", "Fred F", "Fgatan 1", "333 33", ""], self._rows()[1:])
+
+    def test_household_without_huvudmedlem_gets_the_first_active_person(self):
+        db.Member.update(end_date=date.today()).where(db.Member.email == "ada@example.com").execute()
+        self.login("matrikel")
+        self.assertIn(["1", "Alf A", "Adagatan 3", "623 55 Visby", ""], self._rows()[1:])
+
     def test_fee_reminder_marks_last_years_payers(self):
         self.login("matrikel")
         _, *rows = self._rows("?fee_reminder=1")
@@ -1152,5 +1205,8 @@ class TestAddressListExport(MatrikelApiTest):
         )
         self.assertEqual(
             [(r.new_data, r.changed_by) for r in logged],
-            [({"action": "address-list", "rows": 4, "fee_reminder": True}, "matrikel"), ({"action": "matr"}, "matrikel")],
+            [
+                ({"action": "address-list", "rows": 4, "fee_reminder": True}, "matrikel"),
+                ({"action": "matr"}, "matrikel"),
+            ],
         )

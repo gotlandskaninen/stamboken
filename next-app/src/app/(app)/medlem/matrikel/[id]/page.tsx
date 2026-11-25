@@ -70,7 +70,14 @@ export default async function MembershipDetailPage({
             kolumner behöver ~1100px för att inte radbrytas på desktop, och
             Översikt blir en statusremsa ovanför (samma recept som
             /medlem/statistik). */}
-        <OversiktCard membership={membership} canEdit={canEdit} />
+        <OversiktCard
+          membership={membership}
+          canEdit={canEdit}
+          canOpenHerd={(gb) =>
+            Boolean(user?.is_admin) ||
+            (Array.isArray(user?.is_manager) && user.is_manager.includes(gb))
+          }
+        />
         <div className={ds["ad-col"]}>
           <PersonsCard membership={membership} canEdit={canEdit} />
           {canEdit ? <MembershipFormCard membership={membership} /> : null}

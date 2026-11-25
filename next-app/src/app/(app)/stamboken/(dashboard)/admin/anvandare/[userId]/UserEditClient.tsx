@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Avatar, FormControlLabel, Switch } from "@mui/material";
 import type { AdminUserDetail, PrivilegeEntry } from "../../_lib/types";
@@ -123,17 +124,17 @@ export function UserEditClient({
       return `Genbanksansvarig — ${gbName(p.genebank)}`;
     return p.level === "helper"
       ? `Genbankshjälpare — ${gbName(p.genebank)}`
-      : `Granskare — ${gbName(p.genebank)}`;
+      : `Läsrätt till ${gbName(p.genebank)}`;
   };
 
   // Handoff nivåbadge (README:45): Administratör skog, Genbanksansvarig
-  // mossa, Besättningsägare himmel, Granskare neutral.
+  // mossa, Besättningsägare himmel, Läsrätt neutral.
   const LEVEL_TEXT: Record<PrivilegeEntry["level"], string> = {
     admin: "Administratör",
     matrikel_admin: "Matrikeladministratör",
     manager: "Genbanksansvarig",
     helper: "Genbankshjälpare",
-    viewer: "Granskare",
+    viewer: "Läsrätt",
     owner: "Besättningsägare",
   };
   const LEVEL_BADGE: Record<PrivilegeEntry["level"], string> = {
@@ -248,27 +249,52 @@ export function UserEditClient({
               <p className={ds["ad-hint"]}>Inga roller tilldelade.</p>
             ) : (
               <ul className={styles["ad-role-list"]}>
-                {detail._privileges.map((p, i) => (
-                  <li key={`${p.level}-${i}`} className={styles["ad-role-row"]}>
-                    <span className={`sb-badge ${LEVEL_BADGE[p.level]}`}>
-                      {LEVEL_TEXT[p.level]}
-                    </span>
-                    {roleTarget(p) && (
-                      <span className={styles["ad-role-target"]}>
-                        {roleTarget(p)}
-                      </span>
-                    )}
-                    <button
-                      type="button"
-                      className={`sb-btn sb-btn-ghost sb-btn-sm ${styles["ad-role-remove"]}`}
-                      aria-label={`Ta bort ${roleLabel(p)}`}
-                      disabled={pending}
-                      onClick={() => handleRevoke(p)}
+                {detail._privileges.map((p, i) => {
+                  const herd =
+                    p.level === "owner"
+                      ? herds.find((h) => h.id === p.herd)
+                      : undefined;
+                  return (
+                    <li
+                      key={`${p.level}-${i}`}
+                      className={styles["ad-role-row"]}
                     >
-                      Ta bort
-                    </button>
-                  </li>
-                ))}
+                      <span className={`sb-badge ${LEVEL_BADGE[p.level]}`}>
+                        {LEVEL_TEXT[p.level]}
+                      </span>
+                      {roleTarget(p) && (
+                        <span className={styles["ad-role-target"]}>
+                          {herd ? (
+                            <Link
+                              href={`/stamboken/admin/besattningar/${herd.herd}`}
+                              className="sb-link"
+                            >
+                              {roleTarget(p)}
+                            </Link>
+                          ) : (
+                            roleTarget(p)
+                          )}
+                        </span>
+                      )}
+                      {/* The herd's status in words, not only colour (#214). */}
+                      {herd &&
+                        (herd.is_active ? (
+                          <span className="sb-badge sb-badge-mossa">Aktiv</span>
+                        ) : (
+                          <span className="sb-badge">Inaktiv</span>
+                        ))}
+                      <button
+                        type="button"
+                        className={`sb-btn sb-btn-ghost sb-btn-sm ${styles["ad-role-remove"]}`}
+                        aria-label={`Ta bort ${roleLabel(p)}`}
+                        disabled={pending}
+                        onClick={() => handleRevoke(p)}
+                      >
+                        Ta bort
+                      </button>
+                    </li>
+                  );
+                })}
               </ul>
             )}
             <hr className="sb-rule" />

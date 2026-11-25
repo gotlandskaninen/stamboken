@@ -61,8 +61,9 @@ export default async function AdminLandingPage() {
   const [usersCount, adminHerdsCount, genebanks, membershipsCount] =
     await Promise.all([
       isAdmin ? safeCount("/v2/admin/users?per_page=1") : Promise.resolve(null),
-      // GET /api/manage/herd is admin-only in Phase 17.
-      isAdmin ? safeCount("/manage/herd?per_page=1") : Promise.resolve(null),
+      // Admin: every herd. A manager's count of active herds comes from
+      // /genebanks below.
+      isAdmin ? safeCount("/manage/herd?page_size=1") : Promise.resolve(null),
       // Envelope: { genebanks: [...] }, same as admin/layout.tsx.
       fetchApi<{ genebanks: GenebankShort[] }>("/genebanks", {
         forceProd: true,
