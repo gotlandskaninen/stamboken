@@ -40,40 +40,74 @@ describe("PrioritiesTab", () => {
     vi.clearAllMocks();
   });
 
+  const rows = () => screen.queryByText("Kritisk (1)");
+  const failedAlert = () =>
+    screen.queryByText(/Kunde inte hämta prioriteringsdata/);
+  const staleNote = () => screen.queryByText(/Kunde inte uppdatera/);
+
   it("refetches on mount and keeps the cached rows on screen meanwhile", () => {
-    renderTab({
-      data: cached,
-      currentData: cached,
-      isLoading: false,
-      isFetching: true,
-    });
+    renderTab({ data: cached, currentData: cached, isFetching: true });
     expect(prioritiesQuery).toHaveBeenCalledWith(1, {
       refetchOnMountOrArgChange: true,
     });
     expect(banner()).toBeNull();
-    expect(screen.getByText("Kritisk (1)")).toBeTruthy();
+    expect(rows()).toBeTruthy();
   });
 
   it("shows the banner only while there is no data yet", () => {
-    renderTab({ data: undefined, isLoading: true, isFetching: true });
+    renderTab({
+      data: undefined,
+      currentData: undefined,
+      isLoading: true,
+      isFetching: true,
+    });
     expect(banner()).toBeTruthy();
   });
 
-  it("keeps the cached rows when the background refetch fails", () => {
-    const error = { status: 500 };
-    renderTab({ data: cached, currentData: cached, isLoading: false, error });
-    expect(screen.queryByText(/Kunde inte hämta prioriteringsdata/)).toBeNull();
-    expect(screen.getByText("Kritisk (1)")).toBeTruthy();
-  });
-
-  it("shows the error when the failed genebank has no data of its own", () => {
-    // After a genebank switch, data is still the previous genebank's.
+  it("does not show the previous genebank's rows while the new one loads", () => {
+    // After a switch A→B, data is still A's until B answers (and isLoading is false).
     renderTab({
       data: cached,
       currentData: undefined,
       isLoading: false,
+      isFetching: true,
+    });
+    expect(banner()).toBeTruthy();
+    expect(rows()).toBeNull();
+  });
+
+  it("keeps the cached rows with a note when a refetch fails", () => {
+    renderTab({
+      data: cached,
+      currentData: cached,
+      isFetching: false,
       error: { status: 500 },
     });
-    expect(screen.getByText(/Kunde inte hämta prioriteringsdata/)).toBeTruthy();
+    expect(failedAlert()).toBeNull();
+    expect(staleNote()).toBeTruthy();
+    expect(rows()).toBeTruthy();
+  });
+
+  it("shows the error when the failed genebank has no data of its own", () => {
+    renderTab({
+      data: cached,
+      currentData: undefined,
+      isFetching: false,
+      error: { status: 500 },
+    });
+    expect(failedAlert()).toBeTruthy();
+    expect(rows()).toBeNull();
+  });
+
+  it("hides the cached rows after a 403 or 401", () => {
+    const denied = { data: cached, currentData: cached, isFetching: false };
+    renderTab({ ...denied, error: { status: 403 } });
+    expect(failedAlert()).toBeTruthy();
+    expect(rows()).toBeNull();
+    cleanup();
+    renderTab({ ...denied, error: { status: 401 } });
+    expect(failedAlert()).toBeNull(); // the session-expired flow takes over, as before
+    expect(staleNote()).toBeNull();
+    expect(rows()).toBeNull();
   });
 });

@@ -2228,9 +2228,9 @@ def _pinned_snapshot(g_id):
 def _on_snapshot(g_id, cached, *params, eligible=False):
     """Run a memoized genetics body on one pinned snapshot, cached under that snapshot's content key.
 
-    A result computed on snapshot v is stored under v even if v+1 is published
-    meanwhile, so it can never be served as v+1. Without a snapshot (a failed
-    cold build) the body runs uncached and returns the service's empty result;
+    A result computed on snapshot v is stored under v's inputs even if v+1 is
+    published meanwhile, so it is never served for other inputs. Without a
+    snapshot (a failed cold build) the body runs uncached and returns the service's empty result;
     when reading the snapshot fails, the uncached body fails as it always did.
     The memoized `_<name>_cached` bodies take `snap_key` only as part of the cache key.
     """

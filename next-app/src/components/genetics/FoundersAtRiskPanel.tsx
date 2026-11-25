@@ -18,6 +18,7 @@ import {
   useFetchFoundersAtRiskQuery,
   FounderAtRisk,
 } from "@/redux/api/apiSlice";
+import { queryView, StaleNote } from "./queryView";
 
 const riskConfig: Record<
   FounderAtRisk["risk_level"],
@@ -81,24 +82,20 @@ interface FoundersAtRiskPanelProps {
 const FoundersAtRiskPanel = ({ genebankId }: FoundersAtRiskPanelProps) => {
   const {
     data: founders,
-    currentData,
-    isLoading,
-    error,
-  } = useFetchFoundersAtRiskQuery(genebankId, {
-    refetchOnMountOrArgChange: true,
-  });
+    loading,
+    failed,
+    stale,
+  } = queryView(
+    useFetchFoundersAtRiskQuery(genebankId, {
+      refetchOnMountOrArgChange: true,
+    }),
+  );
 
-  if (isLoading) {
+  if (loading) {
     return <Skeleton variant="rounded" height={200} sx={{ mb: 6 }} />;
   }
 
-  const isAuthError =
-    error != null &&
-    typeof error === "object" &&
-    "status" in error &&
-    (error as { status: unknown }).status === 401;
-
-  if (error && !isAuthError && !currentData) {
+  if (failed) {
     return (
       <Alert severity="error" sx={{ mb: 6 }}>
         Kunde inte hämta data om founders.
@@ -120,6 +117,7 @@ const FoundersAtRiskPanel = ({ genebankId }: FoundersAtRiskPanelProps) => {
         <Typography variant="h6" gutterBottom>
           Founder-status ({founders.length} founders)
         </Typography>
+        {stale && <StaleNote />}
         <Typography
           variant="body2"
           color="textSecondary"

@@ -24,6 +24,7 @@ import GeneticsInfoPanel from "./GeneticsInfoPanel";
 import HelpTooltip from "./HelpTooltip";
 import TrendChart from "./TrendChart";
 import FoundersAtRiskPanel from "./FoundersAtRiskPanel";
+import { queryView, StaleNote } from "./queryView";
 import type { Theme } from "@mui/material/styles";
 
 const Chart = dynamic(() => import("react-apexcharts"), {
@@ -82,25 +83,21 @@ const FounderChart = ({
 const ThemedFounderChart = withTheme(FounderChart);
 
 const OverviewTab = ({ genebankId }: OverviewTabProps) => {
-  const {
-    data: metrics,
-    currentData: currentMetrics,
-    isLoading: metricsLoading,
-    error: metricsError,
-  } = useFetchPopulationMetricsQuery(genebankId, {
-    refetchOnMountOrArgChange: true,
-  });
+  // Both views belong to the selected genebank: its KPIs never mix with another's.
+  const metricsView = queryView(
+    useFetchPopulationMetricsQuery(genebankId, {
+      refetchOnMountOrArgChange: true,
+    }),
+  );
+  const foundersView = queryView(
+    useFetchFounderStatisticsQuery(genebankId, {
+      refetchOnMountOrArgChange: true,
+    }),
+  );
+  const metrics = metricsView.data;
+  const founders = foundersView.data;
 
-  const {
-    data: founders,
-    currentData: currentFounders,
-    isLoading: foundersLoading,
-    error: foundersError,
-  } = useFetchFounderStatisticsQuery(genebankId, {
-    refetchOnMountOrArgChange: true,
-  });
-
-  if (metricsLoading || foundersLoading) {
+  if (metricsView.loading || foundersView.loading) {
     return (
       <React.Fragment>
         <Alert severity="info" sx={{ mb: 6 }}>
@@ -118,17 +115,7 @@ const OverviewTab = ({ genebankId }: OverviewTabProps) => {
     );
   }
 
-  const isAuthError = (err: unknown) =>
-    err != null &&
-    typeof err === "object" &&
-    "status" in err &&
-    (err as { status: unknown }).status === 401;
-
-  // A failed refetch keeps this genebank's cached data on screen.
-  if (
-    (metricsError && !isAuthError(metricsError) && !currentMetrics) ||
-    (foundersError && !isAuthError(foundersError) && !currentFounders)
-  ) {
+  if (metricsView.failed || foundersView.failed) {
     return (
       <Alert severity="error">
         Kunde inte hämta genetikdata. Kontrollera att du har behörighet.
@@ -140,6 +127,7 @@ const OverviewTab = ({ genebankId }: OverviewTabProps) => {
 
   return (
     <React.Fragment>
+      {(metricsView.stale || foundersView.stale) && <StaleNote />}
       <GeneticsInfoPanel tab="overview" />
       <Grid
         container

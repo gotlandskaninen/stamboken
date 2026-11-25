@@ -11,6 +11,7 @@ import {
 } from "@/redux/api/apiSlice";
 import HelpTooltip from "./HelpTooltip";
 import GeneticsInfoPanel from "./GeneticsInfoPanel";
+import { queryView, StaleNote } from "./queryView";
 import { translateReasons } from "@/utils/translateReasons";
 
 const FilterChip = styled(MuiChip)<{ selected: boolean }>`
@@ -35,12 +36,14 @@ interface PrioritiesTabProps {
 const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
   const {
     data: priorities,
-    currentData,
-    isLoading,
-    error,
-  } = useFetchGeneticPrioritiesQuery(genebankId, {
-    refetchOnMountOrArgChange: true,
-  });
+    loading,
+    failed,
+    stale,
+  } = queryView(
+    useFetchGeneticPrioritiesQuery(genebankId, {
+      refetchOnMountOrArgChange: true,
+    }),
+  );
 
   const [filters, setFilters] = useState({
     critical: true,
@@ -122,7 +125,7 @@ const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
     },
   ];
 
-  if (isLoading) {
+  if (loading) {
     return (
       <Box>
         <Alert severity="info" sx={{ mb: 4 }}>
@@ -133,14 +136,7 @@ const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
     );
   }
 
-  const isAuthError =
-    error != null &&
-    typeof error === "object" &&
-    "status" in error &&
-    (error as { status: unknown }).status === 401;
-
-  // A failed refetch keeps this genebank's cached rows on screen.
-  if (error && !isAuthError && !currentData) {
+  if (failed) {
     return (
       <Alert severity="error">
         Kunde inte hämta prioriteringsdata. Kontrollera att du har behörighet.
@@ -150,6 +146,7 @@ const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
 
   return (
     <Box>
+      {stale && <StaleNote />}
       <GeneticsInfoPanel tab="priorities" />
       <Box
         sx={{

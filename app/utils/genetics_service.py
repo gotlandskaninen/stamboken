@@ -229,11 +229,6 @@ def _gene_drop_of(snap, n_iterations=1000, seed=None):
     return snap.memo("gene_drop_1000_None", compute) if (n_iterations, seed) == (1000, None) else compute()
 
 
-def _cached_gene_drop(snap):
-    """The /gene-drop/ endpoint's default run, if it has been computed on this snapshot."""
-    return snap.derived.get("gene_drop_1000_None")
-
-
 def _founder_stats_of(snap):
     return snap.memo(
         "founder_statistics",
@@ -723,13 +718,9 @@ def _founders_at_risk_of(snap):
     # Get average contributions from founder statistics
     avg_contributions = _founder_stats_of(snap).get("avg_contributions", {})
 
-    # Try to get allele retention from gene drop (if computed on this snapshot)
-    allele_retention = None
-    cached_gd = _cached_gene_drop(snap)
-    if cached_gd is not None:
-        allele_retention = cached_gd.get("allele_retention")
-
-    result = identify_founders_at_risk(individuals, contrib, avg_contributions, allele_retention)
+    # No allele retention: its only source is an unseeded /gene-drop/ run that this worker may or
+    # may not have made, and the shared memo must not depend on which worker filled it.
+    result = identify_founders_at_risk(individuals, contrib, avg_contributions)
 
     # Enrich lost/critical founders with recoverable carriers: individuals
     # outside the reference population that are plausibly alive and breedable
@@ -744,7 +735,9 @@ def _founders_at_risk_of(snap):
 
         for f_entry in needs_recovery:
             founder_id = f_entry["founder_id"]
-            recoverable = [ind_id for ind_id in alive_inactive_ids if contrib.get(ind_id, {}).get(founder_id, 0.0) > 0]
+            recoverable = sorted(
+                ind_id for ind_id in alive_inactive_ids if contrib.get(ind_id, {}).get(founder_id, 0.0) > 0
+            )
             f_entry["recoverable_carriers"] = recoverable
 
     return result

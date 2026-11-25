@@ -93,6 +93,24 @@ class TestDebouncePolling(unittest.TestCase):
 
     @patch("utils.cache_invalidation._redis_client")
     @patch("utils.cache_invalidation._recompute_genebank")
+    def test_claims_every_due_key_before_warming_any(self, mock_recompute, mock_redis):
+        """Genebank 1's build outlasts genebank 2's key: both are warmed all the same."""
+        due = str(int(time.time()) - 31)
+        store = {"debounce:1": due, "debounce:2": due}
+        mock_redis.keys.return_value = list(store)
+        mock_redis.get.side_effect = store.get
+        mock_redis.delete.side_effect = lambda key: store.pop(key, None)
+
+        def slow_warm_up(genebank_id):
+            store.clear()  # every key left has expired meanwhile
+
+        mock_recompute.side_effect = slow_warm_up
+        poll_debounce_keys()
+
+        assert [c.args[0] for c in mock_recompute.call_args_list] == [1, 2]
+
+    @patch("utils.cache_invalidation._redis_client")
+    @patch("utils.cache_invalidation._recompute_genebank")
     def test_waits_during_window(self, mock_recompute, mock_redis):
         """Debounce does not fire while within the delay window."""
         mock_redis.keys.return_value = ["debounce:1"]

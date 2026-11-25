@@ -27,6 +27,8 @@ _redis_url: str | None = None  # Stored for creating pub/sub client
 PUBSUB_CHANNEL = "herdbook:cache:invalidate"
 DEBOUNCE_DELAY_SECONDS = 30
 BUILD_WAIT_SECONDS = 300  # a large pedigree's snapshot build can outlast the debounce
+# Outlives a debounce poll that waits for builds and warms every genebank, so no pending key expires unwarmed.
+DEBOUNCE_KEY_SECONDS = 3600
 
 # Memoized function references — set by set_cache_and_functions()
 _memoized_functions: list = []
@@ -126,7 +128,7 @@ def trigger_invalidation(genebank_id: int):
         _redis_client.set(
             f"debounce:{genebank_id}",
             int(time.time()),
-            ex=120,  # expire after 2min as safety
+            ex=DEBOUNCE_KEY_SECONDS,  # safety: a key nobody polls does not linger
         )
         logger.info(f"Cache invalidation triggered for genebank {genebank_id}")
 
@@ -245,7 +247,9 @@ def poll_debounce_keys():
     Check for debounce keys ready to fire. Called every 5s by APScheduler on the leader.
 
     For each debounce:{genebank_id} key where now - timestamp >= 30s:
-    delete the key and run eager recomputation.
+    delete the key and run eager recomputation. Every due key is claimed
+    before any recompute: one genebank's wait for its build must not let
+    another's key expire.
     """
     if _redis_client is None:
         return
@@ -256,7 +260,7 @@ def poll_debounce_keys():
         return
 
     now = int(time.time())
-
+    due = []
     for key in keys:
         try:
             val = _redis_client.get(key)
@@ -266,9 +270,12 @@ def poll_debounce_keys():
             if now - timestamp >= DEBOUNCE_DELAY_SECONDS:
                 genebank_id = int(key.split(":")[1])
                 _redis_client.delete(key)
-                _recompute_genebank(genebank_id)
+                due.append(genebank_id)
         except (redis.RedisError, ValueError) as e:
             logger.warning(f"Error processing debounce key {key}: {e}")
+
+    for genebank_id in due:
+        _recompute_genebank(genebank_id)
 
 
 def poll_genetics_version():

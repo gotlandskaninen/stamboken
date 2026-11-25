@@ -18,6 +18,7 @@ import {
   useFetchGeneticsTrendsQuery,
   TrendDataPoint,
 } from "@/redux/api/apiSlice";
+import { queryView, StaleNote } from "./queryView";
 
 const Chart = dynamic(() => import("react-apexcharts"), {
   ssr: false,
@@ -30,11 +31,10 @@ interface TrendChartProps {
 }
 
 const TrendChart = ({ genebankId }: TrendChartProps) => {
-  const { data, currentData, isLoading, error } = useFetchGeneticsTrendsQuery(
-    genebankId,
-    {
+  const { data, loading, failed, stale } = queryView(
+    useFetchGeneticsTrendsQuery(genebankId, {
       refetchOnMountOrArgChange: true,
-    },
+    }),
   );
   const theme = useTheme();
 
@@ -58,17 +58,11 @@ const TrendChart = ({ genebankId }: TrendChartProps) => {
     [data, effectiveStart, effectiveEnd],
   );
 
-  if (isLoading) {
+  if (loading) {
     return <Skeleton variant="rounded" height={300} sx={{ mb: 6 }} />;
   }
 
-  const isAuthError =
-    error != null &&
-    typeof error === "object" &&
-    "status" in error &&
-    (error as { status: unknown }).status === 401;
-
-  if (error && !isAuthError && !currentData) {
+  if (failed) {
     return (
       <Alert severity="error" sx={{ mb: 6 }}>
         Kunde inte hämta trenddata.
@@ -224,6 +218,7 @@ const TrendChart = ({ genebankId }: TrendChartProps) => {
         <Typography variant="h6" gutterBottom>
           Genetiska trender
         </Typography>
+        {stale && <StaleNote />}
 
         <Box
           sx={{
