@@ -151,6 +151,25 @@ class TestMatrikelDomainFunctions(DatabaseTest):
         matrikel.reactivate_person(person, self.admin)
         self.assertEqual(self._added_notice(person).status, "sent")
 
+    def test_reactivate_main_member_audits_the_new_main(self):
+        db.Member.update(end_date=date(2024, 3, 1)).where(db.Member.id == self.main.id).execute()
+        matrikel.reactivate_person(self.main, self.admin)
+        audit = db.MatrikelAudit.get(db.MatrikelAudit.action == "main_member_changed")
+        self.assertEqual(audit.payload, {"previous_person_id": None, "new_person_id": self.main.id})
+
+    def test_reactivate_second_main_member_refused(self):
+        db.Member.update(role="huvudmedlem", end_date=date(2024, 3, 1)).where(db.Member.id == self.family.id).execute()
+        with self.assertRaises(ValueError):
+            matrikel.reactivate_person(self.family, self.admin)
+        self.assertIsNotNone(db.Member.get_by_id(self.family.id).end_date)
+
+    def test_reactivate_person_in_inactive_membership_refused(self):
+        matrikel.soft_delete_person(self.family, self.admin)
+        db.Membership.update(membership_status="inactive").where(db.Membership.id == self.membership.id).execute()
+        with self.assertRaises(ValueError):
+            matrikel.reactivate_person(self.family, self.admin)
+        self.assertIsNotNone(db.Member.get_by_id(self.family.id).end_date)
+
     def test_reactivate_person_refuses_anonymized_and_active(self):
         with self.assertRaises(ValueError):
             matrikel.reactivate_person(self.family, self.admin)  # still active
@@ -856,6 +875,23 @@ class TestPersonMutationEndpoints(MatrikelAdminTestBase):
         resp = self.patch_json(f"/api/v2/persons/{self.family.id}", {"role": "skotare"})
         self.assertEqual(resp.status_code, 200, resp.data)
         self.assertEqual(db.Member.get_by_id(self.family.id).role, "skotare")
+
+    def test_reactivate_endpoint_403_for_manager_and_owner(self):
+        self.client.delete(f"/api/v2/persons/{self.family.id}")
+        for username in ("man", "owner"):
+            self.login(username)
+            resp = self.client.post(f"/api/v2/persons/{self.family.id}/reactivate")
+            self.assertEqual(resp.status_code, 403, username)
+        self.assertIsNotNone(db.Member.get_by_id(self.family.id).end_date)
+
+    def test_reactivate_endpoint_refuses_linked_account(self):
+        user = da.register_user("fam@example.com", "pass", username="fam")
+        self.family.user = user
+        self.family.save()
+        self.client.delete(f"/api/v2/persons/{self.family.id}")
+        resp = self.client.post(f"/api/v2/persons/{self.family.id}/reactivate")
+        self.assertEqual(resp.status_code, 409)
+        self.assertIn("Koppla bort kontot först", resp.get_json()["detail"])
 
     def test_reactivate_endpoint(self):
         self.login()

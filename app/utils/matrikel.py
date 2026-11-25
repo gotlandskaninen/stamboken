@@ -474,6 +474,12 @@ def reactivate_person(member, actor):
             queue_member_added(person)
         if person.role == "huvudmedlem":
             reserve_holder(person.id)
+            write_matrikel_audit(
+                actor,
+                "main_member_changed",
+                membership,
+                {"previous_person_id": None, "new_person_id": person.id},
+            )
         write_matrikel_audit(
             actor,
             "person_reactivated",
