@@ -76,8 +76,7 @@ const descriptions: Record<
     {
       term: "Avelsprioritet",
       description:
-        "Högsta: enda kaninen i beräkningen med gener från ett founderdjur, eller ett medelsläktskap på eller under gränsen för de 5\u00a0% minst släkta. Hög: på eller under gränsen för de 25\u00a0% minst släkta, bland de 25\u00a0% med flest unika gener, eller bär gener från ett founderdjur med liten andel av generna (under hälften av en jämn fördelning). Övriga: resten.",
-      source: "Ballou och Lacy 1995 (rangordning efter medelsläktskap)",
+        "Högsta: enda kaninen i beräkningen med gener från ett founderdjur, eller ett medelsläktskap på eller under gränsen för de 5\u00a0% minst släkta. Hög: på eller under gränsen för de 25\u00a0% minst släkta, bland de 25\u00a0% med flest unika gener, eller bär gener från ett founderdjur med liten andel av generna (under hälften av en jämn fördelning). Övriga: resten. Nivåerna är Stambokens egen regel, inte en vedertagen standard: gränserna är andelar av kaninerna, så ungefär 5\u00a0% hamnar alltid i Högsta och minst 25\u00a0% i Hög, hur genbanken än mår.",
     },
     {
       term: "Ovanliga gener (0–100)",

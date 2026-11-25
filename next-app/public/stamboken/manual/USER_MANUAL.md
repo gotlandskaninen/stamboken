@@ -962,8 +962,10 @@ första anropet och kan ta upp till en minut.
 1. Välj **Genbank** om du ansvarar för flera.
 2. **Översikt** – nyckeltalen **Kaniner i beräkningen** (med datumet som räkningen
    börjar från), **Effektiv populationsstorlek (Ne)** (målet är minst 50, helst 100),
-   **Effektivt antal founderdjur (FE)** och **Medelsläktskap (MK)**, som jämförs med
-   förra året eftersom det inte finns någon gräns för vad som är högt. Sedan kommer
+   **Effektivt antal founderdjur (FE)** och **Medelsläktskap (MK)**. Det finns ingen
+   gräns för vad som är ett högt medelsläktskap, så kortet visar i stället de två
+   senaste stängda åren under dagens tal; de räknas på varje års kaniner och jämförs
+   med varandra, inte med dagens tal. Sedan kommer
    diagrammet **Founderdjur med störst andel av generna**, rutan **Inavel** med
    genomsnittlig inavel (F) och inavelsökning per generation (ΔF), **Genetiska
    trender** med ett mått i taget och tabellen **Founderdjurens läge** med statusarna

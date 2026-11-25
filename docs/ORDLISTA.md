@@ -48,8 +48,10 @@ Fliken under Genetik som visar vilka kaniner som är viktigast att avla på, i t
 Hög och Övriga. Högsta är den enda kaninen i beräkningen med gener från ett founderdjur, eller en
 kanin vars medelsläktskap är på eller under gränsen för de 5 % minst släkta. Hög är på eller under
 gränsen för de 25 % minst släkta, bland de 25 % med flest unika gener, eller bär gener från ett
-founderdjur som har liten andel av generna. Övriga är resten. Ordet Kritisk används inte, varken
-här eller om founderdjurens läge.\
+founderdjur som har liten andel av generna. Övriga är resten. Nivåerna är Stambokens egen regel,
+inte en vedertagen standard (PMx rangordnar efter medelsläktskap inom kön och har inga sådana
+klasser): gränserna är andelar av kaninerna, så ungefär 5 % blir alltid Högsta och minst 25 % Hög,
+hur genbanken än mår. Ordet Kritisk används inte, varken här eller om founderdjurens läge.\
 Kod: `calculate_genetic_priorities` (`priority`: `critical`, `important`, `normal`) · Legacy-manual: – · Legacy: – · Nytt UI: samma, "Högsta", "Hög", "Övriga" (PrioritiesTab.tsx:33–35)
 
 **Benring**\
@@ -110,7 +112,7 @@ Hur stor en idealisk population skulle vara för att förlora genetisk variation
 genbanken; ju större, desto bättre. Stamboken räknar den från hur mycket inaveln har ökat per
 generation hos varje kanin i beräkningen (realiserad Ne, Gutiérrez m.fl. 2008), både för i dag och
 för varje stängt år i trenden. Visas som heltal. FAO anger minst 50, Frankham m.fl. 2014 minst 100.\
-Kod: `effective_population_size` (`calculate_realised_ne`) · Legacy-manual: – · Legacy: – · Nytt UI: samma, "Ne" (OverviewTab.tsx:200, TrendChart.tsx)
+Kod: `effective_population_size` (`calculate_realised_ne`) · Legacy-manual: – · Legacy: – · Nytt UI: samma, "Ne" (OverviewTab.tsx:201, TrendChart.tsx)
 
 **Founderdjur**\
 Rasens ursprungsdjur: kaniner utan kända föräldrar i stamboken. Bestämd form plural founderdjuren.
@@ -126,7 +128,7 @@ av generna som i dag (Lacy 1989). Ju högre FE, desto jämnare fördelning. Okä
 så FE kan bli större än antalet founderdjur med bärare. På
 skärmen heter måttet effektivt antal founderdjur och visas med en decimal. Det är inte samma mått
 som founder genome equivalents (FGE), som också räknar med att gener går förlorade av slumpen.\
-Kod: `founder_equivalents` · Legacy-manual: – · Legacy: – · Nytt UI: "Effektivt antal founderdjur (FE)" (OverviewTab.tsx:214), "FE" (TrendChart.tsx)
+Kod: `founder_equivalents` · Legacy-manual: – · Legacy: – · Nytt UI: "Effektivt antal founderdjur (FE)" (OverviewTab.tsx:215), "FE" (TrendChart.tsx)
 
 **Färg / färganteckning**\
 Färgen väljs ur genbankens lista med godkända färger; saknas färgen kontaktar du genbanksansvarig.
@@ -314,9 +316,10 @@ Hur nära släkt två kaniner är, i procent. En avkommas inavelskoefficient är
 mellan föräldrarna. Medelsläktskap (MK) är en kanins genomsnittliga släktskap med de aktiva djuren
 i genbanken; ett lågt värde betyder att kaninen bär ovanliga gener som är viktiga att föra vidare.
 Det finns ingen gräns för vad som är ett högt medelsläktskap: talet stiger ju mer av stamtavlan som är
-känd (FAO 2023, CGRFA-19/23/10.2/Inf.4, s. 12). Genetiksidan visar det därför utan färg och jämför
-med förra stängda året.\
-Kod: `mean_kinship`, `inbreeding` · Legacy-manual: "släkt" · Legacy: "Genomsnittligt släktskap" · Nytt UI: "Medelsläktskap (MK)" på genetiksidan, i procent (OverviewTab.tsx:227), "kinship-koefficienten" under Parningsförslag
+känd (FAO 2023, CGRFA-19/23/10.2/Inf.4, s. 12), och tal räknade på olika uppsättningar kaniner går
+inte att jämföra. Genetiksidan visar därför dagens värde utan färg och, bredvid, de två senaste
+stängda åren, som båda räknas på respektive års kaniner.\
+Kod: `mean_kinship`, `inbreeding` · Legacy-manual: "släkt" · Legacy: "Genomsnittligt släktskap" · Nytt UI: "Medelsläktskap (MK)" på genetiksidan, i procent (OverviewTab.tsx:228), "kinship-koefficienten" under Parningsförslag
 
 **Släktträd / härstamning**\
 Släktträdet visar kaninens föräldrar, mor- och farföräldrar och längre bakåt. Härstamningen är
@@ -431,7 +434,7 @@ ordet i `scripts/check-ui-terms.sh`, med datum om det beslutades 2026-10-30 (se 
 | Provparning | "Provparning", "provpara" (manual:68, 61) | "Provparning" (navigation.tsx:194) | samma som nu | "Provparning" (`sidebar.provparning`), "Provpara" (`individual.edit.testMate`), "testparning" (bli-genbanksbesattning/page.tsx:112, stamboken-online/page.tsx:45) | Öppen fråga |
 | Registrera | "registrera/skapa intyg" (manual:145) | "Registrera" (navigation.tsx:248) | samma som nu | "Registrera" (`litterRoster.registerButton`), "Skriv in ungen i stamboken" (`litterRoster.registerTooltip`) | Öppen fråga |
 | Oregistrerade ungar | "Oregistrerade djur" (manual:30), "Skapa oregistrerade kaniner" (manual:141) | "Visa oregistrerade djur" (herd_view.tsx:184), "Skapa oregistrerade kaniner" (breeding_form.tsx:890) | samma som nu | "Kullista" (`litterRoster.title`), "Lägg till ungar" (`litterRoster.add`), "Behålls oreg." (`bunny.fate.kept_unregistered`) | Öppen fråga |
-| Släktskap | "släkt" (manual:61) | "Genomsnittligt släktskap/ Mean Kinship" (individual_view.tsx:255) | "MK — Genomsnittlig medelkinship", "kinship-koefficienten" (GeneticsInfoPanel.tsx:34, 80) | "Medelsläktskap (MK)" (GeneticsInfoPanel.tsx:57), "kinship-koefficienten" (GeneticsInfoPanel.tsx:107, Parningsförslag) | Öppen fråga |
+| Släktskap | "släkt" (manual:61) | "Genomsnittligt släktskap/ Mean Kinship" (individual_view.tsx:255) | "MK — Genomsnittlig medelkinship", "kinship-koefficienten" (GeneticsInfoPanel.tsx:34, 80) | "Medelsläktskap (MK)" (GeneticsInfoPanel.tsx:57), "kinship-koefficienten" (GeneticsInfoPanel.tsx:106, Parningsförslag) | Öppen fråga |
 | Testmiljön | "Testsystemet", "den skarpa sidan" (manual:238–239) | "OBS DETTA ÄR TESTSYSTEMET!" (navigation.tsx:345) | samma som nu | "testmiljön", "riktiga stamboken" (AvatarMenu.tsx:199–200), "TESTMILJÖ" (DemoBanner.client.tsx:21), "Demosynkronisering" (SystemPillNav.tsx:23) | Öppen fråga |
 | Webbkurs | – | "Validerad" (userForm.tsx:353) | samma som nu | "Webbkurs genomförd (validerad)" (UserEditClient.tsx:366) | Öppen fråga |
 | Administrationen | – | "Administrera" (navigation.tsx:259) | samma som nu | "Administration" (`sidebar.adminSection`) | Öppen fråga |
@@ -486,7 +489,7 @@ Projektägaren beslutade 2026-10-30:
 16. Beslutat 2026-11-25: **Founderdjur** (bestämd form plural founderdjuren) om rasens ursprungsdjur, alltid med en svensk förklaring där ordet först står och under Förklaringar; inte founder, grundare eller founder-linje. Se posten Founderdjur.
 17. Beslutat 2026-11-25: **Avelsprioritet** som rubrik och kolumn, med nivåerna **Högsta**, **Hög** och **Övriga**. Kritisk används inte längre, inte heller om founderdjurens läge. Se posten Avelsprioritet.
 18. Beslutat 2026-11-25: **Ne** på genetiksidan är en och samma skattning i kortet och i trenden: realiserad Ne från varje kanins inavelsökning (Gutiérrez m.fl. 2008), i trenden räknad för varje år på det årets kaniner. Se posten Effektiv populationsstorlek (Ne).
-19. Beslutat 2026-11-25: **Medelsläktskap (MK)** visas utan gräns och färg (inte "under 5 %"), jämfört med förra stängda året. Ingen källa ger en absolut gräns (FAO 2023, s. 12). Se posten Släktskapskoefficient / medelsläktskap (MK).
+19. Beslutat 2026-11-25: **Medelsläktskap (MK)** visas utan gräns och färg (inte "under 5 %"), med de två senaste stängda åren bredvid, räknade på samma regel. Ingen källa ger en absolut gräns (FAO 2023, s. 12). Se posten Släktskapskoefficient / medelsläktskap (MK).
 
 ## Öppna frågor
 

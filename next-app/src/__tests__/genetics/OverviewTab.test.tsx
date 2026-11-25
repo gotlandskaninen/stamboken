@@ -86,7 +86,7 @@ describe("OverviewTab", () => {
     expect(screen.getByText("75 ± 5")).toBeDefined();
     expect(screen.getByText("26,3")).toBeDefined();
     expect(screen.getByText("2,6 %")).toBeDefined();
-    expect(screen.getByText("förra året –")).toBeDefined(); // no closed year yet
+    expect(screen.getByText("stängda år: –")).toBeDefined(); // no closed year yet
     expect(screen.queryByText(/under 5|5–10|över 10/)).toBeNull();
     // The card and the table count the same founderdjur.
     expect(
@@ -102,26 +102,28 @@ describe("OverviewTab", () => {
     expect(screen.queryByText(/81/)).toBeNull();
   });
 
-  it("compares MK with the last closed year, without a verdict", () => {
-    const lastYear = new Date().getFullYear() - 1;
+  it("compares the two latest closed years on one rule, without a verdict", () => {
     trendsQuery.mockReturnValueOnce({
       data: [
-        { year: lastYear - 1, mean_kinship: 0.022 },
-        { year: lastYear, mean_kinship: 0.0241 },
+        { year: 2023, mean_kinship: 0.022 },
+        { year: 2024, mean_kinship: 0.0289 },
+        { year: 2025, mean_kinship: 0.0302 },
       ],
       isLoading: false,
     });
     renderTab();
-    expect(screen.getByText("2,6 %")).toBeDefined();
-    expect(screen.getByText("förra året 2,4 %")).toBeDefined();
+    expect(screen.getByText("2,6 %")).toBeDefined(); // today
+    expect(
+      screen.getByText("2024: 2,9 % · 2025: 3,0 % (stängda år)"),
+    ).toBeDefined();
     cleanup();
 
     trendsQuery.mockReturnValueOnce({
-      data: [{ year: lastYear - 2, mean_kinship: 0.0241 }],
+      data: [{ year: 2025, mean_kinship: null }],
       isLoading: false,
     });
     renderTab();
-    expect(screen.getByText(`år ${lastYear - 2} 2,4 %`)).toBeDefined();
+    expect(screen.getByText("2025: – (stängt år)")).toBeDefined();
   });
 
   it("states the reference window's first day in Swedish", () => {

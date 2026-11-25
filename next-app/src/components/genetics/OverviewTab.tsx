@@ -39,15 +39,16 @@ const Chart = dynamic(() => import("react-apexcharts"), {
 });
 
 // No literature gives an absolute MK threshold (FAO 2023: kinship rises with pedigree
-// knowledge), so the card compares with the last closed year instead of colouring a level.
-function lastYearMk(trend: TrendDataPoint[]): string {
-  const last = trend[trend.length - 1];
-  if (last?.mean_kinship == null) return "förra året –";
-  const when =
-    last.year === new Date().getFullYear() - 1
-      ? "förra året"
-      : `år ${last.year}`;
-  return `${when} ${percent(last.mean_kinship)}`;
+// knowledge), so no level is coloured. The comparison is the two latest closed years, both on
+// the history rule: today's set is another population and does not compare with them.
+function closedYearsMk(trend: TrendDataPoint[]): string {
+  const years = trend.slice(-2);
+  if (years.length === 0) return "stängda år: –";
+  const shown = years.map(
+    (d) =>
+      `${d.year}: ${d.mean_kinship == null ? "–" : percent(d.mean_kinship)}`,
+  );
+  return `${shown.join(" · ")} (${years.length === 1 ? "stängt år" : "stängda år"})`;
 }
 
 const swedishDate = (iso: string) =>
@@ -226,8 +227,8 @@ const OverviewTab = ({ genebankId }: OverviewTabProps) => {
           <KpiCard
             title="Medelsläktskap (MK)"
             value={empty ? "–" : percent(metrics.mean_kinship)}
-            subtitle={trend ? lastYearMk(trend) : undefined}
-            tooltip={MK_TEXT}
+            subtitle={trend ? closedYearsMk(trend) : undefined}
+            tooltip={`${MK_TEXT} Det stora talet gäller i dag. Åren under är räknade på varje års kaniner, så de är inte samma population som i dag: jämför åren med varandra, inte med dagens tal.`}
           />
         </Grid>
       </Grid>
