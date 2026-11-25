@@ -27,10 +27,19 @@ export default async function HerdListPage({
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
   const user = await requireHerdAdmin();
-  const sp = await searchParams;
+  const sp = { ...(await searchParams) };
   // Positivt heltal — bråktal/NaN/negativt blir sida 1; över-taket
   // omdirigeras till sista sidan nedan.
   const page = Math.max(1, Math.trunc(Number(sp.page ?? "1")) || 1);
+
+  // A manager of a single genebank has nothing to choose between.
+  const genebanks = GENEBANKS.filter(
+    (gb) => user.is_admin || user.is_manager?.includes(gb.id),
+  );
+  // A genebank the user cannot choose is dropped, not sent: the API says 403.
+  if (!genebanks.some((gb) => String(gb.id) === sp.genebank_id)) {
+    delete sp.genebank_id;
+  }
 
   const qs = new URLSearchParams({
     page: String(page),
@@ -44,10 +53,6 @@ export default async function HerdListPage({
   const { herds, total } = await fetchApi<HerdListResponse>(
     `/manage/herd?${qs.toString()}`,
     { forceProd: true }, // Admin reads force prod too.
-  );
-  // A manager of a single genebank has nothing to choose between.
-  const genebanks = GENEBANKS.filter(
-    (gb) => user.is_admin || user.is_manager?.includes(gb.id),
   );
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));

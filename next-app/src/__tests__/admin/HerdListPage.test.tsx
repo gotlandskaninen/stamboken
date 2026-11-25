@@ -70,6 +70,14 @@ describe("herd list page (#214)", () => {
     expect(url.searchParams.get("active")).toBe("true");
   });
 
+  it("drops a genebank the manager cannot choose", async () => {
+    requireHerdAdmin.mockResolvedValue({ id: 3, is_manager: [1] });
+    await renderPage({ genebank_id: "2" });
+
+    const url = new URL(fetchApi.mock.calls[0][0], "http://x");
+    expect(url.searchParams.has("genebank_id")).toBe(false);
+  });
+
   it("shows an admin the genebank filter too", async () => {
     requireHerdAdmin.mockResolvedValue({ id: 1, is_admin: true });
     await renderPage();

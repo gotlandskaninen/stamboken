@@ -1226,6 +1226,8 @@ def _opt_bool_arg(name):
     return raw == "true"
 
 
+# [Next.js] Only the v2 adminpanel calls this GET, so its 403 → 200 for managers (#214) is an accepted exception
+# to ADR-0006; legacy uses the POST/PATCH above.
 @APP.route("/api/manage/herd", methods=["GET"])
 @login_required
 @manager_required
@@ -1246,11 +1248,18 @@ def list_all_herds():
             return unauthorized()
         if not user.is_admin and not user.is_manager:
             return problem(403, "Åtkomst nekad", "Du saknar behörighet för denna åtgärd.")
+        genebank_id = request.args.get("genebank_id", type=int)
+        if genebank_id is not None:
+            err = check_genebank_manager_access(current_user, genebank_id) or check_genebank_manager_access(
+                user, genebank_id
+            )
+            if err is not None:
+                return err
         return jsonify(
             da.list_all_herds(
                 current_user,
                 user,
-                genebank_id=request.args.get("genebank_id", type=int),
+                genebank_id=genebank_id,
                 active=_opt_bool_arg("active"),
                 has_owner=_opt_bool_arg("has_owner"),
                 search=request.args.get("q"),

@@ -56,14 +56,16 @@ test.describe("manager scoped herd view", () => {
     await expect(page.getByRole("link", { name: /^M\d+/ })).toHaveCount(0);
   });
 
-  test("another genebank's filter shows no herds", async ({ page }) => {
+  test("another genebank's filter is dropped, not shown", async ({ page }) => {
+    // The API answers 403 for a genebank the manager does not manage; the
+    // page drops that filter and lists the manager's own herds.
     await page.goto(
       `/stamboken/admin/besattningar?genebank_id=${mkGenebankId}`,
     );
     await expect(
-      page.getByRole("textbox", { name: "Sök besättningsnummer eller namn" }),
+      page.getByRole("link", { name: /^G\d+/ }).first(),
     ).toBeVisible();
-    await expect(page.getByRole("link", { name: /^[GM]\d+/ })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: /^M\d+/ })).toHaveCount(0);
   });
 
   test("out-of-range page redirects to the last page", async ({ page }) => {

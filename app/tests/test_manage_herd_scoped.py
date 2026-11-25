@@ -71,11 +71,16 @@ class TestManageHerdScoped(DatabaseTest):
     def test_manage_herd_list_manager_cannot_reach_other_genebank(self):
         self.login("man", "pass")
         other_gb = self.herds[2].genebank_id
-        for query in (f"genebank_id={other_gb}", "q=M3", f"genebank_id={other_gb}&q=M3"):
+        for query in (f"genebank_id={other_gb}", f"genebank_id={other_gb}&q=M3"):
             resp = self.client.get(f"/api/manage/herd?{query}")
-            self.assertEqual(resp.status_code, 200, resp.data)
-            self.assertEqual(resp.get_json()["total"], 0, query)
-            self.assertEqual(resp.get_json()["herds"], [], query)
+            self.assertEqual(resp.status_code, 403, query)  # ADR-0014: a named genebank is checked
+            self.assertIn("application/problem+json", resp.content_type)
+            self.assertNotIn("M3", resp.get_data(as_text=True))
+        resp = self.client.get("/api/manage/herd?q=M3")
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual((resp.get_json()["total"], resp.get_json()["herds"]), (0, []))
+        own = self.client.get(f"/api/manage/herd?genebank_id={self.herds[0].genebank_id}")
+        self.assertEqual(own.get_json()["total"], 2)
 
     def test_manage_herd_list_viewer_and_owner_get_403(self):
         for username in ("spec", "owner"):
