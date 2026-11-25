@@ -1592,7 +1592,8 @@ def _household_person(user, workspace, persons):
 
 def _plan_household_links(workspace) -> tuple[list, list, int]:
     """Memberships with a herd that several active accounts own: returns (actions [(codes, line, main, user,
-    person data or None for the main member's link)], listed [(codes, reason)], already)."""
+    person data or None for the main member's link, (main member's account id, herd ids the account owns) for a new
+    person)], listed [(codes, reason)], already). A household's main link comes before its new persons."""
     owners, incomplete = legacy_owner_index()
     herd_memberships = dict(Herd.select(Herd.id, Herd.membership).where(Herd.membership.is_null(False)).tuples())
     memberships_of: dict[int, set[int]] = {}
@@ -1602,7 +1603,7 @@ def _plan_household_links(workspace) -> tuple[list, list, int]:
                 memberships_of.setdefault(user_id, set()).add(herd_memberships[herd_id])
     linked = {person.user_id: person for person in Member.select().where(Member.user.is_null(False))}
 
-    households: dict[int, tuple[list, dict]] = {}  # membership id -> (codes, {user id: user})
+    households: dict[int, tuple[list, list, dict]] = {}  # membership id -> (codes, herd ids, {user id: user})
     herds = (
         Herd.select(Herd, Membership)
         .join(Membership)
@@ -1612,12 +1613,13 @@ def _plan_household_links(workspace) -> tuple[list, list, int]:
     for herd in herds:
         active = {uid: user for uid, user in owners.get(herd.id, {}).items() if user.is_active}
         if len(active) > 1:
-            codes, users = households.setdefault(herd.membership_id, ([], {}))
+            codes, herd_ids, users = households.setdefault(herd.membership_id, ([], [], {}))
             codes.append(herd.herd)
+            herd_ids.append(herd.id)
             users.update(active)
 
     actions, listed, already = [], [], set()
-    for membership_id, (codes, users) in households.items():
+    for membership_id, (codes, herd_ids, users) in households.items():
         persons = list(Member.select().where(Member.membership == membership_id, Member.end_date.is_null(True)))
         main = next((p for p in persons if p.role == "huvudmedlem"), None)
         if main is None:
@@ -1646,7 +1648,7 @@ def _plan_household_links(workspace) -> tuple[list, list, int]:
                 listed.append((codes, "länken skulle ge kontot åtkomst till fler besättningar"))
                 continue
             [(_, _, _, reason)] = pairs.values()
-            actions.append((codes, _pair_line(main, main_user, codes, reason), main, main_user, None))
+            actions.append((codes, _pair_line(main, main_user, codes, reason), main, main_user, None, None))
 
         for user in users.values():
             if user is main_user:
@@ -1671,16 +1673,17 @@ def _plan_household_links(workspace) -> tuple[list, list, int]:
                 f"{_q(data['first_name'] + ' ' + data['last_name'])} {_q(data['email'])} ({column}) "
                 f"-> konto {user.id} | {_account_detail(user)}"
             )
-            actions.append((codes, line, main, user, data))
+            owned = [herd_id for herd_id in herd_ids if user.id in owners.get(herd_id, {})]
+            actions.append((codes, line, main, user, data, (main_user.id, owned)))
 
     # Two new persons with one name in a membership, or one login address anywhere: none of them is added.
     family = [action for action in actions if action[4] is not None]
     names = Counter(
-        (main.membership_id, _norm_name(f"{d['first_name']} {d['last_name']}")) for _, _, main, _, d in family
+        (main.membership_id, _norm_name(f"{d['first_name']} {d['last_name']}")) for _, _, main, _, d, _ in family
     )
-    addresses = Counter(_norm_email(d["email"]) for _, _, _, _, d in family)
+    addresses = Counter(_norm_email(d["email"]) for _, _, _, _, d, _ in family)
     for action in family:
-        codes, _, main, user, data = action
+        codes, _, main, user, data, _ = action
         if names[(main.membership_id, _norm_name(f"{data['first_name']} {data['last_name']}"))] > 1:
             listed.append((codes, f"konto {user.id}: flera konton i planen får samma namn i medlemskapet"))
         elif addresses[_norm_email(data["email"])] > 1:
@@ -1691,10 +1694,30 @@ def _plan_household_links(workspace) -> tuple[list, list, int]:
     return actions, listed, len(already)
 
 
-def _add_household_person(main, user, data, actor) -> None:
-    """The same add as a manual one (address check, audit, medlemskap.tillagd), and the link, in one transaction."""
+def _add_household_person(main, user, data, planned, actor) -> None:
+    """The same add as a manual one (address check, audit, medlemskap.tillagd), and the link, in one transaction.
+    First, under the locks link_member_user takes and in its order (membership, then account), what the plan rested
+    on must still hold: an active membership, the main member linked to her account, and the account an owner of
+    one of the household's herds."""
+    main_user_id, herd_ids = planned
     with DB_PROXY.atomic():
-        person = add_person(main.membership, data, actor)
+        membership = Membership.select().where(Membership.id == main.membership_id).for_update().get()
+        account = User.select().where(User.id == user.id).for_update().get()
+        if membership.membership_status != Status.ACTIVE:
+            raise LinkError("Medlemskapet är inte aktivt", "Medlemskapet är inte längre aktivt")
+        main_linked = Member.select().where(
+            Member.id == main.id,
+            Member.role == "huvudmedlem",
+            Member.end_date.is_null(True),
+            Member.user == main_user_id,
+        )
+        if not main_linked.exists():
+            raise LinkError("Huvudmedlemmen är inte kopplad", "Huvudmedlemmen är inte kopplad till sitt konto")
+        herds = Herd.select(Herd.id).where(Herd.id.in_(herd_ids), Herd.membership == membership.id)
+        roles = [r for r in account.privileges if isinstance(r, dict) and r.get("level") == "owner"]
+        if not {str(r.get("herd")).lstrip("0") for r in roles} & {str(herd.id) for herd in herds}:
+            raise LinkError("Kontot äger inte besättningen", "Kontot har inte längre rollen ägare på besättningen")
+        person = add_person(membership, data, actor)
         person.notes = _HOUSEHOLD_NOTE
         person.save(only=[Member.notes])
         link_member_user(person.id, user.id, actor=actor, mode="cli", invalidate=False)
@@ -1730,20 +1753,25 @@ def link_household_cmd(workspace_path: str, apply_links: bool, actor_user_id: in
     """
     actor = _link_actor(apply_links, actor_user_id, plan_value)
     actions, listed, already = _plan_household_links(_read_workspace(workspace_path))
-    value = _plan_checksum(line for _, line, _, _, _ in actions)
+    value = _plan_checksum(action[1] for action in actions)
     if apply_links and plan_value != value:
-        _echo_plan("Att koppla", [line for _, line, _, _, _ in actions], listed, already)
+        _echo_plan("Att koppla", [action[1] for action in actions], listed, already)
         click.echo(f"Kontrollvärde: {value}")
         raise click.ClickException(_PLAN_CHANGED)
 
-    done = []
-    for codes, line, main, user, data in actions:
+    done, refused_main = [], set()
+    for codes, line, main, user, data, planned in actions:
+        if apply_links and data is not None and main.membership_id in refused_main:
+            listed.append((codes, f"konto {user.id}: inte tillagt, huvudmedlemmens koppling avvisades"))
+            continue
         try:
             if apply_links and data is None:
                 link_member_user(main.id, user.id, actor=actor, mode="cli")
             elif apply_links:
-                _add_household_person(main, user, data, actor)
+                _add_household_person(main, user, data, planned, actor)
         except (ConfirmRequired, LinkError, IntegrityError, AddressTaken, ValueError) as exc:
+            if data is None:
+                refused_main.add(main.membership_id)
             listed.append((codes, f"avvisades ({type(exc).__name__}: {_q(exc)})"))
         else:
             done.append(line)

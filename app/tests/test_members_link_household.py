@@ -4,13 +4,16 @@ import csv
 import os
 import re
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
+import cli.members as members_cli_module
 import utils.data_access as da
 import utils.database as db
 from cli.members import members_cli
 from click.testing import CliRunner
 from flask.cli import ScriptInfo
 from herdbook import APP  # noqa: E402
+from utils.matrikel import LinkError
 
 from tests.database_test import DatabaseTest  # noqa: E402
 
@@ -320,6 +323,64 @@ class TestMembersLinkHousehold(DatabaseTest):
             self.assertIn(f"konto {user.id}: flera konton i planen får samma adress", plan.output)
         self._apply()
         self.assertEqual(self._added(membership) + self._added(other), [])
+
+    def _household_of_two(self):
+        membership, main, herd = self._household()
+        self._account("Anna Svensson", owns=[herd])
+        bo = self._account("Bo Svensson", owns=[herd], email="bo@example.org")
+        self._workspace_row("bo@example.org", "Bo", "Svensson", home="bo.hemma@example.net")
+        return membership, main, herd, bo
+
+    def _apply_with(self, before_link):
+        """Apply, calling before_link(person_id) right before each link_member_user (instead of it, if it raises)."""
+        plan = self._plan_value()
+        real = members_cli_module.link_member_user
+
+        def link(person_id, user_id, **kwargs):
+            before_link(person_id)
+            return real(person_id, user_id, **kwargs)
+
+        with patch.object(members_cli_module, "link_member_user", side_effect=link):
+            return self._apply(plan=plan)
+
+    def test_refused_main_link_skips_the_household(self):
+        membership, main, _, bo = self._household_of_two()
+
+        def refuse_main(person_id):
+            if person_id == main.id:
+                raise LinkError("Avvisad", "avvisad i testet")
+
+        result = self._apply_with(refuse_main)
+
+        self.assertIn(f"konto {bo.id}: inte tillagt, huvudmedlemmens koppling avvisades", result.output)
+        self.assertEqual(self._added(membership), [])
+        self.assertEqual(self._notices(), [])
+
+    def test_owner_role_revoked_after_the_plan_stops_the_add(self):
+        membership, main, herd, bo = self._household_of_two()
+
+        def revoke(person_id):
+            if person_id == main.id:  # an admin takes the owner role away meanwhile
+                da.update_role({"action": "remove", "role": "owner", "user": bo.id, "herd": herd.id}, self.admin.uuid)
+
+        result = self._apply_with(revoke)
+
+        self.assertIn("Kontot har inte längre rollen ägare på besättningen", result.output)
+        self.assertIsNotNone(db.Member.get_by_id(main.id).user_id)
+        self.assertEqual(self._added(membership), [])
+        self.assertEqual(self._notices(), [])
+
+    def test_inactive_membership_after_the_plan_stops_the_add(self):
+        membership, main, _, _ = self._household_of_two()
+
+        def retire(person_id):
+            if person_id == main.id:
+                db.Membership.update(membership_status="inactive").where(db.Membership.id == membership.id).execute()
+
+        result = self._apply_with(retire)
+
+        self.assertIn("Medlemskapet är inte längre aktivt", result.output)
+        self.assertEqual(self._added(membership), [])
 
     def test_changed_plan_writes_nothing(self):
         membership, main, herd = self._household()
