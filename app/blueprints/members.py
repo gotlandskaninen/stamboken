@@ -162,6 +162,15 @@ def list_members():
     if status:
         q = q.where(Membership.membership_status == status)
 
+    # G/M as in the MATR paper list (export_members: the herd code's letter), but only active herds.
+    active_herd = request.args.get("active_herd")
+    if active_herd:
+        if active_herd not in ("G", "M"):
+            return problem(400, "Ogiltig frågeparameter", "active_herd måste vara G eller M")
+        q = q.where(
+            Membership.id.in_(Herd.select(Herd.membership).where(Herd.is_active & Herd.herd.startswith(active_herd)))
+        )
+
     try:
         page = _parse_int_arg("page", default=1, minimum=1)
         per_page = _parse_int_arg("per_page", default=25, minimum=1, maximum=100)
@@ -175,13 +184,25 @@ def list_members():
     # re-queries the persons of every membership on the page (per_page
     # extra round trips on the busiest matrikel endpoint).
     persons_by_membership: dict[int, list[Member]] = {}
+    active_herds: dict[int, list[str]] = {}
     if items:
-        for person in Member.select().where(Member.membership.in_([ms.id for ms in items])).order_by(Member.id):
+        ids = [ms.id for ms in items]
+        for person in Member.select().where(Member.membership.in_(ids)).order_by(Member.id):
             persons_by_membership.setdefault(person.membership_id, []).append(person)
+        for herd in (
+            Herd.select(Herd.membership, Herd.herd).where(Herd.membership.in_(ids) & Herd.is_active).order_by(Herd.herd)
+        ):
+            active_herds.setdefault(herd.membership_id, []).append(herd.herd)
 
     return jsonify(
         {
-            "items": [_membership_to_dict(ms, persons_by_membership.get(ms.id, [])) for ms in items],
+            "items": [
+                {
+                    **_membership_to_dict(ms, persons_by_membership.get(ms.id, [])),
+                    "active_herds": active_herds.get(ms.id, []),
+                }
+                for ms in items
+            ],
             "total": total,
             "page": page,
             "per_page": per_page,

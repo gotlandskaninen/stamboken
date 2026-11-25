@@ -56,6 +56,7 @@ const rows: MembershipRow[] = [
     postal_code: "623 55",
     city: "Visby",
     postal_address: "623 55 Visby",
+    active_herds: ["G9001", "G9003", "M9002"],
     persons: [
       {
         id: 1,
@@ -93,6 +94,7 @@ const rows: MembershipRow[] = [
     postal_code: null,
     city: null,
     postal_address: null,
+    active_herds: [],
     persons: [],
   },
   {
@@ -108,6 +110,7 @@ const rows: MembershipRow[] = [
     postal_code: "621 41",
     city: "Visby",
     postal_address: "621 41 Visby",
+    active_herds: [],
     persons: [
       {
         id: 4,
@@ -175,6 +178,14 @@ describe("MembershipsGridClient", () => {
 
     // active persons only (Cecilia has an end_date)
     expect(screen.getByText("2")).toBeInTheDocument();
+  });
+
+  it("splits the active herds into the G and M columns (#214)", () => {
+    render(<MembershipsGridClient rows={[rows[0]]} total={1} />);
+    expect(screen.getByRole("columnheader", { name: "G" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "M" })).toBeInTheDocument();
+    expect(screen.getByText("G9001, G9003")).toBeInTheDocument();
+    expect(screen.getByText("M9002")).toBeInTheDocument();
   });
 
   it("navigates to the membership detail page on row click", () => {

@@ -116,6 +116,21 @@ class TestMembershipList(MatrikelApiTest):
         self.assertEqual(len(data["items"]), 2)
         self.assertEqual(data["total"], 3)
 
+    def test_active_herds_and_filter(self):
+        """#214: the G/M columns — the membership's active herds, filterable by the code's letter."""
+        db.Herd.create(herd="G9001", genebank=self.genebanks[0], membership=self.ms1, is_active=True)
+        db.Herd.create(herd="M9002", genebank=self.genebanks[1], membership=self.ms1, is_active=True)
+        db.Herd.create(herd="G9003", genebank=self.genebanks[0], membership=self.ms2, is_active=False)
+        self.login("man")
+        rows = {r["member_number"]: r for r in self.client.get("/api/v2/members").get_json()["items"]}
+        self.assertEqual(rows[6]["active_herds"], ["G9001", "M9002"])
+        self.assertEqual(rows[7]["active_herds"], [])
+        for letter in ("G", "M"):
+            with self.subTest(letter=letter):
+                data = self.client.get(f"/api/v2/members?active_herd={letter}").get_json()
+                self.assertEqual([r["member_number"] for r in data["items"]], [6])
+        self.assertEqual(self.client.get("/api/v2/members?active_herd=X").status_code, 400)
+
 
 class TestMembershipDetailAndPatch(MatrikelApiTest):
     def setUp(self):
@@ -1152,5 +1167,8 @@ class TestAddressListExport(MatrikelApiTest):
         )
         self.assertEqual(
             [(r.new_data, r.changed_by) for r in logged],
-            [({"action": "address-list", "rows": 4, "fee_reminder": True}, "matrikel"), ({"action": "matr"}, "matrikel")],
+            [
+                ({"action": "address-list", "rows": 4, "fee_reminder": True}, "matrikel"),
+                ({"action": "matr"}, "matrikel"),
+            ],
         )
