@@ -423,8 +423,11 @@ def query_matrikel_audit(
         q = q.where(MatrikelAudit.action == action)
     erased_accounts = _erased_accounts()
     if actor:
+        # A manager matches only the name the rows show it, or a hit would confirm a handler's hidden e-mail.
+        named = (fn.lower(User.username) == actor.lower()) | (fn.lower(User.email) == actor.lower())
+        shown = fn.lower(fn.COALESCE(User.username, User.email)) == actor.lower()
         q = q.where(
-            (fn.lower(User.username) == actor.lower()) | (fn.lower(User.email) == actor.lower()),
+            named if full_access else shown,
             User.id.not_in(list(erased_accounts)) if erased_accounts else True,
         )
     # The days are Swedish days, as the pages show the times. Capped: the far ends of date overflow the conversion.

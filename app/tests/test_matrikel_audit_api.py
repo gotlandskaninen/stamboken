@@ -263,3 +263,26 @@ class TestMatrikelAudit(MatrikelApiTest):
         after = matrikel.query_matrikel_audit(full_access=True, membership_id=self.ms.id)
         row = next(r for r in after["rows"] if r["action"] == "kontakt_andrad")
         self.assertEqual(row["actor"], {"id": None, "name": matrikel.REDACTED_VALUE})
+
+    def test_manager_filters_only_on_the_shown_actor_name(self):
+        """Codex #248 r2: a hit on a handler's e-mail would confirm an address the manager is never shown."""
+        handler = da.register_user("handlaggare.post@example.com", "pass", username="handlaggare")
+        matrikel.write_matrikel_audit(handler, "person_removed", self.ms, {"person_id": self.person.id})
+
+        def found(query):
+            data = self.get(query).get_json()
+            return data["total"], len(data["rows"])
+
+        self.login("man")
+        self.assertEqual(self.get("").get_json()["rows"][0]["actor"]["name"], "handlaggare")
+        for query, expected in (
+            ("actor=handlaggare.post@example.com", (0, 0)),
+            ("actor=handlaggare.post@example.com&page=3", (0, 0)),  # an empty page tells no total either
+            ("actor=HANDLAGGARE", (1, 1)),
+            ("actor=handlaggare&page=3", (1, 0)),
+        ):
+            with self.subTest(query=query):
+                self.assertEqual(found(query), expected)
+        self.client.get("/api/logout")
+        self.login()  # admin sees the account page with both, so may search by either
+        self.assertEqual(found("actor=handlaggare.post@example.com"), (1, 1))
