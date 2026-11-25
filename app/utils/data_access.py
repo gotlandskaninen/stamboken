@@ -1323,7 +1323,8 @@ def update_role(operation, user_uuid=None, skip_role_check=False):
                     target_user.remove_role(operation["role"], operation.get(target))
                     updated = True
                 elif not has_role and operation["action"] == "add":
-                    if operation["role"] == "owner":
+                    # Not for the Google sign-in's herd attribute (skip_role_check): the person is linked after it.
+                    if operation["role"] == "owner" and not skip_role_check:
                         if refused := _owner_refused(target_user.id, operation["herd"]):
                             raise refused
                     if (
