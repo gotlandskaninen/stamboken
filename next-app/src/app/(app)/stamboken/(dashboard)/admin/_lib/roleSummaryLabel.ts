@@ -7,7 +7,7 @@ export function roleSummaryLabel(s: string): string {
     .replace(/^admin/, "Administratör")
     .replace(/^manager/, "Genbanksansvarig ")
     .replace(/^helper/, "Genbankshjälpare ")
-    .replace(/^viewer/, "Granskare ")
+    .replace(/^viewer/, "Läsrätt ")
     .replace(/^owner/, "Besättningsägare ")
     .replace(/matrikel_admin/, "Matrikeladministratör");
 }

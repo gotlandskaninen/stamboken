@@ -181,7 +181,7 @@ def list_users_admin():
       active=true|false       (hbuser.is_active — the Aktiv/Inaktiv filter)
       v2_prod_access=true|false  (hbuser.v2_prod_access — the yes/no filter)
       active_since=<ISO8601>  (last_active >= this)
-      search=<str>            (matches username | email | fullname)
+      search=<str>            (matches username | email | fullname, or the account id as "174" or "konto 174")
       page=<int>              (default 1)
       per_page=<int>          (default 25, cap 200)
       sort=username|email|fullname|last_active   (default: last_active)

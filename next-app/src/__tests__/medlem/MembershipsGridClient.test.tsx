@@ -56,6 +56,11 @@ const rows: MembershipRow[] = [
     postal_code: "623 55",
     city: "Visby",
     postal_address: "623 55 Visby",
+    active_herds: [
+      { herd: "G9001", letter: "G" },
+      { herd: "G9003", letter: "G" },
+      { herd: "m9002", letter: "M" },
+    ],
     persons: [
       {
         id: 1,
@@ -93,6 +98,7 @@ const rows: MembershipRow[] = [
     postal_code: null,
     city: null,
     postal_address: null,
+    active_herds: [],
     persons: [],
   },
   {
@@ -108,6 +114,7 @@ const rows: MembershipRow[] = [
     postal_code: "621 41",
     city: "Visby",
     postal_address: "621 41 Visby",
+    active_herds: [],
     persons: [
       {
         id: 4,
@@ -175,6 +182,21 @@ describe("MembershipsGridClient", () => {
 
     // active persons only (Cecilia has an end_date)
     expect(screen.getByText("2")).toBeInTheDocument();
+  });
+
+  it("splits the active herds into the G and M columns (#214)", () => {
+    render(<MembershipsGridClient rows={[rows[0]]} total={1} />);
+    expect(screen.getByRole("columnheader", { name: "G" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "M" })).toBeInTheDocument();
+    expect(screen.getByText("G9001, G9003")).toBeInTheDocument();
+    expect(screen.getByText("m9002")).toBeInTheDocument();
+  });
+
+  it("keeps the other columns when an older API sends no active_herds", () => {
+    const { active_herds: _, ...oldShape } = rows[0];
+    render(<MembershipsGridClient rows={[oldShape]} total={1} />);
+    expect(screen.getByText("Anna Lindqvist")).toBeInTheDocument();
+    expect(screen.getAllByText("?")).toHaveLength(2); // G and M unknown, not "—" (none)
   });
 
   it("navigates to the membership detail page on row click", () => {

@@ -23,6 +23,7 @@ from utils.database import (
     BILLING_FIELDS,
     DB_PROXY,
     AuditLog,
+    Genebank,
     Herd,
     HerdAccessGrant,
     Member,
@@ -172,6 +173,17 @@ def list_members():
     if status:
         q = q.where(Membership.membership_status == status)
 
+    # G/M as in the paper matrikel: an active herd in that genebank, named by its initial
+    # (data_access._genebank_letters, cli/members.py).
+    active_herd = request.args.get("active_herd")
+    if active_herd:
+        if active_herd not in ("G", "M"):
+            return problem(400, "Ogiltig frågeparameter", "active_herd måste vara G eller M")
+        genebanks = [gb.id for gb in Genebank.select(Genebank.id, Genebank.name) if gb.name[:1].upper() == active_herd]
+        q = q.where(
+            Membership.id.in_(Herd.select(Herd.membership).where(Herd.is_active & Herd.genebank.in_(genebanks)))
+        )
+
     try:
         page = _parse_int_arg("page", default=1, minimum=1)
         per_page = _parse_int_arg("per_page", default=25, minimum=1, maximum=100)
@@ -185,13 +197,30 @@ def list_members():
     # re-queries the persons of every membership on the page (per_page
     # extra round trips on the busiest matrikel endpoint).
     persons_by_membership: dict[int, list[Member]] = {}
+    active_herds: dict[int, list[dict]] = {}
     if items:
-        for person in Member.select().where(Member.membership.in_([ms.id for ms in items])).order_by(Member.id):
+        ids = [ms.id for ms in items]
+        for person in Member.select().where(Member.membership.in_(ids)).order_by(Member.id):
             persons_by_membership.setdefault(person.membership_id, []).append(person)
+        for herd in (
+            Herd.select(Herd.membership, Herd.herd, Genebank.name)
+            .join(Genebank)
+            .where(Herd.membership.in_(ids) & Herd.is_active)
+            .order_by(Herd.herd)
+        ):
+            active_herds.setdefault(herd.membership_id, []).append(
+                {"herd": herd.herd, "letter": herd.genebank.name[:1].upper()}
+            )
 
     return jsonify(
         {
-            "items": [_membership_to_dict(ms, persons_by_membership.get(ms.id, [])) for ms in items],
+            "items": [
+                {
+                    **_membership_to_dict(ms, persons_by_membership.get(ms.id, [])),
+                    "active_herds": active_herds.get(ms.id, []),
+                }
+                for ms in items
+            ],
             "total": total,
             "page": page,
             "per_page": per_page,

@@ -309,6 +309,17 @@ class TestAdminUsersList(DatabaseTest):
         rows = resp.get_json()["users"]
         self.assertEqual([r["id"] for r in rows], [self.owner.id])
 
+    def test_admin_users_list_search_matches_account_number(self):
+        """#192: the inbox names an account without a name "Konto <id>"; both forms find it."""
+        self.login("admin", "pass")
+        for search in (str(self.owner.id), f"Konto {self.owner.id}", f"konto{self.owner.id}"):
+            with self.subTest(search=search):
+                resp = self.client.get("/api/v2/admin/users", query_string={"search": search})
+                self.assertEqual(resp.status_code, 200, resp.data)
+                self.assertIn(self.owner.id, [r["id"] for r in resp.get_json()["users"]])
+        resp = self.client.get("/api/v2/admin/users", query_string={"search": "99999999999"})
+        self.assertEqual(resp.status_code, 200, resp.data)
+
     def test_admin_users_list_shows_and_filters_matrikel_admin(self):
         """matrikel_admin is shown alone and next to a studbook role
         (never hidden by the admin > manager > ... precedence) and filterable."""
