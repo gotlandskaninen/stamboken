@@ -6,7 +6,7 @@ export function SkrivUt() {
   return (
     <button
       type="button"
-      className={`sb-btn ${styles.skrivUt}`}
+      className={`sb-btn sb-btn-secondary ${styles.skrivUt}`}
       onClick={async () => {
         // Photos further down have not loaded yet (loading="lazy"); print them too.
         const bilder = [

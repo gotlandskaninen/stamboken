@@ -41,6 +41,13 @@ export function FargKortDialog({
         )}
       </DialogContent>
       <DialogActions>
+        <Button
+          href={`/stamboken/fargatlas#farg-${id}`}
+          target="_blank"
+          rel="noopener"
+        >
+          Öppna färgatlasen i ny flik
+        </Button>
         <Button onClick={onClose}>Stäng</Button>
       </DialogActions>
     </Dialog>

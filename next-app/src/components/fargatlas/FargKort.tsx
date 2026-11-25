@@ -5,39 +5,42 @@ import styles from "./fargatlas.module.css";
 export function FargKort({
   farg,
   fotoBas,
+  ankare = true,
 }: {
   farg: AtlasFarg;
   fotoBas: string;
+  /** The id #farg-<nummer> that links point at; off for a second copy of the card on the same page. */
+  ankare?: boolean;
 }) {
   return (
-    <article className={`sb-card ${styles.kort}`} id={`farg-${farg.id}`}>
-      {farg.foton.length === 0 ? (
-        <div className={styles.utanFoto}>Foto saknas</div>
-      ) : (
-        farg.foton.map((foto) => (
-          <figure key={foto.id} className={styles.foto}>
-            <a
-              href={fotoUrl(fotoBas, foto.id, 1600)}
-              target="_blank"
-              rel="noopener"
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element -- next/image would fetch the photo without the visitor's session */}
-              <img
-                src={fotoUrl(fotoBas, foto.id, 480)}
-                alt={`${farg.id} ${farg.name}, större bild`}
-                loading="lazy"
-              />
-            </a>
-            {(foto.bildtext || foto.fotograf) && (
-              <figcaption>
-                {foto.bildtext}
-                {foto.bildtext && foto.fotograf && " · "}
-                {foto.fotograf && `Foto: ${foto.fotograf}`}
-              </figcaption>
-            )}
-          </figure>
-        ))
-      )}
+    <article
+      className={`sb-card ${styles.kort}`}
+      id={ankare ? `farg-${farg.id}` : undefined}
+    >
+      {/* Without a photo the text leads; an empty box per card would make the atlas look unfinished. */}
+      {farg.foton.map((foto) => (
+        <figure key={foto.id} className={styles.foto}>
+          <a
+            href={fotoUrl(fotoBas, foto.id, 1600)}
+            target="_blank"
+            rel="noopener"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element -- next/image would fetch the photo without the visitor's session */}
+            <img
+              src={fotoUrl(fotoBas, foto.id, 480)}
+              alt={`${farg.id} ${farg.name}, större bild i ny flik`}
+              loading="lazy"
+            />
+          </a>
+          {(foto.bildtext || foto.fotograf) && (
+            <figcaption>
+              {foto.bildtext}
+              {foto.bildtext && foto.fotograf && " · "}
+              {foto.fotograf && `Foto: ${foto.fotograf}`}
+            </figcaption>
+          )}
+        </figure>
+      ))}
       <div className={styles.text}>
         <h3 className={styles.namn}>
           <span className={styles.nummer}>{farg.id}</span> {farg.name}

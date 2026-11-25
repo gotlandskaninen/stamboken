@@ -106,8 +106,10 @@ Kod: `color` (`Color`), `color_note`, `eye_color`, `claw_color`, `belly_color`, 
 **Färgatlas**\
 Föreningens färgnummer med foto och beskrivning, ordnade i grupper efter bestämningsnyckeln. Färgens
 nummer är dess id i Stamboken, och numret anger grundfärgen, också när pälsen är rex. Sidan Färgatlas
-i Stamboken visas bara för inloggade, och länken Visa färgen i färgvalet öppnar färgens kort.\
-Kod: `Color.id`, `/stamboken/fargatlas`, `/api/v2/fargatlas` (nyckeln och texterna ur atlaspaketet) · Legacy-manual: – · Legacy: – · Nytt UI: "Färgatlas", "Visa färgen", "Foto saknas"
+i Stamboken visas bara för inloggade, och länken Visa färgen i färgvalet öppnar färgens kort.
+Hjälp mig välja är bestämningsnyckeln: en fråga i taget fram till ett färgnummer, bara för
+gotlandskanin.\
+Kod: `Color.id`, `/stamboken/fargatlas`, `/api/v2/fargatlas` (nyckeln och texterna ur atlaspaketet) · Legacy-manual: – · Legacy: – · Nytt UI: "Färgatlas", "Visa färgen", "Foto saknas", "Hjälp mig välja"
 
 **Genbank**\
 Alla besättningar och alla kaniner av en ras i föreningens bevarandeprogram. Föreningen har två

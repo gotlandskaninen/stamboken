@@ -42,14 +42,14 @@ describe("FargKort", () => {
     expect(img.getAttribute("loading")).toBe("lazy");
     expect(
       screen
-        .getByRole("link", { name: "22 Viltgrå, större bild" })
+        .getByRole("link", { name: "22 Viltgrå, större bild i ny flik" })
         .getAttribute("href"),
     ).toBe("/api/v2/fargatlas/foto/22-a?storlek=1600");
   });
 
-  it('utan foto visar "Foto saknas"', () => {
+  it("utan foto har kortet ingen bildyta", () => {
     render(<FargKort farg={utanFoto} fotoBas="/api" />);
-    expect(screen.getByText("Foto saknas")).toBeDefined();
+    expect(screen.queryByText("Foto saknas")).toBeNull();
     expect(screen.queryByRole("img")).toBeNull();
     expect(screen.queryByText(/Skiljs från/)).toBeNull();
   });

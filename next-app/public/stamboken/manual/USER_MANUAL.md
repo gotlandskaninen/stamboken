@@ -722,12 +722,22 @@ avkomman F: bra upp till N %, utred närmare upp till M %, över det hög inavel
 
 Föreningens färgnummer i grupper efter bestämningsnyckeln, och mellerudskaninens
 nummer i en egen grupp. Varje färg har ett kort med foto, nummer, namn, beskrivning och vad
-som skiljer den från närliggande färger. Saknas foto står det "Foto saknas". Klicka på
-fotot för en större bild. **Skriv ut** ger grupperna på papper utan meny. Färgnumret
+som skiljer den från närliggande färger; en färg utan foto har bara text. Klicka på
+fotot för en större bild. Grupperna och **Gå till nummer** högst upp tar dig direkt till
+en grupp eller en färg. **Skriv ut** ger grupperna på papper utan meny. Färgnumret
 anger grundfärgen, också när pälsen är rex: välj då **Rex** vid **Päls**.
 
+Överst på sidan finns **Hjälp mig välja**, bestämningsnyckeln för gotlandskanin. Den
+ställer en fråga i taget om kaninens färg och teckning och slutar i ett färgnummer.
+Dina svar står överst; klicka på ett av dem för att ändra det. **Tillbaka** går ett steg
+bakåt och **Börja om** till första frågan. Efter numret svarar du **Ja** eller **Nej**
+på frågorna om pälsen och ögonen. Vid utskrift kommer nyckeln med som en numrerad lista.
+
 I färgvalet, när du registrerar eller redigerar en kanin, öppnar **Visa färgen**
-kortet för den färg som är vald.
+kortet för den färg som är vald. För gotlandskanin finns också **Hjälp mig välja**:
+**Välj** i slutet sätter färgen, och **Stäng** lämnar färgen som den var. Guiden
+väljer inte päls åt dig: svarar du **Ja** på frågan om pälsen påminner färgvalet dig om
+att välja **Rex** vid **Päls**.
 
 #### Min profil
 

@@ -14,6 +14,8 @@
 .gruppNamn {
   margin: 0 0 8px;
   font-size: 22px;
+  /* below the sticky top bar when a link jumps here */
+  scroll-margin-top: 80px;
 }
 .gruppText {
   max-width: 64ch;
@@ -28,6 +30,7 @@
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  scroll-margin-top: 80px;
 }
 .foto {
   margin: 0;
@@ -44,17 +47,8 @@
 }
 .foto figcaption {
   padding: 6px 16px 0;
-  font-size: 13px;
-  color: var(--sb-ink-2);
-}
-.utanFoto {
-  aspect-ratio: 4 / 3;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--sb-paper-2);
-  color: var(--sb-ink-2);
   font-size: 14px;
+  color: var(--sb-ink-2);
 }
 .text {
   padding: 12px 16px 16px;
@@ -73,13 +67,241 @@
 }
 .text .kommentar {
   color: var(--sb-ink-2);
+  font-size: 15px;
+}
+
+/* The way into the page: group links and a number list */
+.hopplista {
+  margin: 24px 0 8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 24px;
+}
+.gruppLankar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.gruppLank {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--sb-ink-3);
+  border-radius: var(--sb-r-2);
+  background: var(--sb-card);
+  color: var(--sb-ink);
+  font-size: 15px;
+  text-decoration: none;
+}
+.nummerVal {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+}
+.nummerVal select {
+  min-height: 44px;
+  font-size: 16px;
+  padding: 0 8px;
+  border: 1px solid var(--sb-ink-3);
+  border-radius: var(--sb-r-2);
+  background: var(--sb-card);
+  color: var(--sb-ink);
+}
+
+/* "Hjälp mig välja" */
+.nyckelSektion {
+  margin-top: 24px;
+  overflow: hidden;
+}
+.nyckelHuvud {
+  padding: 16px 20px;
+  background: var(--sb-skog-soft);
+  border-bottom: 1px solid var(--sb-line);
+}
+.nyckelHuvud .gruppNamn {
+  margin-bottom: 4px;
+}
+.nyckelKropp {
+  padding: 16px 20px 20px;
+}
+.nyckel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 600px;
+}
+.steg {
+  margin: 0;
   font-size: 14px;
+  color: var(--sb-ink-2);
+}
+.fraga {
+  margin: 0;
+  font-size: 20px;
+}
+.fraga:focus-visible,
+.resultatRubrik:focus-visible {
+  outline: 2px solid var(--sb-skog);
+  outline-offset: 4px;
+}
+.fraga:focus:not(:focus-visible),
+.resultatRubrik:focus:not(:focus-visible) {
+  outline: none;
+}
+.hjalp {
+  display: block;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--sb-ink-2);
+}
+.svar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.svarKnapp {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 48px;
+  padding: 10px 16px;
+  border: 1px solid var(--sb-ink-3);
+  border-radius: var(--sb-r-2);
+  background: var(--sb-card);
+  color: var(--sb-ink);
+  font: inherit;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+.svarKnapp:focus-visible {
+  outline: 2px solid var(--sb-skog);
+  outline-offset: 2px;
+}
+@media (hover: hover) {
+  .svarKnapp:hover {
+    border-color: var(--sb-skog);
+    background: var(--sb-skog-soft);
+  }
+}
+.pil {
+  font-size: 22px;
+  line-height: 1;
+  color: var(--sb-ink-2);
+}
+.spar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.sparSteg {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--sb-line-strong);
+  border-radius: 999px;
+  background: var(--sb-paper-2);
+  color: var(--sb-ink);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.resultat {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.resultat p {
+  margin: 0;
+}
+.resultatRubrik {
+  margin: 0;
+  font-family: var(--sb-display);
+  font-size: 30px;
+  line-height: 1.15;
+}
+.resultatNummer {
+  font-family: var(--sb-mono);
+  color: var(--sb-lera);
+  margin-right: 8px;
+}
+.resultatFoto {
+  display: block;
+  width: 100%;
+  max-width: 320px;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: var(--sb-r-2);
+  background: var(--sb-paper-2);
+}
+.anteckning {
+  border-left: 3px solid var(--sb-lera);
+  padding-left: 12px;
+}
+.efter {
+  margin: 0;
+  padding: 12px 16px;
+  border: 1px solid var(--sb-line);
+  border-radius: var(--sb-r-2);
+}
+.efter legend {
+  padding: 0 4px;
+  font-weight: 600;
+}
+.jaNej {
+  min-width: 72px;
+  min-height: 44px;
+  border: 1px solid var(--sb-ink-3);
+  border-radius: var(--sb-r-2);
+  background: var(--sb-card);
+  color: var(--sb-ink);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+.jaNej[aria-pressed="true"] {
+  background: var(--sb-skog);
+  border-color: var(--sb-skog);
+  color: #fff;
+}
+.paminnelse {
+  margin-top: 8px !important;
+  font-weight: 600;
+  color: var(--sb-ink);
+}
+.knappar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.baraUtskrift {
+  display: none;
 }
 
 /* The print view: the groups without the menu (the topbar hides itself), each photo small beside its text. */
 @media print {
-  .skrivUt {
+  .skrivUt,
+  .nyckelSektion,
+  .hopplista {
     display: none !important;
+  }
+  .baraUtskrift {
+    display: block;
+    break-after: page;
+  }
+  .baraUtskrift li {
+    break-inside: avoid;
   }
   .container {
     padding: 0;
@@ -97,8 +319,10 @@
     break-inside: avoid;
     padding: 8px 0;
   }
-  .foto img,
-  .utanFoto {
+  .foto {
+    flex: none;
+  }
+  .foto img {
     width: 45mm;
   }
   .foto figcaption {

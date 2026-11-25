@@ -30,7 +30,7 @@ test("en demosession ser färgatlasen med foto från api-test", async ({
   await page.goto("/stamboken/fargatlas");
   await expect(
     page.getByRole("main").getByRole("heading", { level: 2 }),
-  ).toHaveCount(4); // the seed key's three groups and Övriga färger
+  ).toHaveCount(5); // Hjälp mig välja, the seed key's three groups and Övriga färger
   const img = page.locator("#farg-22").getByRole("img");
   await img.scrollIntoViewIfNeeded();
   const response = await photo;

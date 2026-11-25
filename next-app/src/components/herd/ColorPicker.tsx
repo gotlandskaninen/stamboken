@@ -11,6 +11,9 @@ import {
 } from "@mui/material";
 import type { ColorOption } from "@/app/(app)/stamboken/(dashboard)/min-besattning/actions";
 import { FargKortDialog } from "@/components/fargatlas/FargKortDialog";
+import { FargNyckelDialog } from "@/components/fargatlas/FargNyckelDialog";
+import { useFargatlas } from "@/components/fargatlas/useFargatlas";
+import { kontrollera } from "@/lib/fargatlas/nyckel";
 
 interface ColorPickerProps {
   options: ColorOption[];
@@ -60,6 +63,14 @@ export function ColorPicker({
   required,
 }: ColorPickerProps) {
   const [showColor, setShowColor] = useState(false);
+  const [guide, setGuide] = useState(false);
+  const [saknas, setSaknas] = useState<number | null>(null);
+  const [paminnelser, setPaminnelser] = useState<string[]>([]);
+  // The key covers the gotlandskanin numbers only (matched as colorsFor matches the list), and the guide is offered
+  // only when the atlas package has a usable key.
+  const gotland = genebank.includes("Gotland");
+  const atlas = useFargatlas(gotland);
+  const medGuide = gotland && !loading && !kontrollera(atlas?.atlas.nyckel);
   // Free text when no official list could be loaded; the backend validates either way.
   if (options.length === 0 && !loading) {
     return (
@@ -95,7 +106,10 @@ export function ColorPicker({
         disableClearable
         loading={loading}
         filterOptions={filter}
-        onChange={(_, v) => onChange(v.name)}
+        onChange={(_, v) => {
+          setPaminnelser([]);
+          onChange(v.name);
+        }}
         getOptionLabel={optionLabel}
         isOptionEqualToValue={(a, b) =>
           a.name === b.name && (a.id == null || b.id == null || a.id === b.id)
@@ -122,22 +136,64 @@ export function ColorPicker({
           <TextField {...params} label={label} required={required} />
         )}
       />
-      {selected?.id != null && (
-        <>
+      {paminnelser.map((p) => (
+        <Typography
+          key={p}
+          role="status"
+          variant="body2"
+          sx={{ mt: 1, fontWeight: 600 }}
+        >
+          Kom ihåg: {p}
+        </Typography>
+      ))}
+      <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", mt: 1 }}>
+        {selected?.id != null && (
           <Button
             size="small"
+            variant="outlined"
             onClick={() => setShowColor(true)}
-            sx={{ minHeight: 44, px: 0 }}
+            sx={{ minHeight: 44 }}
           >
             Visa färgen
           </Button>
-          <FargKortDialog
-            id={selected.id}
-            open={showColor}
-            onClose={() => setShowColor(false)}
-          />
-        </>
+        )}
+        {medGuide && (
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={() => setGuide(true)}
+            sx={{ minHeight: 44 }}
+          >
+            Hjälp mig välja
+          </Button>
+        )}
+      </Box>
+      {selected?.id != null && (
+        <FargKortDialog
+          id={selected.id}
+          open={showColor}
+          onClose={() => setShowColor(false)}
+        />
       )}
+      <FargNyckelDialog
+        open={guide}
+        onClose={() => {
+          setGuide(false);
+          setSaknas(null);
+        }}
+        saknas={saknas}
+        onValj={(nummer, paminn) => {
+          const option = options.find((o) => o.id === nummer);
+          if (!option) {
+            setSaknas(nummer);
+            return;
+          }
+          onChange(option.name);
+          setPaminnelser(paminn);
+          setGuide(false);
+          setSaknas(null);
+        }}
+      />
     </Box>
   );
 }
