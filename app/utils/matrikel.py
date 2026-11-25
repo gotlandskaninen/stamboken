@@ -425,6 +425,21 @@ def soft_delete_person(member, actor):
         )
 
 
+def limit_open_grants(member):
+    """A person who became skötare: her grants without an end date get one year, as create_grant gives a new one.
+    In the caller's transaction, under the membership lock."""
+    now = datetime.now()
+    return (
+        HerdAccessGrant.update(valid_until=_plus_one_year(date.today()), updated_at=now)
+        .where(
+            HerdAccessGrant.member == member,
+            HerdAccessGrant.revoked_at.is_null(True),
+            HerdAccessGrant.valid_until.is_null(True),
+        )
+        .execute()
+    )
+
+
 def reactivate_person(member, actor):
     """Undo soft_delete_person for an ended, not anonymized person: clear end_date, audit it.
 

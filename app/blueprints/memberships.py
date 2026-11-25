@@ -27,6 +27,7 @@ from utils.matrikel import (
     create_membership,
     grant_is_active,
     is_anonymized,
+    limit_open_grants,
     link_member_user,
     link_membership_herd,
     membership_herd_candidates,
@@ -578,6 +579,8 @@ def patch_person(person_id: int):
 
             if not after:
                 return jsonify(_person_to_dict(person))
+            if after.get("role") == "skotare":
+                limit_open_grants(person)  # a keeper's access runs a year, like create_grant's default
 
             # UPDATE only what this body changed: a full-row save() would write
             # member.user_id back from the re-read copy too, and the audit rows

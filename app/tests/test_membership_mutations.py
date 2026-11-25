@@ -867,6 +867,16 @@ class TestPersonMutationEndpoints(MatrikelAdminTestBase):
         self.client.post(f"/api/v2/persons/{self.family.id}/anonymize")
         self.assertEqual(self.client.post(f"/api/v2/persons/{self.family.id}/reactivate").status_code, 409)
 
+    def test_patch_person_to_skotare_limits_open_grants_to_a_year(self):
+        grant = db.HerdAccessGrant.create(member=self.family, herd=self.herds[0], granted_by=self.admin)
+        self.assertIsNone(grant.valid_until)
+        self.login()
+        resp = self.patch_json(f"/api/v2/persons/{self.family.id}", {"role": "skotare"})
+        self.assertEqual(resp.status_code, 200, resp.data)
+        valid_until = db.HerdAccessGrant.get_by_id(grant.id).valid_until
+        self.assertIsNotNone(valid_until)
+        self.assertGreater(valid_until, date.today())
+
     def test_patch_person_promote_second_main_409(self):
         resp = self.patch_json(f"/api/v2/persons/{self.family.id}", {"role": "huvudmedlem"})
         self.assertEqual(resp.status_code, 409)
