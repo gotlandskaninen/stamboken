@@ -148,7 +148,17 @@ export function CasePane({
         <dl className={styles.caseFacts}>
           <dt>{t("queueDetail.sender")}</dt>
           <dd>
-            {senderText(item) || t("queue.unknownSender")}
+            {/* senderText shows item.sender's name first; only admins may open the account page. */}
+            {item.sender && user.is_admin ? (
+              <Link
+                href={`/stamboken/admin/anvandare/${item.sender.id}`}
+                className="sb-link"
+              >
+                {item.sender.name}
+              </Link>
+            ) : (
+              senderText(item) || t("queue.unknownSender")
+            )}
             <SenderUnconfirmed item={item} paneT={t} />
           </dd>
           <dt>{t("queueDetail.kind")}</dt>

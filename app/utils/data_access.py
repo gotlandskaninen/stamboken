@@ -4109,7 +4109,12 @@ def list_admin_users(
         q = q.where(User.last_active >= active_since)
     if search:
         s = f"%{search}%"
-        q = q.where((User.username**s) | (User.email**s) | (User.fullname**s))
+        match = (User.username**s) | (User.email**s) | (User.fullname**s)
+        # The account number, as "174" or "Konto 174" (what the inbox shows). ASCII digits, bounded to int4.
+        number = re.fullmatch(r"(?:konto\s*)?([0-9]{1,10})", search.strip(), re.IGNORECASE)
+        if number and int(number[1]) <= 2_147_483_647:
+            match = match | (User.id == int(number[1]))
+        q = q.where(match)
     sort_map = {
         "username": User.username,
         "email": User.email,

@@ -113,8 +113,8 @@ export default async function AdminUsersPage({
             name="search"
             defaultValue={sp.search ?? ""}
             className={`sb-input ${ds["ad-search"]}`}
-            placeholder="Sök användarnamn, e-post eller namn…"
-            aria-label="Sök efter användarnamn, e-postadress eller namn"
+            placeholder="Sök kontonummer, användarnamn, e-post eller namn…"
+            aria-label="Sök efter kontonummer, användarnamn, e-postadress eller namn"
           />
           <FormControl size="small" className={ds["ad-filter"]}>
             <span className={ds["ad-filter-label"]} id="ad-f-role">

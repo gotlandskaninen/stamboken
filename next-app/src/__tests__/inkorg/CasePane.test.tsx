@@ -125,6 +125,30 @@ describe("CasePane", () => {
     ).toHaveAttribute("href", "/stamboken/inkorg?herd=G9001");
   });
 
+  it("links the sender's account to its admin page for an admin only (#192)", () => {
+    const sender = { id: 174, name: "Konto 174" };
+    view({ sender });
+    expect(screen.queryByRole("link", { name: "Konto 174" })).toBeNull();
+    expect(screen.getByText("Konto 174")).toBeVisible();
+    cleanup();
+    render(
+      <ModeProvider mode="prod">
+        <CasePane
+          item={{ ...letter, sender }}
+          user={{ ...user, is_admin: true }}
+          myGenebanks={[1]}
+          backHref="/stamboken/inkorg"
+          nextHref={null}
+          now={now}
+        />
+      </ModeProvider>,
+    );
+    expect(screen.getByRole("link", { name: "Konto 174" })).toHaveAttribute(
+      "href",
+      "/stamboken/admin/anvandare/174",
+    );
+  });
+
   it("can still open the complete registration view for a closed case", () => {
     view({ state: "klar" }, null);
     expect(
