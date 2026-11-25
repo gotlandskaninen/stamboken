@@ -30,7 +30,12 @@ interface TrendChartProps {
 }
 
 const TrendChart = ({ genebankId }: TrendChartProps) => {
-  const { data, isLoading, error } = useFetchGeneticsTrendsQuery(genebankId);
+  const { data, currentData, isLoading, error } = useFetchGeneticsTrendsQuery(
+    genebankId,
+    {
+      refetchOnMountOrArgChange: true,
+    },
+  );
   const theme = useTheme();
 
   const [visibleSeries, setVisibleSeries] = useState<string[]>(["ne", "fe"]);
@@ -63,7 +68,7 @@ const TrendChart = ({ genebankId }: TrendChartProps) => {
     "status" in error &&
     (error as { status: unknown }).status === 401;
 
-  if (error && !isAuthError) {
+  if (error && !isAuthError && !currentData) {
     return (
       <Alert severity="error" sx={{ mb: 6 }}>
         Kunde inte hämta trenddata.

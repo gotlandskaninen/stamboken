@@ -84,15 +84,21 @@ const ThemedFounderChart = withTheme(FounderChart);
 const OverviewTab = ({ genebankId }: OverviewTabProps) => {
   const {
     data: metrics,
+    currentData: currentMetrics,
     isLoading: metricsLoading,
     error: metricsError,
-  } = useFetchPopulationMetricsQuery(genebankId);
+  } = useFetchPopulationMetricsQuery(genebankId, {
+    refetchOnMountOrArgChange: true,
+  });
 
   const {
     data: founders,
+    currentData: currentFounders,
     isLoading: foundersLoading,
     error: foundersError,
-  } = useFetchFounderStatisticsQuery(genebankId);
+  } = useFetchFounderStatisticsQuery(genebankId, {
+    refetchOnMountOrArgChange: true,
+  });
 
   if (metricsLoading || foundersLoading) {
     return (
@@ -118,9 +124,10 @@ const OverviewTab = ({ genebankId }: OverviewTabProps) => {
     "status" in err &&
     (err as { status: unknown }).status === 401;
 
+  // A failed refetch keeps this genebank's cached data on screen.
   if (
-    (metricsError && !isAuthError(metricsError)) ||
-    (foundersError && !isAuthError(foundersError))
+    (metricsError && !isAuthError(metricsError) && !currentMetrics) ||
+    (foundersError && !isAuthError(foundersError) && !currentFounders)
   ) {
     return (
       <Alert severity="error">

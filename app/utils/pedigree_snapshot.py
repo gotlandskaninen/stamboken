@@ -15,7 +15,9 @@ pin the snapshot it started with so nested reads agree.
 
 import contextlib
 import contextvars
+import hashlib
 import itertools
+import json
 import logging
 import threading
 import time
@@ -64,6 +66,9 @@ class PedigreeSnapshot:
     fge: float | None
     band_cuts: tuple | None
     recovery_eligible: frozenset = frozenset()  # numbers plausibly alive and breedable, read with the pedigree
+    # sha256 of the inputs, equal across workers: pedigree rows with their membership, and carrier eligibility.
+    fingerprint: str = ""
+    eligible_fingerprint: str = ""
     derived: dict = field(default_factory=dict, repr=False)
     _guard: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _name_locks: dict = field(default_factory=dict, repr=False)
@@ -105,6 +110,10 @@ class PedigreeSnapshot:
             return reference_block(self.sire, self.dam, self.F, ref_idx), self.ref_ids
 
         return self.memo("reference_kinship", compute)
+
+
+def _sha256(value):
+    return hashlib.sha256(json.dumps(value, separators=(",", ":")).encode()).hexdigest()
 
 
 def build_snapshot(genebank_id, rows, members, key, seq, recovery_eligible=frozenset()):
@@ -164,6 +173,9 @@ def build_snapshot(genebank_id, rows, members, key, seq, recovery_eligible=froze
         fge=fge,
         band_cuts=cuts,
         recovery_eligible=frozenset(recovery_eligible),
+        # Exactly what the arrays above are built from, so equal fingerprints give equal results.
+        fingerprint=_sha256([[ind.id, ind.sex, ind.sire_id, ind.dam_id, ind.is_active] for ind in raw]),
+        eligible_fingerprint=_sha256(sorted(recovery_eligible)),
     )
 
 

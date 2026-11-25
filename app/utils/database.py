@@ -4157,8 +4157,9 @@ def rotate_genetics_epoch() -> str:
     """Give the database a new genetics epoch and return it (``flask genetics rotate-epoch``).
 
     Run after the database was replaced (restore, demo sync): the copy brings back a
-    version counter that can repeat numbers already memoized for other pedigree data,
-    and the epoch is what keeps those memos from being served. The SQL
+    version counter that can repeat a number a worker's snapshot is keyed on, and the
+    epoch is what makes that snapshot rebuild. The memoized results need no epoch:
+    they are keyed on the snapshot's content. The SQL
     function is the one the dump restore (stamboken-drift) and sync-demo-db.sh call through psql.
     """
     with DATABASE.atomic():
@@ -4184,7 +4185,7 @@ def _create_genetics_version_guards():
         " changed_at timestamptz NOT NULL DEFAULT now())"
     )
     sql("INSERT INTO genetics_version (id, version) VALUES (1, 0) ON CONFLICT DO NOTHING")
-    # Part of the genetics memo key: a restored or copied database gets a new one.
+    # Part of the snapshot key: a restored or copied database gets a new one.
     sql("ALTER TABLE genetics_version ADD COLUMN IF NOT EXISTS epoch text NOT NULL DEFAULT gen_random_uuid()::text")
     sql(
         """CREATE OR REPLACE FUNCTION rotate_genetics_epoch() RETURNS text

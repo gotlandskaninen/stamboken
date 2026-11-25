@@ -4,8 +4,8 @@ Cache invalidation for genetics data.
 Coordinates snapshot rebuilds across gunicorn workers using Redis pub/sub,
 debounced recomputation via Redis keys + APScheduler polling, and a leader
 poller on the global genetics version. Memoized results are keyed on the
-snapshot they were computed from, so nothing is ever deleted: a new genetics
-version simply misses the cache.
+content of the snapshot they were computed from, so nothing is ever deleted:
+changed inputs simply miss the cache, and unchanged ones keep hitting it.
 """
 
 import logging
@@ -26,6 +26,7 @@ _redis_url: str | None = None  # Stored for creating pub/sub client
 
 PUBSUB_CHANNEL = "herdbook:cache:invalidate"
 DEBOUNCE_DELAY_SECONDS = 30
+BUILD_WAIT_SECONDS = 300  # a large pedigree's snapshot build can outlast the debounce
 
 # Memoized function references — set by set_cache_and_functions()
 _memoized_functions: list = []
@@ -210,9 +211,21 @@ def _recompute_genebank(genebank_id: int):
     """Eagerly recompute all memoized metrics for a genebank.
 
     Uses the function references injected via set_cache_and_functions()
-    instead of importing from herdbook to avoid circular imports.
+    instead of importing from herdbook to avoid circular imports. Waits for
+    a snapshot of the latest write first: warming the retained snapshot would
+    only hit its own memo and leave the new inputs to the first request.
     """
     logger.info(f"Debounce firing: recomputing metrics for genebank {genebank_id}")
+    gs = _get_genetics_service()
+    deadline = time.monotonic() + BUILD_WAIT_SECONDS
+    try:
+        # A write during the running build needs one more; a failing build must not spin.
+        for _ in range(3):
+            if not gs.snapshot_status(genebank_id)[1]:  # reading the status schedules the build a moved key needs
+                break
+            gs.ps.wait_for_builds(genebank_id, timeout=max(deadline - time.monotonic(), 0))
+    except Exception:  # pylint: disable=broad-except
+        logger.warning("Snapshot build for genebank %s not done; warming the current one", genebank_id, exc_info=True)
 
     for func in _memoized_functions:
         try:

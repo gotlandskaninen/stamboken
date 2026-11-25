@@ -35,9 +35,12 @@ interface PrioritiesTabProps {
 const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
   const {
     data: priorities,
+    currentData,
     isLoading,
     error,
-  } = useFetchGeneticPrioritiesQuery(genebankId);
+  } = useFetchGeneticPrioritiesQuery(genebankId, {
+    refetchOnMountOrArgChange: true,
+  });
 
   const [filters, setFilters] = useState({
     critical: true,
@@ -136,7 +139,8 @@ const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
     "status" in error &&
     (error as { status: unknown }).status === 401;
 
-  if (error && !isAuthError) {
+  // A failed refetch keeps this genebank's cached rows on screen.
+  if (error && !isAuthError && !currentData) {
     return (
       <Alert severity="error">
         Kunde inte hämta prioriteringsdata. Kontrollera att du har behörighet.

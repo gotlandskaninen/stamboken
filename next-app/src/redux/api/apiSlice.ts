@@ -438,11 +438,14 @@ export const apiSlice = createApi({
     // Genetics endpoints [Next.js]
     // population-metrics and founder-statistics return raw dicts (no wrapper)
     // genetic-priorities and breeding-suggestions wrap with {status, data}
+    // The dashboard's queries keep their data for an hour after the tab
+    // unmounts; the tabs refetch on mount, so a revisit shows it at once.
     fetchPopulationMetrics: builder.query<PopulationMetrics, number>({
       query: (genebankId) => ({
         url: `/${genebankId}/population-metrics/`,
         timeout: 120000,
       }),
+      keepUnusedDataFor: 3600,
       providesTags: ["Genetics"],
     }),
     fetchFounderStatistics: builder.query<FounderStatistics, number>({
@@ -450,6 +453,7 @@ export const apiSlice = createApi({
         url: `/${genebankId}/founder-statistics/`,
         timeout: 120000,
       }),
+      keepUnusedDataFor: 3600,
       providesTags: ["Genetics"],
     }),
     fetchGeneticPriorities: builder.query<GeneticPriority[], number>({
@@ -457,6 +461,7 @@ export const apiSlice = createApi({
         url: `/${genebankId}/genetic-priorities/`,
         timeout: 120000,
       }),
+      keepUnusedDataFor: 3600,
       transformResponse: (response: {
         status: string;
         data: GeneticPriority[];
@@ -468,6 +473,7 @@ export const apiSlice = createApi({
         url: `/${genebankId}/founders-at-risk/`,
         timeout: 120000,
       }),
+      keepUnusedDataFor: 3600,
       transformResponse: (response: {
         status: string;
         data: FounderAtRisk[];
@@ -479,6 +485,7 @@ export const apiSlice = createApi({
         url: `/${genebankId}/genetics-trends/`,
         timeout: 10000,
       }),
+      keepUnusedDataFor: 3600,
       transformResponse: (response: {
         status: string;
         data: TrendDataPoint[];

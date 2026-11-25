@@ -5,12 +5,14 @@ This module fetches pedigree data from the database and calculates genetic
 metrics using the Python implementation (replacing R-API).
 """
 
+import hashlib
 import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 import numpy as np
 from peewee import JOIN, fn
@@ -66,6 +68,15 @@ REFERENCE_DEFINITION_VERSION = CURRENT_DEFINITION.version
 # Part of the snapshot key, so the shared memo is never served across it, and of the
 # history watermark, so the next reconcile recomputes the stored years (0 = before versioning).
 ALGORITHM_VERSION = 1
+
+# Part of the shared memo key, which keeps results for days: a deploy that changes how they
+# are computed misses the old ones even when nobody bumped ALGORITHM_VERSION.
+CODE_VERSION = hashlib.sha256(
+    b"".join(
+        (Path(__file__).parent / name).read_bytes()
+        for name in ("genetics.py", "genetics_service.py", "pedigree_math.py", "pedigree_snapshot.py")
+    )
+).hexdigest()[:16]
 
 
 def reference_population_numbers(genebank_id: int, start_date: date | None = None) -> set[str]:

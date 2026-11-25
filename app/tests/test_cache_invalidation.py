@@ -5,7 +5,9 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from utils.cache_invalidation import (
+    BUILD_WAIT_SECONDS,
     _handle_invalidation_message,
+    _recompute_genebank,
     get_genebank_ids_for_individual,
     poll_debounce_keys,
     set_cache_and_functions,
@@ -99,3 +101,39 @@ class TestDebouncePolling(unittest.TestCase):
         poll_debounce_keys()
 
         mock_recompute.assert_not_called()
+
+
+class TestRecompute(unittest.TestCase):
+    """The debounced warm-up computes on the snapshot the write asked for, not the retained one."""
+
+    @patch("utils.cache_invalidation.genetics_service")
+    def test_waits_until_the_snapshot_is_current_before_warming(self, mock_gs):
+        """A write during the running build: that build is stale too, so wait for the next one."""
+        order = []
+        mock_gs.snapshot_status.side_effect = [(1, True), (2, True), (3, False)]
+        mock_gs.ps.wait_for_builds.side_effect = lambda _gb, timeout: order.append("wait")
+        set_cache_and_functions(
+            memoized_funcs=[MagicMock(side_effect=lambda _gb: order.append("warm"))],
+            breeding_suggestions_func=MagicMock(side_effect=lambda _gb: order.append("suggestions")),
+        )
+        _recompute_genebank(1)
+        assert order == ["wait", "wait", "warm", "suggestions"]
+        assert 0 < mock_gs.ps.wait_for_builds.call_args.kwargs["timeout"] <= BUILD_WAIT_SECONDS
+
+    @patch("utils.cache_invalidation.genetics_service")
+    def test_a_build_that_stays_stale_does_not_spin(self, mock_gs):
+        mock_gs.snapshot_status.return_value = (1, True)  # e.g. failing builds cooling down
+        func = MagicMock()
+        set_cache_and_functions(memoized_funcs=[func], breeding_suggestions_func=None)
+        _recompute_genebank(1)
+        assert mock_gs.ps.wait_for_builds.call_count == 3
+        func.assert_called_once_with(1)
+
+    @patch("utils.cache_invalidation.genetics_service")
+    def test_warms_the_current_snapshot_when_the_build_does_not_finish(self, mock_gs):
+        mock_gs.snapshot_status.return_value = (1, True)
+        mock_gs.ps.wait_for_builds.side_effect = TimeoutError
+        func = MagicMock()
+        set_cache_and_functions(memoized_funcs=[func], breeding_suggestions_func=None)
+        _recompute_genebank(1)
+        func.assert_called_once_with(1)

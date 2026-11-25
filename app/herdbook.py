@@ -560,7 +560,9 @@ def rate_limit_exceeded(error):  # pylint: disable=unused-argument
 
 
 KINSHIP_LIFETIME = 300
-DASHBOARD_LIFETIME = 3600  # Dashboard aggregates change rarely (hourly refresh)
+# Keyed on the snapshot's content (_memo_key), so a long life never serves changed inputs. Bounded by
+# Redis memory, which has no maxmemory: about 110 KiB per memoized pedigree state of a large genebank.
+DASHBOARD_LIFETIME = 7 * 24 * 3600
 
 
 # Before_request
@@ -2202,10 +2204,16 @@ def check_ind_intyg():
     )
 
 
-def _memo_key(snap):
-    version, day, definition, algorithm, epoch = snap.key
-    # The epoch identifies the database: a restored one can repeat a version already memoized.
-    return f"{epoch}:{version}:{day.isoformat()}:{definition}:{algorithm}"
+def _memo_key(snap, eligible=False):
+    """The shared memo key: what the results are computed from, never the global version or the day.
+
+    A write that leaves the genebank's pedigree and membership alone (the other genebank, a
+    herd-tracking note) or a new day keeps the key, and the cached results with it. Carrier
+    eligibility moves with the date (age cap); only founders at risk reads it (`eligible`).
+    """
+    _version, _day, definition, algorithm, _epoch = snap.key
+    key = f"{snap.fingerprint}:{definition}:{algorithm}:{genetics.CODE_VERSION}"
+    return f"{key}:{snap.eligible_fingerprint}" if eligible else key
 
 
 def _pinned_snapshot(g_id):
@@ -2217,8 +2225,8 @@ def _pinned_snapshot(g_id):
     return genetics.ps.pinned(snap) if snap is not None else contextlib.nullcontext()
 
 
-def _on_snapshot(g_id, cached, *params):
-    """Run a memoized genetics body on one pinned snapshot, cached under that snapshot's key.
+def _on_snapshot(g_id, cached, *params, eligible=False):
+    """Run a memoized genetics body on one pinned snapshot, cached under that snapshot's content key.
 
     A result computed on snapshot v is stored under v even if v+1 is published
     meanwhile, so it can never be served as v+1. Without a snapshot (a failed
@@ -2234,7 +2242,7 @@ def _on_snapshot(g_id, cached, *params):
     if snap is None:
         return cached.uncached(g_id, None, *params)
     with genetics.ps.pinned(snap):
-        return cached(g_id, _memo_key(snap), *params)
+        return cached(g_id, _memo_key(snap, eligible), *params)
 
 
 def get_ind_inbreeding(i_number, g_id):
@@ -2380,7 +2388,7 @@ def _get_founder_statistics_cached(g_id, snap_key):  # pylint: disable=unused-ar
 
 def get_founders_at_risk(g_id):
     """Get founders at risk for genebank, shared across workers via Redis."""
-    return _on_snapshot(g_id, _get_founders_at_risk_cached)
+    return _on_snapshot(g_id, _get_founders_at_risk_cached, eligible=True)
 
 
 @CACHE.memoize(timeout=DASHBOARD_LIFETIME)

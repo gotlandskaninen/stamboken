@@ -81,9 +81,12 @@ interface FoundersAtRiskPanelProps {
 const FoundersAtRiskPanel = ({ genebankId }: FoundersAtRiskPanelProps) => {
   const {
     data: founders,
+    currentData,
     isLoading,
     error,
-  } = useFetchFoundersAtRiskQuery(genebankId);
+  } = useFetchFoundersAtRiskQuery(genebankId, {
+    refetchOnMountOrArgChange: true,
+  });
 
   if (isLoading) {
     return <Skeleton variant="rounded" height={200} sx={{ mb: 6 }} />;
@@ -95,7 +98,7 @@ const FoundersAtRiskPanel = ({ genebankId }: FoundersAtRiskPanelProps) => {
     "status" in error &&
     (error as { status: unknown }).status === 401;
 
-  if (error && !isAuthError) {
+  if (error && !isAuthError && !currentData) {
     return (
       <Alert severity="error" sx={{ mb: 6 }}>
         Kunde inte hämta data om founders.
