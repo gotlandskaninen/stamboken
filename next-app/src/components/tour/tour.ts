@@ -120,11 +120,8 @@ export const TOUR_STEPS: TourStep[] = [
 ];
 
 /** The first match that takes up space on screen, or null. */
-export function visibleTarget(
-  selector: string,
-  root: ParentNode = document,
-): Element | null {
-  for (const el of root.querySelectorAll(selector)) {
+export function visibleTarget(selector: string): Element | null {
+  for (const el of document.querySelectorAll(selector)) {
     if (el.getClientRects().length > 0) return el;
   }
   return null;

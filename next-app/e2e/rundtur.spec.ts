@@ -1,9 +1,9 @@
 import { test, expect, type Page } from "@playwright/test";
 import {
-  expectTourAxeClean as expectNoAxeViolations,
-  startTourFromMenu as startFromMenu,
-  tourPopover as tour,
-  walkTour as walk,
+  expectTourAxeClean,
+  startTourFromMenu,
+  tourPopover,
+  walkTour,
 } from "../e2e-shared/tour";
 
 // The tour (stamboken #229) for an ordinary member (gk-owner storageState).
@@ -30,9 +30,9 @@ test.describe("Rundtur för en vanlig medlem", () => {
     await expect(page.locator(".driver-popover-progress-text")).toHaveText(
       /^1 av \d+$/,
     );
-    await expectNoAxeViolations(page);
+    await expectTourAxeClean(page);
 
-    const titles = await walk(page);
+    const titles = await walkTour(page);
     expect(titles).toEqual(
       expect.arrayContaining([
         "Min besättning",
@@ -64,20 +64,20 @@ test.describe("Rundtur för en vanlig medlem", () => {
     await expect(
       page.getByRole("region", { name: "Rundtur i Stamboken" }),
     ).toHaveCount(0);
-    await expect(tour(page)).toHaveCount(0);
+    await expect(tourPopover(page)).toHaveCount(0);
 
     // prefers-reduced-motion: no fade.
     await page.emulateMedia({ reducedMotion: "reduce" });
-    await startFromMenu(page);
+    await startTourFromMenu(page);
     await expect(page.locator("body")).not.toHaveClass(/driver-fade/);
-    await expectNoAxeViolations(page);
+    await expectTourAxeClean(page);
   });
 
   test("Esc ends the tour and gives focus back; it can start again", async ({
     page,
   }) => {
     await openMinBesattning(page);
-    await startFromMenu(page);
+    await startTourFromMenu(page);
     const inTour = () =>
       page.evaluate(() => !!document.activeElement?.closest(".driver-popover"));
     await expect.poll(inTour).toBe(true);
@@ -91,11 +91,11 @@ test.describe("Rundtur för en vanlig medlem", () => {
       .getByRole("button", { name: "Nästa" })
       .click();
     await page.keyboard.press("Escape");
-    await expect(tour(page)).toHaveCount(0);
+    await expect(tourPopover(page)).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Account" })).toBeFocused();
 
     // Started again it begins from the first step.
-    await startFromMenu(page);
+    await startTourFromMenu(page);
     await expect(page.locator(".driver-popover-progress-text")).toHaveText(
       /^1 av /,
     );
@@ -103,7 +103,7 @@ test.describe("Rundtur för en vanlig medlem", () => {
       .getByRole("dialog")
       .getByRole("button", { name: "Stäng rundturen" })
       .click();
-    await expect(tour(page)).toHaveCount(0);
+    await expect(tourPopover(page)).toHaveCount(0);
   });
 
   test("on a rabbit's page the tour shows its photo and certificate", async ({
@@ -113,12 +113,12 @@ test.describe("Rundtur för en vanlig medlem", () => {
     await expect(page.locator('[data-tour="rabbit-card"]')).toBeVisible({
       timeout: 15000,
     });
-    await startFromMenu(page);
+    await startTourFromMenu(page);
     await expect(page.locator(".driver-popover-title")).toHaveText("Kaninen");
     await expect(
       page.getByRole("dialog").getByRole("link", { name: "Läs mer" }),
     ).toHaveAttribute("href", "/stamboken-online/manual#ladda-upp-ett-foto");
-    const titles = await walk(page);
+    const titles = await walkTour(page);
     // Min besättning's tabs are not on this page.
     expect(titles).not.toContain("Kullar och parningar");
   });
@@ -127,7 +127,7 @@ test.describe("Rundtur för en vanlig medlem", () => {
     await openMinBesattning(page);
     const offer = page.getByRole("region", { name: "Rundtur i Stamboken" });
     await expect(offer).toBeVisible();
-    await startFromMenu(page);
+    await startTourFromMenu(page);
     // Gone at once, not only after the tour.
     await expect(offer).toHaveCount(0);
     await page.keyboard.press("Escape");
@@ -141,7 +141,7 @@ test.describe("Rundtur för en vanlig medlem", () => {
   }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await openMinBesattning(page);
-    await startFromMenu(page);
+    await startTourFromMenu(page);
     const progress = page.locator(".driver-popover-progress-text");
     const title = page.locator(".driver-popover-title");
     while ((await title.innerText()).trim() !== "Årsrapport") {
@@ -166,9 +166,9 @@ test.describe("Rundtur för en vanlig medlem", () => {
       page,
     }) => {
       await openMinBesattning(page);
-      await startFromMenu(page);
-      await expectNoAxeViolations(page);
-      const titles = await walk(page);
+      await startTourFromMenu(page);
+      await expectTourAxeClean(page);
+      const titles = await walkTour(page);
       expect(titles).toEqual(
         expect.arrayContaining(["Kaniner", "Årsrapport", "Profil"]),
       );
