@@ -67,7 +67,6 @@ export default function RootLayout({
           rel="apple-touch-icon"
           href="/static/img/icons/apple-touch-icon.png"
         />
-        <link rel="manifest" href="/static/manifest.json" />
       </head>
       <body
         className={`${sourceSerif.variable} ${ibmPlexSans.variable} ${ibmPlexMono.variable}`}
