@@ -82,8 +82,8 @@ describe("published account rules revision", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
   });
   it("displays the text that Flask will archive, with its formatting, and binds the form to its UTF-8 digest", async () => {
-    // The node shapes the seeded rules use: a bold opening, a mailto link
-    // and an internal link.
+    // The node shapes the seeded rules use (a bold opening, a mailto link and
+    // a site-relative link), plus italics, a line break and an autolink.
     const text = (value: string, format?: number) => ({
       type: "text",
       text: value,
@@ -104,6 +104,12 @@ describe("published account rules revision", () => {
               text("Kontot är ditt eget.", 1),
               text(" Mejla "),
               link("mailto:test@example.org", "test@example.org"),
+              text(" eller "),
+              {
+                type: "autolink",
+                fields: { url: "https://example.org", linkType: "custom" },
+                children: [text("example.org")],
+              },
               text("."),
             ],
           },
@@ -200,6 +206,17 @@ describe("published account rules revision", () => {
             fields: { url: "/ordlista", linkType: "custom" },
             children: [{ type: "text", text: "ordlistan" }],
           },
+        ],
+      },
+    ],
+    [
+      "a line break with children",
+      {
+        type: "paragraph",
+        children: [
+          { type: "text", text: "Du får" },
+          { type: "linebreak", children: [{ type: "text", text: " INTE" }] },
+          { type: "text", text: " dela kontot." },
         ],
       },
     ],

@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   useTransition,
+  type MouseEvent,
   type ReactNode,
 } from "react";
 import Link from "next/link";
@@ -191,6 +192,18 @@ const NEXT_STEP: Record<string, [href: string, label: string]> = {
   rulesChanged: ["#kontoregler", "codeLogin.toRules"],
 };
 
+// Jumps within the page without a history entry, which the App Router cannot
+// go back from, and moves focus to the target.
+function jump(
+  event: MouseEvent<HTMLAnchorElement>,
+  target: HTMLElement | null,
+) {
+  if (!target) return;
+  event.preventDefault();
+  target.scrollIntoView({ block: "center" });
+  target.focus({ preventScroll: true });
+}
+
 export function CreateAccount({
   rules,
   returnTo,
@@ -234,7 +247,12 @@ export function CreateAccount({
         <>
           <p className={styles.lead}>
             {t("codeLogin.readFirst")}{" "}
-            <a href="#godkann">{t("codeLogin.toAccept")}</a>
+            <a
+              href="#godkann"
+              onClick={(event) => jump(event, checkbox.current)}
+            >
+              {t("codeLogin.toAccept")}
+            </a>
           </p>
           {children}
           <form
@@ -273,7 +291,8 @@ export function CreateAccount({
                 aria-describedby={error ? "godkann-fel" : undefined}
                 onChange={(event) => {
                   setAcceptedHash(event.target.checked ? rules.sha256 : null);
-                  if (error === "acceptFirst") setError("");
+                  if (error === "acceptFirst" || error === "rulesChanged")
+                    setError("");
                 }}
               />
               {t("codeLogin.accept")}
@@ -287,8 +306,14 @@ export function CreateAccount({
                     {next[0] === "sign-in" ? (
                       <Link href={signIn}>{t(next[1])}</Link>
                     ) : (
-                      // A plain anchor, so the jump within the page moves focus.
-                      <a href={next[0]}>{t(next[1])}</a>
+                      <a
+                        href={next[0]}
+                        onClick={(event) =>
+                          jump(event, document.getElementById("kontoregler"))
+                        }
+                      >
+                        {t(next[1])}
+                      </a>
                     )}
                   </>
                 )}

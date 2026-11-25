@@ -12,7 +12,7 @@ type LexicalNode = {
 };
 // Bold and italic only: their words are the plain text's words.
 const PLAIN_FORMATS = 1 | 2;
-// The plain-text converter reads `text` and `children` of any node, the page
+// The plain-text converter reads the `text` and `children` it finds, the page
 // only what each node type renders, so a node must carry exactly those.
 function sameWordsAsText(node: LexicalNode): boolean {
   switch (node.type) {
@@ -25,8 +25,9 @@ function sameWordsAsText(node: LexicalNode): boolean {
     case "linebreak":
       return node.text === undefined && node.children === undefined;
     case "link":
+    case "autolink":
       return (
-        node.fields?.linkType === "custom" &&
+        (node.type === "autolink" || node.fields?.linkType === "custom") &&
         node.text === undefined &&
         (node.children ?? []).every(
           (child) => child.type === "text" && sameWordsAsText(child),
