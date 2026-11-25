@@ -727,8 +727,7 @@
       },
       "roles": {
         "title": "Your role",
-        "text": "You have a role in the association, so you reach the admin panel from your menu.",
-        "textMatrikel": "You have a role in the association, so you reach the admin panel and the member register from your menu."
+        "text": "You have a role in the association, so you reach the admin panel and the member register from your menu."
       },
       "tyckTill": {
         "title": "Tyck till",

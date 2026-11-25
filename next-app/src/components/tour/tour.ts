@@ -1,9 +1,6 @@
 import type { UserContext } from "@/lib/user-context";
 import { MANUAL_PATH } from "@/lib/constants";
-import {
-  hasAnyVisible,
-  isMemberAdmin,
-} from "@/app/(app)/stamboken/(dashboard)/admin/_components/navConfig";
+import { isMemberAdmin } from "@/app/(app)/stamboken/(dashboard)/admin/_components/navConfig";
 
 export interface TourStep {
   /** i18n key under tour.steps, and the step's id in tests. */
@@ -14,8 +11,6 @@ export interface TourStep {
   href: string;
   /** Only for users with this role; everyone when left out. */
   when?: (user: UserContext) => boolean;
-  /** The text's key when it differs per user (default: `${id}.text`). */
-  text?: (user: UserContext) => string;
 }
 
 // The top nav hides on small screens; its links are then behind the menu button.
@@ -81,8 +76,9 @@ export const TOUR_STEPS: TourStep[] = [
     id: "roles",
     target: '[data-tour="user-menu"]',
     href: `${MANUAL_PATH}#adminpanelen-för-genbanksansvarig`,
-    when: hasAnyVisible,
-    text: (user) => (isMemberAdmin(user) ? "roles.textMatrikel" : "roles.text"),
+    // Everyone who sees Adminpanelen in the menu (admin, genbanksansvarig,
+    // matrikeladmin) also sees Matrikel there.
+    when: isMemberAdmin,
   },
   {
     id: "tyckTill",

@@ -43,15 +43,16 @@ export function TourProvider({ children }: { children: React.ReactNode }) {
 
   const start = React.useCallback(async () => {
     if (!user) return;
+    // driver.js returns focus to the last focused element, which after Nästa
+    // is a button in the closed popover. Return it to where the tour started,
+    // read before the await below unmounts the offer, or to the menu when
+    // that button is gone.
+    const opener = document.activeElement;
     const { driver } = await import("driver.js");
     end();
     const steps = stepsFor(user);
     if (steps.length === 0) return;
     const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    // driver.js returns focus to the last focused element, which after Nästa
-    // is a button in the closed popover. Return it to where the tour started,
-    // or to the menu when that is gone (the offer hides itself).
-    const opener = document.activeElement;
     const running = driver({
       steps: steps.map((step) => ({
         element: step.element,
@@ -59,7 +60,7 @@ export function TourProvider({ children }: { children: React.ReactNode }) {
           title: t(`tour.steps.${step.id}.title`),
           // driver.js sets this as HTML: every text is escaped.
           description:
-            `<p>${escapeHtml(t(`tour.steps.${step.text?.(user) ?? `${step.id}.text`}`))}</p>` +
+            `<p>${escapeHtml(t(`tour.steps.${step.id}.text`))}</p>` +
             `<p><a href="${escapeHtml(step.href)}">${escapeHtml(t("tour.more"))}</a></p>`,
         },
       })),
@@ -86,7 +87,9 @@ export function TourProvider({ children }: { children: React.ReactNode }) {
         if (tour.current !== running) return;
         tour.current = null;
         const back =
-          opener instanceof HTMLElement && opener.isConnected
+          opener instanceof HTMLElement &&
+          opener.isConnected &&
+          opener !== document.body
             ? opener
             : document.querySelector<HTMLElement>('[data-tour="user-menu"]');
         // After driver.js's own focus call, which can land on the old popover.

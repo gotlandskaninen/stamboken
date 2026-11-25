@@ -51,15 +51,9 @@ describe("stepsFor", () => {
     expect(ids(manager)).toEqual(expect.arrayContaining(["mode", "roles"]));
   });
 
-  it("names Matrikel in the role step for those who keep the register", () => {
-    const roles = (user: UserContext) =>
-      stepsFor(user, everywhere).find((s) => s.id === "roles")!;
-    expect(roles(matrikelAdmin).text!(matrikelAdmin)).toBe(
-      "roles.textMatrikel",
-    );
-    expect(roles(manager).text!(manager)).toBe("roles.textMatrikel");
-    const viewer = { ...member, is_admin: true };
-    expect(roles(viewer)).toBeDefined();
+  it("gives the role step to those who keep the matrikel", () => {
+    expect(ids(matrikelAdmin)).toContain("roles");
+    expect(ids({ ...member, is_admin: true })).toContain("roles");
   });
 
   it("skips steps whose target is not on the page, in order", () => {
@@ -120,12 +114,7 @@ describe("the offer's memory", () => {
 describe("the steps' texts and links", () => {
   it("has a Swedish title and text for every step", () => {
     for (const step of TOUR_STEPS) {
-      const keys = [
-        `${step.id}.title`,
-        ...[member, matrikelAdmin].map(
-          (u) => step.text?.(u) ?? `${step.id}.text`,
-        ),
-      ];
+      const keys = [`${step.id}.title`, `${step.id}.text`];
       for (const key of keys) {
         expect(i18n.exists(`tour.steps.${key}`, { lng: "sv" }), key).toBe(true);
       }

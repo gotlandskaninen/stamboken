@@ -724,8 +724,7 @@
       },
       "roles": {
         "title": "Ihre Rolle",
-        "text": "Sie haben eine Rolle im Verein. Deshalb erreichen Sie den Adminbereich über Ihr Menü.",
-        "textMatrikel": "Sie haben eine Rolle im Verein. Deshalb erreichen Sie den Adminbereich und das Mitgliederverzeichnis über Ihr Menü."
+        "text": "Sie haben eine Rolle im Verein. Deshalb erreichen Sie den Adminbereich und das Mitgliederverzeichnis über Ihr Menü."
       },
       "tyckTill": {
         "title": "Tyck till",

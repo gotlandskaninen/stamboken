@@ -727,8 +727,7 @@
       },
       "roles": {
         "title": "Din roll",
-        "text": "Du har en roll i föreningen. Därför når du Adminpanelen från din meny.",
-        "textMatrikel": "Du har en roll i föreningen. Därför når du Adminpanelen och Matrikel från din meny."
+        "text": "Du har en roll i föreningen. Därför når du Adminpanelen och Matrikel från din meny."
       },
       "tyckTill": {
         "title": "Tyck till",
