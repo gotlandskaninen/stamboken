@@ -84,6 +84,7 @@ export function UserEditClient({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
   const [plaintext, setPlaintext] = useState<string | null>(null);
   const [fullname, setFullname] = useState(detail.fullname ?? "");
   const [email, setEmail] = useState(detail.email ?? "");
@@ -95,13 +96,16 @@ export function UserEditClient({
   const displayName = detail.username ?? detail.email;
 
   // Runs a Server Action; ApiError/pre-check failures come back as
-  // { error } and render in the red banner. Successful mutations redirect
-  // to the list — the thrown NEXT_REDIRECT propagates and navigates.
+  // { error } and render in the red banner. A successful one stays on the
+  // page (#249): its revalidation re-renders the new state, and a short
+  // confirmation says it was saved.
   const run = (action: () => Promise<ActionError | void>) => {
     setError(null);
+    setSaved(false);
     startTransition(async () => {
       const result = await action();
       if (result && "error" in result) setError(result.error);
+      else setSaved(true);
     });
   };
 
@@ -186,6 +190,14 @@ export function UserEditClient({
           className={`${ds["ad-banner"]} ${ds["ad-banner-danger"]}`}
         >
           {error}
+        </div>
+      )}
+      {saved && (
+        <div
+          role="status"
+          className={`${ds["ad-banner"]} ${ds["ad-banner-success"]}`}
+        >
+          Ändringen är sparad.
         </div>
       )}
 

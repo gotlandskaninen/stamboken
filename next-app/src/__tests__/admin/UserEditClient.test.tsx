@@ -12,6 +12,8 @@ import {
 const revokeRole = vi.hoisted(() => vi.fn());
 const logoutEverywhere = vi.hoisted(() => vi.fn());
 const removeGoogleLogin = vi.hoisted(() => vi.fn());
+const setAccountActive = vi.hoisted(() => vi.fn());
+const setV2ProdAccess = vi.hoisted(() => vi.fn());
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
 }));
@@ -21,9 +23,9 @@ vi.mock("@/app/(app)/stamboken/(dashboard)/admin/anvandare/actions", () => ({
   removeGoogleLogin,
   resetPassword: vi.fn(),
   revokeRole,
-  setAccountActive: vi.fn(),
+  setAccountActive,
   setValidated: vi.fn(),
-  setV2ProdAccess: vi.fn(),
+  setV2ProdAccess,
   updateUserProfile: vi.fn(),
 }));
 
@@ -187,5 +189,55 @@ describe("UserEditClient Google login", () => {
     const dialog = openGoogleDialog();
     fireEvent.click(within(dialog).getByRole("button", { name: "Ta bort" }));
     expect(removeGoogleLogin).toHaveBeenCalledWith(7);
+  });
+});
+
+describe("UserEditClient switches (#249)", () => {
+  const renderPage = () =>
+    render(
+      <UserEditClient
+        detail={detail}
+        actorId={1}
+        genebanks={[]}
+        herds={[]}
+        recentAudit={[]}
+        concurrentEditWarning={null}
+      />,
+    );
+
+  it("saves the real-stambok switch and confirms it on the page", async () => {
+    setV2ProdAccess.mockResolvedValue(undefined);
+    renderPage();
+    expect(screen.queryByText("Ändringen är sparad.")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("switch", { name: /riktiga stamboken/ }));
+    expect(setV2ProdAccess).toHaveBeenCalledWith(7, true);
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Ändringen är sparad.",
+    );
+  });
+
+  it("asks before deactivating, then confirms the change on the page", async () => {
+    setAccountActive.mockResolvedValue(undefined);
+    renderPage();
+    fireEvent.click(screen.getByRole("switch", { name: "Kontot är aktivt" }));
+    const dialog = screen.getByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Inaktivera" }));
+    expect(setAccountActive).toHaveBeenCalledWith(7, false);
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Ändringen är sparad.",
+    );
+  });
+
+  it("shows a refusal instead of the confirmation", async () => {
+    setAccountActive.mockResolvedValue({ error: "Nej." });
+    renderPage();
+    fireEvent.click(screen.getByRole("switch", { name: "Kontot är aktivt" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Inaktivera",
+      }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("Nej.");
+    expect(screen.queryByText("Ändringen är sparad.")).not.toBeInTheDocument();
   });
 });

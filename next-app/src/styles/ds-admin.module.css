@@ -209,6 +209,11 @@
   border-color: var(--sb-warning);
   color: var(--sb-ink-2);
 }
+.ad-banner-success {
+  background: var(--sb-success-soft);
+  border-color: var(--sb-success);
+  color: var(--sb-ink-2);
+}
 
 /* Gridkropp. DataGrid kräver en avgränsad höjd (samma mönster som
    components/explorer/RabbitExplorer.tsx:453).

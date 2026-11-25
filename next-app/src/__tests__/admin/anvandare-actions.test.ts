@@ -2,7 +2,11 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { fetchApi } from "@/lib/api";
-import { resetPassword } from "@/app/(app)/stamboken/(dashboard)/admin/anvandare/actions";
+import {
+  resetPassword,
+  setAccountActive,
+  setV2ProdAccess,
+} from "@/app/(app)/stamboken/(dashboard)/admin/anvandare/actions";
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
@@ -35,4 +39,26 @@ describe("resetPassword", () => {
     expect(revalidatePath).not.toHaveBeenCalled();
     expect(redirect).not.toHaveBeenCalled();
   });
+});
+
+describe("the switches (#249)", () => {
+  test.each([
+    ["setAccountActive", () => setAccountActive(7, false), "active"],
+    ["setV2ProdAccess", () => setV2ProdAccess(7, true), "v2-prod-access"],
+  ])(
+    "%s saves, re-renders the account and the list, and stays on the page",
+    async (_name, action, endpoint) => {
+      vi.mocked(fetchApi).mockResolvedValue(undefined);
+      expect(await action()).toBeUndefined();
+      expect(fetchApi).toHaveBeenCalledWith(
+        `/v2/admin/users/7/${endpoint}`,
+        expect.objectContaining({ method: "PATCH", forceProd: true }),
+      );
+      expect(revalidatePath).toHaveBeenCalledWith("/stamboken/admin/anvandare");
+      expect(revalidatePath).toHaveBeenCalledWith(
+        "/stamboken/admin/anvandare/7",
+      );
+      expect(redirect).not.toHaveBeenCalled();
+    },
+  );
 });

@@ -1,7 +1,6 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 import { fetchApi, ApiError } from "@/lib/api";
 import { requireAdminProdMode } from "../_lib/requireAdminProdMode";
 import { generateTempPassword } from "../_lib/password";
@@ -11,6 +10,8 @@ const LIST_PATH = "/stamboken/admin/anvandare";
 
 export type ActionError = { error: string };
 
+// Every action stays on the account page (#249): the revalidation re-renders
+// it with the new state, and the list keeps its search and filters.
 function revalidateUser(userId: number) {
   revalidatePath(LIST_PATH);
   revalidatePath(`${LIST_PATH}/${userId}`);
@@ -32,7 +33,6 @@ export async function updateUserProfile(
     throw e;
   }
   revalidateUser(userId);
-  redirect(LIST_PATH);
 }
 
 export async function setV2ProdAccess(
@@ -51,7 +51,6 @@ export async function setV2ProdAccess(
     throw e;
   }
   revalidateUser(userId);
-  redirect(LIST_PATH);
 }
 
 export async function setValidated(
@@ -71,7 +70,6 @@ export async function setValidated(
     throw e;
   }
   revalidateUser(userId);
-  redirect(LIST_PATH);
 }
 
 export async function setAccountActive(
@@ -91,7 +89,6 @@ export async function setAccountActive(
     throw e;
   }
   revalidateUser(userId);
-  redirect(LIST_PATH);
 }
 
 export async function logoutEverywhere(
@@ -109,7 +106,6 @@ export async function logoutEverywhere(
     throw e;
   }
   revalidateUser(userId);
-  redirect(LIST_PATH);
 }
 
 export async function removeGoogleLogin(
@@ -126,7 +122,6 @@ export async function removeGoogleLogin(
     throw e;
   }
   revalidateUser(userId);
-  redirect(LIST_PATH);
 }
 
 export async function grantRole(
@@ -145,7 +140,6 @@ export async function grantRole(
     throw e;
   }
   revalidateUser(userId);
-  redirect(LIST_PATH);
 }
 
 export async function revokeRole(
@@ -188,7 +182,6 @@ export async function revokeRole(
     throw e;
   }
   revalidateUser(userId);
-  redirect(LIST_PATH);
 }
 
 export async function resetPassword(
@@ -210,7 +203,7 @@ export async function resetPassword(
     if (e instanceof ApiError) return { error: e.detail };
     throw e;
   }
-  // Exception: NO redirect and no revalidation — the plaintext is shown
+  // Exception: no revalidation — the plaintext is shown
   // exactly once, and a reset of the admin's own password has already ended
   // her session, so a re-render would drop the page before she saw it.
   // [Klar] in the client refreshes the detail view.
