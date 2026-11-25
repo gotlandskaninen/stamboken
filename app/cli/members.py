@@ -1763,6 +1763,14 @@ def _add_household_person(main, user, data, planned, workspace, actor) -> None:
         roles = [r for r in account.privileges if isinstance(r, dict) and r.get("level") == "owner"]
         if not {str(r.get("herd")).lstrip("0") for r in roles} & {str(herd.id) for herd in herds}:
             raise LinkError("Kontot äger inte besättningen", "Kontot har inte längre rollen ägare på besättningen")
+        owners, incomplete = legacy_owner_index()  # the account's row is locked, so its entries are current
+        owned_memberships = Herd.select(Herd.membership).where(
+            Herd.id.in_([herd_id for herd_id, users in owners.items() if account.id in users]),
+            Herd.membership.is_null(False),
+        )
+        memberships_of = {account.id: {herd.membership_id for herd in owned_memberships}}
+        if reason := _account_problem(account, incomplete, memberships_of):
+            raise LinkError("Kontot ska granskas", f"Sedan planen: {reason}")
         persons = list(Member.select().where(Member.membership == membership.id, Member.end_date.is_null(True)))
         choice = _family_choice(account, workspace, persons, None)
         if choice != (data, column):

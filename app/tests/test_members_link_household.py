@@ -384,6 +384,30 @@ class TestMembersLinkHousehold(DatabaseTest):
         self.assertEqual(self._added(membership), [])
         self.assertEqual(self._notices(), [])
 
+    def _account_changed_after_the_plan(self, change):
+        membership, main, _, bo = self._household_of_two()
+
+        def change_account(person_id):
+            if person_id == main.id:
+                account = db.User.get_by_id(bo.id)
+                change(account)
+                account.save()
+
+        result = self._apply_with(change_account)
+
+        self.assertEqual(self._added(membership), [])
+        self.assertEqual(self._notices(), [])
+        return result.output
+
+    def test_role_given_after_the_plan_stops_the_add(self):
+        output = self._account_changed_after_the_plan(lambda a: a.add_role("manager", self.genebanks[0].id))
+        self.assertIn("Sedan planen: kontot har en roll", output)
+
+    def test_herd_in_another_membership_after_the_plan_stops_the_add(self):
+        _, _, other_herd = self._household(902, first="Eva", last="Ek")
+        output = self._account_changed_after_the_plan(lambda a: a.add_role("owner", other_herd.id))
+        self.assertIn("Sedan planen: kontot äger besättningar i flera medlemskap", output)
+
     def test_inactive_membership_after_the_plan_stops_the_add(self):
         membership, main, _, _ = self._household_of_two()
 
