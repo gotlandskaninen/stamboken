@@ -10,7 +10,6 @@ import {
   ROLE_ADD_BUTTON,
   ROLE_HERD_FIELD,
   ROLE_LEVEL_FIELD,
-  ROLE_REMOVE_BUTTON,
   SEARCH_FIELD,
 } from "./helpers/copy";
 import { psql } from "./helpers/db";
@@ -53,32 +52,57 @@ test("owner(herd) is refused; grant + revoke viewer(genebank) writes two privile
     .click();
   await page.getByRole("button", { name: ROLE_ADD_BUTTON }).click();
   await expect(
-    page.getByText(/kopplat till (en person|något medlemskap)/),
+    page.getByText(/kopplat till en person|kopplad till något medlemskap/),
   ).toBeVisible();
 
-  // Grant viewer(genebank) instead and revoke it again.
-  await page.goto(`/stamboken/admin/anvandare/${userId}`);
-  await page.getByLabel(ROLE_LEVEL_FIELD).click();
-  await page.getByRole("option", { name: "Granskare" }).click();
-  await page.getByLabel(GENEBANK_FIELD, { exact: true }).fill("Gotlandskanin");
-  await page.getByRole("option", { name: "Gotlandskanin" }).first().click();
-  await page.getByRole("button", { name: ROLE_ADD_BUTTON }).click();
+  // Grant viewer(genebank) instead and revoke it again. The victim is seeded
+  // with viewer on both genebanks, so the Gotland entry is taken away first
+  // (the grant must really add it) and put back at the end whatever happens.
+  const gotlandViewer =
+    "e->>'level' = 'viewer' AND (e->>'genebank')::int = " +
+    "(SELECT genebank_id FROM genebank WHERE name = 'Gotlandskanin')";
+  const victim = `username = '${VICTIM_ROLE.username}'`;
+  const gotlandViewers = () =>
+    psql(
+      "SELECT count(*) FROM hbuser, jsonb_array_elements(privileges::jsonb) e " +
+        `WHERE ${victim} AND ${gotlandViewer};`,
+    );
+  psql(
+    "UPDATE hbuser SET privileges = (SELECT COALESCE(jsonb_agg(e), '[]'::jsonb)::text " +
+      `FROM jsonb_array_elements(privileges::jsonb) e WHERE NOT (${gotlandViewer})) WHERE ${victim};`,
+  );
+  const entry = () =>
+    page.getByRole("button", { name: "Ta bort Granskare — Gotlandskanin" });
+  try {
+    await page.goto(`/stamboken/admin/anvandare/${userId}`);
+    await expect(entry()).toHaveCount(0);
+    await page.getByLabel(ROLE_LEVEL_FIELD).click();
+    await page.getByRole("option", { name: "Granskare" }).click();
+    await page
+      .getByLabel(GENEBANK_FIELD, { exact: true })
+      .fill("Gotlandskanin");
+    await page.getByRole("option", { name: "Gotlandskanin" }).first().click();
+    await page.getByRole("button", { name: ROLE_ADD_BUTTON }).click();
 
-  await page.goto(`/stamboken/admin/anvandare/${userId}`);
-  const grantedEntry = page
-    .getByRole("listitem")
-    .filter({ hasText: "Granskare" });
-  await expect(grantedEntry.first()).toBeVisible();
+    await page.goto(`/stamboken/admin/anvandare/${userId}`);
+    await expect(entry()).toHaveCount(1);
+    expect(gotlandViewers()).toBe("1");
 
-  // Revoke the same entry (ghost button, aria-label "Ta bort <roll>").
-  await grantedEntry
-    .first()
-    .getByRole("button", { name: ROLE_REMOVE_BUTTON })
-    .click();
-  await page.goto(`/stamboken/admin/anvandare/${userId}`);
-  await expect(
-    page.getByRole("listitem").filter({ hasText: "Granskare" }),
-  ).toHaveCount(0);
+    // Revoke the same entry (ghost button, aria-label "Ta bort <roll>").
+    await entry().click();
+    await page.goto(`/stamboken/admin/anvandare/${userId}`);
+    await expect(entry()).toHaveCount(0);
+    expect(gotlandViewers()).toBe("0");
+  } finally {
+    if (gotlandViewers() === "0") {
+      psql(
+        "UPDATE hbuser SET privileges = (privileges::jsonb || jsonb_build_array(jsonb_build_object(" +
+          "'level', 'viewer', 'genebank', " +
+          "(SELECT genebank_id FROM genebank WHERE name = 'Gotlandskanin'))))::text " +
+          `WHERE ${victim};`,
+      );
+    }
+  }
 
   // Two privileges audit rows on this hbuser record (§7.3; Task C15's
   // field chips carry the Swedish label "Roller" for the DB column
