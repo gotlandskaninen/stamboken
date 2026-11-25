@@ -341,9 +341,10 @@ def _masked_actor_rows():
     """The log rows whose actor is an anonymised person's own account (#244), as an SQL condition, or None.
 
     The erasure detaches the account but empties it only when it was still linked; one unlinked before keeps its name.
-    It may be a handler's account, linked by mistake and since corrected, so the mask is per row: the rows about her
-    (her person_id) and her household's rows while the account was linked to her (her self-service). The account's
-    other rows keep its name. Every link and detach writes person_user_(un)linked with both ids, which gives the spans.
+    It may be a handler's account, linked by mistake and since corrected, so the mask covers only what she did with
+    it: her household's rows while the account was linked to her. Before and after, the account acts as itself and
+    keeps its name, also on rows about her. Every link and detach writes person_user_(un)linked with both ids, which
+    gives the spans.
     """
     links = list(
         MatrikelAudit.select(
@@ -374,18 +375,15 @@ def _masked_actor_rows():
         else:  # linked before the log began
             pair.append((a.membership_id, None, a.created_at))
     condition = None
-    for (person, account), pair in spans.items():
-        about = MatrikelAudit.payload["person_id"] == str(person)
+    for (_person, account), pair in spans.items():
         for membership, start, end in pair:
-            span = MatrikelAudit.membership == membership
+            row = (MatrikelAudit.actor == account) & (MatrikelAudit.membership == membership)
             if start is not None:
-                span &= MatrikelAudit.created_at >= start
+                row &= MatrikelAudit.created_at >= start
             if end is not None:
-                span &= MatrikelAudit.created_at <= end
-            about |= span
-        row = (MatrikelAudit.actor == account) & about
-        condition = row if condition is None else condition | row
-    return None if condition is None else fn.COALESCE(condition, False)  # a payload without person_id gives NULL
+                row &= MatrikelAudit.created_at <= end
+            condition = row if condition is None else condition | row
+    return condition
 
 
 def _household_erasures(membership_ids) -> dict[int, datetime | None]:
