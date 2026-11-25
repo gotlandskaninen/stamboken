@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from unittest import mock
 
 import utils.data_access as da
+import werkzeug.security
 from werkzeug.security import check_password_hash
 
 # Valid UUID format that doesn't exist (PostgreSQL requires valid UUID syntax)
@@ -111,6 +112,15 @@ class TestDataAccess(DatabaseTest):
         user, generation = da.authenticate_user(email, password)
         self.assertEqual(user.email, email)
         self.assertEqual(generation, da.account_generation(user.uuid))
+
+    def test_register_user_hashes_with_scrypt(self):
+        """conftest swaps in a cheap hash for speed; this test keeps the production hash (scrypt)."""
+        with mock.patch.object(da, "generate_password_hash", werkzeug.security.generate_password_hash):
+            user = da.register_user("scrypt_user", "pass")
+        auth = db.Authenticators.get((db.Authenticators.user == user.id) & (db.Authenticators.auth == "password"))
+        self.assertTrue(auth.auth_data.startswith("scrypt:"))
+        self.assertEqual(da.authenticate_user("scrypt_user", "!pass!"), (None, None))
+        self.assertEqual(da.authenticate_user("scrypt_user", "pass")[0].id, user.id)
 
     def test_fetch_user_info(self):
         """
