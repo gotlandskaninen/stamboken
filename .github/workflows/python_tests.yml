@@ -21,27 +21,27 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          fetch-depth: 2
 
       # Before the filter decides anything: a broken filter must not skip its own tests.
       - name: Test the filter
         run: bash scripts/tests/test-python-relevant.sh
 
-      # The diff of this run's own base and head, not the PR's current files,
-      # so a rerun of an older commit is judged on that commit. File names
-      # are never printed: the runner reads workflow commands from the log.
+      # The checked-out PR merge commit against its first parent: what the
+      # merge would change, judged on this run's own commit. quotePath off so
+      # å, ä and ö stay readable; names with control characters stay quoted
+      # and run the suite. File names are never printed: the runner reads
+      # workflow commands from the log.
       - name: Decide whether the Python suite runs
         id: filter
         env:
           EVENT: ${{ github.event_name }}
-          BASE: ${{ github.event.pull_request.base.sha }}
-          HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           if [ "$EVENT" != pull_request ]; then
             python=true
           else
             files="$RUNNER_TEMP/changed-files"
-            git diff --name-only --no-renames "$BASE...$HEAD" >"$files"
+            git -c core.quotePath=false diff --name-only --no-renames HEAD^1 HEAD >"$files"
             echo "$(wc -l <"$files") changed files"
             python=$(scripts/python-relevant.sh <"$files")
           fi

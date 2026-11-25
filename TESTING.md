@@ -229,7 +229,7 @@ skriver om hela filen med de gamla tiderna för tester den inte körde. En PR so
 utanför `app/` hoppar över sviten (`scripts/python-relevant.sh`). Den
 obligatoriska kontrollen `Run Python tests` körs alltid och är grön när sviten
 hoppades över, röd när någon del misslyckades eller filtret inte gav ett svar.
-Filtret bedömer körningens egen diff (bas mot head), inte PR:ens nuvarande
+Filtret bedömer PR:ens mergecommit mot dess första förälder, inte PR:ens nuvarande
 filer. Push till `main` kör allt.
 
 ---
