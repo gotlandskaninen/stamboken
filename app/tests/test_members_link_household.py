@@ -465,6 +465,25 @@ class TestMembersLinkHousehold(DatabaseTest):
         self.assertIsNone(db.Member.get_by_id(main.id).user_id)
         self.assertEqual(self._added(membership), [])
 
+    def test_main_member_candidate_whose_workspace_row_names_another_person_lists_the_household(self):
+        """A family member's account with the household's shared address and a nickname matches the main member."""
+        membership, main, herd = self._household()
+        db.Member.update(email="hem@example.org").where(db.Member.id == main.id).execute()
+        db.Member.create(membership=membership, role="familjemedlem", first_name="Bo", last_name="Svensson")
+        bosse = self._account("Bosse", owns=[herd], email="hem@example.org")
+        self._account("Cia Svensson", owns=[herd], email="cia@example.org")
+        self._workspace_row("hem@example.org", "Bo", "Svensson", home="bo.hemma@example.net")
+        self._workspace_row("cia@example.org", "Cia", "Svensson", home="cia.hemma@example.net")
+
+        plan = self._run()
+
+        self.assertIn(
+            f"G901: huvudmedlemmens konto {bosse.id}: Workspace-raden har namnet på en annan person", plan.output
+        )
+        self.assertIn("Att koppla: 0", plan.output)
+        self._apply()
+        self.assertIsNone(db.Member.get_by_id(main.id).user_id)
+
     def test_changed_plan_writes_nothing(self):
         membership, main, herd = self._household()
         self._account("Anna Svensson", owns=[herd])

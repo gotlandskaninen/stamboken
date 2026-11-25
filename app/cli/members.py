@@ -1660,6 +1660,13 @@ def _plan_household_links(workspace) -> tuple[list, list, int]:
         if reason := _account_problem(main_user, incomplete, memberships_of):
             listed.append((codes, f"huvudmedlemmens konto {main_user.id}: {reason}"))
             continue
+        row = workspace.get(_norm_email(main_user.google_email)) or {}
+        row_name = _norm_name(f"{row.get(_WORKSPACE_NAME[0], '')} {row.get(_WORKSPACE_NAME[1], '')}")
+        if row_name and any(_norm_name(f"{p.first_name} {p.last_name}") == row_name for p in persons if p is not main):
+            listed.append(
+                (codes, f"huvudmedlemmens konto {main_user.id}: Workspace-raden har namnet på en annan person")
+            )
+            continue
         if holder := _registry_holder(main_user, other_than=main.id):
             listed.append((codes, f"huvudmedlemmens konto {main_user.id}: Google-adressen hör till person {holder.id}"))
             continue
