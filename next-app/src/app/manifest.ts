@@ -7,7 +7,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "Stamboken",
     short_name: "Stamboken",
-    start_url: "/stamboken",
+    start_url: "/stamboken/min-besattning",
     scope: "/",
     display: "standalone",
     // --sb-skog and --sb-paper in src/styles/tokens.css

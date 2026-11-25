@@ -13,5 +13,5 @@ test("pages link the Stamboken manifest, which opens the dashboard", async ({
 
   const res = await request.get("/manifest.webmanifest");
   expect(res.ok()).toBe(true);
-  expect((await res.json()).start_url).toBe("/stamboken");
+  expect((await res.json()).start_url).toBe("/stamboken/min-besattning");
 });
