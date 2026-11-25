@@ -2,8 +2,9 @@ import "@testing-library/jest-dom/vitest";
 import { afterEach, describe, it, expect, beforeEach, vi } from "vitest";
 import { cleanup, render, screen, fireEvent } from "@testing-library/react";
 const mocks = vi.hoisted(() => ({
-  user: { is_owner: ["G9999", "G9998", "G9997"] } as {
+  user: { is_owner: ["G9999", "G9998", "G9997"], v2_prod_access: true } as {
     is_owner: string[] | null;
+    v2_prod_access: boolean;
   },
 }));
 vi.mock("@/lib/user-context", () => ({ useUser: () => mocks.user }));
@@ -54,13 +55,49 @@ describe("OnboardingChecklist", () => {
   beforeEach(() => {
     localStorage.clear();
     document.cookie = "sb_mode=; max-age=0";
+    mocks.user.v2_prod_access = true;
   });
   afterEach(cleanup);
 
   it("shows the steps for an active herd that has not bred", () => {
     renderList({});
     expect(screen.getByText(TITLE)).toBeInTheDocument();
+    expect(screen.getAllByRole("listitem")).toHaveLength(4);
+  });
+
+  it("offers the test environment as a fourth step with a manual link", () => {
+    renderList({});
+    const step = screen.getAllByRole("listitem")[3];
+    expect(step).toHaveTextContent("Prova i testmiljön");
+    expect(step).toHaveTextContent(
+      "Byt till testmiljön i menyn under din bild.",
+    );
+    expect(step).not.toHaveTextContent("Klart");
+    expect(screen.getByRole("link", { name: "Om testmiljön" })).toHaveAttribute(
+      "href",
+      "/stamboken-online/manual#testmiljön-och-riktiga-stamboken",
+    );
+  });
+
+  it("hides the test environment step without access to riktiga stamboken", () => {
+    mocks.user.v2_prod_access = false;
+    renderList({});
     expect(screen.getAllByRole("listitem")).toHaveLength(3);
+    expect(screen.queryByText("Prova i testmiljön")).toBeNull();
+  });
+
+  it("does not tick the test environment step just by rendering in it", () => {
+    document.cookie = "sb_mode=demo";
+    renderList({});
+    expect(screen.getAllByRole("listitem")[3]).not.toHaveTextContent("Klart");
+    expect(localStorage.getItem("sb-onboarding-tried-demo")).toBeNull();
+  });
+
+  it("ticks the test environment step once the menu has switched there", () => {
+    // Written by AvatarMenu on "Ja, byt till testmiljön".
+    localStorage.setItem("sb-onboarding-tried-demo", "1");
+    renderList({});
+    expect(screen.getAllByRole("listitem")[3]).toHaveTextContent("Klart");
   });
 
   it.each([
@@ -141,7 +178,7 @@ describe("OnboardingChecklist", () => {
     const ids = new Set(
       [...md.matchAll(/^#{1,6} (.+)$/gm)].map((m) => slug(m[1])),
     );
-    for (const step of onboardingSteps([], [])) {
+    for (const step of onboardingSteps([], [], false)) {
       expect(ids).toContain(step.manual.slice(1));
     }
   });
