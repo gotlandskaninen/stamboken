@@ -28,7 +28,9 @@ export default async function CreateAccountPage({
     <CreateAccount rules={displayed ?? undefined} returnTo={return_to}>
       {rules && (
         <section className={styles.rules} aria-labelledby="kontoregler">
-          <h2 id="kontoregler">{rules.title}</h2>
+          <h2 id="kontoregler" tabIndex={-1}>
+            {rules.title}
+          </h2>
           {rules.subtitle && <p>{rules.subtitle}</p>}
           {rules.sections.map(({ content, text }, index) =>
             content ? (

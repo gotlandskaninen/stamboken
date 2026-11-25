@@ -284,9 +284,12 @@ export function CreateAccount({
                 {next && (
                   <>
                     {" "}
-                    <Link href={next[0] === "sign-in" ? signIn : next[0]}>
-                      {t(next[1])}
-                    </Link>
+                    {next[0] === "sign-in" ? (
+                      <Link href={signIn}>{t(next[1])}</Link>
+                    ) : (
+                      // A plain anchor, so the jump within the page moves focus.
+                      <a href={next[0]}>{t(next[1])}</a>
+                    )}
                   </>
                 )}
               </p>
