@@ -10,7 +10,12 @@ import { expect, test } from "@playwright/test";
 // fixtures/code_login.py) och kontoreglerna i test-CMS:et; workflowet
 // manual-screenshots.yml startar båda.
 
-test.use({ viewport: { width: 1280, height: 800 } });
+// Straight to Next, as public-code-login.spec.ts: the code login is only
+// known to work there, and the pictures are the same.
+test.use({
+  baseURL: "http://localhost:3000",
+  viewport: { width: 1280, height: 800 },
+});
 
 function fixture(action: "seed" | "mail", email: string) {
   const result = execFileSync(

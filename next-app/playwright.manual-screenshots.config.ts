@@ -15,7 +15,8 @@ export default defineConfig({
   timeout: 120000,
   retries: 0,
   expect: {
-    timeout: 20000,
+    // A changed picture is retried until this runs out before it is written.
+    timeout: 8000,
     toHaveScreenshot: {
       animations: "disabled",
       caret: "hide",
@@ -29,6 +30,10 @@ export default defineConfig({
     headless: true,
     deviceScaleFactor: 1,
     locale: "sv-SE",
+    // A button that never becomes clickable fails fast, not at the test timeout.
+    actionTimeout: 15000,
+    screenshot: "only-on-failure",
+    trace: "retain-on-failure",
   },
   // Playwright matches testMatch against the absolute path.
   projects: [

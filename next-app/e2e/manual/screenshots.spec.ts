@@ -1,4 +1,5 @@
 import { test, expect, type Page, type BrowserContext } from "@playwright/test";
+import { hideTyckTillWhileClicking } from "./hide-tyck-till";
 
 // Skärmbilder till användarmanualen. Varje post ger två bilder i public/stamboken/manual/
 // (projektet "manual" i playwright.manual-screenshots.config.ts):
@@ -285,6 +286,8 @@ async function act(page: Page, action: string) {
   }
   await page.waitForTimeout(800);
 }
+
+test.beforeEach(({ page }) => hideTyckTillWhileClicking(page));
 
 for (const shot of SHOTS) {
   for (const [suffix, viewport] of [

@@ -148,12 +148,12 @@ jobs:
           MANUAL_CERT_UUID=$(PGPASSWORD=testpass psql -h localhost -U herdbook herdbook_test -tAc \
             "select verification_token from digitalcertificatev2 where is_current order by id desc limit 1")
           export MANUAL_CERT_UUID
-          pnpm exec playwright test --config playwright.manual-screenshots.config.ts --project=manual --update-snapshots=changed
+          pnpm exec playwright test --config playwright.manual-screenshots.config.ts --project=manual --update-snapshots=changed --reporter=line
         working-directory: next-app
 
       - name: Take the matrikel guide's screenshots
         if: ${{ !cancelled() }}
-        run: pnpm exec playwright test --config playwright.manual-screenshots.config.ts --project=guide --update-snapshots=changed
+        run: pnpm exec playwright test --config playwright.manual-screenshots.config.ts --project=guide --update-snapshots=changed --reporter=line
         working-directory: next-app
 
       # The list of changed images is also the list of sections to reread.

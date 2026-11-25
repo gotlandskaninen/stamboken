@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { hideTyckTillWhileClicking } from "./hide-tyck-till";
 
 // Skärmbilder till guiden för matrikeln (content/matrikel-guide/). Går igenom
 // flödet en gång med påhittade personer: en ansökan skickas in och godkänns,
@@ -19,6 +20,7 @@ const APPLICANT = {
 test.describe.configure({ mode: "serial" });
 test.use({ viewport: { width: 1280, height: 800 } });
 test.beforeEach(async ({ page }) => {
+  await hideTyckTillWhileClicking(page);
   // The beta banner takes room on every picture; mark it closed as a reader would.
   await page.addInitScript(() =>
     localStorage.setItem("herdbook-wip-banner-dismissed", "1"),
