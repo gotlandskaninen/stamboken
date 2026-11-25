@@ -558,11 +558,9 @@ def get_population_metrics(genebank_id: int) -> dict:
         - mean_equiv_gen: Average equivalent generations
         - mean_full_gen: Average full generations
         - mean_max_gen: Average maximum generations
-        - reference_start: ISO date the snapshot's membership counts life signs from (None without one)
     """
     snap = snapshot(genebank_id)
     if snap is None or not snap.ids:
-        start = snap.reference_start if snap is not None else None
         return {
             "population_size": 0,
             "n_active": 0,
@@ -581,10 +579,9 @@ def get_population_metrics(genebank_id: int) -> dict:
             "mean_equiv_gen": 0.0,
             "mean_full_gen": 0.0,
             "mean_max_gen": 0.0,
-            "reference_start": start.isoformat() if start else None,
         }
 
-    metrics = snap.memo(
+    return snap.memo(
         "population_metrics",
         lambda: calculate_population_metrics(
             snap.individuals,
@@ -593,9 +590,6 @@ def get_population_metrics(genebank_id: int) -> dict:
             gen_numbers=_generations_of(snap),
         ),
     )
-    # From the snapshot, not today's rounds: the date describes the members behind the numbers.
-    start = snap.reference_start
-    return {**metrics, "reference_start": start.isoformat() if start else None}
 
 
 def get_effective_population_size(genebank_id: int) -> dict[str, float]:

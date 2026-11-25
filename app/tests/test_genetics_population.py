@@ -473,7 +473,6 @@ class TestReferenceKinshipComputedOnce(GeneticsPopulationTest):
             calls = block_spy.call_count
 
         self.assertEqual(calls, 1)
-        # A hand-built snapshot has no membership window: reference_start is None.
-        self.assertEqual(metrics, {**genetics.calculate_population_metrics(self.PEDIGREE), "reference_start": None})
+        self.assertEqual(metrics, genetics.calculate_population_metrics(self.PEDIGREE))
         self.assertEqual(mean_kinship, genetics.calculate_mean_kinship(self.PEDIGREE))
         self.assertEqual(stats, genetics.calculate_founder_statistics(self.PEDIGREE))

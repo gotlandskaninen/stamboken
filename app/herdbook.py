@@ -2514,7 +2514,12 @@ def population_metrics(g_id):
         if not user or not (user.is_admin or genebank_id in (user.is_manager or [])):
             return jsonify({"status": "error", "message": "Åtkomst nekad"}), 403
 
-        metrics = get_population_metrics(genebank_id)
+        # One pinned snapshot for the numbers and their date. The date is added after the memo,
+        # so it is right whatever the memo is keyed on; the cached dict is copied, never changed.
+        with _pinned_snapshot(genebank_id) as snap:
+            metrics = dict(get_population_metrics(genebank_id))
+        start = snap.reference_start if snap is not None else None
+        metrics["reference_start"] = start.isoformat() if start else None
         return jsonify(metrics)
     except Exception as ex:
         APP.logger.error(f"Could not calculate population metrics: {ex}")
