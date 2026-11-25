@@ -7,7 +7,7 @@ type LexicalNode = {
   type?: string;
   text?: unknown;
   format?: number | string;
-  fields?: { linkType?: string };
+  fields?: { linkType?: string; url?: unknown };
   children?: LexicalNode[];
 };
 // Bold and italic only: their words are the plain text's words.
@@ -27,7 +27,9 @@ function sameWordsAsText(node: LexicalNode): boolean {
       return (
         typeof node.text === "string" &&
         node.children === undefined &&
-        (Number(node.format ?? 0) & ~PLAIN_FORMATS) === 0
+        (node.format === undefined ||
+          (Number.isInteger(node.format) &&
+            ((node.format as number) & ~PLAIN_FORMATS) === 0))
       );
     case "linebreak":
       return node.text === undefined && node.children === undefined;
@@ -35,6 +37,7 @@ function sameWordsAsText(node: LexicalNode): boolean {
     case "autolink":
       return (
         node.fields?.linkType === "custom" &&
+        typeof node.fields.url === "string" &&
         node.text === undefined &&
         each(
           node.children ?? [],

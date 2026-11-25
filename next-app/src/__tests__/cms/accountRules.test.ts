@@ -334,6 +334,59 @@ describe("published account rules revision", () => {
       ],
     ],
     [
+      "a format that is not a number",
+      [
+        {
+          blockType: "richText",
+          content: {
+            root: {
+              children: [
+                {
+                  type: "paragraph",
+                  children: [
+                    {
+                      type: "text",
+                      text: "Använd bara ditt eget testkonto.",
+                      format: { toString: "fet" },
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      ],
+    ],
+    [
+      "a link whose address is not a string",
+      [
+        {
+          blockType: "richText",
+          content: {
+            root: {
+              children: [
+                {
+                  type: "paragraph",
+                  children: [
+                    {
+                      type: "link",
+                      fields: { linkType: "custom", url: { toString: "/x" } },
+                      children: [
+                        {
+                          type: "text",
+                          text: "Använd bara ditt eget testkonto.",
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      ],
+    ],
+    [
       "a paragraph whose children are not a list",
       [
         {
