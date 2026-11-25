@@ -35,14 +35,14 @@ const Chart = dynamic(() => import("react-apexcharts"), {
   ssr: false,
 });
 
-// The 5 % and 10 % levels have no cited source, so the card states a fact, not a verdict.
-function getMkLevel(mk: number): ThresholdLevel {
-  if (mk < 0.05) return "good";
-  if (mk <= 0.1) return "warning";
-  return "danger";
+// The 5 % and 10 % levels have no cited source, so the card states the band, not a verdict.
+// Banded on the value as shown (one decimal, like percent()), so "5,0 %" never reads "under 5 %".
+function mkBand(mk: number): { text: string; level: ThresholdLevel } {
+  const shown = Number((mk * 100).toFixed(1));
+  if (shown < 5) return { text: "under 5\u00a0%", level: "good" };
+  if (shown <= 10) return { text: "5–10\u00a0%", level: "warning" };
+  return { text: "över 10\u00a0%", level: "danger" };
 }
-
-const mkBand = (mk: number) => (mk < 0.05 ? "under 5\u00a0%" : "över 5\u00a0%");
 
 const pctLabel = (val: number) => `${decimal(val, 1)}\u00a0%`;
 
@@ -146,10 +146,10 @@ const OverviewTab = ({ genebankId }: OverviewTabProps) => {
   // An empty genebank gets "–", never zeros that read as healthy (the API answers 0 there).
   const empty = metrics.n_active === 0;
   const ne = metrics.effective_population_size;
-  const nFounderdjur = founderRows?.length;
   const nWithCarriers = founderRows?.filter(
     (f) => f.risk_level !== "lost",
   ).length;
+  const mk = mkBand(metrics.mean_kinship);
 
   return (
     <React.Fragment>
@@ -195,19 +195,20 @@ const OverviewTab = ({ genebankId }: OverviewTabProps) => {
             title="Effektivt antal founderdjur (FE)"
             value={empty ? "–" : decimal(founders.founder_equivalents, 1)}
             subtitle={
-              empty || nFounderdjur === undefined
+              empty || nWithCarriers === undefined
                 ? undefined
-                : `${nWithCarriers} av ${nFounderdjur} founderdjur har bärare i beräkningen`
+                : // FE also counts unknown parents, so the count is its basis, not its ceiling.
+                  `räknat på ${nWithCarriers} founderdjur med bärare i beräkningen och på okända föräldrar`
             }
-            tooltip={`${FOUNDERDJUR} FE är så många founderdjur som, om alla hade lämnat lika stor andel av generna, skulle ge samma spridning av generna som i dag (Lacy 1989). En okänd förälder till en kanin med bara en känd förälder räknas här som ett eget founderdjur.`}
+            tooltip={`${FOUNDERDJUR} FE är så många founderdjur som, om alla hade lämnat lika stor andel av generna, skulle ge samma spridning av generna som i dag (Lacy 1989). En okänd förälder till en kanin med bara en känd förälder räknas här som ett eget founderdjur, så FE kan bli större än antalet founderdjur med bärare.`}
           />
         </Grid>
         <Grid size={{ xs: 12, sm: 6, md: 3 }}>
           <KpiCard
             title="Medelsläktskap (MK)"
             value={empty ? "–" : percent(metrics.mean_kinship)}
-            subtitle={empty ? undefined : mkBand(metrics.mean_kinship)}
-            level={empty ? "neutral" : getMkLevel(metrics.mean_kinship)}
+            subtitle={empty ? undefined : mk.text}
+            level={empty ? "neutral" : mk.level}
             tooltip="Hur nära släkt kaninerna i beräkningen i genomsnitt är med varandra. Det är också den andel av founderdjurens genetiska variation som har gått förlorad. Lägre är bättre."
           />
         </Grid>

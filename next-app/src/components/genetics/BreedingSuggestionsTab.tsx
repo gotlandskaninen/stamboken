@@ -27,6 +27,7 @@ import {
 import HelpTooltip from "./HelpTooltip";
 import GeneticsInfoPanel from "./GeneticsInfoPanel";
 import { translateReasons } from "@/utils/translateReasons";
+import { decimal, percent } from "@/lib/genetics";
 
 function getMsiColor(msi: number): "success" | "warning" | "error" {
   if (msi <= 2) return "success";
@@ -40,8 +41,6 @@ interface BreedingSuggestionsTabProps {
 
 const BASE_MAX_INBREEDING = 0.0625;
 const MAX_INBREEDING_LIMIT = 0.25;
-
-const formatPercent = (value: number) => `${(value * 100).toFixed(1)} %`;
 
 const BreedingSuggestionsTab = ({
   genebankId,
@@ -86,8 +85,8 @@ const BreedingSuggestionsTab = ({
   const emptyMessage = lacksSexes
     ? "Referenspopulationen saknar hanar eller honor, så inga par kan föreslås."
     : expectedOffspringF != null
-      ? `Inga par klarar taket ${formatPercent(usedCap)}. Förväntad inavel vid slumpparning i rasen är ${formatPercent(expectedOffspringF)}.${raiseHint}`
-      : `Inga par hittades under taket ${formatPercent(usedCap)}.${raiseHint}`;
+      ? `Inga par klarar taket ${percent(usedCap)}. Förväntad inavel vid slumpparning i rasen är ${percent(expectedOffspringF)}.${raiseHint}`
+      : `Inga par hittades under taket ${percent(usedCap)}.${raiseHint}`;
 
   const handleCalculate = () => {
     setQueryParams({
@@ -223,13 +222,13 @@ const BreedingSuggestionsTab = ({
                       <TableCell>{s.sire_id}</TableCell>
                       <TableCell>{s.dam_id}</TableCell>
                       <TableCell align="right">
-                        {(s.expected_f * 100).toFixed(2)}%
+                        {percent(s.expected_f, 2)}
                       </TableCell>
                       <TableCell
                         align="right"
                         sx={{ color: s.delta_gd > 0 ? green[600] : "inherit" }}
                       >
-                        {s.delta_gd.toFixed(4)}
+                        {decimal(s.delta_gd, 4)}
                       </TableCell>
                       <TableCell align="center">
                         <Chip
@@ -240,7 +239,7 @@ const BreedingSuggestionsTab = ({
                       </TableCell>
                       <TableCell>
                         <Typography variant="body2" color="textSecondary">
-                          {translateReasons(s.reasons).join(", ")}
+                          {translateReasons(s.reasons).join("; ")}
                         </Typography>
                       </TableCell>
                     </TableRow>

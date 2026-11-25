@@ -122,7 +122,8 @@ Kod: `identify_founders` · Legacy-manual: – · Legacy: – · Nytt UI: samma,
 
 **Founderdjursekvivalenter / effektivt antal founderdjur (FE)**\
 Så många founderdjur som, om alla hade lämnat lika stor andel av generna, skulle ge samma spridning
-av generna som i dag (Lacy 1989). Ju närmare antalet founderdjur, desto jämnare fördelning. På
+av generna som i dag (Lacy 1989). Ju högre FE, desto jämnare fördelning. Okända föräldrar räknas med,
+så FE kan bli större än antalet founderdjur med bärare. På
 skärmen heter måttet effektivt antal founderdjur och visas med en decimal. Det är inte samma mått
 som founder genome equivalents (FGE), som också räknar med att gener går förlorade av slumpen.\
 Kod: `founder_equivalents` · Legacy-manual: – · Legacy: – · Nytt UI: "Effektivt antal founderdjur (FE)" (OverviewTab.tsx:195), "FE" (TrendChart.tsx)

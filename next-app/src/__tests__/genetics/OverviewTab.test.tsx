@@ -88,7 +88,9 @@ describe("OverviewTab", () => {
     expect(screen.getByText("under 5 %")).toBeDefined();
     // The card and the table count the same founderdjur.
     expect(
-      screen.getByText("2 av 3 founderdjur har bärare i beräkningen"),
+      screen.getByText(
+        "räknat på 2 founderdjur med bärare i beräkningen och på okända föräldrar",
+      ),
     ).toBeDefined();
     expect(
       screen.getByText("Founderdjurens läge (3 founderdjur)"),
@@ -96,6 +98,20 @@ describe("OverviewTab", () => {
     expect(screen.getByText("0,67 % · mål under 1 % (FAO)")).toBeDefined();
     expect(screen.queryByText(/Diversitetsförlust/)).toBeNull();
     expect(screen.queryByText(/81/)).toBeNull();
+  });
+
+  it("bands MK on the value as shown", () => {
+    for (const [mk, shown, band] of [
+      [0.0494, "4,9 %", "under 5 %"],
+      [0.0499, "5,0 %", "5–10 %"],
+      [0.1004, "10,0 %", "5–10 %"],
+      [0.1012, "10,1 %", "över 10 %"],
+    ] as const) {
+      renderTab({ m: { ...metrics, mean_kinship: mk } });
+      expect(screen.getByText(shown)).toBeDefined();
+      expect(screen.getByText(band)).toBeDefined();
+      cleanup();
+    }
   });
 
   it("shows – and a sentence for an empty genebank, never a healthy zero", () => {

@@ -47,7 +47,7 @@ const descriptions: Record<
     {
       term: "Effektivt antal founderdjur (FE)",
       description:
-        "Så många founderdjur som, om alla hade lämnat lika stor andel av generna, skulle ge samma spridning av generna som i dag. Ju närmare antalet founderdjur, desto jämnare är generna fördelade. En okänd förälder till en kanin med bara en känd förälder räknas som ett eget founderdjur.",
+        "Så många founderdjur som, om alla hade lämnat lika stor andel av generna, skulle ge samma spridning av generna som i dag. Ju högre FE, desto jämnare är generna fördelade. En okänd förälder till en kanin med bara en känd förälder räknas som ett eget founderdjur, så FE kan bli större än antalet founderdjur i tabellen.",
       source: "Lacy 1989",
     },
     {

@@ -66,7 +66,7 @@ describe("BreedingSuggestionsTab", () => {
     );
     expect(
       screen.getByText(
-        "Inga par klarar taket 9.0 %. Förväntad inavel vid slumpparning i rasen är 9.0 %. Höj taket för att få förslag.",
+        "Inga par klarar taket 9,0 %. Förväntad inavel vid slumpparning i rasen är 9,0 %. Höj taket för att få förslag.",
       ),
     ).toBeTruthy();
   });
@@ -87,7 +87,7 @@ describe("BreedingSuggestionsTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Beräkna" }));
     expect(
       screen.getByText(
-        "Inga par hittades under taket 6.3 %. Höj taket för att få förslag.",
+        "Inga par hittades under taket 6,3 %. Höj taket för att få förslag.",
       ),
     ).toBeTruthy();
   });
@@ -108,7 +108,7 @@ describe("BreedingSuggestionsTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Beräkna" }));
     expect(
       screen.getByText(
-        "Inga par klarar taket 25.0 %. Förväntad inavel vid slumpparning i rasen är 30.0 %.",
+        "Inga par klarar taket 25,0 %. Förväntad inavel vid slumpparning i rasen är 30,0 %.",
       ),
     ).toBeTruthy();
   });

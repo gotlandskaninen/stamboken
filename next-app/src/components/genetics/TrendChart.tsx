@@ -66,6 +66,7 @@ const TrendChart = ({ genebankId }: TrendChartProps) => {
 
   const metric = metrics[metricKey];
   const values = data.map((d) => d[metric.key] as number | null);
+  const known = values.filter((v) => v != null).length;
   const categories = data.map((d) => d.year.toString());
   const firstReliableYear = data.find((d) => d.data_quality !== "low")?.year;
   const hasLowQuality =
@@ -153,7 +154,7 @@ const TrendChart = ({ genebankId }: TrendChartProps) => {
           </ToggleButtonGroup>
         </Box>
 
-        {values.some((v) => v != null) ? (
+        {known > 0 ? (
           <Chart
             key={metricKey}
             options={options}
@@ -162,8 +163,22 @@ const TrendChart = ({ genebankId }: TrendChartProps) => {
             height={300}
           />
         ) : (
+          // No year at all: most likely a history not yet recomputed after an update
+          // (the API cannot tell that apart from a genebank where no year has a value).
           <Typography variant="body2" color="textSecondary">
-            {metric.name} kan inte räknas för de här åren.
+            Inga värden för {metric.name} de här åren ännu. Efter en uppdatering
+            räknas de fram i bakgrunden, så ladda om sidan om en stund.
+          </Typography>
+        )}
+
+        {metricKey === "ne" && known > 0 && known < values.length && (
+          <Typography
+            variant="caption"
+            color="textSecondary"
+            sx={{ mt: 1, display: "block" }}
+          >
+            Ne saknas för år där ingen kanin har mer än en generation känd
+            bakåt, eller där inaveln inte ökade.
           </Typography>
         )}
 

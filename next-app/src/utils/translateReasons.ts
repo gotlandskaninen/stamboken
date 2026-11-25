@@ -49,7 +49,10 @@ const patterns: [RegExp, Replacement][] = [
   [/^Genetic representation within normal range$/, "–"],
 
   // Breeding suggestions (genetics.py suggest_breeding_pairs)
-  [/^Sire MK=([\d.]+), Dam MK=([\d.]+)$/, "Hane MK=$1, Hona MK=$2"],
+  [
+    /^Sire MK=([\d.]+), Dam MK=([\d.]+)$/,
+    (_, sire, dam) => `Hane MK=${pct(sire, 2)}, Hona MK=${pct(dam, 2)}`,
+  ],
   [/^Parents are unrelated$/, "Föräldrarna är obesläktade"],
   [/^Low offspring inbreeding$/, "Låg inavel hos avkomma"],
 ];

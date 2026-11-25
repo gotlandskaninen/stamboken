@@ -57,7 +57,8 @@ function CarrierInfo({ founder }: { founder: FounderAtRisk }) {
     parts.push(`I beräkningen: ${carrier_ids.join(", ")}`);
   }
 
-  // Rabbits that may be alive but are not reported (sent for none and 1 carrier)
+  // recovery_eligible minus the members: certified, no death date or note, not castrated,
+  // within the age cap, but outside the calculation (sent for none and 1 carrier)
   if (recoverable_carriers && recoverable_carriers.length > 0) {
     const n = recoverable_carriers.length;
     const label =
@@ -72,8 +73,8 @@ function CarrierInfo({ founder }: { founder: FounderAtRisk }) {
         sx={{ color: "info.main", fontStyle: "italic" }}
       >
         {n === 1
-          ? "1 kanin som kan leva men inte är rapporterad"
-          : `${n} kaniner som kan leva men inte är rapporterade`}
+          ? "1 kanin utan dödsdatum som inte är med i beräkningen"
+          : `${n} kaniner utan dödsdatum som inte är med i beräkningen`}
         : {label}
       </Typography>,
     );

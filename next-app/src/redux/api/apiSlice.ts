@@ -281,7 +281,7 @@ export interface TrendDataPoint {
   active_count: number;
   mean_inbreeding: number;
   mean_kinship: number;
-  effective_population_size: number | null; // computed on-the-fly via rolling regression
+  effective_population_size: number | null; // realised Ne over the year's members, like the card
   founder_equivalents: number;
   data_quality: "high" | "medium" | "low";
 }

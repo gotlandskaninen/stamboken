@@ -960,19 +960,27 @@ pappersintyg; de byts ut för hand.
 första anropet och kan ta upp till en minut.
 
 1. Välj **Genbank** om du ansvarar för flera.
-2. **Översikt** – nyckeltalen **Aktiva individer**, **Effektiv pop.storlek (Ne)**,
-   **Founder-ekvivalenter (FE)** och **Genomsnittlig MK**, diagrammet **Founder-bidrag
-   (topp 10)**, **Populationssammanfattning**, **Genetiska trender** över åren och
-   tabellen **Founder-status** med statusarna Förlorad, Kritisk, Varning, Bevaka och Ok.
-3. **Prioriteringar** – individerna sorterade efter bevarandevärde: **Kritisk**,
-   **Viktig** eller **Normal**, med **Genetiskt värde**, **Genomunikhet** och **Skäl**.
-   Knapparna **Kritisk (N)**, **Viktig (N)** och **Normal (N)** slår av och på nivåerna.
+2. **Översikt** – nyckeltalen **Kaniner i beräkningen**, **Effektiv
+   populationsstorlek (Ne)** (målet är minst 50, helst 100), **Effektivt antal
+   founderdjur (FE)** och **Medelsläktskap (MK)**, diagrammet **Founderdjur med störst
+   andel av generna**, rutan **Inavel** med genomsnittlig inavel (F) och inavelsökning
+   per generation (ΔF), **Genetiska trender** med ett mått i taget och tabellen
+   **Founderdjurens läge** med statusarna Ingen bärare, 1 bärare kvar, 2–3 bärare,
+   Liten andel och Ok. Founderdjur är rasens ursprungsdjur, kaniner utan kända
+   föräldrar i stamboken. Korten visar läget i dag; trenden har ett värde per stängd
+   årsrapportering.
+3. **Avelsprioritet** – kaninerna sorterade efter hur viktiga de är för aveln:
+   **Högsta**, **Hög** eller **Övriga**, med **Ovanliga gener (0–100)**, **Unika gener**
+   och **Skäl**. Knapparna **Högsta (N)**, **Hög (N)** och **Övriga (N)** slår av och på
+   nivåerna.
 4. **Parningsförslag** – ange **Max antal par**, **Max inavel (F)** och **Max per hane**
    och klicka **Beräkna**. Tabellen visar paren med **Förväntad F**, **ΔGD**, **MSI**
    (1 = utmärkt, 6 = dålig) och **Skäl**.
 
-Panelen **Förklaringar** på varje flik förklarar förkortningarna. Frågetecknen vid
-rubrikerna ger samma text som verktygstips.
+Panelen **Förklaringar** på varje flik förklarar förkortningarna och vilka kaniner som är
+med i beräkningen. Frågetecknen vid rubrikerna ger samma text som verktygstips; du når
+dem också med tabbtangenten. Står det under Genetiska trender att värdena för Ne räknas
+fram, laddar du om sidan om en stund.
 
 ### Skapa och redigera besättningar i din genbank
 
@@ -1065,12 +1073,12 @@ händelse. En korrigering lämnar hjälparen till genbanksansvarig.
 <!-- route: /stamboken/genetik -->
 
 Rubriken **Genetik** med rullgardinen **Genbank** och flikarna **Översikt**,
-**Prioriteringar** och **Parningsförslag**. Uppfödare utan ansvar för någon genbank ser
+**Avelsprioritet** och **Parningsförslag**. Uppfödare utan ansvar för någon genbank ser
 sidan men får ingen genbank att välja. Se [Använda genetiksidan](#använda-genetiksidan).
 
 ![Genetik, översikt](genetik-oversikt-desktop.png)
 
-![Genetik, prioriteringar](genetik-prioriteringar-desktop.png)
+![Genetik, avelsprioritet](genetik-prioriteringar-desktop.png)
 
 ![Genetik, parningsförslag](genetik-parningsforslag-desktop.png)
 
@@ -1414,7 +1422,9 @@ funktion (inloggning, lösenordsåterställning, redigera kanin med flera). Bara
 | Försäljningen registrerades för mer än 7 dagar sedan | Ångra försäljning | Kontakta genbanksansvarig. |
 | Texten innehåller en e-postadress eller ett telefonnummer | Ångra, korrigera | Ta bort personuppgiften ur anledningen. |
 | Kunde inte ladda kaniner. Försök igen senare. | Alla kaniner | Tillfälligt fel; ladda om sidan. |
-| Kunde inte hämta genetikdata. Kontrollera att du har behörighet. | Genetik | Du är inte genbanksansvarig för vald genbank. |
+| Du har inte behörighet att se genetiken för den här genbanken. | Genetik | Du är inte genbanksansvarig för vald genbank. |
+| Beräkningen gick inte att hämta. Försök igen om en stund. | Genetik | Tillfälligt fel; klicka **Försök igen** eller ladda om sidan om en stund. |
+| Du är utloggad. Logga in igen för att se beräkningen. | Genetik | Logga in igen. |
 
 ### Kontakt
 

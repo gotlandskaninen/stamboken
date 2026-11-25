@@ -45,9 +45,9 @@ describe("translateReason", () => {
     );
   });
 
-  it("leaves the breeding reasons and unknown text as they were", () => {
+  it("formats the breeding reasons in Swedish and leaves unknown text", () => {
     expect(translateReason("Sire MK=0.0100, Dam MK=0.0200")).toBe(
-      "Hane MK=0.0100, Hona MK=0.0200",
+      `Hane MK=1,00${NBSP}%, Hona MK=2,00${NBSP}%`,
     );
     expect(translateReason("Something new")).toBe("Something new");
   });
