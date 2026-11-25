@@ -109,6 +109,8 @@ koden i. Sidan **Logga in med länk** visar vem du loggar in som, och du klickar
 **Logga in här**. I en annan webbläsare eller på en annan dator fungerar länken
 inte. Skriv då koden på inloggningssidan i stället.
 
+![Sidan Logga in med länk](logga-in-lank-desktop.png)
+
 #### Skapa ditt konto första gången
 
 <!-- route: /auth/skapa-konto -->
