@@ -41,6 +41,7 @@ const base: UserRow = {
   fullname: null,
   email: "konto@example.org",
   roleLabel: "Besättningsägare (1 besättningar)",
+  hasRole: true,
   last_active: "aldrig",
   validated: false,
   v2_prod_access: false,
@@ -52,7 +53,10 @@ describe("UsersGridClient", () => {
   it("shows the account number and flags a role holder without a name (#192)", () => {
     render(
       <UsersGridClient
-        rows={[base, { ...base, id: 175, roleLabel: "Ingen roll" }]}
+        rows={[
+          base,
+          { ...base, id: 175, roleLabel: "Ingen roll", hasRole: false },
+        ]}
         total={2}
         query=""
         sortField="last_active"

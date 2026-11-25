@@ -86,6 +86,7 @@ export default async function AdminUsersPage({
     fullname: u.fullname,
     email: u.email,
     roleLabel: roleSummaryLabel(u.role_summary),
+    hasRole: u.role_summary !== "ingen roll", // the backend's raw value, not the label
     last_active: formatLastActive(u.last_active),
     validated: u.validated,
     v2_prod_access: u.v2_prod_access,

@@ -13,6 +13,7 @@ export type UserRow = {
   fullname: string | null;
   email: string;
   roleLabel: string;
+  hasRole: boolean;
   last_active: string;
   validated: boolean;
   v2_prod_access: boolean;
@@ -59,7 +60,7 @@ const columns: GridColDef<UserRow>[] = [
     minWidth: 160,
     // #192: an account with a role but no name shows as "Konto <nr>" elsewhere — flag it for fixing.
     valueGetter: (_value, row) =>
-      row.fullname || (row.roleLabel === "Ingen roll" ? "—" : "Namn saknas"),
+      row.fullname || (row.hasRole ? "Namn saknas" : "—"),
   },
   {
     field: "email",
