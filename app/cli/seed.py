@@ -1042,15 +1042,15 @@ _TESTNYCKEL = {
     "start": "q1",
     "fragor": {
         "q1": {
-            "text": "Testfråga: är kaninen ljus?",
+            "text": "Testfråga: har kaninen en testteckning?",
             "hjalp": "Testhjälp till den första frågan.",
             "svar": [{"id": "q1-ja", "text": "Ja", "till": "q2"}, {"id": "q1-nej", "text": "Nej", "till": "q3"}],
         },
         "q2": {
-            "text": "Testfråga: vilken ljus färg?",
+            "text": "Testfråga: vilken testteckning?",
             "svar": [
-                {"id": "q2-roda", "text": "Testsvar med röda ögon", "till": 12, "hjalp": "Testhjälp till ett svar."},
-                {"id": "q2-bla", "text": "Testsvar med blå ögon", "till": 18},
+                {"id": "q2-a", "text": "Testsvar A", "till": 12, "hjalp": "Testhjälp till ett svar."},
+                {"id": "q2-b", "text": "Testsvar B", "till": 18},
                 {"id": "q2-inget", "text": "Passar inget", "till": 99, "anteckning": "Testanteckning om färgen."},
             ],
         },
@@ -1064,7 +1064,7 @@ _TESTNYCKEL = {
     },
     "efter_numret": [{"id": "rex", "text": "Testfråga om pälsen?", "ja": "Testsvar: välj Rex vid Päls."}],
     "grupper": [
-        {"id": "testljusa", "namn": "Testgrupp ljusa", "nummer": [12, 17, 18, 23]},
+        {"id": "testljusa", "namn": "Testgrupp ljusa", "nummer": [12, 18]},
         {"id": "testvilt", "namn": "Testgrupp vilt", "nummer": [21, 22, 24, 25, 26, 27, 28]},
         {"id": "mellerud", "namn": "Testgrupp mellerud", "nummer": [100, 101], "i_guiden": False},
     ],

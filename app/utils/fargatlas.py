@@ -122,20 +122,53 @@ def _foton(farg):
     ]
 
 
+def _har_form(nyckel):
+    """Whether the key has the shape the page and the guide read; ops checks paths and reachability."""
+
+    def text(x, valfri=False):
+        return isinstance(x, str) or (valfri and x is None)
+
+    def tal(x):
+        return isinstance(x, int) and not isinstance(x, bool)
+
+    def svar(s):
+        return (
+            isinstance(s, dict)
+            and text(s.get("id"))
+            and text(s.get("text"))
+            and (text(s.get("till")) or tal(s.get("till")))
+            and text(s.get("hjalp"), True)
+            and text(s.get("anteckning"), True)
+        )
+
+    def fraga(f):
+        return isinstance(f, dict) and text(f.get("text")) and text(f.get("hjalp"), True) and isinstance(f.get("svar"), list) and all(map(svar, f["svar"]))
+
+    def grupp(g):
+        return isinstance(g, dict) and text(g.get("id")) and text(g.get("namn")) and isinstance(g.get("nummer"), list) and all(map(tal, g["nummer"]))
+
+    def efter(e):
+        return isinstance(e, dict) and all(text(e.get(k)) for k in ("id", "text", "ja"))
+
+    return (
+        isinstance(nyckel, dict)
+        and text(nyckel.get("start"))
+        and isinstance(nyckel.get("fragor"), dict)
+        and all(map(fraga, nyckel["fragor"].values()))
+        and isinstance(nyckel.get("grupper"), list)
+        and all(map(grupp, nyckel["grupper"]))
+        and isinstance(nyckel.get("efter_numret", []), list)
+        and all(map(efter, nyckel.get("efter_numret", [])))
+    )
+
+
 def _nyckel(paket):
     """
-    The determination key from the manifest, passed on as it is (ops checks it before every build), or None. A key
-    of the wrong shape is logged and left out, and the page then shows the colours by genebank without the guide.
+    The determination key from the manifest, passed on as it is, or None. A key of the wrong shape is logged and left
+    out, and the page then shows the colours by genebank without the guide.
     """
     nyckel = paket.get("nyckel")
-    if nyckel is None:
-        return None
-    if (
-        isinstance(nyckel, dict)
-        and isinstance(nyckel.get("start"), str)
-        and isinstance(nyckel.get("fragor"), dict)
-        and isinstance(nyckel.get("grupper"), list)
-    ):
+    if nyckel is None or _har_form(nyckel):
         return nyckel
     logger.error("The colour atlas manifest's key has the wrong shape")
     return None

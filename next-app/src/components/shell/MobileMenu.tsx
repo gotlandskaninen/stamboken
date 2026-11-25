@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTranslation } from "react-i18next";
-import { badgeKey, badgeLabel, navItemsFor } from "./nav-items";
+import { badgeKey, badgeLabel, navItemsFor, RESURSER } from "./nav-items";
 import { SbIcon } from "./SbIcon";
 import styles from "./topbar.module.css";
 
@@ -47,6 +47,28 @@ export function MobileMenu({
           </Link>
         );
       })}
+      <p className={styles.mobileNavRubrik} id="mobil-resurser">
+        {t("sidebar.resurser")}
+      </p>
+      <ul className={styles.mobileNavLista} aria-labelledby="mobil-resurser">
+        {RESURSER.map((r) => {
+          const active = !r.extern && pathname.startsWith(r.href);
+          return (
+            <li key={r.key}>
+              <Link
+                href={r.href}
+                onClick={onNavigate}
+                className={`${styles.mobileNavItem} ${active ? styles.mobileNavItemActive : ""}`}
+                aria-current={active ? "page" : undefined}
+                {...(r.extern && { target: "_blank", rel: "noopener" })}
+              >
+                <SbIcon name={r.icon} size={18} />
+                {t(r.i18nKey)}
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
       <button
         type="button"
         onClick={onTyckTill}
