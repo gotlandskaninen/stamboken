@@ -246,7 +246,9 @@ describe("ColorPicker", () => {
     const tillViltgra = async () => {
       for (const text of ["Nej", "Ja, testvilt"])
         fireEvent.click(
-          await screen.findByRole("button", { name: new RegExp(`^${text}`) }),
+          await screen.findByRole("button", {
+            name: (namn: string) => namn.startsWith(text),
+          }),
         );
     };
     const oppna = async () =>

@@ -38,7 +38,11 @@ const data = {
 };
 
 const svara = (text: string) =>
-  fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${text}`) }));
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: (namn: string) => namn.startsWith(text),
+    }),
+  );
 const tillViltgra = () => ["Nej", "Ja, testvilt"].forEach(svara);
 
 describe("FargNyckel", () => {
