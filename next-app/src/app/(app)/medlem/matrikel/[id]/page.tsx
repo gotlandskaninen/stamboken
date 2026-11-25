@@ -34,6 +34,9 @@ export default async function MembershipDetailPage({
 
   const user = await getUser();
   // A log that cannot be read must not take the member page down with it.
+  // Same mode as the membership above, not forceProd: in demo mode the id is
+  // the demo database's, and the prod log would show another household. The
+  // admin tab is prod only because the admin panel only opens in prod.
   const history = await fetchApi<MatrikelAuditPage>(
     `/v2/members/audit?membership_id=${membership.id}&per_page=10`,
   ).catch(() => null);
