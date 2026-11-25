@@ -164,3 +164,27 @@ class TestMatrikelAudit(MatrikelApiTest):
             with self.subTest(actor=actor):
                 found = self.get(f"actor={actor}").get_json()
                 self.assertEqual((found["total"], found["rows"]), (0, []))
+
+    def _billing_row(self):
+        # as if left behind by a path the erasure missed: the household's old billing address
+        matrikel.write_matrikel_audit(
+            self.admin,
+            "membership_updated",
+            self.ms,
+            {"before": {"billing_address": "Fakturagatan 9"}, "after": {"billing_address": None}},
+        )
+
+    def test_erased_household_is_masked_on_read(self):
+        matrikel.anonymize_person(db.Member.get_by_id(self.person.id), self.matrikel_user)  # the only active person
+        self._billing_row()
+        self.login("man")
+        resp = self.get(f"membership_id={self.ms.id}&action=membership_updated")
+        self.assertNotIn("Fakturagatan", resp.get_data(as_text=True))
+        self.assertEqual(resp.get_json()["rows"][0]["payload"]["before"]["billing_address"], matrikel.REDACTED_VALUE)
+
+    def test_household_with_an_active_person_is_not_masked(self):
+        _mk_person(self.ms, "Vera", "Testsson", role="familjemedlem")
+        matrikel.anonymize_person(db.Member.get_by_id(self.person.id), self.matrikel_user)
+        self._billing_row()
+        self.login("man")
+        self.assertIn("Fakturagatan 9", self.get(f"membership_id={self.ms.id}").get_data(as_text=True))

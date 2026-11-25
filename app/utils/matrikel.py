@@ -372,6 +372,7 @@ def query_matrikel_audit(
     lose what GET /v2/members/<id> does not show them: the organisation number and a person's notes. A row about an
     anonymised person is redacted again on read, should a stored payload have escaped the erasure. An account once
     linked to an anonymised person is shown as REDACTED_VALUE, as actor and as user_id, and the actor filter skips it.
+    In an erased household the rows without a person (membership_updated and the like) lose HOUSEHOLD_PII_KEYS.
     """
     q = (
         MatrikelAudit.select(MatrikelAudit, User, Membership)
@@ -403,12 +404,25 @@ def query_matrikel_audit(
 
     ids = {pid for a in audits if isinstance(pid := person_of(a.payload or {}), int)}
     persons = {p.id: p for p in Member.select().where(Member.id.in_(list(ids)))} if ids else {}
+    # anonymize_person() erases the household when its last active person goes: no active person, one anonymised
+    erased_households = {
+        m.membership_id
+        for m in Member.select(Member.membership)
+        .where(Member.membership.in_(list({a.membership_id for a in audits})))
+        .group_by(Member.membership)
+        .having(
+            ~fn.bool_or(Member.end_date.is_null())
+            & fn.bool_or((Member.first_name == ANONYMIZED_FIRST_NAME) & (Member.last_name == ANONYMIZED_LAST_NAME))
+        )
+    }
     rows = []
     for a in audits:
         payload = a.payload or {}
         person = persons.get(person_of(payload))
         if person is not None and is_anonymized(person):
             payload, _ = _redact_node(payload)
+        if a.membership_id in erased_households and "person_id" not in payload:
+            payload, _ = _redact_node(payload, HOUSEHOLD_PII_KEYS)  # what redact_household_from_audits() covers
         if payload.get("user_id") in erased_accounts:
             payload = {**payload, "user_id": REDACTED_VALUE}
         masked_actor = a.actor_id in erased_accounts
