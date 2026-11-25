@@ -136,11 +136,23 @@ class TestAdminEraseAccount(DatabaseTest):
             (409, "Kontots uppgifter är raderade, så kontot kan inte aktiveras."),
         )
 
+    def test_an_account_with_only_lasratt_is_erased(self):
+        # Every account gets Läsrätt on both genebanks when it is made, so Läsrätt is no role here.
+        user = self._account("v")
+        db.User.update(_privileges='[{"level": "viewer", "genebank": 1}, {"level": "viewer", "genebank": 2}]').where(
+            db.User.id == user.id
+        ).execute()
+        self._login()
+        self.assertEqual(self._erase(user.id).status_code, 204)
+        row = db.User.get_by_id(user.id)
+        self.assertEqual((row.email, row.privileges), (f"raderad-{user.id}", []))
+
     def test_an_account_with_a_role_is_refused(self):
-        for level in ("viewer", "helper", "owner", "manager", "matrikel_admin", "admin"):
+        for level in ("helper", "owner", "manager", "matrikel_admin", "admin"):
             with self.subTest(level=level):
                 tag = f"r{level}"
                 user = self._account(tag)
+                user.add_role("viewer", self.genebanks[1].id)  # beside the role, as every account has it
                 target = {"owner": self.herds[0].id, "admin": None, "matrikel_admin": None}.get(
                     level, self.genebanks[0].id
                 )

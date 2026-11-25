@@ -655,9 +655,10 @@ def erase_unlinked_account(user_id, actor_id):
     """
     Empties an account that belongs to no person (#250), as anonymize_person empties a person's account: the same
     steps for the account, in one transaction with its row locked, the audit purge last and the profile pictures
-    removed after the commit. Refuses (LinkError) the caller's own account, an account already emptied, one with any
-    role and one that a person in the register points to, ended or not: persons are handled in the register. A linker
-    takes this row's lock before it writes member.user_id and refuses an inactive account, so the check holds.
+    removed after the commit. Refuses (LinkError) the caller's own account, an account already emptied, one with a
+    role other than Läsrätt and one that a person in the register points to, ended or not: persons are handled in the
+    register. A linker takes this row's lock before it writes member.user_id and refuses an inactive account, so the
+    check holds.
     What the account sent to the intake queue goes as for a person (erase_user_from_inbox), its files after the
     commit.
     """
@@ -669,7 +670,8 @@ def erase_unlinked_account(user_id, actor_id):
             raise LinkError("Användare saknas", f"Ingen användare med id {user_id}.", 404, type="user-not-found")
         if user.email == f"raderad-{user.id}":  # not_erased(), on the locked row
             raise LinkError("Redan raderat", "Kontots uppgifter är redan raderade.", type="erased")
-        if user.privileges:
+        # Läsrätt is no role here: every account gets it on both genebanks (RETENTION_HOLD_LEVELS)
+        if any(p["level"] != "viewer" for p in user.privileges or []):
             raise LinkError("Kontot har en roll", "Ta bort kontots roller innan uppgifterna raderas.", type="has-role")
         if Member.select().where(Member.user == user.id).exists():
             raise LinkError(

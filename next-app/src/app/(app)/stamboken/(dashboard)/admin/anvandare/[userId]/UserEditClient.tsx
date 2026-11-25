@@ -422,16 +422,17 @@ export function UserEditClient({
             <DetailCard title="Radera kontots uppgifter">
               <p className={ds["ad-hint"]}>
                 Raderar namn, e-post, inloggningar och profilbild och maskerar
-                kontot i ändringsloggen. Gäller bara ett konto utan roll som
-                inte hör till någon person i matrikeln. Personer anonymiseras i
-                matrikeln.
+                kontot i ändringsloggen. Gäller bara ett konto som inte har
+                någon annan roll än läsrätt och inte hör till någon person i
+                matrikeln. Personer anonymiseras i matrikeln.
               </p>
               <button
                 type="button"
                 className="sb-btn sb-btn-secondary"
                 disabled={
                   pending ||
-                  detail._privileges.length > 0 ||
+                  // Läsrätt is no role here: every account gets it (#250).
+                  detail._privileges.some((p) => p.level !== "viewer") ||
                   detail.id === actorId
                 }
                 onClick={() => setEraseDialogOpen(true)}

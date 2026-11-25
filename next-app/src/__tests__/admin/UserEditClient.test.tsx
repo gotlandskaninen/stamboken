@@ -290,6 +290,17 @@ describe("UserEditClient Radera kontots uppgifter (#250)", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
+  it("is on for an account with only Läsrätt", () => {
+    renderPage({
+      ...plain,
+      _privileges: [
+        { level: "viewer", genebank: 1 },
+        { level: "viewer", genebank: 2 },
+      ],
+    });
+    expect(button()).toBeEnabled();
+  });
+
   it("is off for an account with a role and for the admin's own", () => {
     renderPage(detail);
     expect(button()).toBeDisabled();
