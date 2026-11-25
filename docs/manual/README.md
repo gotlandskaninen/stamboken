@@ -13,7 +13,7 @@ GitHub; sidan gör dem relativa. Tre saker håller manualen i takt med gränssni
 ## 1. Täckningsgrind: varje sida har ett avsnitt
 
 `scripts/check-manual-coverage.sh` listar varje `page.tsx` under
-`next-app/src/app/(app)/stamboken/` och inloggningssidan, och kräver att manualen
+`next-app/src/app/(app)/stamboken/` och inloggningssidorna under `/auth/`, och kräver att manualen
 innehåller kommentaren `<!-- route: /stamboken/... -->` för var och en (route-grupper
 som `(dashboard)` tas bort, `[param]` behålls). Skriptet körs i CI (`lint.yml`, steget
 "Manual coverage") och av `scripts/ci-local.sh` i lint-steget. Saknas ett avsnitt
@@ -46,27 +46,39 @@ stacken seedas om. Ändras ett steg i manualen ändras motsvarande `test.step` h
 
 ## 3. Skärmbilder
 
-`next-app/e2e/manual/screenshots.spec.ts` tar varje bild vid 375 px (`-mobil.png`)
-och 1280 px (`-desktop.png`) med `playwright.manual-screenshots.config.ts` och skriver
-dem bredvid manualen. Den körs
-aldrig i CI och aldrig mot prod eller demo.gotlandskaninen.se, bara mot den seedade
-stacken ovan. Två krav utöver stacken:
+Bilderna tas i GitHub Actions av workflowet `manual-screenshots.yml`, aldrig mot
+prod eller demo.gotlandskaninen.se. Workflowet startar samma seedade stack som
+Playwright-jobbet, med kodinloggning påslagen, och en nginx-proxy framför Next och
+API:t på samma origin (genetiksidan behöver sina avslutande snedstreck). Sedan kör det
+flödestesterna ovan, så att kullistan och ett utfärdat intyg finns, och tar alla
+bilder i manualen och guiden.
 
-- En proxy framför Next och API på samma origin (adminpanelen och genetiksidan
-  behöver prod-läge respektive sökvägar med avslutande snedstreck, som nginx bevarar).
-  Ett minimalt nginx räcker: `/api/` till :9090, allt annat till :3000, med
-  `proxy_set_header Host $http_host` (Server Actions avvisar annars anropen).
-  Adressen ges i `MANUAL_BASE_URL` (standard `http://localhost:8080`).
-- Flödestesterna ovan har körts först (kullista och utfärdat intyg finns då), och
-  `MANUAL_CERT_UUID` är `verification_token` för ett utfärdat intyg
-  (`select verification_token from digitalcertificatev2 where is_current order by id desc limit 1`).
+- `e2e/manual/screenshots.spec.ts` tar varje sida vid 375 px (`-mobil.png`) och
+  1280 px (`-desktop.png`). Ett svar med 404 eller en omdirigering till inloggningen
+  stoppar testet i stället för att bli en bild.
+- `e2e/manual/login-screenshots.spec.ts` tar kodinloggningen: fältet för koden,
+  sidan för länken och Skapa mitt konto. Fixturen är densamma som i
+  `public-code-login.spec.ts`.
+- `e2e/manual/matrikel-guide-screenshots.spec.ts` tar guidens bilder, se nedan.
 
-```bash
-cd next-app && MANUAL_CERT_UUID=<uuid> pnpm exec playwright test --config playwright.manual-screenshots.config.ts e2e/manual/screenshots.spec.ts
-```
+Bilderna är Playwrights jämförelsebilder (`toHaveScreenshot`), och
+`playwright.manual-screenshots.config.ts` lägger dem bredvid manualen respektive
+guiden. Workflowet kör med `--update-snapshots=changed`, så bara bilder som skiljer
+sig från bilden i repot skrivs om. Jobbets sammanfattning listar dem, och bilder som
+manualen nämner men som saknas. Listan är också listan över avsnitt att läsa om. De
+ändrade bilderna laddas upp som artefakten `manual-screenshots`.
+
+Så förs bilderna in:
+
+1. Kör workflowet: Actions → Manual screenshots → Run workflow, på `main` eller på en
+   gren. Det körs också av sig självt på en PR som ändrar skärmbildsskripten.
+2. Hämta artefakten och lägg bilderna i en PR:
+   `gh run download <run-id> -n manual-screenshots -D .` från repots rot. Artefakten
+   innehåller hela sökvägen.
+3. Läs om avsnitten som visar de ändrade bilderna.
 
 Bilderna visar seedens påhittade besättningar (Visby Kaninuppfödning, G1274) och
-testanvändarna; inga riktiga medlemmar.
+testanvändarna, inga riktiga medlemmar.
 
 ## Guiden för matrikeln
 
@@ -81,20 +93,14 @@ Den publika manualen nämner bara att guiden finns.
 
 Täckningsgrinden ovan kräver ett `<!-- route: /medlem/... -->` i guiden för varje
 `page.tsx` under `next-app/src/app/(app)/medlem/` (utom guiden själv). Skärmbilderna
-tas av `next-app/e2e/manual/matrikel-guide-screenshots.spec.ts` med påhittade
-personer, mot en nystartad seedad stack (en andra körning lägger in samma personer
-igen). Ingen nginx behövs, dev-servern räcker:
+tas av `next-app/e2e/manual/matrikel-guide-screenshots.spec.ts` (projektet `guide`)
+med påhittade personer, i samma workflow som manualens bilder. Specen behöver en
+nystartad seedad stack: en andra körning lägger in samma personer igen.
 
-```bash
-cd next-app && MANUAL_BASE_URL=http://localhost:3000 pnpm exec playwright test --config playwright.manual-screenshots.config.ts e2e/manual/matrikel-guide-screenshots.spec.ts
-```
+## Vid varje release
 
-## Framtida steg: förslag på manualtext från PR-diffen
-
-Inte byggt. Tänkt koppling: ett separat, icke-blockerande jobb i `playwright.yml`
-eller ett eget workflow som på `pull_request` kör en Sonnet-agent (Claude Code
-Action) med PR-diffen under `next-app/src/app/(app)/stamboken/` och
-`next-app/messages/sv.json` som indata, manualens berörda avsnitt som kontext, och
-uppdraget att föreslå ändrad manualtext som en PR-kommentar (aldrig en commit).
-Agenten läser bara; människan klistrar in. Grinden i punkt 1 förblir det enda som
-blockerar.
+Texten granskas vid varje release-tagg (Jonas beslut 2026-11-25). Den som taggar
+kör workflowet ovan på `main` före taggen och lägger in de ändrade bilderna. Sedan
+läser den manualen och guiden mot releasens PR:er och listan över ändrade bilder, och
+rättar texten i samma PR. Grinden i punkt 1 är fortfarande det enda som blockerar en
+PR. En agent i CI som föreslår manualtext på varje PR valdes bort samma dag.
