@@ -29,6 +29,8 @@ DEFAULT_CLASSROOM_URL = "https://classroom.google.com/c/NjE3MDI1MzY2OTAz?cjc=27x
 # tests/data/legacy_calls.tsv. On a legacy host these need a validated account
 # (the web course), not v2_prod_access. Pairs, not URLs: legacy's
 # GET /api/individual/<nr> is here, v2's PATCH on the same URL is not.
+# A route closed by ADR-0020 stays listed: the legacy source keeps its call
+# site, so a validated account on a legacy host gets the 410 text, not a 403.
 LEGACY_ENDPOINTS = frozenset(
     {
         ("breeding", "GET"),

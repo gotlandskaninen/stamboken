@@ -78,8 +78,8 @@ produktionsbehörighet. Resten av kön, notislistan och originalen kräver produ
 i riktiga Stamboken.
 
 Rollen genbankshjälpare delas ut som andra roller: `POST /api/v2/admin/role` med
-`{"operation": "add", "user_id": 5, "role": {"level": "helper", "genebank": 1}}` (admin), eller
-den äldre `POST /api/manage/role` (genbanksansvarig i sin egen genbank). Användarlistan
+`{"operation": "add", "user_id": 5, "role": {"level": "helper", "genebank": 1}}` (admin). Den äldre
+`POST /api/manage/role` är stängd ([ADR-0020](adr/0020-gamla-appen-stangs-en-funktion-i-taget.md)). Användarlistan
 `GET /api/v2/admin/users?role=helper` filtrerar på rollen, och `role_summary` visar till exempel
 `helper(G)`. En hjälpare får läsrätt i sin genbank men ingen egen rätt att ändra kaniner: hen
 skriver bara genom en post hen har tagit.

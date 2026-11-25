@@ -190,8 +190,9 @@ def save_round(year, user, **dates):
 def follow_end_date(round_):
     """
     R10: the column of the round's active codes follows its end_date, and K2: so do the kept buyers. In the caller's
-    transaction, after its UPDATE of the round row, which holds the row to the commit: save_round, and legacy's
-    PATCH (data_access.update_yearly_report_round). A cleared end_date (legacy only) moves neither: a code without
+    transaction, after its UPDATE of the round row, which holds the row to the commit: save_round, and
+    data_access.update_yearly_report_round (its legacy route is closed, ADR-0020). A cleared end_date (legacy only)
+    moves neither: a code without
     one is invalid anyway (report_code.refusal), and a kept buyer keeps the purge_at it has.
     """
     if round_.end_date is None:

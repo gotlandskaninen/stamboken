@@ -1986,6 +1986,18 @@ class TestUserAdminContracts(FlaskTest):
             self.assertEqual(response.status_code, 200)
             self.assertIn("status", response.get_json())
 
+    def test_manage_user_self_patch_changes_only_the_own_account(self):
+        """PATCH without id is the one open write into update_user, which lets a genbanksansvarig change other
+        accounts: the route replaces the body's id with the caller's own, so another account stays as it was."""
+        with self.app as ctx:
+            self.login(ctx, self.manager)
+            response = ctx.patch(
+                "/api/manage/user/", json={"id": self.viewer.id, "email": "flyttad@example.org", "validated": False}
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(db.User.get_by_id(self.viewer.id).email, self.viewer.email)
+        self.assertEqual(db.User.get_by_id(self.manager.id).email, "flyttad@example.org")
+
     def test_manage_user_self_patch_cannot_take_another_accounts_email(self):
         """A self-service PATCH may not take an address another
         account holds (any casing). The CMS itself keys on google_email +
@@ -2066,10 +2078,10 @@ class TestAdminContracts(FlaskTest):
 
 
 # ============================================================================
-# update_role's scope guards. The legacy route /api/manage/role is closed
-# (ADR-0020); POST /api/v2/admin/role calls the same function, so the
-# guards are tested on it directly. A denial is {"status": "error",
-# "message": "forbidden"}.
+# update_role's scope guards, tested on the function. The legacy route
+# /api/manage/role is closed (ADR-0020) and POST /api/v2/admin/role is
+# admin-only, so no route reaches the manager branches today. A denial is
+# {"status": "error", "message": "forbidden"}.
 # ============================================================================
 
 

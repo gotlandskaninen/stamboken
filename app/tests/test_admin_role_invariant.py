@@ -39,7 +39,7 @@ class TestLastAdminInvariant(DatabaseTest):
         user.add_role("admin", None)
         return user
 
-    def _remove_admin_via_legacy(self, target_id):
+    def _remove_admin(self, target_id):
         """POST /api/v2/admin/role (the old /api/manage/role is closed, 410). The 409
         comes from the shared data-access helper raising ValidationError."""
         return self.client.post(
@@ -50,7 +50,7 @@ class TestLastAdminInvariant(DatabaseTest):
     def test_last_admin_cannot_remove_own_admin_via_direct_api(self):
         # DatabaseTest seeds exactly one admin (self.admin).
         self.login("admin", "pass")
-        resp = self._remove_admin_via_legacy(self.admin.id)
+        resp = self._remove_admin(self.admin.id)
         self.assertEqual(resp.status_code, 409)
         self.assertEqual(resp.headers["Content-Type"], "application/problem+json")
         body = resp.get_json()
@@ -70,18 +70,18 @@ class TestLastAdminInvariant(DatabaseTest):
         second = self._make_admin("second")
         self.login("admin", "pass")
         # Step 1 — allowed: another admin (second) still exists.
-        resp = self._remove_admin_via_legacy(self.admin.id)
+        resp = self._remove_admin(self.admin.id)
         self.assertEqual(resp.status_code, 200)
         # Step 2 — second is now the last admin; removing them must 409.
         self.login("second", "pass")
-        resp = self._remove_admin_via_legacy(second.id)
+        resp = self._remove_admin(second.id)
         self.assertEqual(resp.status_code, 409)
         self.assertEqual(resp.get_json()["type"], "last-admin")
 
     def test_admin_can_remove_own_admin_when_others_exist(self):
         self._make_admin("other")
         self.login("admin", "pass")
-        resp = self._remove_admin_via_legacy(self.admin.id)
+        resp = self._remove_admin(self.admin.id)
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.get_json()["status"], "updated")
         # Audit row from the hbuser trigger. NOTE: the trigger records the
@@ -104,7 +104,7 @@ class TestLastAdminInvariant(DatabaseTest):
         target = self._make_admin("target")
         self._make_admin("third")
         self.login("admin", "pass")
-        resp = self._remove_admin_via_legacy(target.id)
+        resp = self._remove_admin(target.id)
         self.assertEqual(resp.status_code, 200)
         privs = db.User.get_by_id(target.id).privileges
         self.assertFalse(any(p.get("level") == "admin" for p in privs))

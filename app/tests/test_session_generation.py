@@ -125,10 +125,10 @@ class TestSession(SessionTest):
 
     def test_basic_auth_changes_no_password(self):
         """Its one-request session has no mark, so the re-check under the account's row lock refuses the change."""
-        form = {"oldpassword": "pass", "newpassword": "ny", "password": "ny"}
-        self.assertIsNone(
-            da.change_password(self.viewer, self.viewer.id, form, session_stamps={"user_id": self.viewer.uuid})
-        )
+        auth = {"Authorization": "Basic " + base64.b64encode(b"admin:pass").decode()}
+        url = f"/api/v2/admin/users/{self.viewer.id}/password-reset"
+        res = APP.test_client().post(url, headers=auth, json={"password": "ny"})
+        self.assertEqual(res.get_json()["type"], "password-reset-failed")
         self.assertIsNotNone(da.authenticate_user("spec", "pass")[0])
 
     def test_a_login_flask_login_refuses_writes_no_session(self):
@@ -492,13 +492,9 @@ class TestLostMarkAndRaces(SessionTest):
             with self.subTest(name):
                 real(other, self.admin.id, {"password": "pass", "newpassword": "pass"})
                 own = self.login("admin")
-                with own.session_transaction() as sess:
-                    stamps = dict(sess)
                 with mock.patch.object(da, "change_password", self.first(revoke, real)):
-                    answer = da.change_password(
-                        self.admin, self.admin.id, {"password": "egen", "newpassword": "egen"}, session_stamps=stamps
-                    )
-                self.assertIsNone(answer)
+                    answer = own.post(f"/api/v2/admin/users/{self.admin.id}/password-reset", json={"password": "egen"})
+                self.assertEqual(answer.get_json()["type"], "password-reset-failed")
                 self.assertEqual(da.authenticate_user("admin", "egen"), (None, None))
 
     def test_logout_everywhere_waits_for_the_account(self):
