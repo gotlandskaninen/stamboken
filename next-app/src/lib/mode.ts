@@ -24,10 +24,35 @@ export const MODE_COOKIE = "sb_mode";
  * Validate a raw cookie value against the `demo|prod` allow-list.
  * Returns `"prod"` only for the exact string `"prod"`; everything else
  * (undefined, unknown values, wrong case) fail-safes to `"demo"` (ASVS V5).
+ * With a session, middleware replaces a missing or invalid value with
+ * {@link initialMode} before any page reads it (#227).
  */
 export function parseMode(value: string | undefined): Mode {
   return value === "prod" ? "prod" : "demo";
 }
+
+/**
+ * Base-dev-safe initial mode from the promotion flag:
+ * - promoted (v2_prod_access) -> "prod"
+ * - non-promoted with a test API configured -> "demo"
+ * - non-promoted in base dev (no test API) -> "prod" (nowhere to demo against)
+ */
+export function initialMode(v2ProdAccess: boolean): Mode {
+  const testConfigured = !!process.env.API_TEST_INTERNAL_URL;
+  return v2ProdAccess || !testConfigured ? "prod" : "demo";
+}
+
+/**
+ * The browser must read sb_mode (RTK Query picks demo vs. prod from it), so it
+ * is NON-httpOnly; the rest mirrors the session cookie (actions.ts). It is not
+ * an auth token (threat T-999.2-10).
+ */
+export const modeCookieOptions = {
+  httpOnly: false,
+  secure: process.env.NODE_ENV === "production",
+  sameSite: "lax" as const,
+  path: "/",
+};
 
 /**
  * SSR-safe client reader: extracts `sb_mode` from `document.cookie` and returns
