@@ -172,7 +172,8 @@ class TestMatrikelAudit(MatrikelApiTest):
                 self.assertEqual((found["total"], found["rows"]), (0, []))
 
     def _billing_row(self, minutes_before_now=0):
-        # as if left behind by a path the erasure missed: the household's old billing address
+        """A membership_updated row with the household's old billing address, written now and dated back if asked:
+        after the erasure, so the erasure's own redaction in the database never reached it."""
         row = matrikel.write_matrikel_audit(
             self.admin,
             "membership_updated",
@@ -182,18 +183,27 @@ class TestMatrikelAudit(MatrikelApiTest):
         at = datetime.now() - timedelta(minutes=minutes_before_now)
         db.MatrikelAudit.update(created_at=at).where(db.MatrikelAudit.id == row.id).execute()
 
-    def test_erased_household_is_masked_on_read(self):
-        self._billing_row(minutes_before_now=5)  # written before the erasure, which did not reach it
-        matrikel.anonymize_person(db.Member.get_by_id(self.person.id), self.matrikel_user)  # the only active person
-        self.login("man")
+    def _billing_shown(self):
         resp = self.get(f"membership_id={self.ms.id}&action=membership_updated")
-        self.assertNotIn("Fakturagatan", resp.get_data(as_text=True))
-        self.assertEqual(resp.get_json()["rows"][0]["payload"]["before"]["billing_address"], matrikel.REDACTED_VALUE)
+        return "Fakturagatan" in resp.get_data(as_text=True), resp.get_json()["rows"]
 
-    def test_erased_household_stays_masked_after_a_new_person(self):
-        """Codex #248 r2: a new huvudmedlem in the erased household must not bring the old address back."""
-        self._billing_row(minutes_before_now=5)
+    def test_erased_household_is_masked_on_read(self):
+        matrikel.anonymize_person(db.Member.get_by_id(self.person.id), self.matrikel_user)  # the only active person
+        self._billing_row(minutes_before_now=5)  # dated before the erasure, as if the erasure had missed it
+        self.login("man")
+        shown, rows = self._billing_shown()
+        self.assertFalse(shown)
+        self.assertEqual(rows[0]["payload"]["before"]["billing_address"], matrikel.REDACTED_VALUE)
+
+    def test_erased_household_stays_masked_until_and_after_a_new_person(self):
+        """Codex #248 r2/r3: a row written after the erasure, before anyone joined, still names the erased household."""
         matrikel.anonymize_person(db.Member.get_by_id(self.person.id), self.matrikel_user)
+        self._billing_row()  # after the erasure: stored unmasked
+        self.assertIn(
+            "Fakturagatan 9", json.dumps(db.MatrikelAudit.select().order_by(db.MatrikelAudit.id.desc()).first().payload)
+        )
+        self.login("man")
+        self.assertFalse(self._billing_shown()[0])
         _mk_person(self.ms, "Nils", "Nyman", "nils@example.com")
         matrikel.write_matrikel_audit(
             self.admin,
@@ -201,11 +211,9 @@ class TestMatrikelAudit(MatrikelApiTest):
             self.ms,
             {"before": {"billing_address": None}, "after": {"billing_address": "Nya vägen 2"}},
         )
-        self.login("man")
-        resp = self.get(f"membership_id={self.ms.id}&action=membership_updated")
-        self.assertNotIn("Fakturagatan", resp.get_data(as_text=True))
-        newest = resp.get_json()["rows"][0]["payload"]["after"]["billing_address"]
-        self.assertEqual(newest, "Nya vägen 2")  # the new household's own history is not erased
+        shown, rows = self._billing_shown()
+        self.assertFalse(shown)
+        self.assertEqual(rows[0]["payload"]["after"]["billing_address"], "Nya vägen 2")  # the new household's own
 
     def test_household_with_an_active_person_is_not_masked(self):
         self._billing_row(minutes_before_now=5)

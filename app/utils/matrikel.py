@@ -361,12 +361,14 @@ def _erased_accounts() -> set[int]:
     return {p["user_id"] for p in links if p.get("person_id") in erased and isinstance(p.get("user_id"), int)}
 
 
-def _household_erasures(membership_ids) -> dict[int, datetime]:
-    """When each household was last erased: the latest person_anonymized row after which no person was active.
+def _household_erasures(membership_ids) -> dict[int, datetime | None]:
+    """Until when each erased household's log rows are masked: the first person added after its last erasure, or
+    None (for ever) while nobody has joined since.
 
-    anonymize_person() erases the household as its last active person goes, and writes no other marker. A person was
-    active at that moment if added before it and not ended by that day; an end the same day counts as before, which
-    errs towards masking. The mark outlives persons added later: their household is new, its old rows stay erased.
+    The erasure is the latest person_anonymized row after which no person was active: anonymize_person() erases the
+    household as its last active person goes, and writes no other marker. A person was active at that moment if added
+    before it and not ended by that day; an end the same day counts as before, which errs towards masking. Rows
+    written after the erasure but before anyone joined still name the erased household, so they are masked too.
     """
     if not membership_ids:
         return {}
@@ -384,7 +386,14 @@ def _household_erasures(membership_ids) -> dict[int, datetime]:
         )
         .group_by(MatrikelAudit.membership)
     )
-    return {r.membership_id: r.erased_at for r in rows}
+    erased_at = {r.membership_id: r.erased_at for r in rows}
+    until = dict.fromkeys(erased_at)
+    for m in Member.select(Member.membership, Member.created_at).where(Member.membership.in_(list(erased_at))):
+        if m.created_at > erased_at[m.membership_id] and (
+            until[m.membership_id] is None or m.created_at < until[m.membership_id]
+        ):
+            until[m.membership_id] = m.created_at
+    return until
 
 
 @snapshot_read()  # one snapshot: an erasure committing mid-read must not pair her old account with "Borttagen person"
@@ -407,7 +416,7 @@ def query_matrikel_audit(
     person's notes. A row about an anonymised person is redacted again on read, should a stored payload have escaped
     the erasure. An account once linked to an anonymised person is shown as REDACTED_VALUE, as actor and as user_id,
     and the actor filter skips it. In a household that has been erased, the rows without a person (membership_updated
-    and the like) from before its last erasure lose HOUSEHOLD_PII_KEYS, also when new persons came later.
+    and the like) from before the first person who joined after its last erasure lose HOUSEHOLD_PII_KEYS.
     """
     q = (
         MatrikelAudit.select(MatrikelAudit, User, Membership)
@@ -452,7 +461,8 @@ def query_matrikel_audit(
         person = persons.get(person_of(payload))
         if person is not None and is_anonymized(person):
             payload, _ = _redact_node(payload)
-        if a.membership_id in erasures and a.created_at <= erasures[a.membership_id] and "person_id" not in payload:
+        until = erasures.get(a.membership_id, a.created_at)  # not erased: no row is before itself
+        if "person_id" not in payload and (until is None or a.created_at < until):
             payload, _ = _redact_node(payload, HOUSEHOLD_PII_KEYS)  # what redact_household_from_audits() covers
         if payload.get("user_id") in erased_accounts:
             payload = {**payload, "user_id": REDACTED_VALUE}
