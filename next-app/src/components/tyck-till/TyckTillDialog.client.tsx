@@ -782,10 +782,13 @@ export function TyckTillDialog({
 export function TyckTillLink({
   className,
   label,
+  tour,
   children = "Tyck till",
 }: {
   className?: string;
   label?: string;
+  /** Target name for the tour (data-tour). */
+  tour?: string;
   children?: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -795,6 +798,7 @@ export function TyckTillLink({
         type="button"
         className={className ?? styles.link}
         aria-label={label}
+        data-tour={tour}
         onClick={() => setOpen(true)}
       >
         {children}
@@ -807,7 +811,11 @@ export function TyckTillLink({
 // Always at the right edge of every page (Jonas 2026-11-24), as the old site's feedback tab.
 export function TyckTillTab() {
   return (
-    <TyckTillLink className={styles.sidetab} label="Tyck till om sidan">
+    <TyckTillLink
+      className={styles.sidetab}
+      label="Tyck till om sidan"
+      tour="tyck-till"
+    >
       <span>Tyck till</span>
     </TyckTillLink>
   );

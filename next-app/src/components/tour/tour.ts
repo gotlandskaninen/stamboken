@@ -114,7 +114,7 @@ export const TOUR_STEPS: TourStep[] = [
   },
   {
     id: "tyckTill",
-    target: '[aria-label="Tyck till om sidan"]',
+    target: '[data-tour="tyck-till"]',
     href: `${MANUAL_PATH}#tyck-till`,
   },
 ];
