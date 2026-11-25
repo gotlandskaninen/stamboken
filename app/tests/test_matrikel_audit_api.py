@@ -137,7 +137,8 @@ class TestMatrikelAudit(MatrikelApiTest):
         self.assertEqual((page["total"], page["page"], page["per_page"]), (3, 2, 1))
         self.assertEqual([r["action"] for r in page["rows"]], ["person_removed"])
         self.assertEqual(self.get("per_page=999").get_json()["per_page"], 200)
-        for bad in ("from=igar", "page=x", "membership_id=y", "member_number=z"):
+        bad_ids = ("membership_id=0", "membership_id=-1", "member_number=0", "member_number=-5", "member_number=1.5")
+        for bad in ("from=igar", "page=x", "membership_id=y", "member_number=z", *bad_ids):
             with self.subTest(bad=bad):
                 self.assertEqual(self.get(bad).status_code, 400)
 
