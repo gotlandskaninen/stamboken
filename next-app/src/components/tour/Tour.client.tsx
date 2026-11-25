@@ -173,12 +173,13 @@ export function TourProvider({ children }: { children: React.ReactNode }) {
       start,
       offerOpen: !!user && unanswered && !answered && !offerHidden,
       decline: () => {
+        end(); // a start still loading driver.js must not open the tour
         if (user) answerOffer(user.id);
         setAnswered(true);
       },
       hideOffer: setOfferHidden,
     }),
-    [start, user, unanswered, answered, offerHidden],
+    [start, end, user, unanswered, answered, offerHidden],
   );
 
   return <TourContext.Provider value={value}>{children}</TourContext.Provider>;

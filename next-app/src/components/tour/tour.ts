@@ -7,6 +7,8 @@ export interface TourStep {
   id: string;
   /** CSS selector; the first visible match is highlighted. */
   target: string;
+  /** Where to point instead when the target hides after the tour started. */
+  fallback?: string;
   /** Link into the manual or the matrikel guide; null: no link for this user. */
   href: string | ((user: UserContext) => string | null);
   /** The text's key under tour.steps when it depends on the user. */
@@ -18,6 +20,7 @@ export interface TourStep {
 /** A step as this user sees it, with its target on the page. */
 export interface ShownStep {
   id: string;
+  /** The selector looked up again each time the step is shown. */
   target: string;
   element: Element;
   href: string | null;
@@ -88,8 +91,10 @@ export const TOUR_STEPS: TourStep[] = [
   },
   {
     id: "inkorg",
-    // Only queue workers have the link; on mobile the step is skipped.
+    // Only queue workers have the link, so the step needs it at the start
+    // (on mobile it is skipped); if the window narrows later, the menu.
     target: '[data-tour="nav-inkorg"]',
+    fallback: '[data-tour="menu"]',
     href: `${MANUAL_PATH}#arbeta-i-inkorgen`,
   },
   {
@@ -138,7 +143,10 @@ export function stepsFor(
     if (!element) return [];
     const href = typeof step.href === "function" ? step.href(user) : step.href;
     const textKey = step.text?.(user) ?? `${step.id}.text`;
-    return [{ id: step.id, target: step.target, element, href, textKey }];
+    const target = step.fallback
+      ? `${step.target}, ${step.fallback}`
+      : step.target;
+    return [{ id: step.id, target, element, href, textKey }];
   });
 }
 

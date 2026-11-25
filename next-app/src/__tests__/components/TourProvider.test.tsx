@@ -108,6 +108,15 @@ describe("the offer", () => {
     expect(screen.queryByRole("region", OFFER)).toBeNull();
   });
 
+  it("cancels a start still loading when the user says Nej tack", async () => {
+    renderShell();
+    fireEvent.click(screen.getByRole("button", { name: "Visa runt" }));
+    fireEvent.click(screen.getByRole("button", { name: "Nej tack" }));
+    await settle();
+    expect(mocks.drive).not.toHaveBeenCalled();
+    expect(screen.queryByRole("region", OFFER)).toBeNull();
+  });
+
   it("saves Nej tack at once and never starts the tour", () => {
     const { unmount } = renderShell();
     fireEvent.click(screen.getByRole("button", { name: "Nej tack" }));

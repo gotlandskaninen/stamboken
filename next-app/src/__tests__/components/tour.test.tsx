@@ -75,6 +75,15 @@ describe("stepsFor", () => {
     );
   });
 
+  it("keeps Inkorg on the role's link at the start, then lets the menu stand in", () => {
+    const onPage = new Set(['[data-tour="menu"]']);
+    const find = (sel: string) => (onPage.has(sel) ? document.body : null);
+    // The menu button alone gives no Inkorg step to those without the link.
+    expect(ids(member, find)).not.toContain("inkorg");
+    const inkorg = step(member, "inkorg")!;
+    expect(inkorg.target).toBe('[data-tour="nav-inkorg"], [data-tour="menu"]');
+  });
+
   it("skips steps whose target is not on the page, in order", () => {
     const onPage = new Set(['[data-tour="rabbit-card"]']);
     const find = (sel: string) => (onPage.has(sel) ? document.body : null);
