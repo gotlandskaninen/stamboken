@@ -294,6 +294,33 @@ class TestMembersLinkHousehold(DatabaseTest):
         self._apply()
         self.assertEqual(self._added(membership), [bo_row])
 
+    def test_colliding_candidates_are_all_listed_before_any_write(self):
+        membership, _, herd = self._household()
+        other, _, other_herd = self._household(902, first="Eva", last="Ek")
+        self._account("Anna Svensson", owns=[herd])
+        self._account("Eva Ek", owns=[other_herd])
+        same_name = [
+            self._account("Bo", owns=[herd], email="bo1@example.org"),
+            self._account("Bo", owns=[herd], email="bo2@example.org"),
+        ]
+        same_address = [
+            self._account("Cia Svensson", owns=[herd], email="cia@example.org"),
+            self._account("Dan Ek", owns=[other_herd], email="dan@example.org"),
+        ]
+        self._workspace_row("bo1@example.org", "Bo", "Svensson", home="bo1@example.net")
+        self._workspace_row("bo2@example.org", "Bo", "Svensson", home="bo2@example.net")
+        self._workspace_row("cia@example.org", "Cia", "Svensson", home="delad@example.net")
+        self._workspace_row("dan@example.org", "Dan", "Ek", home="delad@example.net")
+
+        plan = self._run()
+
+        for user in same_name:
+            self.assertIn(f"konto {user.id}: flera konton i planen får samma namn i medlemskapet", plan.output)
+        for user in same_address:
+            self.assertIn(f"konto {user.id}: flera konton i planen får samma adress", plan.output)
+        self._apply()
+        self.assertEqual(self._added(membership) + self._added(other), [])
+
     def test_changed_plan_writes_nothing(self):
         membership, main, herd = self._household()
         self._account("Anna Svensson", owns=[herd])

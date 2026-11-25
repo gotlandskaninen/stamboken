@@ -1672,6 +1672,22 @@ def _plan_household_links(workspace) -> tuple[list, list, int]:
                 f"-> konto {user.id} | {_account_detail(user)}"
             )
             actions.append((codes, line, main, user, data))
+
+    # Two new persons with one name in a membership, or one login address anywhere: none of them is added.
+    family = [action for action in actions if action[4] is not None]
+    names = Counter(
+        (main.membership_id, _norm_name(f"{d['first_name']} {d['last_name']}")) for _, _, main, _, d in family
+    )
+    addresses = Counter(_norm_email(d["email"]) for _, _, _, _, d in family)
+    for action in family:
+        codes, _, main, user, data = action
+        if names[(main.membership_id, _norm_name(f"{data['first_name']} {data['last_name']}"))] > 1:
+            listed.append((codes, f"konto {user.id}: flera konton i planen får samma namn i medlemskapet"))
+        elif addresses[_norm_email(data["email"])] > 1:
+            listed.append((codes, f"konto {user.id}: flera konton i planen får samma adress"))
+        else:
+            continue
+        actions.remove(action)
     return actions, listed, len(already)
 
 
