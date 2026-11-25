@@ -995,7 +995,7 @@ och inställningar: [inkorg-gmail.md](inkorg-gmail.md)). Varje mejl i inkorgen b
 
 En ny post får avsändarens adress i `sender_address`, mejlets text i `message` (en HTML-text
 utan taggar; bara de första 100 000 tecknen läses och högst 10 000 sparas) och en gissad besättning. Bilagorna går genom samma kontroller som en uppladdning
-([Ladda upp](#ladda-upp)): JPEG, PNG, WebP, HEIC och PDF, högst 25 MB styck (lika stort som Gmail tar emot) och högst 10 bilder
+([Ladda upp](#ladda-upp)): JPEG, PNG, WebP, HEIC och PDF, högst 25 MB styck (lika stort som Gmail låter en avsändare bifoga; Gmail tar emot större) och högst 10 bilder
 per mejl. En bild vars kortaste sida är under 200 bildpunkter (en logotyp i signaturen, en
 spårningspixel) är inget dokument. Övriga bilagor sparas inte, men deras namn står i händelsen `inkommen`. Ett foto som
 skickats inbäddat i texten räknas som en bilaga. Genbanksansvarig och hjälpare i postens
@@ -1312,7 +1312,9 @@ dokumentet inte hör till den; 409 när dokumentet inte har någon kopia.
   släpper igenom lika mycket till Server Actions och middleware (`bodySizeLimit` och
   `proxyClientMaxBodySize` i `next.config.js`). Ett större inskick nekas med 413 (problem+json när
   begäran når Flask, annars nginx egen sida), så gränssnittet räknar filernas storlek före
-  sändningen (högst 48 MB) och ber om ett nytt inskick för resten. Resten av API:t tar högst 26 MB.
+  sändningen (högst 25 MB per fil och 48 MB allt som allt) och ber om ett nytt inskick för resten.
+  Kaninens foto och årsrapportens foto tar högst 26 MB (en fil och formuläret), Tyck till 25 MB och
+  resten av API:t 11 MB.
 - Telefonens filväljare: `<input type="file" accept="image/*,application/pdf" multiple>` ger både
   kamera och bildbibliotek.
 - Bilderna kräver inloggningens cookie. Använd dem som `src` i samma ursprung, eller hämta dem

@@ -15,6 +15,8 @@ import styles from "../inskick.module.css";
 // nginx cuts the request at 50 MiB, multipart overhead included (docs/inkorg.md),
 // so the files get a little less.
 const MAX_TOTAL = 48 * 1024 * 1024;
+// The server's limit for one file (MAX_FILE_SIZE in app/blueprints/uploads.py).
+const MAX_FILE = 25 * 1024 * 1024;
 
 /**
  * `herds` are the user's own. Someone who works in the queue may upload for
@@ -62,6 +64,11 @@ export function UploadForm({
     // One at a time: decoded phone photos are large.
     const prepared: File[] = [];
     for (const f of files) prepared.push(await prepare(f));
+    const tooBig = prepared.find((f) => f.size > MAX_FILE);
+    if (tooBig) {
+      setError(`”${tooBig.name}” är för stor (högst 25 MB per fil).`);
+      return null;
+    }
     if (prepared.reduce((n, f) => n + f.size, 0) > MAX_TOTAL) {
       setError(
         "Bilderna är för stora tillsammans (högst 48 MB). Skicka färre åt gången.",
@@ -212,7 +219,8 @@ export function UploadForm({
             Ta foto eller välj filer
           </button>
           <span className="sb-meta">
-            Foton eller PDF. Högst 10 bilder och 48 MB per inskick.
+            Foton eller PDF. Högst 10 bilder, 25 MB per fil och 48 MB per
+            inskick.
           </span>
         </div>
         <div className={styles.field}>

@@ -38,9 +38,10 @@ from utils.matrikel import resolve_own_membership
 from utils.report_code import CodeActor, actor_key
 
 from .common import check_genebank_access, json_login_required, manager_required, problem
-from .inbox import MAX_REQUEST, REGISTRATION_FIELDS, _each_image, _Refused, certificate_upload_refusal
+from .inbox import REGISTRATION_FIELDS, _each_image, _Refused, certificate_upload_refusal
 from .individual_v2_create import may_register_in, number_suggestion, paper_number_check, register_individual_as
 from .rapport_link import _environment, session_codes, touch
+from .uploads import MAX_FILE_REQUEST
 
 arsrapport_bp = Blueprint("arsrapport", __name__, url_prefix="/api")
 
@@ -517,7 +518,7 @@ NO_RIGHT_TO_ADD = "Du har inte rätt att lägga till kaniner i besättningen."
 
 @arsrapport_bp.errorhandler(413)
 def too_large(_exc):
-    """A photo over MAX_REQUEST (werkzeug's 413 is HTML) as problem+json, as the queue's upload."""
+    """A photo over MAX_FILE_REQUEST (werkzeug's 413 is HTML) as problem+json, as the queue's upload."""
     return problem(413, "Payload Too Large", "Filen är för stor. Max 25 MB.")
 
 
@@ -577,7 +578,7 @@ def _send_limit(access):
 def upload_photo(herd, year):
     if not report_link_only() and (refusal := certificate_upload_refusal()) is not None:
         return refusal
-    request.max_content_length = MAX_REQUEST  # before the body is read, as the queue's upload
+    request.max_content_length = MAX_FILE_REQUEST  # before the body is read: one photo, as the queue's upload
     herd, round_, access = _report_target(herd, year)
     if access.item is not None:
         raise ArsrapportError(403, PAPER_IN_QUEUE)

@@ -411,8 +411,8 @@ fotona. De som arbetar med inläsningen lägger in kaninerna åt dig.
 1. Välj **Mina inskick** i menyn och klicka **Ladda upp intyg**.
 2. Välj **Besättning**. Har du bara en är den redan vald.
 3. Klicka **Ta foto eller välj filer**. På telefonen kan du välja kameran eller
-   bildbiblioteket. Du kan också välja en PDF. Högst 10 bilder och 48 MB tillsammans per
-   inskick; en PDF räknas sida för sida.
+   bildbiblioteket. Du kan också välja en PDF. Högst 10 bilder, 25 MB per fil och 48 MB
+   tillsammans per inskick; en PDF räknas sida för sida.
 4. Skriv ett **Meddelande** om du vill (valfritt).
 5. Klicka **Skicka**.
 

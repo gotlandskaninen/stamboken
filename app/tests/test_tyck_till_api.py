@@ -242,6 +242,13 @@ class TestChecks(TyckTillTest):
             self.assertEqual(dict(stored.getexif()), {})
             self.assertEqual(stored.format, "JPEG")
 
+    def test_a_large_image_is_scaled_to_the_dialogs_size_so_the_mail_stays_small(self):
+        inskick_id = uuid.uuid4()
+        response = self.send(files=[("a.jpg", encoded(photo((3000, 1500))))], inskick_id=str(inskick_id))
+        self.assertEqual(response.get_json()["images"], 1)
+        with Image.open(tt.folder(inskick_id) / "bild-0.jpg") as stored:
+            self.assertEqual(stored.size, (blueprint.IMAGE_SIDE, blueprint.IMAGE_SIDE // 2))
+
     def test_five_images_refused(self):
         files = [(f"{n}.jpg", encoded(photo((200, 200), seed=n))) for n in range(5)]
         response = self.send(files=files)
