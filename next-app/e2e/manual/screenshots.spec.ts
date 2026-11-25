@@ -1,16 +1,11 @@
 import { test, expect, type Page, type BrowserContext } from "@playwright/test";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 
-// Skärmbilder till användarmanualen. Varje post ger två filer i public/stamboken/manual/:
+// Skärmbilder till användarmanualen. Varje post ger två bilder i public/stamboken/manual/
+// (projektet "manual" i playwright.manual-screenshots.config.ts):
 // <namn>-mobil.png (375 px) och <namn>-desktop.png (1280 px). Kräver att
 // mutation-manual-flows.spec.ts körts först (kull med kullista, utfärdat intyg)
 // och att MANUAL_CERT_UUID pekar på ett utfärdat intyg (annars hoppas den bilden).
 
-const OUT = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "../../public/stamboken/manual",
-);
 const USERS = {
   owner: { username: "test-gk-owner", password: "test-gk-owner-pass" },
   manager: { username: "test-gk-manager", password: "test-gk-pass" },
@@ -299,7 +294,11 @@ for (const shot of SHOTS) {
     test(`${shot.name} (${suffix})`, async ({ page, context }) => {
       await page.setViewportSize(viewport);
       await login(page, context, shot.role);
-      await page.goto(shot.path, { waitUntil: "networkidle" });
+      const res = await page.goto(shot.path, { waitUntil: "networkidle" });
+      // A 404 or a redirect to sign-in must fail, not become a picture.
+      expect(res?.status(), shot.path).toBeLessThan(400);
+      if (shot.role !== "anonymous")
+        expect(new URL(page.url()).pathname).not.toBe("/auth/sign-in");
       await page
         .getByText("Laddar")
         .first()
@@ -317,8 +316,7 @@ for (const shot of SHOTS) {
       if (await beta.isVisible().catch(() => false)) await beta.click();
       for (const a of shot.actions ?? []) await act(page, a);
       await page.waitForTimeout(500);
-      await page.screenshot({
-        path: path.join(OUT, `${shot.name}-${suffix}.png`),
+      await expect(page).toHaveScreenshot(`${shot.name}-${suffix}.png`, {
         fullPage: shot.fullPage ?? false,
       });
     });

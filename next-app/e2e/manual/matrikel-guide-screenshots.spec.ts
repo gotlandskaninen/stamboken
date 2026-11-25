@@ -1,21 +1,13 @@
 import { test, expect, type Page } from "@playwright/test";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 // Skärmbilder till guiden för matrikeln (content/matrikel-guide/). Går igenom
 // flödet en gång med påhittade personer: en ansökan skickas in och godkänns,
 // ett medlemskap läggs in för hand och får en familjemedlem. Körs för hand mot
 // en NYSTARTAD seedad e2e-stack (en andra körning lägger in samma personer en
-// gång till), aldrig i CI och aldrig mot prod eller demo:
-//
-//   MANUAL_BASE_URL=http://localhost:3010 pnpm exec playwright test \
-//     --config playwright.manual-screenshots.config.ts \
-//     e2e/manual/matrikel-guide-screenshots.spec.ts
+// gång till), aldrig mot prod eller demo. Projektet "guide" i
+// playwright.manual-screenshots.config.ts; workflowet manual-screenshots.yml
+// kör det, se docs/manual/README.md.
 
-const OUT = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "../../content/matrikel-guide",
-);
 const ADMIN = { username: "test-admin", password: "test-admin-pass" };
 // Påhittade personer på example.com-adresser.
 const APPLICANT = {
@@ -38,7 +30,7 @@ async function shot(page: Page, name: string, fullPage = false) {
     content: "nextjs-portal { display: none !important; }",
   });
   await page.waitForTimeout(600);
-  await page.screenshot({ path: path.join(OUT, `${name}.png`), fullPage });
+  await expect(page).toHaveScreenshot(`${name}.png`, { fullPage });
 }
 
 async function loginAdmin(page: Page) {
@@ -140,7 +132,7 @@ test("medlemskapets sida, adress och betalning", async ({ page }) => {
   });
   await form.getByLabel("Betalningsnotering").fill("Betalt 2026-11-16 Swish");
   await form.scrollIntoViewIfNeeded();
-  await form.screenshot({ path: path.join(OUT, "medlemskap-formular.png") });
+  await expect(form).toHaveScreenshot("medlemskap-formular.png");
   await form.getByRole("button", { name: "Spara" }).click();
   await expect(page.getByText("Medlemskapet sparat")).toBeVisible();
 

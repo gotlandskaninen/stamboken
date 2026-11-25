@@ -1,22 +1,47 @@
 import { defineConfig } from "@playwright/test";
 
 /**
- * Skärmbilder till manualen (public/stamboken/manual/). Körs för hand mot
- * den seedade e2e-stacken bakom en nginx-proxy (se docs/manual/README.md),
- * aldrig i CI och aldrig mot prod eller demo:
- *
- *   pnpm exec playwright test --config playwright.manual-screenshots.config.ts
+ * Skärmbilder till manualen (public/stamboken/manual/) och guiden för
+ * matrikeln (content/matrikel-guide/). Bilderna är Playwrights
+ * jämförelsebilder (toHaveScreenshot): med --update-snapshots=changed skrivs
+ * bara de som skiljer sig från bilden i repot, så git status visar vilka
+ * bilder (och därmed avsnitt) som har ändrats. Workflowet
+ * manual-screenshots.yml kör dem mot den seedade CI-stacken bakom en
+ * nginx-proxy; se docs/manual/README.md. Aldrig mot prod eller demo.
  */
 export default defineConfig({
   testDir: "./e2e/manual",
-  testMatch: /screenshots\.spec\.ts/,
   workers: 1,
   timeout: 120000,
   retries: 0,
+  expect: {
+    timeout: 20000,
+    toHaveScreenshot: {
+      animations: "disabled",
+      caret: "hide",
+      // A few pixels of anti-aliasing are not a changed screen.
+      maxDiffPixels: 50,
+      stylePath: "./e2e/manual/screenshots.css",
+    },
+  },
   use: {
     baseURL: process.env.MANUAL_BASE_URL || "http://localhost:8080",
     headless: true,
     deviceScaleFactor: 1,
     locale: "sv-SE",
   },
+  // Playwright matches testMatch against the absolute path.
+  projects: [
+    {
+      name: "manual",
+      testMatch: /[\\/](?:login-)?screenshots\.spec\.ts$/,
+      snapshotPathTemplate:
+        "{testDir}/../../public/stamboken/manual/{arg}{ext}",
+    },
+    {
+      name: "guide",
+      testMatch: /[\\/]matrikel-guide-screenshots\.spec\.ts$/,
+      snapshotPathTemplate: "{testDir}/../../content/matrikel-guide/{arg}{ext}",
+    },
+  ],
 });
