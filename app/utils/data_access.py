@@ -1435,8 +1435,10 @@ def list_all_herds(user, *also, genebank_id=None, active=None, has_owner=None, s
         q = q.where(Herd.genebank.in_(list(scope)))
     if genebank_id is not None:
         q = q.where(Herd.genebank == genebank_id)
-    if active is not None:
-        q = q.where(Herd.is_active == active)
+    if active:
+        q = q.where(Herd.is_active == True)  # noqa: E712
+    elif active is not None:  # a NULL status shows as Inaktiv, so it is found here (#214)
+        q = q.where((Herd.is_active == False) | Herd.is_active.is_null(True))  # noqa: E712
     # Materialise before slicing: herd is a small table (~1200 rows) and
     # the owner/search filters can only run Python-side (TEXT JSON).
     herds = list(q)
