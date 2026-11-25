@@ -184,7 +184,8 @@ class TestMembersLinkHousehold(DatabaseTest):
 
         plan = self._run()
 
-        self.assertIn(f"konto {bo.id}: en annan medlem loggar redan in med adressen (AddressTaken)", plan.output)
+        self.assertIn(f"konto {bo.id}: ingen reservadress i Workspace-raden går att använda", plan.output)
+        self.assertIn("Home Secondary Email: en annan medlem loggar redan in med adressen (AddressTaken)", plan.output)
         self._apply()
         self.assertEqual(self._added(membership), [])
 
@@ -197,7 +198,35 @@ class TestMembersLinkHousehold(DatabaseTest):
 
         plan = self._run()
 
-        self.assertIn(f"konto {bo.id}: medlemskapet har redan en person med samma namn eller adress", plan.output)
+        self.assertIn(f"konto {bo.id}: ingen reservadress", plan.output)
+        self.assertIn("Home Secondary Email: en person i medlemskapet har adressen", plan.output)
+
+    def test_person_with_the_same_name_is_not_added_twice(self):
+        membership, _, herd = self._household()
+        db.Member.create(membership=membership, role="familjemedlem", first_name="BO", last_name=" svensson")
+        self._account("Anna Svensson", owns=[herd])
+        bo = self._account("Bo Svensson", owns=[herd], email="bo@example.org")
+        self._workspace_row("bo@example.org", "Bo", "Svensson", home="bo.hemma@example.net")
+
+        plan = self._run()
+
+        self.assertIn(f"konto {bo.id}: medlemskapet har redan en person med samma namn", plan.output)
+
+    def test_the_next_address_column_is_used_when_one_fails_a_check(self):
+        membership, _, herd = self._household()
+        other, _, _ = self._household(902, first="Eva", last="Ek")
+        db.Member.update(email="upptagen@example.net").where(db.Member.membership == other).execute()
+        self._account("Anna Svensson", owns=[herd])
+        self._account("Bo Svensson", owns=[herd], email="bo@example.org")
+        self._workspace_row(
+            "bo@example.org", "Bo", "Svensson", home="upptagen@example.net", recovery="ogiltig", work="bo@example.net"
+        )
+
+        plan = self._run()
+        self.assertIn('"bo@example.net" (Work Secondary Email)', plan.output)
+        self._apply()
+        [person] = self._added(membership)
+        self.assertEqual(person.email, "bo@example.net")
 
     def test_role_account_and_account_in_two_memberships_are_listed(self):
         membership, _, herd = self._household()

@@ -1564,25 +1564,30 @@ def _household_person(user, workspace, persons):
         return "kontots Google-adress finns inte i Workspace-exporten"
     if workspace.get(_norm_email(user.email), row) is not row:
         return "kontots e-post och Google-adress hör till olika rader i Workspace-exporten"
-    column = next((c for c in _WORKSPACE_ADDRESSES if row[c]), None)
-    if column is None:
-        return "Workspace-raden saknar reservadress"
-    from blueprints.common import EMAIL_RE  # Load blueprints after CLI registration.
-
-    address, first, last = row[column], row[_WORKSPACE_NAME[0]], row[_WORKSPACE_NAME[1]]
-    if not EMAIL_RE.match(address):
-        return f"{column} i Workspace-raden är ingen giltig e-postadress"
+    first, last = row[_WORKSPACE_NAME[0]], row[_WORKSPACE_NAME[1]]
     if not (first and last):
         return "Workspace-raden saknar för- eller efternamn"
-    if login_address_taken(address, 0):
-        return "en annan medlem loggar redan in med adressen (AddressTaken)"
     name = _norm_name(f"{first} {last}")
-    if any(
-        _norm_name(f"{p.first_name} {p.last_name}") == name or _norm_email(p.email) == _norm_email(address)
-        for p in persons
-    ):
-        return "medlemskapet har redan en person med samma namn eller adress"
-    return {"first_name": first, "last_name": last, "email": address, "role": "familjemedlem"}, column
+    if any(_norm_name(f"{p.first_name} {p.last_name}") == name for p in persons):
+        return "medlemskapet har redan en person med samma namn"
+    from blueprints.common import EMAIL_RE  # Load blueprints after CLI registration.
+
+    refused = []
+    for column in _WORKSPACE_ADDRESSES:  # the first address that passes every check
+        address = row[column]
+        if not address:
+            continue
+        if not EMAIL_RE.match(address):
+            refused.append(f"{column}: ingen giltig e-postadress")
+        elif login_address_taken(address, 0):
+            refused.append(f"{column}: en annan medlem loggar redan in med adressen (AddressTaken)")
+        elif any(_norm_email(p.email) == _norm_email(address) for p in persons):
+            refused.append(f"{column}: en person i medlemskapet har adressen")
+        else:
+            return {"first_name": first, "last_name": last, "email": address, "role": "familjemedlem"}, column
+    if not refused:
+        return "Workspace-raden saknar reservadress"
+    return f"ingen reservadress i Workspace-raden går att använda ({'; '.join(refused)})"
 
 
 def _plan_household_links(workspace) -> tuple[list, list, int]:
