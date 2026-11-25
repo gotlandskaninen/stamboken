@@ -36,7 +36,7 @@ const STEPS: Array<{
   },
   {
     title: "Ditt konto",
-    text: "Har du redan ett konto loggar du in med det, med kod, föreningskontot eller lösenord. Är du huvudmedlem och har inget konto skapar du det själv första gången du loggar in med kod. Du godkänner reglerna för kontot och kommer sedan direkt in i riktiga stamboken. Kommer det ingen kod, eller säger sidan att det redan finns ett konto som kan vara ditt, skriv till admin@gotlandskaninen.se.",
+    text: "Har du redan ett konto loggar du in med det, med föreningskontot eller lösenord. Med kod kommer du in på kontot när det är kopplat till din rad i matrikeln. Är du huvudmedlem och har inget konto skapar du det själv första gången du loggar in med kod. Du godkänner reglerna för kontot och kommer sedan direkt in i riktiga stamboken. Kommer det ingen kod, eller säger sidan att det redan finns ett konto som kan vara ditt, skriv till admin@gotlandskaninen.se.",
     link: {
       href: "/kontoregler",
       label: "Läs reglerna för användarkonton",
