@@ -124,17 +124,17 @@ export function UserEditClient({
       return `Genbanksansvarig — ${gbName(p.genebank)}`;
     return p.level === "helper"
       ? `Genbankshjälpare — ${gbName(p.genebank)}`
-      : `Granskare — ${gbName(p.genebank)}`;
+      : `Läsrätt till ${gbName(p.genebank)}`;
   };
 
   // Handoff nivåbadge (README:45): Administratör skog, Genbanksansvarig
-  // mossa, Besättningsägare himmel, Granskare neutral.
+  // mossa, Besättningsägare himmel, Läsrätt neutral.
   const LEVEL_TEXT: Record<PrivilegeEntry["level"], string> = {
     admin: "Administratör",
     matrikel_admin: "Matrikeladministratör",
     manager: "Genbanksansvarig",
     helper: "Genbankshjälpare",
-    viewer: "Granskare",
+    viewer: "Läsrätt",
     owner: "Besättningsägare",
   };
   const LEVEL_BADGE: Record<PrivilegeEntry["level"], string> = {

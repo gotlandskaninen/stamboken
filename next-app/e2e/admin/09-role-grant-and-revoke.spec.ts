@@ -41,7 +41,7 @@ test("grant + revoke owner(herd) writes two privileges audit rows", async ({
   const userId = page.url().match(/anvandare\/(\d+)/)![1];
 
   // Grant owner(herd) via RolePicker: level select + herd autocomplete
-  // (Task 26 level labels: Admin / Genbanksansvarig / Granskare /
+  // (Task 26 level labels: Admin / Genbanksansvarig / Läsrätt /
   // Besättningsägare).
   await page.getByLabel(ROLE_LEVEL_FIELD).click();
   await page.getByRole("option", { name: "Besättningsägare" }).click();

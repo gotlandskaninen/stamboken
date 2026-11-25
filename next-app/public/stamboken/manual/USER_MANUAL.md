@@ -168,11 +168,11 @@ i nya Stamboken är inte klar än; knappen **Årsrapportera** visar "Kommer snar
 Tills dess rapporterar du som tidigare.
 
 **Uppfödare** (besättningsägare), **genbanksansvarig** och **administratör** – rollerna
-som manualens tre delar handlar om. Dessutom finns **granskare**, som får se en genbank
-utan att ändra, **skötare**, som får sköta en annan medlems besättning, och
-**matrikeladministratör**, som hanterar medlemsregistret. Matrikeladministratören har
-en egen guide inne i medlemsregistret (**Guide** överst på sidorna), som bara syns
-för den rollen.
+som manualens tre delar handlar om. Dessutom kan ett konto ha **läsrätt** till en genbank
+och se allt i den utan att ändra. Det finns också **skötare**, som får sköta en annan
+medlems besättning, och **matrikeladministratör**, som hanterar medlemsregistret.
+Matrikeladministratören har en egen guide inne i medlemsregistret (**Guide** överst på
+sidorna), som bara syns för den rollen.
 
 ---
 
@@ -1158,8 +1158,8 @@ Kolumnen **Status och åtkomst** visar märkena **Webbkurs** (validerad),
 
 1. Öppna användaren och gå till kortet **Roller**.
 2. Välj **Roll**: Administratör, Matrikeladministratör, Genbanksansvarig,
-   Genbankshjälpare, Granskare eller Besättningsägare. För Genbanksansvarig,
-   Genbankshjälpare och Granskare väljer du **Genbank**;
+   Genbankshjälpare, Läsrätt eller Besättningsägare. För Genbanksansvarig,
+   Genbankshjälpare och Läsrätt väljer du **Genbank**;
    för Besättningsägare söker du besättningen i **Besättning**.
 3. Klicka **Lägg till roll**.
 4. Ta bort en roll med **Ta bort** på raden.

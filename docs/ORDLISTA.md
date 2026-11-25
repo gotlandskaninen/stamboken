@@ -118,10 +118,6 @@ rättar besättningshistorik, numrerar om kullar och lägger in kaniner som köp
 utanför genbanken. Tar emot pappersintyg och årsrapporter.\
 Kod: `manager` · Legacy-manual: samma · Legacy: samma, "Manager" · Nytt UI: samma
 
-**Granskare**\
-Ser allt i en genbank men kan inte ändra något.\
-Kod: `viewer` · Legacy-manual: – · Legacy: "Viewer" · Nytt UI: samma
-
 **GX1 / MX1**\
 Två påhittade besättningar för kaniner som sålts till någon utanför genbanken, till exempel som
 sällskapsdjur: GX1 för gotlandskanin, MX1 för mellerudskanin. En kanin utan intyg kan bara säljas
@@ -201,6 +197,11 @@ Den står först i individnumret och ändras inte när kaninen säljs. En kanin 
 besättning än sin ursprungsbesättning märks Köpt på kaninens kort. Köparen registrerar ingenting;
 det gör säljaren eller genbanksansvarig.\
 Kod: `origin_herd` · Legacy-manual: "köpt" · Legacy: "Ursprungsbesättning" · Nytt UI: "Köpt", "Ursprungsbesättning" (ändringsloggen)
+
+**Läsrätt**\
+Rollen som ser allt i en genbank men inte kan ändra något: "Läsrätt till Gotlandskaninen". Ingen
+granskar något, så rollen heter inte "Granskare".\
+Kod: `viewer` · Legacy-manual: – · Legacy: "Viewer" · Nytt UI: "Läsrätt" (#214)
 
 **Matrikeladministratör**\
 Sköter medlemsregistret: medlemskap, medlemsnummer, personer och medlemsansökningar.\
@@ -380,7 +381,7 @@ ordet i `scripts/check-ui-terms.sh`, med datum om det beslutades 2026-10-30 (se 
 | Försäljning i ändringsloggen | – | – | "Överlåtelse" (auditLabels.ts:158) | "Försäljning" (auditLabels.ts:158) | Försäljning |
 | Pappret vid försäljning | – | – | – | "Försäljningsbevis" (PurchaseDialog.tsx, `buyerNote`) | Försäljningsbevis, aldrig "överlåtelsebevis" (beslut 2026-11-25) |
 | Rollen genbanksansvarig | "genbanksansvarig" (manual:178, 201) | "Manager" (userForm.tsx:83, individual_view.tsx:453), "Endast Manager" (field_with_permission.tsx:73), "genbanksansvarig" (individual_form.tsx:131) | "Manager" (KontoCard.tsx:124), "Genbanksansvarig" (RolePicker.tsx:76) | "Genbanksansvarig" (KontoCard.tsx:124, RolePicker.tsx:76), "Endast genbanksansvarig" (min-besattning-ui.tsx:244) | Genbanksansvarig |
-| Övriga roller | "vanlig användare" (manual:188) | "Owner", "Viewer" (userForm.tsx:82, 84) | samma som nu | "Besättningsägare", "Granskare", "Administratör", "Matrikeladministratör" (RolePicker.tsx:74–78) | Besättningsägare bara som rollnamn i admin, Uppfödare i text (beslut 2026-10-30) |
+| Övriga roller | "vanlig användare" (manual:188) | "Owner", "Viewer" (userForm.tsx:82, 84) | samma som nu | "Besättningsägare", "Läsrätt", "Administratör", "Matrikeladministratör" (RolePicker.tsx:74–79) | Besättningsägare bara som rollnamn i admin, Uppfödare i text (beslut 2026-10-30); Läsrätt, inte "Granskare" (#214) |
 | Fliken med kullar | "Kullar och parningar" (manual:125, 128) | "Kullar och parningar" (herd_view.tsx:141, individual_form.tsx:290) | "Kullar & parningar" (min-besattning-ui.tsx:13), "Kullar & Parningar" (`breeding.listTitle`, används inte) | "Kullar och parningar" (min-besattning-ui.tsx:13, `breeding.listTitle`, används inte) | Kullar och parningar (beslut 2026-10-30) |
 | Fliken med kaniner | "Lista över individer" (manual:126) | "Lista över individer" (herd_view.tsx:134) | samma som nu | "Kaniner" (min-besattning-ui.tsx:12) | Kaniner (beslut 2026-10-30) |
 | Min besättning | "Min besättning" (manual:78) | "Min besättning", "Mina besättningar" (navigation.tsx:207–208) | "Min Besättning" (`sidebar.minBesattning`), "Min besättning" (`individual.breadcrumb.myHerd`) | "Min besättning" (`sidebar.minBesattning`, `individual.breadcrumb.myHerd`) | Min besättning (beslut 2026-10-30) |

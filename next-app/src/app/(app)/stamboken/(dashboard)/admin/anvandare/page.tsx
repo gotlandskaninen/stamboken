@@ -131,7 +131,7 @@ export default async function AdminUsersPage({
               <MenuItem value="matrikel_admin">Matrikeladministratör</MenuItem>
               <MenuItem value="manager">Genbanksansvarig</MenuItem>
               <MenuItem value="helper">Genbankshjälpare</MenuItem>
-              <MenuItem value="viewer">Granskare</MenuItem>
+              <MenuItem value="viewer">Läsrätt</MenuItem>
               <MenuItem value="owner">Besättningsägare</MenuItem>
               <MenuItem value="none">Ingen roll</MenuItem>
             </Select>
