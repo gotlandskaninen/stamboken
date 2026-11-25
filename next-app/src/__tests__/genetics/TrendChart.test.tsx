@@ -122,15 +122,46 @@ describe("TrendChart", () => {
     expect(screen.queryByText(/kan inte skattas/)).toBeNull();
   });
 
-  it("says why when recomputed years have no estimable Ne", () => {
-    renderChart([year(2024, null, 0), year(2025, null, 3)]);
+  it("names the cause when recomputed years have no estimable Ne", () => {
+    for (const [ns, text] of [
+      [
+        [0, 0],
+        "Ne kan inte skattas för de här åren: för få kaniner med känd stamtavla i de här åren.",
+      ],
+      [
+        [12, 40],
+        "Inaveln har inte ökat de här åren, så Ne går inte att skatta.",
+      ],
+      [
+        [0, 40],
+        "Ne går inte att skatta för de här åren: vissa år har för få kaniner med känd stamtavla, och andra år har inaveln inte ökat.",
+      ],
+    ] as const) {
+      renderChart([year(2024, null, ns[0]), year(2025, null, ns[1])]);
+      expect(screen.queryByTestId("chart")).toBeNull();
+      expect(screen.getByText(text)).toBeDefined();
+      expect(screen.queryByText(/ladda om/)).toBeNull();
+      cleanup();
+    }
+  });
+
+  it("shows one closed year in the table, without a line", () => {
+    renderChart([year(2025, 70.66, 315)]);
     expect(screen.queryByTestId("chart")).toBeNull();
     expect(
-      screen.getByText(
-        "Ne kan inte skattas för de här åren: för få kaniner med känd stamtavla i de här åren.",
-      ),
+      screen.getByText(/Diagrammet visas när det finns två stängda år/),
     ).toBeDefined();
-    expect(screen.queryByText(/ladda om/)).toBeNull();
+    const toggle = screen.getByRole("button", { name: "Visa som tabell" });
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    const cells = within(screen.getByRole("table"))
+      .getAllByRole("row")
+      .slice(1)
+      .map((r) =>
+        within(r)
+          .getAllByRole("cell")
+          .map((c) => c.textContent),
+      );
+    expect(cells).toEqual([["2025", "71", "4", "315"]]);
   });
 
   it("offers the values as a table, Ne with ± and the number of rabbits", () => {

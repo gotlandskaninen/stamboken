@@ -79,3 +79,13 @@ class TestReferenceStart(DatabaseTest):
         memo.assert_called_once()
         self.assertEqual(body, {**cached, "reference_start": served.reference_start.isoformat()})
         self.assertEqual(cached, {"n_active": 99, "mean_kinship": 0.01})  # the cached dict is not changed
+
+    def test_a_failed_snapshot_has_no_date_but_a_genebank_without_members_has_one(self):
+        """Both answer zeros; only the date tells the page an empty genebank from a failed calculation."""
+        empty = db.Genebank.create(name="Tom genbank")
+        body = self._metrics(empty.id)
+        self.assertEqual((body["n_active"], body["reference_start"]), (0, self.expected.isoformat()))
+
+        with patch.object(gs, "snapshot", return_value=None):  # the first build failed
+            body = self._metrics(self.genebanks[0].id)
+        self.assertEqual((body["n_active"], body["reference_start"]), (0, None))

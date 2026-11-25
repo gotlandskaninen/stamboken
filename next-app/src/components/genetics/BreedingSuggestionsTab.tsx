@@ -71,13 +71,10 @@ const BreedingSuggestionsTab = ({
   const [queryParams, setQueryParams] =
     useState<BreedingSuggestionsParams | null>(null);
 
-  const {
-    data: suggestions,
-    isLoading,
-    isFetching,
-    error,
-    refetch,
-  } = useFetchBreedingSuggestionsQuery(queryParams ?? skipToken);
+  // currentData: only the answer for the submitted parameters, never the previous one's pairs.
+  const { currentData, isLoading, isFetching, error, refetch } =
+    useFetchBreedingSuggestionsQuery(queryParams ?? skipToken);
+  const suggestions = error ? undefined : currentData;
 
   const usedCap = queryParams?.maxInbreeding ?? maxInbreeding;
   const raiseHint =

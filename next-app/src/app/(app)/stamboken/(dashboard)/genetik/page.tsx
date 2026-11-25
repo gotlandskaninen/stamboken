@@ -122,7 +122,8 @@ function GenetikPage() {
           </TabPanel>
 
           <TabPanel value={activeTab} index="prioriteringar">
-            <PrioritiesTab genebankId={genebankId} />
+            {/* keyed: the previous genebank's rabbits never show while the new list loads */}
+            <PrioritiesTab key={genebankId} genebankId={genebankId} />
           </TabPanel>
 
           <TabPanel value={activeTab} index="parningsforslag">
