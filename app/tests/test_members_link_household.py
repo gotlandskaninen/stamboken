@@ -205,7 +205,7 @@ class TestMembersLinkHousehold(DatabaseTest):
         membership, _, herd = self._household()
         db.Member.create(membership=membership, role="familjemedlem", first_name="BO", last_name=" svensson")
         self._account("Anna Svensson", owns=[herd])
-        bo = self._account("Bo Svensson", owns=[herd], email="bo@example.org")
+        bo = self._account("B S", owns=[herd], email="bo@example.org")  # only the Workspace name is the same
         self._workspace_row("bo@example.org", "Bo", "Svensson", home="bo.hemma@example.net")
 
         plan = self._run()
@@ -255,6 +255,44 @@ class TestMembersLinkHousehold(DatabaseTest):
 
         self.assertIn("G901: inget konto matchar huvudmedlemmen", plan.output)
         self.assertIn("Att koppla: 0", plan.output)
+
+    def test_main_member_match_that_also_matches_another_person_is_listed(self):
+        """A weak match on the main member loses to an exact match on a family member (as in link-by-herd)."""
+        membership, main, herd = self._household(first="Eva", last="Lund")
+        db.Member.update(email="bo.lund@example.org").where(db.Member.id == main.id).execute()
+        db.Member.create(
+            membership=membership,
+            role="familjemedlem",
+            first_name="Bo",
+            last_name="Lund",
+            workspace_email="bo.lund@gotlandskaninen.se",
+        )
+        self._account("Bo Lund", owns=[herd], email="bo.lund@gotlandskaninen.se")
+        self._account("Cia Lund", owns=[herd], email="cia@example.org")
+        self._workspace_row("cia@example.org", "Cia", "Lund", home="cia.hemma@example.net")
+
+        plan = self._run()
+
+        self.assertIn("G901: flera möjliga kopplingar", plan.output)
+        self.assertIn("Att koppla: 0", plan.output)
+        self._apply()
+        self.assertIsNone(db.Member.get_by_id(main.id).user_id)
+        self.assertEqual(len(self._added(membership)), 1)  # only the family member created above
+
+    def test_account_matching_an_existing_person_is_not_added_again(self):
+        membership, _, herd = self._household()
+        bo_row = db.Member.create(
+            membership=membership, role="familjemedlem", first_name="Bo", last_name="Svensson", email="bo@example.org"
+        )
+        self._account("Anna Svensson", owns=[herd])
+        bo = self._account("Bosse S", owns=[herd], email="bo@example.org")
+        self._workspace_row("bo@example.org", "Bosse", "S", home="bo.hemma@example.net")
+
+        plan = self._run()
+
+        self.assertIn(f"konto {bo.id}: kontot matchar en person i medlemskapet", plan.output)
+        self._apply()
+        self.assertEqual(self._added(membership), [bo_row])
 
     def test_changed_plan_writes_nothing(self):
         membership, main, herd = self._household()

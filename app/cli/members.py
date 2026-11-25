@@ -1623,11 +1623,16 @@ def _plan_household_links(workspace) -> tuple[list, list, int]:
         if main is None:
             listed.append((codes, "medlemskapet har ingen aktiv huvudmedlem"))
             continue
-        matching = [user for user in users.values() if user.id == main.user_id or _match_reason(main, user)]
+        # Every person-account match in the household, as link-by-herd counts its counterparts.
+        possible = {(p.id, u.id) for p in persons for u in users.values() if _match_reason(p, u)}
+        matching = [user for user in users.values() if user.id == main.user_id or (main.id, user.id) in possible]
         if len(matching) != 1:
             listed.append((codes, f"{'flera konton' if matching else 'inget konto'} matchar huvudmedlemmen"))
             continue
         main_user = matching[0]
+        if main.user_id != main_user.id and any((p.id, main_user.id) in possible for p in persons if p is not main):
+            listed.append((codes, f"flera möjliga kopplingar: konto {main_user.id} matchar också en annan person"))
+            continue
         if reason := _account_problem(main_user, incomplete, memberships_of):
             listed.append((codes, f"huvudmedlemmens konto {main_user.id}: {reason}"))
             continue
@@ -1652,6 +1657,9 @@ def _plan_household_links(workspace) -> tuple[list, list, int]:
                     already.add((person.id, user.id))
                 else:
                     listed.append((codes, f"konto {user.id}: kontot är redan kopplat till en annan medlem"))
+                continue
+            if any((p.id, user.id) in possible for p in persons):
+                listed.append((codes, f"konto {user.id}: kontot matchar en person i medlemskapet (koppla för hand)"))
                 continue
             planned = _account_problem(user, incomplete, memberships_of) or _household_person(user, workspace, persons)
             if isinstance(planned, str):
