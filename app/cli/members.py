@@ -1738,17 +1738,23 @@ def link_household_cmd(workspace_path: str, apply_links: bool, actor_user_id: in
     """Link the accounts of a herd that several active accounts own.
 
     For each active herd in an active membership with more than one active
-    owner account: the account that matches the main member (as link-by-herd
-    matches) is linked to her, and every other owner account that is linked to
-    no person becomes a new familjemedlem in the membership, added as a manual
-    add is, and is linked to that account. Name and address come from the
-    row of the account's verified Google address in the Google Admin user
-    export; an account without one, or whose own e-mail names another row, is
-    listed (Home Secondary Email, else
-    Recovery Email, else Work Secondary Email). Accounts with a role, accounts
-    owning herds in several memberships, accounts without a row or address,
-    and addresses another member logs in with are listed, as is a household
-    whose main member no account (or more than one) matches.
+    owner account: the one account that matches the main member (as link-by-herd
+    matches, and matching no other person) is linked to her, and every other
+    owner account that is linked to no person becomes a new familjemedlem in the
+    membership, added as a manual add is, and is linked to that account.
+    Name and address come from the row of the account's verified Google address
+    in the Google Admin user export; the address is the first of Home Secondary
+    Email, Recovery Email and Work Secondary Email that is valid, that no other
+    member logs in with and that no person in the membership has.
+    Listed instead: an account without a Google address or whose own e-mail
+    names another row, an account with a role or with herds in several
+    memberships, an account that matches a person already in the membership,
+    and candidates sharing a name in a membership or an address in the plan.
+    A household whose main member no account (or more than one) matches is
+    listed whole. --apply goes household by household: if the main member's
+    link is refused, nobody is added to that household, and each add rechecks
+    under lock that the membership is active, the main member linked and the
+    account still an owner of the herd.
     Plan, Kontrollvärde and --apply work as in link-by-herd.
     """
     actor = _link_actor(apply_links, actor_user_id, plan_value)
