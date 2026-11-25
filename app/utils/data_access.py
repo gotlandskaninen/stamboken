@@ -1479,7 +1479,7 @@ def list_all_herds(user, *also, genebank_id=None, active=None, has_owner=None, s
                 "is_active": bool(h.is_active),
                 "genebank_id": h.genebank_id,
                 "genebank_name": h.genebank.name,
-                "owner_usernames": [o.username or o.email for o in herd_owners],
+                "owner_usernames": [o.username or o.fullname or o.email for o in herd_owners],
             }
         )
     return {"herds": rows, "total": total, "page": page, "page_size": page_size}
