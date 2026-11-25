@@ -23,7 +23,11 @@ const apiBase = (mode: Mode) =>
  * logs every read. `error` has the shape GeneticsError reads ({ status }).
  */
 export function useWorkList(genebankId: number, mode: Mode) {
+  // Each answer is bound to the mode and genebank it was asked for: after a switch the
+  // list is loading until its own answer arrives, never the other mode's rows.
+  const asked = `${mode}:${genebankId}`;
   const [result, setResult] = useState<{
+    asked?: string;
     data?: WorkListRow[];
     error?: { status: number | string };
   }>({});
@@ -39,23 +43,25 @@ export function useWorkList(genebankId: number, mode: Mode) {
       })
         .then(async (res) => {
           const next = res.ok
-            ? { data: (await res.json()) as WorkListRow[] }
-            : { error: { status: res.status } };
+            ? { asked, data: (await res.json()) as WorkListRow[] }
+            : { asked, error: { status: res.status } };
           if (!controller.signal.aborted) setResult(next);
         })
         .catch(() => {
           if (!controller.signal.aborted)
-            setResult({ error: { status: "FETCH_ERROR" } });
+            setResult({ asked, error: { status: "FETCH_ERROR" } });
         }),
     );
     return () => {
       clearTimeout(start);
       controller.abort();
     };
-  }, [genebankId, mode, attempt]);
+  }, [asked, genebankId, mode, attempt]);
+  const own = result.asked === asked ? result : {};
   return {
-    ...result,
-    isLoading: !result.data && !result.error,
+    data: own.data,
+    error: own.error,
+    isLoading: !own.data && !own.error,
     refetch: () => {
       setResult({});
       setAttempt((n) => n + 1);

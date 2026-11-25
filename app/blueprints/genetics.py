@@ -71,7 +71,9 @@ def priorities_csv(genebank_id):
     refused = check_genebank_access(genebank_id)
     if refused:
         return refused
-    if settings.service.demo_instance:
+    # Also a production request from a browser in demo mode (sb_mode, lib/mode.ts): a saved file
+    # link must not export real rabbits while the user believes they are in the testmiljö.
+    if settings.service.demo_instance or request.cookies.get("sb_mode") == "demo":
         return problem(403, "Inte i testmiljön", DEMO_EXPORT_REFUSED)
     wanted = set(request.args.get("levels", ",".join(work_list.LEVELS)).split(","))
     if not wanted <= set(work_list.LEVELS):

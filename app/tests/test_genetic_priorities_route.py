@@ -283,7 +283,7 @@ class TestPrioritiesExport(RouteTest):
             self.assertEqual(self._export(self.genebanks[0], [_priority("G1-2111")]).status_code, 200)
         self.assertEqual(len(self._audit()), 2)
 
-    def test_a_rabbit_moved_to_the_other_genebank_keeps_its_name_and_herd_hidden(self):
+    def test_a_rabbit_moved_to_the_other_genebank_shows_none_of_its_details(self):
         rabbit = self.individuals[0]
         rabbit.name, rabbit.sex = "Testa", "female"
         rabbit.save()
@@ -299,17 +299,27 @@ class TestPrioritiesExport(RouteTest):
         self._login(self.manager)  # manager of the first genebank only
         with patch.dict(APP.extensions, {"genetic_priorities": lambda g_id: rows}):
             (shown,) = self.client.get(WORK_LIST.format(self.genebanks[0].id)).get_json()
-        self.assertEqual((shown["name"], shown["herd"], shown["sex"]), (None, None, "female"))
+        self.assertEqual(shown, _priority("G1-2111"))  # the plain priority row, none of the four fields
         cells = list(
             csv.reader(self._export(self.genebanks[0], rows).get_data(as_text=True)[1:].splitlines(), delimiter=";")
         )
-        self.assertEqual(cells[1][:4], ["G1-2111", "", "", "Hona"])
+        self.assertEqual(cells[1][:5], ["G1-2111", "", "", "", ""])
         self.client.get("/api/logout")
 
         self._login(self.admin)
         with patch.dict(APP.extensions, {"genetic_priorities": lambda g_id: rows}):
             (shown,) = self.client.get(WORK_LIST.format(self.genebanks[0].id)).get_json()
-        self.assertEqual((shown["name"], shown["herd"]), ("Testa", "M3"))
+        self.assertEqual((shown["name"], shown["sex"], shown["herd"]), ("Testa", "female", "M3"))
+
+    def test_a_browser_in_demo_mode_gets_no_file_from_production(self):
+        self._login(self.manager)  # a production session with export rights
+        self.client.set_cookie("sb_mode", "demo")
+        res = self._export(self.genebanks[0], [_priority("G1-2111")])
+        self.assertEqual(res.status_code, 403)
+        self.assertIn("där varje uttag loggas", res.get_json()["detail"])
+        self.assertEqual(self._audit(), [])
+        self.client.set_cookie("sb_mode", "prod")
+        self.assertEqual(self._export(self.genebanks[0], [_priority("G1-2111")]).status_code, 200)
 
     def test_head_answers_without_a_row(self):
         self._login(self.manager)

@@ -104,6 +104,35 @@ describe("useWorkList", () => {
     );
   });
 
+  it("after a mode switch is loading until the new mode's own answer arrives", async () => {
+    let answerDemo: (r: Response) => void = () => {};
+    const fetchMock = vi.fn((url: string) =>
+      url.startsWith("/api-test")
+        ? new Promise<Response>((resolve) => (answerDemo = resolve))
+        : Promise.resolve(Response.json([row("G9-1", "critical", "G9")])),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("NEXT_PUBLIC_API_TEST_URL", "/api-test");
+    const { result, rerender } = renderHook(
+      ({ mode }: { mode: "prod" | "demo" }) => useWorkList(1, mode),
+      { initialProps: { mode: "prod" as "prod" | "demo" } },
+    );
+    await waitFor(() =>
+      expect(result.current.data?.[0].individual_id).toBe("G9-1"),
+    );
+
+    rerender({ mode: "demo" });
+    expect(result.current.data).toBeUndefined();
+    expect(result.current.isLoading).toBe(true);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await act(async () =>
+      answerDemo(Response.json([row("D9-1", "critical", "D9")])),
+    );
+    await waitFor(() =>
+      expect(result.current.data?.[0].individual_id).toBe("D9-1"),
+    );
+  });
+
   it("gives the status of a refusal, and loads again on retry", async () => {
     const fetchMock = answer(403, { detail: "nej" });
     vi.stubGlobal("fetch", fetchMock);

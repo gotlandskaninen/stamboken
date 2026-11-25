@@ -53,7 +53,7 @@ inte en vedertagen standard (PMx rangordnar efter medelsläktskap inom kön och 
 klasser). Gränserna räknas fram ur kaninerna i genbanken och varje kanin jämförs med dem; hur många
 som hamnar på varje nivå beror på genbanken. Ordet Kritisk används inte, varken här eller om
 founderdjurens läge.\
-Kod: `calculate_genetic_priorities` (`priority`: `critical`, `important`, `normal`) · Legacy-manual: – · Legacy: – · Nytt UI: samma, "Högsta", "Hög", "Övriga" (workList.ts:73–75)
+Kod: `calculate_genetic_priorities` (`priority`: `critical`, `important`, `normal`) · Legacy-manual: – · Legacy: – · Nytt UI: samma, "Högsta", "Hög", "Övriga" (workList.ts:79–81)
 
 **Benring**\
 Ringen runt kaninens ben, med serie och löpnummer (till exempel GKF 123). De flesta kaniner tatueras
