@@ -280,6 +280,31 @@ describe("ColorPicker", () => {
       expect(status.closest("[aria-hidden=true]")).toBeNull();
     });
 
+    it("ett nytt val med Nej tar bort förra valets påminnelse", async () => {
+      getFargatlas.mockResolvedValue(medNyckel);
+      render(
+        <ColorPicker
+          options={options}
+          value=""
+          onChange={() => {}}
+          genebank="Gotlandskanin"
+        />,
+      );
+      const valj = async (ja: boolean) => {
+        await oppna();
+        await tillViltgra();
+        fireEvent.click(
+          screen.getByRole("button", { name: ja ? "Ja" : "Nej" }),
+        );
+        fireEvent.click(screen.getByRole("button", { name: /^Välj 22/ }));
+        await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      };
+      await valj(true);
+      expect(await screen.findByText(/Kom ihåg: Testsvar/)).toBeDefined();
+      await valj(false);
+      await waitFor(() => expect(screen.queryByText(/Kom ihåg/)).toBeNull());
+    });
+
     it("stäng utan val ändrar inget", async () => {
       getFargatlas.mockResolvedValue(medNyckel);
       const onChange = vi.fn();

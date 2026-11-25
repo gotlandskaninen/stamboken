@@ -90,5 +90,9 @@ describe("nyckeln som data", () => {
     expect(kontrollera({ ...kopia(), start: "toString" })).toMatch(
       /första fråga/,
     );
+    const [rex] = TESTNYCKEL.efter_numret!;
+    expect(
+      kontrollera({ ...kopia(), efter_numret: [rex, { ...rex }] }),
+    ).toMatch(/samma id/);
   });
 });

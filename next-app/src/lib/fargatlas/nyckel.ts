@@ -71,6 +71,10 @@ function brister(nyckel: Nyckel | null | undefined): string | null {
   if (!finns(nyckel.start)) return "nyckeln saknar sin första fråga";
   if (nyckel.efter_numret !== undefined && !Array.isArray(nyckel.efter_numret))
     return "frågorna efter numret har fel form";
+  const efterIds = (nyckel.efter_numret ?? []).map((q) => q?.id);
+  // the guide keeps each Ja/Nej answer by id, so two questions with one id would share an answer
+  if (new Set(efterIds).size !== efterIds.length)
+    return "två frågor efter numret har samma id";
   for (const [id, fraga] of Object.entries(nyckel.fragor)) {
     if (!Array.isArray(fraga?.svar) || fraga.svar.length === 0)
       return `${id} saknar svar`;

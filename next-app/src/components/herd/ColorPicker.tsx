@@ -68,7 +68,8 @@ export function ColorPicker({
   const [paminnelser, setPaminnelser] = useState<string[]>([]);
   // Välj's reminders wait for the dialog to close: while it is open the picker is hidden from screen readers, and
   // a status text set then would never be announced.
-  const vantande = useRef<string[]>([]);
+  // null: the dialog closed without Välj, and the reminders stay as they were.
+  const vantande = useRef<string[] | null>(null);
   // The key covers the gotlandskanin numbers only (matched as colorsFor matches the list), and the guide is offered
   // only when the atlas package has a usable key.
   const gotland = genebank.includes("Gotland");
@@ -184,8 +185,9 @@ export function ColorPicker({
         }}
         saknas={saknas}
         onExited={() => {
-          if (vantande.current.length) setPaminnelser(vantande.current);
-          vantande.current = [];
+          // A new choice replaces the reminders, also with none (a Nej to the coat this time).
+          if (vantande.current) setPaminnelser(vantande.current);
+          vantande.current = null;
         }}
         onValj={(nummer, paminn) => {
           const option = options.find((o) => o.id === nummer);
