@@ -27,12 +27,25 @@ const viltgra: AtlasFarg = {
   skiljs_fran: null,
   foton: [],
 };
+// The atlas's colours come from the database; these are the numbers the made-up key reaches in the tests.
+const allt: AtlasFarg = {
+  ...viltgra,
+  id: 99,
+  name: "Testfärg",
+  beskrivning: null,
+};
+const svart: AtlasFarg = {
+  ...viltgra,
+  id: 11,
+  name: "Svart",
+  beskrivning: null,
+};
 const data = {
   fotoBas: "/api",
   atlas: {
     version: "test",
     grupper: {},
-    farger: [viltgra],
+    farger: [viltgra, allt, svart],
     nyckel: TESTNYCKEL,
   },
 };
@@ -78,6 +91,37 @@ describe("FargNyckel", () => {
     expect(onValj).toHaveBeenCalledWith(99, [
       "Färganteckning: Testanteckning.",
     ]);
+  });
+
+  it("resultatets foto visar bildtext och fotograf", () => {
+    const medFoto = {
+      ...data,
+      atlas: {
+        ...data.atlas,
+        farger: [
+          {
+            ...viltgra,
+            foton: [
+              { id: "22-a", fotograf: "Test Fotograf", bildtext: "Testbild" },
+            ],
+          },
+        ],
+      },
+    };
+    render(<FargNyckel data={medFoto} />);
+    tillViltgra();
+    expect(screen.getByText("Testbild · Foto: Test Fotograf")).toBeDefined();
+  });
+
+  it("ett nummer som saknas i färglistan säger det i stället för att ge ett råd", () => {
+    const utan22 = { ...data, atlas: { ...data.atlas, farger: [] } };
+    const onValj = vi.fn();
+    render(<FargNyckel data={utan22} onValj={onValj} />);
+    tillViltgra();
+    expect(screen.getByRole("alert").textContent).toMatch(
+      /22 finns inte i Stambokens färglista/,
+    );
+    expect(screen.queryByRole("button", { name: /^Välj/ })).toBeNull();
   });
 
   it("Tillbaka går ett steg och fokus följer med till frågan", () => {

@@ -238,9 +238,24 @@ describe("ColorPicker", () => {
   });
 
   describe("Hjälp mig välja", () => {
+    // The atlas's colours come from the database, as the picker's list does.
+    const farg = (id: number, name: string) => ({
+      id,
+      name,
+      comment: null,
+      genebank: "Gotlandskanin",
+      beskrivning: null,
+      skiljs_fran: null,
+      foton: [],
+    });
     const medNyckel = {
       fotoBas: "/api",
-      atlas: { version: "test", grupper: {}, farger: [], nyckel: TESTNYCKEL },
+      atlas: {
+        version: "test",
+        grupper: {},
+        farger: [farg(11, "Svart"), farg(22, "Viltgrå")],
+        nyckel: TESTNYCKEL,
+      },
     };
     // The made-up key's path to 22.
     const tillViltgra = async () => {

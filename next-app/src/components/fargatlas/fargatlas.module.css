@@ -245,6 +245,14 @@
   border-radius: var(--sb-r-2);
   background: var(--sb-paper-2);
 }
+.resultatBild {
+  margin: 0;
+}
+.resultatBild figcaption {
+  margin-top: 6px;
+  font-size: 14px;
+  color: var(--sb-ink-2);
+}
 .anteckning {
   border-left: 3px solid var(--sb-lera);
   padding-left: 12px;

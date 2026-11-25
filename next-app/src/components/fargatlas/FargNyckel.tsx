@@ -211,12 +211,28 @@ function Resultat({
       </h3>
       {farg?.comment && <p className={styles.hjalp}>{farg.comment}</p>}
       {foto && (
-        // eslint-disable-next-line @next/next/no-img-element -- next/image would fetch the photo without the visitor's session
-        <img
-          className={styles.resultatFoto}
-          src={fotoUrl(data.fotoBas, foto.id, 480)}
-          alt={`Foto: ${nummer} ${farg?.name ?? ""}`}
-        />
+        <figure className={styles.resultatBild}>
+          {/* eslint-disable-next-line @next/next/no-img-element -- next/image would fetch the photo without the visitor's session */}
+          <img
+            className={styles.resultatFoto}
+            src={fotoUrl(data.fotoBas, foto.id, 480)}
+            alt={`Foto: ${nummer} ${farg?.name ?? ""}`}
+          />
+          {/* the photographer is always named where the photo is shown, as on the card */}
+          {(foto.bildtext || foto.fotograf) && (
+            <figcaption>
+              {foto.bildtext}
+              {foto.bildtext && foto.fotograf && " · "}
+              {foto.fotograf && `Foto: ${foto.fotograf}`}
+            </figcaption>
+          )}
+        </figure>
+      )}
+      {!farg && (
+        <p role="alert">
+          Färg {nummer} finns inte i Stambokens färglista. Fråga
+          genbanksansvarig vilket nummer kaninen ska ha.
+        </p>
       )}
       {farg?.beskrivning && <p>{farg.beskrivning}</p>}
       {anteckning && (
@@ -251,7 +267,7 @@ function Resultat({
           Färg {nummer} finns inte i färglistan. Stäng och välj färgen i fältet.
         </p>
       )}
-      {onValj ? (
+      {!farg ? null : onValj ? (
         <div className={styles.knappar}>
           <button
             type="button"
