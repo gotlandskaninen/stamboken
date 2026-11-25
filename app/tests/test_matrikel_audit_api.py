@@ -444,3 +444,23 @@ class TestMatrikelAudit(MatrikelApiTest):
         found = self.get("actor=handlaggare").get_json()
         self.assertEqual([r["action"] for r in found["rows"]], ["membership_status_changed"])
         self.assertEqual(found["total"], 1)
+
+    def test_link_spans_follow_the_log_order_not_the_clock(self):
+        """Codex #248 r8: when the clock goes back an hour (end of summer time), a profile change written after the
+        link can carry an earlier local time. The span follows the row ids."""
+        account = da.register_user("tova-konto@example.com", "pass")
+        matrikel.link_member_user(self.person.id, account.id, actor=self.matrikel_user, mode="admin")
+        linked = db.MatrikelAudit.select().order_by(db.MatrikelAudit.id.desc()).first()
+        change = matrikel.write_matrikel_audit(
+            account, "kontakt_andrad", self.ms, {"person_id": self.person.id, "fields": ["phone"], "source": "profil"}
+        )
+        backwards = linked.created_at - timedelta(minutes=40)
+        db.MatrikelAudit.update(created_at=backwards).where(db.MatrikelAudit.id == change.id).execute()
+        self.assertGreater(change.id, linked.id)
+        matrikel.unlink_member_user(self.person.id, actor=self.matrikel_user)
+        matrikel.anonymize_person(db.Member.get_by_id(self.person.id), self.matrikel_user)
+        self.login()
+        row = next(r for r in self.get(f"membership_id={self.ms.id}").get_json()["rows"] if r["id"] == change.id)
+        self.assertEqual(row["actor"], {"id": None, "name": matrikel.REDACTED_VALUE})
+        found = self.get("actor=tova-konto@example.com").get_json()
+        self.assertEqual((found["total"], found["rows"]), (0, []))

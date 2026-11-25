@@ -347,11 +347,9 @@ def _masked_actor_rows():
     writes person_user_(un)linked with both ids, which gives the spans.
     """
     links = list(
-        MatrikelAudit.select(
-            MatrikelAudit.action, MatrikelAudit.membership, MatrikelAudit.payload, MatrikelAudit.created_at
-        )
+        MatrikelAudit.select(MatrikelAudit.id, MatrikelAudit.action, MatrikelAudit.membership, MatrikelAudit.payload)
         .where(MatrikelAudit.action.in_(("person_user_linked", "person_user_unlinked")))
-        .order_by(MatrikelAudit.created_at, MatrikelAudit.id)
+        .order_by(MatrikelAudit.id)
     )
     person_ids = {(a.payload or {}).get("person_id") for a in links}
     erased = {
@@ -362,18 +360,20 @@ def _masked_actor_rows():
             Member.last_name == ANONYMIZED_LAST_NAME,
         )
     }
-    spans = {}  # (person, account) -> [(membership, linked at or None, unlinked at or None)]
+    # (person, account) -> [(membership, link row id or None, unlink row id or None)]. Ids, not created_at: the rows
+    # of a membership are written under its lock, so their ids keep the order when the local clock goes back an hour.
+    spans = {}
     for a in links:
         person, account = (a.payload or {}).get("person_id"), (a.payload or {}).get("user_id")
         if person not in erased or not isinstance(account, int):
             continue
         pair = spans.setdefault((person, account), [])
         if a.action == "person_user_linked":
-            pair.append((a.membership_id, a.created_at, None))
+            pair.append((a.membership_id, a.id, None))
         elif pair and pair[-1][2] is None and pair[-1][1] is not None:
-            pair[-1] = (*pair[-1][:2], a.created_at)
+            pair[-1] = (*pair[-1][:2], a.id)
         else:  # linked before the log began
-            pair.append((a.membership_id, None, a.created_at))
+            pair.append((a.membership_id, None, a.id))
     source = MatrikelAudit.payload["source"]
     # What the member's own routes write: /members/me (kontakt_andrad, source profil), /my-membership (persons and
     # grants) and her own link (oauth, matrikel_epost). The rest is a handler's, as are unlinks, also inside a span.
@@ -389,9 +389,9 @@ def _masked_actor_rows():
         for membership, start, end in pair:
             row = (MatrikelAudit.actor == account) & (MatrikelAudit.membership == membership)
             if start is not None:
-                row &= MatrikelAudit.created_at >= start
+                row &= MatrikelAudit.id >= start
             if end is not None:
-                row &= MatrikelAudit.created_at < end
+                row &= MatrikelAudit.id < end
             condition = row if condition is None else condition | row
     # COALESCE: a payload without "source" gives NULL, which ~condition in the actor filter would drop
     return None if condition is None else fn.COALESCE(condition & self_service, False)
