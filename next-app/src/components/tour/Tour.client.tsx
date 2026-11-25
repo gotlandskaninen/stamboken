@@ -34,16 +34,25 @@ export function TourProvider({ children }: { children: React.ReactNode }) {
   const tour = React.useRef<Driver | null>(null);
 
   // A new page has other parts: end the tour rather than point at nothing.
-  React.useEffect(() => () => tour.current?.destroy(), [pathname]);
+  const end = () => {
+    const running = tour.current;
+    tour.current = null; // ended by us: leave focus where it is
+    running?.destroy();
+  };
+  React.useEffect(() => end, [pathname]);
 
   const start = React.useCallback(async () => {
     if (!user) return;
     const { driver } = await import("driver.js");
-    tour.current?.destroy();
+    end();
     const steps = stepsFor(user);
     if (steps.length === 0) return;
     const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    tour.current = driver({
+    // driver.js returns focus to the last focused element, which after Nästa
+    // is a button in the closed popover. Return it to where the tour started,
+    // or to the menu when that is gone (the offer hides itself).
+    const opener = document.activeElement;
+    const running = driver({
       steps: steps.map((step) => ({
         element: step.element,
         popover: {
@@ -69,11 +78,23 @@ export function TourProvider({ children }: { children: React.ReactNode }) {
       // A click on the highlighted link would leave the page mid-tour.
       disableActiveInteraction: true,
       popoverClass: "sb-tour",
-      onDestroyed: () => {
+      // Every close by the user (Klar, the cross, Esc, the overlay) comes here
+      // first; driver.js then leaves the teardown to us. Its own onDestroyed
+      // is skipped when Esc comes between two steps.
+      onDestroyStarted: () => {
+        running.destroy();
+        if (tour.current !== running) return;
         tour.current = null;
+        const back =
+          opener instanceof HTMLElement && opener.isConnected
+            ? opener
+            : document.querySelector<HTMLElement>('[data-tour="user-menu"]');
+        // After driver.js's own focus call, which can land on the old popover.
+        requestAnimationFrame(() => back?.focus());
       },
     });
-    tour.current.drive();
+    tour.current = running;
+    running.drive();
   }, [user, t]);
 
   return <TourContext.Provider value={start}>{children}</TourContext.Provider>;
