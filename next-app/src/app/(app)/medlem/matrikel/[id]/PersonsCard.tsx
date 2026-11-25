@@ -53,6 +53,10 @@ function contactContent(person: Person) {
   );
 }
 
+// As the API (is_anonymized): the pair GDPR erasure leaves on the row.
+const isAnonymized = (p: Person) =>
+  p.first_name === "Borttagen" && p.last_name === "person";
+
 function grantIsActive(grant: Grant, person: Person): boolean {
   if (person.end_date || grant.revoked_at) return false;
   if (grant.valid_until === null) return true;
@@ -247,7 +251,7 @@ export function PersonsCard({
   const confirmRemove = (p: Person) =>
     setConfirm({
       title: "Avsluta person?",
-      text: "Personen avslutas i medlemskapet och alla besättningsåtkomster återkallas. Raden finns kvar i historiken och kan återaktiveras, men åtkomsterna kommer inte tillbaka och ett kopplat konto kopplas loss vid återaktivering.",
+      text: "Personen avslutas i medlemskapet och alla besättningsåtkomster återkallas. Raden finns kvar i historiken och kan återaktiveras, men åtkomsterna kommer inte tillbaka. Ett kopplat konto måste kopplas bort innan personen kan återaktiveras.",
       run: () => removePerson(membership.id, p.id),
       errorTitle: "Kunde inte avsluta personen",
       success: "Person avslutad",
@@ -255,7 +259,7 @@ export function PersonsCard({
   const confirmReactivate = (p: Person) =>
     setConfirm({
       title: "Återaktivera person?",
-      text: "Personen blir aktiv i medlemskapet igen med sin tidigare roll. Åtkomster och konto kopplas inte tillbaka.",
+      text: "Personen blir aktiv i medlemskapet igen med sin tidigare roll. Åtkomster kopplas inte tillbaka, och ett kopplat konto måste först kopplas bort.",
       run: () => reactivatePerson(membership.id, p.id),
       errorTitle: "Kunde inte återaktivera personen",
       success: "Person återaktiverad",
@@ -474,16 +478,19 @@ export function PersonsCard({
             Avsluta
           </MenuItem>
         )}
-        {menuPerson && menuPerson.end_date !== null && (
-          <MenuItem
-            onClick={() => {
-              closeMenu();
-              confirmReactivate(menuPerson);
-            }}
-          >
-            Återaktivera
-          </MenuItem>
-        )}
+        {menuPerson &&
+          menuPerson.end_date !== null &&
+          !isAnonymized(menuPerson) &&
+          membership.membership_status !== "inactive" && (
+            <MenuItem
+              onClick={() => {
+                closeMenu();
+                confirmReactivate(menuPerson);
+              }}
+            >
+              Återaktivera
+            </MenuItem>
+          )}
         {menuPerson && (
           <MenuItem
             className={styles.menuDanger}
@@ -537,7 +544,10 @@ export function PersonsCard({
                 setPersonForm({ ...personForm, phone: e.target.value })
               }
             />
-            {editedPerson?.role !== "huvudmedlem" ? (
+            {!(
+              editedPerson?.role === "huvudmedlem" &&
+              editedPerson.end_date === null
+            ) ? (
               <TextField
                 select
                 label="Roll"
@@ -549,6 +559,11 @@ export function PersonsCard({
               >
                 <MenuItem value="familjemedlem">Familjemedlem</MenuItem>
                 <MenuItem value="skotare">Skötare</MenuItem>
+                {personForm.role === "huvudmedlem" ? (
+                  <MenuItem value="huvudmedlem" disabled>
+                    Huvudmedlem
+                  </MenuItem>
+                ) : null}
               </TextField>
             ) : null}
           </div>

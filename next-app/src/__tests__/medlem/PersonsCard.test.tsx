@@ -380,3 +380,37 @@ describe("PersonsCard — Avsluta och Återaktivera", () => {
     expect(screen.queryByRole("menuitem", { name: "Återaktivera" })).toBeNull();
   });
 });
+
+describe("PersonsCard — Återaktivera döljs", () => {
+  const ended = (over: Partial<Person>) =>
+    ({
+      ...MEMBERSHIP,
+      persons: [
+        person({ id: 11, role: "huvudmedlem" }),
+        person({ id: 15, end_date: "2026-01-01", ...over }),
+      ],
+    }) as MembershipDetail;
+  const menuFor = (membership: MembershipDetail) => {
+    render(<PersonsCard membership={membership} canEdit />);
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /Fler åtgärder/ })[1],
+    );
+  };
+
+  it("hides it for an anonymised person", () => {
+    menuFor(ended({ first_name: "Borttagen", last_name: "person" }));
+    expect(screen.queryByRole("menuitem", { name: "Återaktivera" })).toBeNull();
+  });
+
+  it("hides it when the membership is inactive", () => {
+    menuFor({ ...ended({}), membership_status: "inactive" });
+    expect(screen.queryByRole("menuitem", { name: "Återaktivera" })).toBeNull();
+  });
+
+  it("shows it for an ended, named person in an active membership", () => {
+    menuFor(ended({}));
+    expect(
+      screen.getByRole("menuitem", { name: "Återaktivera" }),
+    ).toBeInTheDocument();
+  });
+});
