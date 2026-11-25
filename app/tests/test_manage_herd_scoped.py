@@ -82,8 +82,10 @@ class TestManageHerdScoped(DatabaseTest):
         own = self.client.get(f"/api/manage/herd?genebank_id={self.herds[0].genebank_id}")
         self.assertEqual(own.get_json()["total"], 2)
 
-    def test_manage_herd_list_viewer_and_owner_get_403(self):
-        for username in ("spec", "owner"):
+    def test_manage_herd_list_viewer_owner_helper_and_matrikel_admin_get_403(self):
+        da.register_user("helper", "pass").add_role("helper", self.genebanks[0].id)
+        da.register_user("matrikel", "pass").add_role("matrikel_admin")
+        for username in ("spec", "owner", "helper", "matrikel"):
             self.client = APP.test_client(use_cookies=True)
             self.login(username, "pass")
             resp = self.client.get("/api/manage/herd")
