@@ -425,6 +425,75 @@ def soft_delete_person(member, actor):
         )
 
 
+def limit_open_grants(member):
+    """A person who became skötare: her grants without an end date get one year, as create_grant gives a new one.
+    In the caller's transaction, under the membership lock."""
+    now = datetime.now()
+    return (
+        HerdAccessGrant.update(valid_until=_plus_one_year(date.today()), updated_at=now)
+        .where(
+            HerdAccessGrant.member == member,
+            HerdAccessGrant.revoked_at.is_null(True),
+            HerdAccessGrant.valid_until.is_null(True),
+        )
+        .execute()
+    )
+
+
+def reactivate_person(member, actor):
+    """Undo soft_delete_person for an ended, not anonymized person: clear end_date, audit it.
+
+    Same lock order as the other person writers (membership, then the linked user, then the person).
+    The grants stay revoked. A linked account is never detached here: the caller unlinks it first, as a
+    step of its own, so reactivating cannot give an account its access back. Raises ValueError for an
+    anonymized, still active or linked person, an inactive membership or a second active huvudmedlem;
+    AddressTaken when a main member's address now belongs to someone else.
+    """
+    with DB_PROXY.atomic():
+        person, _user = _lock_for_detach(member.id)
+        membership = Membership.select().where(Membership.id == person.membership_id).get()
+        if is_anonymized(person):
+            raise ValueError("En anonymiserad person kan inte återaktiveras")
+        if person.end_date is None:
+            raise ValueError("Personen är redan aktiv")
+        if membership.membership_status == "inactive":
+            raise ValueError("Kan inte återaktivera personer i ett inaktivt medlemskap")
+        if person.user_id is not None:
+            raise ValueError("Koppla bort kontot först")
+        if (
+            person.role == "huvudmedlem"
+            and Member.select()
+            .where(Member.membership == membership.id, Member.role == "huvudmedlem", Member.end_date.is_null(True))
+            .exists()
+        ):
+            raise ValueError("Medlemskapet har redan en aktiv huvudmedlem")
+        ended = person.end_date
+        person.end_date = None
+        person.save()
+        if _added_by_another(person):  # soft_delete_person stopped her notice; a delivered one is not sent twice
+            queue_member_added(person)
+        if person.role == "huvudmedlem":
+            reserve_holder(person.id)
+            write_matrikel_audit(
+                actor,
+                "main_member_changed",
+                membership,
+                {"previous_person_id": None, "new_person_id": person.id},
+            )
+        write_matrikel_audit(
+            actor,
+            "person_reactivated",
+            membership,
+            {
+                "person_id": person.id,
+                "role": person.role,
+                "before": {"end_date": ended.isoformat()},
+                "after": {"end_date": None},
+            },
+        )
+    return person
+
+
 def swap_main_member(membership, new_main, actor):
     """Atomically demote the current active huvudmedlem and promote `new_main`.
 
@@ -801,15 +870,17 @@ def set_member_email(person, address, actor, *, by):
     with DB_PROXY.atomic():
         person, user = _lock_for_detach(person.id)  # membership → user → person
         friexemplar = person.membership.membership_status == Status.FRIEXEMPLAR
-        if friexemplar and person.email != address:
+        holder = (
+            not friexemplar and person.end_date is None and (person.role == "huvudmedlem" or person.user_id is not None)
+        )
+        # Someone who holds no login address (ended, friexemplar, or reactivated and not yet linked) must not keep
+        # previous ones: they would wake up when she is linked.
+        if not holder and person.email != address:
             _expire_previous_addresses([person.id])
         if _same(person.email, address):
             if person.email != address:  # the same address, spelled otherwise
                 Member.update(email=address).where(Member.id == person.id).execute()
             return Member.get_by_id(person.id)
-        holder = (
-            not friexemplar and person.end_date is None and (person.role == "huvudmedlem" or person.user_id is not None)
-        )
         told, login_from = [], None
         if holder:
             # Every address this change can touch, locked in one order before the previous ones are read: a clock
