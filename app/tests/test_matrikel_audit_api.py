@@ -251,16 +251,16 @@ class TestMatrikelAudit(MatrikelApiTest):
             finally:
                 db.DB_PROXY.close()
 
-        real = matrikel._erased_accounts
+        real = matrikel._masked_actor_rows
 
-        def erased_accounts_then_erase():
+        def masked_rows_then_erase():
             found = real()
             worker = threading.Thread(target=erase_in_another_transaction)
             worker.start()
             worker.join()
             return found
 
-        with patch.object(matrikel, "_erased_accounts", erased_accounts_then_erase):
+        with patch.object(matrikel, "_masked_actor_rows", masked_rows_then_erase):
             during = matrikel.query_matrikel_audit(full_access=True, membership_id=self.ms.id)
         self.assertEqual(errors, [])
         self.assertTrue(db.MatrikelAudit.select().where(db.MatrikelAudit.action == "person_anonymized").exists())
@@ -294,3 +294,35 @@ class TestMatrikelAudit(MatrikelApiTest):
         self.client.get("/api/logout")
         self.login()  # admin sees the account page with both, so may search by either
         self.assertEqual(found("actor=handlaggare.post@example.com"), (1, 1))
+
+    def test_corrected_link_keeps_the_handlers_other_rows_named(self):
+        """Codex #248 r3: a handler's account linked to her by mistake, corrected before her erasure, stays in use."""
+        handler = da.register_user("handlaggare.post@example.com", "pass", username="handlaggare")
+        matrikel.link_member_user(self.person.id, handler.id, actor=self.matrikel_user, mode="admin")
+        matrikel.write_matrikel_audit(  # while linked to her: her household's self-service, as the log sees it
+            handler, "membership_updated", self.ms, {"before": {}, "after": {}}
+        )
+        matrikel.unlink_member_user(self.person.id, actor=self.matrikel_user)
+        matrikel.write_matrikel_audit(  # about her, after the correction
+            handler, "person_updated", self.ms, {"person_id": self.person.id, "before": {}, "after": {}}
+        )
+        matrikel.anonymize_person(db.Member.get_by_id(self.person.id), self.matrikel_user)
+        matrikel.write_matrikel_audit(handler, "membership_retired", self.other_ms, {"ended_person_ids": []})
+        matrikel.write_matrikel_audit(handler, "membership_updated", self.ms, {"before": {}, "after": {}})  # later
+        self.login()
+        rows = self.get().get_json()["rows"]
+        actors = [(r["action"], r["membership"]["id"], r["actor"]["name"]) for r in rows if r["actor"]]
+        masked = matrikel.REDACTED_VALUE
+        for expected in (
+            ("membership_retired", self.other_ms.id, "handlaggare"),  # another household
+            ("person_updated", self.ms.id, masked),  # about her
+        ):
+            self.assertIn(expected, actors)
+        own = [a[2] for a in actors if a[:2] == ("membership_updated", self.ms.id)]
+        self.assertEqual(own, ["handlaggare", masked])  # after the link: named; while linked: masked
+        found = self.get("actor=handlaggare").get_json()
+        self.assertEqual(
+            sorted((r["action"], r["membership"]["id"]) for r in found["rows"]),
+            sorted([("membership_retired", self.other_ms.id), ("membership_updated", self.ms.id)]),
+        )
+        self.assertEqual(found["total"], 2)

@@ -21,7 +21,7 @@ import re
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from peewee import JOIN, Case, IntegrityError, fn
+from peewee import JOIN, Case, IntegrityError, Value, fn
 
 from utils.cache_invalidation import trigger_invalidation
 from utils.data_access import (
@@ -337,28 +337,55 @@ def _stockholm_midnight(day: date) -> datetime:
     return datetime.combine(day, datetime.min.time(), ZoneInfo("Europe/Stockholm")).astimezone().replace(tzinfo=None)
 
 
-def _erased_accounts() -> set[int]:
-    """Accounts ever linked to an anonymised person: the change log never names them, nor finds rows by them (#244).
+def _masked_actor_rows():
+    """The log rows whose actor is an anonymised person's own account (#244), as an SQL condition, or None.
 
-    The erasure detaches the account but empties it only when it was still linked; one unlinked before keeps its name,
-    and the self-service rows carry it as actor. Every link and detach writes person_user_(un)linked with both ids.
+    The erasure detaches the account but empties it only when it was still linked; one unlinked before keeps its name.
+    It may be a handler's account, linked by mistake and since corrected, so the mask is per row: the rows about her
+    (her person_id) and her household's rows while the account was linked to her (her self-service). The account's
+    other rows keep its name. Every link and detach writes person_user_(un)linked with both ids, which gives the spans.
     """
-    links = [
-        a.payload or {}
-        for a in MatrikelAudit.select(MatrikelAudit.payload).where(
-            MatrikelAudit.action.in_(("person_user_linked", "person_user_unlinked"))
+    links = list(
+        MatrikelAudit.select(
+            MatrikelAudit.action, MatrikelAudit.membership, MatrikelAudit.payload, MatrikelAudit.created_at
         )
-    ]
-    person_ids = {p.get("person_id") for p in links if isinstance(p.get("person_id"), int)}
+        .where(MatrikelAudit.action.in_(("person_user_linked", "person_user_unlinked")))
+        .order_by(MatrikelAudit.created_at, MatrikelAudit.id)
+    )
+    person_ids = {(a.payload or {}).get("person_id") for a in links}
     erased = {
         m.id
         for m in Member.select(Member.id).where(
-            Member.id.in_(list(person_ids)),
+            Member.id.in_([p for p in person_ids if isinstance(p, int)]),
             Member.first_name == ANONYMIZED_FIRST_NAME,
             Member.last_name == ANONYMIZED_LAST_NAME,
         )
     }
-    return {p["user_id"] for p in links if p.get("person_id") in erased and isinstance(p.get("user_id"), int)}
+    spans = {}  # (person, account) -> [(membership, linked at or None, unlinked at or None)]
+    for a in links:
+        person, account = (a.payload or {}).get("person_id"), (a.payload or {}).get("user_id")
+        if person not in erased or not isinstance(account, int):
+            continue
+        pair = spans.setdefault((person, account), [])
+        if a.action == "person_user_linked":
+            pair.append((a.membership_id, a.created_at, None))
+        elif pair and pair[-1][2] is None and pair[-1][1] is not None:
+            pair[-1] = (*pair[-1][:2], a.created_at)
+        else:  # linked before the log began
+            pair.append((a.membership_id, None, a.created_at))
+    condition = None
+    for (person, account), pair in spans.items():
+        about = MatrikelAudit.payload["person_id"] == str(person)
+        for membership, start, end in pair:
+            span = MatrikelAudit.membership == membership
+            if start is not None:
+                span &= MatrikelAudit.created_at >= start
+            if end is not None:
+                span &= MatrikelAudit.created_at <= end
+            about |= span
+        row = (MatrikelAudit.actor == account) & about
+        condition = row if condition is None else condition | row
+    return None if condition is None else fn.COALESCE(condition, False)  # a payload without person_id gives NULL
 
 
 def _household_erasures(membership_ids) -> dict[int, datetime | None]:
@@ -414,12 +441,16 @@ def query_matrikel_audit(
     `date_from` and `date_to` are dates, both days included, cut at midnight in Sweden. Without `full_access` (a
     gene bank manager) the payloads lose what GET /v2/members/<id> does not show them: the organisation number and a
     person's notes. A row about an anonymised person is redacted again on read, should a stored payload have escaped
-    the erasure. An account once linked to an anonymised person is shown as REDACTED_VALUE, as actor and as user_id,
-    and the actor filter skips it. In a household that has been erased, the rows without a person (membership_updated
-    and the like) from before the first person who joined after its last erasure lose HOUSEHOLD_PII_KEYS.
+    the erasure, user_id included. An anonymised person's former account is shown as REDACTED_VALUE as actor on the
+    rows _masked_actor_rows() names, and the actor filter skips those rows. In a household that has been erased, the
+    rows without a person (membership_updated and the like) from before the first person who joined after its last
+    erasure lose HOUSEHOLD_PII_KEYS.
     """
+    masked = _masked_actor_rows()
     q = (
-        MatrikelAudit.select(MatrikelAudit, User, Membership)
+        MatrikelAudit.select(
+            MatrikelAudit, User, Membership, (masked if masked is not None else Value(False)).alias("actor_masked")
+        )
         .join(User, JOIN.LEFT_OUTER, on=(MatrikelAudit.actor == User.id))  # NULL actor: the nightly anonymisation
         .switch(MatrikelAudit)
         .join(Membership)
@@ -430,14 +461,13 @@ def query_matrikel_audit(
         q = q.where(Membership.member_number == member_number)
     if action:
         q = q.where(MatrikelAudit.action == action)
-    erased_accounts = _erased_accounts()
     if actor:
         # A manager matches only the name the rows show it, or a hit would confirm a handler's hidden e-mail.
         named = (fn.lower(User.username) == actor.lower()) | (fn.lower(User.email) == actor.lower())
         shown = fn.lower(fn.COALESCE(User.username, User.email)) == actor.lower()
         q = q.where(
             named if full_access else shown,
-            User.id.not_in(list(erased_accounts)) if erased_accounts else True,
+            ~masked if masked is not None else True,  # a masked row must not answer for the account either
         )
     # The days are Swedish days, as the pages show the times. Capped: the far ends of date overflow the conversion.
     if date_from:
@@ -459,14 +489,11 @@ def query_matrikel_audit(
     for a in audits:
         payload = a.payload or {}
         person = persons.get(person_of(payload))
-        if person is not None and is_anonymized(person):
-            payload, _ = _redact_node(payload)
+        if person is not None and is_anonymized(person):  # user_id too: her account, as in person_user_linked
+            payload, _ = _redact_node(payload, PII_PAYLOAD_KEYS | {"user_id"})
         until = erasures.get(a.membership_id, a.created_at)  # not erased: no row is before itself
         if "person_id" not in payload and (until is None or a.created_at < until):
             payload, _ = _redact_node(payload, HOUSEHOLD_PII_KEYS)  # what redact_household_from_audits() covers
-        if payload.get("user_id") in erased_accounts:
-            payload = {**payload, "user_id": REDACTED_VALUE}
-        masked_actor = a.actor_id in erased_accounts
         if not full_access:
             payload = _drop_keys(payload, {"organization_number"} | ({"notes"} if "person_id" in payload else set()))
         rows.append(
@@ -477,7 +504,7 @@ def query_matrikel_audit(
                 # the name audit_log's changed_by holds too
                 "actor": (
                     {"id": None, "name": REDACTED_VALUE}
-                    if masked_actor
+                    if a.actor_masked
                     else {"id": a.actor.id, "name": a.actor.username or a.actor.email}
                     if a.actor_id
                     else None
