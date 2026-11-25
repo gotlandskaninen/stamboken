@@ -112,3 +112,30 @@ class TestHerdContactReadPaths(HerdContactReadTest):
                 response = client.get(f"/api/manage/herd/{self.herd.herd}")
         self.assertEqual(response.status_code, 403)
         self.assertNotIn(self.main.email, response.get_data(as_text=True))
+
+    def test_manager_list_herds(self):
+        with (
+            self.assert_repeatable_read(da, "herd_contacts"),
+            self.assert_repeatable_read(da, "_herd_owner_map"),
+        ):
+            body = self._get(self.manager, f"/api/manage/herd?q={self.herd.herd}")
+        self.assertIn(self.herd.herd, [row["herd"] for row in body["herds"]])
+
+    def test_manager_list_herds_needs_the_role_in_session_and_snapshot(self):
+        """#214: the herd list re-reads the user in its snapshot, like the detail view."""
+        original = da.fetch_user_info
+
+        def revoke_then_fetch(uuid):
+            if db.DB_PROXY.in_transaction():  # the read in the snapshot, not load_user's
+                with closing(psycopg2.connect(dbname=db.DATABASE.database, **db.DATABASE.connect_params)) as writer:
+                    with writer.cursor() as cursor:
+                        cursor.execute("UPDATE hbuser SET privileges = '[]' WHERE user_id = %s", (self.manager.id,))
+                    writer.commit()
+            return original(uuid)
+
+        with APP.test_client(use_cookies=True) as client:
+            client.post("/api/login", json={"username": self.manager.email, "password": "pass"})
+            with patch.object(da, "fetch_user_info", revoke_then_fetch):
+                response = client.get("/api/manage/herd")
+        self.assertEqual(response.status_code, 403)
+        self.assertNotIn(self.herd.herd, response.get_data(as_text=True))

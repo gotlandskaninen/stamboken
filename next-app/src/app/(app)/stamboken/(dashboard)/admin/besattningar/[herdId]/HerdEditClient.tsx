@@ -201,9 +201,11 @@ export function HerdEditClient({ herd }: { herd: HerdDetail }) {
           )}
         </ul>
         <p className={ds["ad-note"]}>
-          En besättning kan ha flera ägare. Ägarskapet hanteras på
-          användarsidan: öppna användaren ovan (eller via Alla användare) och
-          lägg till eller ta bort rollen Ägare för den här besättningen.
+          En besättning kan ha flera ägare: huvudmedlemmen i medlemskapet som
+          besättningen hör till, och konton med rollen Ägare för besättningen.
+          Huvudmedlemmen ändras i matrikeln. Rollen Ägare läggs till och tas
+          bort på användarsidan: öppna användaren ovan (eller via Alla
+          användare).
         </p>
       </div>
     </section>

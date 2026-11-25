@@ -185,7 +185,7 @@ test("axe över alla sidor (rådgivande)", async ({ page, context }) => {
           if (role === "admin")
             ids = {
               user: await firstId(page, "/v2/admin/users?per_page=1"),
-              herd: await firstId(page, "/manage/herd?per_page=1"),
+              herd: await firstId(page, "/manage/herd?page_size=1"),
               gb: await firstId(page, "/genebanks"),
               membership: await firstId(page, "/v2/members?per_page=1"),
             };
