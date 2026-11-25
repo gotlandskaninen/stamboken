@@ -218,6 +218,7 @@ export function MatrikelAuditClient({
             label="Utförd av"
             defaultValue={filters.actor}
             size="small"
+            helperText="Användarnamn eller e-post"
           />
           <TextField
             name="member_number"

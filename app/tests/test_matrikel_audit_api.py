@@ -131,6 +131,7 @@ class TestMatrikelAudit(MatrikelApiTest):
         self.assertEqual(actions(f"member_number=41&membership_id={self.other_ms.id}"), [])
         self.assertEqual(actions("action=membership_retired"), ["membership_retired"])
         self.assertEqual(actions("actor=matrikel"), ["person_removed"])
+        self.assertEqual(actions("actor=MATRIKEL"), ["person_removed"])  # Opus #248: case does not matter
         self.assertEqual(actions("to=2025-01-10"), ["membership_updated"])  # the whole day
         today = date.today().isoformat()
         self.assertEqual(actions(f"from={today}&to={today}"), ["membership_retired", "person_removed"])

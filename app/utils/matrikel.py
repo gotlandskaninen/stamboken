@@ -396,7 +396,7 @@ def query_matrikel_audit(
     erased_accounts = _erased_accounts()
     if actor:
         q = q.where(
-            (User.username == actor) | (User.email == actor),
+            (fn.lower(User.username) == actor.lower()) | (fn.lower(User.email) == actor.lower()),
             User.id.not_in(list(erased_accounts)) if erased_accounts else True,
         )
     # The days are Swedish days, as the pages show the times. Capped: the far ends of date overflow the conversion.

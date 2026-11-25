@@ -244,7 +244,7 @@ def _id_arg(name: str):
 @matrikel_read_required
 def get_matrikel_audit():
     """The matrikel's change log (#244). Filters: membership_id (the member page's link), member_number (the number
-    the rows show), action, actor (username or e-mail),
+    the rows show), action, actor (username or e-mail, any case),
     from and to (YYYY-MM-DD, both days included), page, per_page (at most 200)."""
     try:
         membership_id = _id_arg("membership_id")

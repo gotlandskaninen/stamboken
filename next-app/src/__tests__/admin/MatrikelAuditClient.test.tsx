@@ -82,6 +82,7 @@ it("keeps the source and the filters in the form and the page links", () => {
     container.querySelector('input[type="hidden"][name="source"]'),
   ).toHaveValue("matrikel");
   expect(screen.getByLabelText("Medlemsnummer")).toHaveValue("99");
+  expect(screen.getByText("Användarnamn eller e-post")).toBeInTheDocument();
   expect(
     container.querySelector('input[name="membership_id"]'),
   ).not.toBeInTheDocument();
