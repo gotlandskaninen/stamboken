@@ -45,7 +45,8 @@ test.describe("Access rules on the new frontend (ACCESS_RULES=enforce)", () => {
     // fetch the rows itself and hide it.
     const prodListRequests: string[] = [];
     page.on("request", (req) => {
-      if (/\/api\/individuals/.test(req.url())) prodListRequests.push(req.url());
+      if (/\/api\/individuals/.test(req.url()))
+        prodListRequests.push(req.url());
     });
     const browserList = /\/api(-test)?\/individuals/;
     await page.route(browserList, (route) => route.abort());
@@ -93,6 +94,28 @@ test.describe("Access rules on the new frontend (ACCESS_RULES=enforce)", () => {
     expect(res.status()).toBe(403);
     expect((await res.json()).message).toBe(NOT_PROMOTED);
   });
+
+  // #227: a session without sb_mode (an installed app sharing the login, or a
+  // cookie that expired first) follows v2_prod_access, and the cookie is set.
+  for (const { user, demo } of [
+    { user: ADMIN, demo: false },
+    { user: OWNER, demo: true },
+  ]) {
+    test(`${user.username} without sb_mode lands in ${demo ? "demo" : "prod"}`, async ({
+      page,
+      context,
+    }) => {
+      await signIn(page, user);
+      await context.clearCookies({ name: "sb_mode" });
+
+      await page.goto("/stamboken/min-besattning");
+      await expect(page.getByText(BANNER_TEXT)).toHaveCount(demo ? 1 : 0);
+      const cookie = (await context.cookies()).find(
+        (c) => c.name === "sb_mode",
+      );
+      expect(cookie?.value).toBe(demo ? "demo" : "prod");
+    });
+  }
 
   test("admin reads production data", async ({ page }) => {
     await signIn(page, ADMIN);

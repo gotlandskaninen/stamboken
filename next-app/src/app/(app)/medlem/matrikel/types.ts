@@ -32,6 +32,9 @@ export type MembershipRow = Organization & {
   city: string | null;
   postal_address: string | null;
   persons: MembershipListPerson[];
+  /** The membership's active herds; `letter` is the initial of each one's genebank (G/M), decided server-side.
+   *  Missing from an older API during a rolling deploy: the columns show it as unknown. */
+  active_herds?: { herd: string; letter: string }[];
 };
 
 export type Grant = {
@@ -142,7 +145,10 @@ export type MembershipDetail = BillingAddress &
     joined_date: string | null;
     notes: string | null;
     persons: Person[];
-    herds: MembershipHerd[];
+    herds: (MembershipHerd & {
+      genebank_id: number;
+      is_active: boolean | null;
+    })[];
   };
 
 // Default page size for the matrikel list — the RSC page uses it whenever the

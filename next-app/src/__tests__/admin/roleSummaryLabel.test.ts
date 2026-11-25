@@ -6,7 +6,7 @@ describe("roleSummaryLabel", () => {
     ["ingen roll", "Ingen roll"],
     ["admin", "Administratör"],
     ["manager(G,M)", "Genbanksansvarig (G,M)"],
-    ["viewer(G)", "Granskare (G)"],
+    ["viewer(G)", "Läsrätt (G)"],
     ["owner(2 besättningar)", "Besättningsägare (2 besättningar)"],
   ])("%s -> %s", (raw, label) => {
     expect(roleSummaryLabel(raw)).toBe(label);

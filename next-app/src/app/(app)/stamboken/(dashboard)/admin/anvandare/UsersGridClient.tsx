@@ -13,6 +13,7 @@ export type UserRow = {
   fullname: string | null;
   email: string;
   roleLabel: string;
+  hasRole: boolean;
   last_active: string;
   validated: boolean;
   v2_prod_access: boolean;
@@ -32,6 +33,13 @@ function EmptyUsers() {
 
 const columns: GridColDef<UserRow>[] = [
   {
+    field: "id",
+    headerName: "Nr",
+    width: 70,
+    sortable: false,
+    cellClassName: ds["ad-cell-mono"],
+  },
+  {
     field: "username",
     headerName: "Användarnamn",
     width: 130,
@@ -50,7 +58,9 @@ const columns: GridColDef<UserRow>[] = [
     headerName: "Namn",
     flex: 1,
     minWidth: 160,
-    valueGetter: (_value, row) => row.fullname || "—",
+    // #192: an account with a role but no name shows as "Konto <nr>" elsewhere — flag it for fixing.
+    valueGetter: (_value, row) =>
+      row.fullname || (row.hasRole ? "Namn saknas" : "—"),
   },
   {
     field: "email",

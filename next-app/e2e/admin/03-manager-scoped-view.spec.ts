@@ -7,6 +7,7 @@ import { psql } from "./helpers/db";
 
 test.describe("manager scoped herd view", () => {
   let mkHerdId: string;
+  let mkGenebankId: string;
 
   test.beforeAll(() => {
     // Numeric Herd.id (column herd_id) of any Mellerudskanin herd — outside
@@ -17,6 +18,10 @@ test.describe("manager scoped herd view", () => {
         "WHERE g.name = 'Mellerudskanin' LIMIT 1;",
     );
     expect(mkHerdId).toMatch(/^\d+$/);
+    mkGenebankId = psql(
+      "SELECT genebank_id FROM genebank WHERE name = 'Mellerudskanin';",
+    );
+    expect(mkGenebankId).toMatch(/^\d+$/);
   });
 
   test.beforeEach(async ({ page, context }) => {
@@ -32,6 +37,34 @@ test.describe("manager scoped herd view", () => {
     await expect(
       page.getByRole("link", { name: /^G\d+/ }).first(),
     ).toBeVisible(); // at least one data row
+    await expect(page.getByRole("link", { name: /^M\d+/ })).toHaveCount(0);
+  });
+
+  test("manager sees the search box and filters (#214)", async ({ page }) => {
+    await page.goto("/stamboken/admin/besattningar");
+    const search = page.getByRole("textbox", {
+      name: "Sök besättningsnummer eller namn",
+    });
+    await expect(search).toBeVisible();
+    await expect(page.getByRole("combobox", { name: "Status" })).toBeVisible();
+    await search.fill("G");
+    await page.getByRole("button", { name: "Filtrera" }).click();
+    await expect(page).toHaveURL(/[?&]q=G/);
+    await expect(
+      page.getByRole("link", { name: /^G\d+/ }).first(),
+    ).toBeVisible();
+    await expect(page.getByRole("link", { name: /^M\d+/ })).toHaveCount(0);
+  });
+
+  test("another genebank's filter is dropped, not shown", async ({ page }) => {
+    // The API answers 403 for a genebank the manager does not manage; the
+    // page drops that filter and lists the manager's own herds.
+    await page.goto(
+      `/stamboken/admin/besattningar?genebank_id=${mkGenebankId}`,
+    );
+    await expect(
+      page.getByRole("link", { name: /^G\d+/ }).first(),
+    ).toBeVisible();
     await expect(page.getByRole("link", { name: /^M\d+/ })).toHaveCount(0);
   });
 

@@ -19,7 +19,18 @@ from flask_login import current_user
 from peewee import IntegrityError
 from utils.csv_safe import csv_safe
 from utils.data_access import session_holds
-from utils.database import BILLING_FIELDS, DB_PROXY, AuditLog, Herd, HerdAccessGrant, Member, Membership, User
+from utils.database import (
+    BILLING_FIELDS,
+    DB_PROXY,
+    AuditLog,
+    Genebank,
+    Herd,
+    HerdAccessGrant,
+    Member,
+    Membership,
+    User,
+    snapshot_read,
+)
 from utils.herd_contact import on_membership_active
 from utils.login_code import (
     AddressTaken,
@@ -162,6 +173,17 @@ def list_members():
     if status:
         q = q.where(Membership.membership_status == status)
 
+    # G/M as in the paper matrikel: an active herd in that genebank, named by its initial
+    # (data_access._genebank_letters, cli/members.py).
+    active_herd = request.args.get("active_herd")
+    if active_herd:
+        if active_herd not in ("G", "M"):
+            return problem(400, "Ogiltig frågeparameter", "active_herd måste vara G eller M")
+        genebanks = [gb.id for gb in Genebank.select(Genebank.id, Genebank.name) if gb.name[:1].upper() == active_herd]
+        q = q.where(
+            Membership.id.in_(Herd.select(Herd.membership).where(Herd.is_active & Herd.genebank.in_(genebanks)))
+        )
+
     try:
         page = _parse_int_arg("page", default=1, minimum=1)
         per_page = _parse_int_arg("per_page", default=25, minimum=1, maximum=100)
@@ -175,13 +197,30 @@ def list_members():
     # re-queries the persons of every membership on the page (per_page
     # extra round trips on the busiest matrikel endpoint).
     persons_by_membership: dict[int, list[Member]] = {}
+    active_herds: dict[int, list[dict]] = {}
     if items:
-        for person in Member.select().where(Member.membership.in_([ms.id for ms in items])).order_by(Member.id):
+        ids = [ms.id for ms in items]
+        for person in Member.select().where(Member.membership.in_(ids)).order_by(Member.id):
             persons_by_membership.setdefault(person.membership_id, []).append(person)
+        for herd in (
+            Herd.select(Herd.membership, Herd.herd, Genebank.name)
+            .join(Genebank)
+            .where(Herd.membership.in_(ids) & Herd.is_active)
+            .order_by(Herd.herd)
+        ):
+            active_herds.setdefault(herd.membership_id, []).append(
+                {"herd": herd.herd, "letter": herd.genebank.name[:1].upper()}
+            )
 
     return jsonify(
         {
-            "items": [_membership_to_dict(ms, persons_by_membership.get(ms.id, [])) for ms in items],
+            "items": [
+                {
+                    **_membership_to_dict(ms, persons_by_membership.get(ms.id, [])),
+                    "active_herds": active_herds.get(ms.id, []),
+                }
+                for ms in items
+            ],
             "total": total,
             "page": page,
             "per_page": per_page,
@@ -877,7 +916,8 @@ def fee_unpaid(payment_note, year):
 
 
 # The printer's mailing list for Koharen (#186), in the layout the printer already gets:
-# one row per household with the huvudmedlem's name only, sorted by postal code.
+# one row per household with the huvudmedlem's name only (an organization with "c/o" its contact),
+# sorted by postal code.
 # New route; the MATR export's contract is untouched (ADR-0006).
 @members_bp.route("/v2/members/address-list", methods=["GET"])
 @json_login_required
@@ -888,33 +928,41 @@ def export_address_list():
     fee_reminder = request.args.get("fee_reminder") == "1"  # only for the year's first two issues
     year = date.today().year
     rows = []
-    for ms in Membership.select().where(Membership.membership_status.in_(("active", "friexemplar"))):
-        if not ms.address and not ms.postal_address:
-            continue
-        persons = sorted(
-            Member.select().where(Member.membership == ms, Member.end_date.is_null(True)),
-            key=lambda p: (p.role != "huvudmedlem", p.id),
-        )
-        if not persons:
-            continue
-        if ms.member_number is not None:
-            nr = str(ms.member_number)
-        else:
-            nr = "0" if ms.membership_status == "friexemplar" else ""
-        unpaid = fee_reminder and ms.membership_status == "active" and fee_unpaid(ms.payment_note, year)
-        sort_key = (ms.postal_code is None, ms.postal_code or "", ms.id)  # a foreign address has no postal code: last
-        rows.append(
-            (
-                sort_key,
-                [
-                    nr,
-                    csv_safe(f"{persons[0].first_name} {persons[0].last_name}".strip()),
-                    csv_safe(ms.address),
-                    csv_safe(ms.postal_address),
-                    "Betala nu" if unpaid else "",
-                ],
+    active_persons = (
+        Member.select().where(Member.end_date.is_null(True)).order_by(Member.role != "huvudmedlem", Member.id)
+    )
+    memberships = Membership.select().where(Membership.membership_status.in_(("active", "friexemplar")))
+    with snapshot_read():  # persons and memberships from one snapshot: no label loses its c/o mid-registration
+        for ms in memberships.prefetch(active_persons):
+            if not ms.address and not ms.postal_address:
+                continue
+            if ms.organization_name:
+                # As in MATR: the organization receives even without an active contact.
+                recipient, care_of = membership_recipient(ms)
+                name = f"{recipient}, {care_of}" if care_of else recipient
+            elif ms.persons:
+                name = ms.persons[0].display_name  # the huvudmedlem, else the first active person
+            else:
+                continue
+            if ms.member_number is not None:
+                nr = str(ms.member_number)
+            else:
+                nr = "0" if ms.membership_status == "friexemplar" else ""
+            unpaid = fee_reminder and ms.membership_status == "active" and fee_unpaid(ms.payment_note, year)
+            # A foreign address has no postal code: last.
+            sort_key = (ms.postal_code is None, ms.postal_code or "", ms.id)
+            rows.append(
+                (
+                    sort_key,
+                    [
+                        nr,
+                        csv_safe(name),
+                        csv_safe(ms.address),
+                        csv_safe(ms.postal_address),
+                        "Betala nu" if unpaid else "",
+                    ],
+                )
             )
-        )
 
     buf = io.StringIO()
     buf.write("\ufeff")  # UTF-8 BOM for Excel
