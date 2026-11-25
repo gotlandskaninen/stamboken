@@ -45,13 +45,16 @@ export function initialMode(v2ProdAccess: boolean): Mode {
 /**
  * The browser must read sb_mode (RTK Query picks demo vs. prod from it), so it
  * is NON-httpOnly; the rest mirrors the session cookie (actions.ts). It is not
- * an auth token (threat T-999.2-10).
+ * an auth token (threat T-999.2-10). It lives as long as the Flask session
+ * (PERMANENT_SESSION_LIFETIME, 31 days), so a chosen demo outlasts a browser
+ * restart and middleware rarely has to look the mode up.
  */
 export const modeCookieOptions = {
   httpOnly: false,
   secure: process.env.NODE_ENV === "production",
   sameSite: "lax" as const,
   path: "/",
+  maxAge: 31 * 24 * 60 * 60,
 };
 
 /**
