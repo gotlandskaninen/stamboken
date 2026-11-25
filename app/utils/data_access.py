@@ -1391,10 +1391,11 @@ def _herd_owner_map():
     return owners
 
 
-def list_all_herds(user, *, genebank_id=None, active=None, has_owner=None, search=None, page=1, page_size=50):
+def list_all_herds(user, *also, genebank_id=None, active=None, has_owner=None, search=None, page=1, page_size=50):
     """
     Adminpanel herd list: every genebank for admin, only the managed
-    genebanks for a manager (#214). Joins genebank name +
+    genebanks for a manager (#214). With `also` (the snapshot's user next to
+    the session's), only the genebanks all of them may see. Joins genebank name +
     owner usernames. Sorted by genebank + the numeric part of the herd
     code (an earlier design said herd.name asc, but `name` is the CONTACT person
     and NULL/empty for hundreds of rows — that order made specific herds
@@ -1403,11 +1404,16 @@ def list_all_herds(user, *, genebank_id=None, active=None, has_owner=None, searc
     filters run BEFORE pagination so `total` and page sizes stay correct.
     Returns {"herds": [...], "total": N, "page": ..., "page_size": ...}.
     """
-    if not user.is_admin and not user.is_manager:
-        raise ValueError("manager-required")
+    scope = None  # every genebank
+    for u in (user, *also):
+        if u.is_admin:
+            continue
+        if not u.is_manager:
+            raise ValueError("manager-required")
+        scope = set(u.is_manager) if scope is None else scope & set(u.is_manager)
     q = Herd.select(Herd, Genebank).join(Genebank)
-    if not user.is_admin:
-        q = q.where(Herd.genebank.in_(user.is_manager))
+    if scope is not None:
+        q = q.where(Herd.genebank.in_(list(scope)))
     if genebank_id is not None:
         q = q.where(Herd.genebank == genebank_id)
     if active is not None:

@@ -1238,17 +1238,26 @@ def list_all_herds():
 
     Auth: admin, or manager(gb) — scoped to the genebanks they manage (#214).
     """
-    return jsonify(
-        da.list_all_herds(
-            current_user,
-            genebank_id=request.args.get("genebank_id", type=int),
-            active=_opt_bool_arg("active"),
-            has_owner=_opt_bool_arg("has_owner"),
-            search=request.args.get("q"),
-            page=request.args.get("page", 1, type=int),
-            page_size=request.args.get("page_size", 50, type=int),
-        )
-    ), 200
+    # The session's user and the row in the snapshot must both pass, as in get_herd_for_admin: the first misses
+    # a role revoked since the session check, the second one granted after update_role revoked this session.
+    with db.snapshot_read():
+        user = da.fetch_user_info(current_user.uuid)
+        if user is None:
+            return unauthorized()
+        if not user.is_admin and not user.is_manager:
+            return problem(403, "Åtkomst nekad", "Du saknar behörighet för denna åtgärd.")
+        return jsonify(
+            da.list_all_herds(
+                current_user,
+                user,
+                genebank_id=request.args.get("genebank_id", type=int),
+                active=_opt_bool_arg("active"),
+                has_owner=_opt_bool_arg("has_owner"),
+                search=request.args.get("q"),
+                page=request.args.get("page", 1, type=int),
+                page_size=request.args.get("page_size", 50, type=int),
+            )
+        ), 200
 
 
 def _resolve_admin_herd(h_ref):
