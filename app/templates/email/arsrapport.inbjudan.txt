@@ -1,0 +1,25 @@
+{% block subject %}{% if prov %}[Provmejl] {% endif %}Årsrapporten {{ year }} för {{ herd }}: rapportera senast {{ deadline }}{% endblock %}
+
+{% block body %}
+Hej!
+
+Det är dags för årsrapporten för besättning {{ herd }}{% if herd_name %} ({{ herd_name }}){% endif %}. Den gäller kaninerna som fanns i besättningen den 31 december {{ year }}.
+
+Rapportera här, i mobilen eller datorn. Du behöver inte logga in:
+{{ link }}{% if prov %}
+(Det här är en provlänk. I det riktiga mejlet öppnar den besättningens rapport.){% endif %}
+
+Kaninerna som står registrerade på din besättning är redan ifyllda. Välj för varje kanin om den finns kvar, är död eller såld, och skriv vikten på de vuxna. Saknas en kanin eller en kull, till exempel en köpt kanin eller en ny kull, lägger du till den i rapporten. Det du fyller i sparas, så du kan fortsätta senare med samma länk.
+
+Sista dag för stödet är {{ deadline }}. Länken gäller till och med {{ end_date }}.
+
+I bilagan finns registerutdraget: det Stamboken har om din besättning. Det är bara för kontroll och skickas inte in. Samma uppgifter står här:
+
+{{ utdrag }}
+
+Länken gäller bara din besättning. Ge den bara till någon som ska rapportera åt dig.
+
+Du kan också rapportera på papper. Blanketten kom med det senaste numret av Koharen, och du skickar den med posten till genbanksansvarig. Rapportera på ett av sätten, inte båda.
+
+Har du frågor? Svara på det här mejlet.
+{% endblock %}

@@ -40,6 +40,8 @@ const MEMBERSHIP: MembershipDetail = {
   id: 1,
   member_number: 1274,
   membership_status: "active",
+  organization_name: null,
+  organization_number: null,
   address: "Solhagavägen 12",
   postal_code: "623 55",
   city: "Klintehamn",
@@ -73,6 +75,103 @@ afterEach(cleanup);
 
 const numberField = () => screen.getByLabelText("Medlemsnummer");
 const spara = () => screen.getByRole("button", { name: /Spara/ });
+
+describe("MembershipFormCard — juridisk person", () => {
+  const checkbox = () =>
+    screen.getByRole("checkbox", { name: "Juridisk person (organisation)" });
+
+  it("converts a membership to an organisation with an optional number", async () => {
+    render(<MembershipFormCard membership={MEMBERSHIP} />);
+    fireEvent.click(checkbox());
+    expect(spara()).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Organisationsnamn"), {
+      target: { value: "Exempelföreningen" },
+    });
+    const number = screen.getByLabelText("Organisationsnummer");
+    fireEvent.change(number, { target: { value: "abc" } });
+    expect(spara()).toBeDisabled();
+    fireEvent.change(number, { target: { value: "" } });
+    fireEvent.click(spara());
+    await waitFor(() =>
+      expect(updateMembershipMock).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({
+          organization_name: "Exempelföreningen",
+        }),
+      ),
+    );
+  });
+
+  it("keeps the stored number out of a rename", async () => {
+    render(
+      <MembershipFormCard
+        membership={{
+          ...MEMBERSHIP,
+          organization_name: "Exempelföreningen",
+          organization_number: "123456-7897",
+        }}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("Organisationsnamn"), {
+      target: { value: "Nya föreningen" },
+    });
+    fireEvent.click(spara());
+    await waitFor(() => expect(updateMembershipMock).toHaveBeenCalledTimes(1));
+    const [, patch] = updateMembershipMock.mock.calls[0];
+    expect(patch.organization_name).toBe("Nya föreningen");
+    expect(patch).not.toHaveProperty("organization_number");
+  });
+
+  it("requires both names before clearing an organisation", async () => {
+    const membership = {
+      ...MEMBERSHIP,
+      organization_name: "Exempelföreningen",
+      organization_number: "123456-7897",
+    };
+    const contact = {
+      id: 11,
+      first_name: "Karin",
+      last_name: "",
+      role: "huvudmedlem",
+      end_date: null,
+      phone: null,
+      email: null,
+      user_id: null,
+      user: null,
+      grants: [],
+    };
+    const { rerender } = render(
+      <MembershipFormCard membership={{ ...membership, persons: [contact] }} />,
+    );
+    expect(checkbox()).toBeChecked();
+    expect(screen.getByLabelText("Organisationsnummer")).toHaveValue(
+      "123456-7897",
+    );
+    fireEvent.click(checkbox());
+    expect(spara()).toBeDisabled();
+    expect(
+      screen.getByText(/Ange kontaktpersonens förnamn och efternamn/),
+    ).toBeInTheDocument();
+    rerender(
+      <MembershipFormCard
+        membership={{
+          ...membership,
+          persons: [{ ...contact, last_name: "Exempel" }],
+        }}
+      />,
+    );
+    fireEvent.click(spara());
+    await waitFor(() =>
+      expect(updateMembershipMock).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({
+          organization_name: null,
+          organization_number: null,
+        }),
+      ),
+    );
+  });
+});
 
 describe("MembershipFormCard — medlemsnummer validation", () => {
   it("blocks a medlemsnummer that is not a positive integer", () => {

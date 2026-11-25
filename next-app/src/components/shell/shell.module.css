@@ -18,6 +18,7 @@
 
 .title {
   margin: 0 0 6px;
+  overflow-wrap: anywhere;
   font-family: var(--sb-display);
   font-size: var(--sb-fs-2xl);
   font-weight: 500;

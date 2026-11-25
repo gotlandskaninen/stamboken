@@ -25,7 +25,7 @@ import {
   unlinkPersonUser,
   updatePerson,
 } from "../actions";
-import { ROLE_LABELS } from "../types";
+import { personName, roleLabel } from "../types";
 import type { Grant, MembershipDetail, Person } from "../types";
 import { KopplaKontoDialog } from "./KopplaKontoDialog";
 import ds from "@/styles/ds-admin.module.css";
@@ -93,6 +93,18 @@ export function PersonsCard({
   const [personOpen, setPersonOpen] = useState(false);
   const [editPersonId, setEditPersonId] = useState<number | null>(null);
   const [personForm, setPersonForm] = useState(EMPTY_PERSON_FORM);
+  const editedPerson = membership.persons.find((p) => p.id === editPersonId);
+  const editingContact =
+    Boolean(membership.organization_name) &&
+    editedPerson?.role === "huvudmedlem" &&
+    editedPerson.end_date === null;
+  // As the API: the name rule applies only when a name or the role changes,
+  // so an imported row without a first name can still get its phone fixed.
+  const namesAndRoleUnchanged =
+    editedPerson !== undefined &&
+    personForm.first_name.trim() === editedPerson.first_name.trim() &&
+    personForm.last_name.trim() === editedPerson.last_name.trim() &&
+    personForm.role === editedPerson.role;
 
   // Grant dialog
   const [grantPerson, setGrantPerson] = useState<Person | null>(null);
@@ -261,10 +273,15 @@ export function PersonsCard({
             {membership.persons.map((p) => (
               <tr key={p.id}>
                 <td data-label="Namn">
-                  {p.first_name} {p.last_name}
+                  {personName(p) ||
+                    (membership.organization_name && p.role === "huvudmedlem"
+                      ? "(ingen namngiven kontaktperson)"
+                      : "–")}
                   {p.end_date ? " (avslutad)" : ""}
                 </td>
-                <td data-label="Roll">{ROLE_LABELS[p.role] ?? p.role}</td>
+                <td data-label="Roll">
+                  {roleLabel(p.role, membership.organization_name)}
+                </td>
                 <td data-label="Kontakt">{contactContent(p)}</td>
                 <td data-label="Konto">
                   {p.user ? (
@@ -373,7 +390,7 @@ export function PersonsCard({
                       <button
                         type="button"
                         className={`sb-btn sb-btn-ghost ${styles.btnXs} ${styles.moreBtn}`}
-                        aria-label={`Fler åtgärder för ${p.first_name} ${p.last_name}`}
+                        aria-label={`Fler åtgärder för ${personName(p) || "kontaktpersonen"}`}
                         aria-haspopup="menu"
                         aria-expanded={menuPerson?.id === p.id}
                         onClick={(e) =>
@@ -446,12 +463,17 @@ export function PersonsCard({
 
       <Dialog open={personOpen} onClose={() => setPersonOpen(false)} fullWidth>
         <DialogTitle>
-          {editPersonId === null ? "Lägg till person" : "Redigera person"}
+          {editPersonId === null
+            ? "Lägg till person"
+            : editingContact
+              ? "Redigera kontaktperson"
+              : "Redigera person"}
         </DialogTitle>
         <DialogContent>
           <div className={styles.dialogBody}>
             <TextField
               label="Förnamn"
+              required={!editingContact}
               value={personForm.first_name}
               onChange={(e) =>
                 setPersonForm({ ...personForm, first_name: e.target.value })
@@ -459,6 +481,7 @@ export function PersonsCard({
             />
             <TextField
               label="Efternamn"
+              required={!editingContact}
               value={personForm.last_name}
               onChange={(e) =>
                 setPersonForm({ ...personForm, last_name: e.target.value })
@@ -508,8 +531,9 @@ export function PersonsCard({
             onClick={savePerson}
             disabled={
               pending ||
-              !personForm.first_name.trim() ||
-              !personForm.last_name.trim()
+              (!editingContact &&
+                !namesAndRoleUnchanged &&
+                (!personForm.first_name.trim() || !personForm.last_name.trim()))
             }
           >
             Spara
@@ -575,6 +599,7 @@ export function PersonsCard({
         person={linkPerson}
         membershipId={membership.id}
         membershipNumber={membership.member_number}
+        organizationName={membership.organization_name}
         onClose={() => setLinkPerson(null)}
       />
 

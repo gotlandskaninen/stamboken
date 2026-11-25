@@ -13,7 +13,7 @@ misjudged host can be corrected without a code change.
 import logging
 import os
 
-from flask import request
+from flask import current_app, request
 
 # Outside the "herdbook" logger tree: APP.log's formatter appends the request
 # URL, query string included, to every line.
@@ -90,14 +90,18 @@ LEGACY_ENDPOINTS = frozenset(
 
 # Open to every logged-in account on every host. The Next.js server forwards
 # the visitor's cookies to public URLs too, so a logged-in member who is not
-# promoted must still reach the public functions, and her own uploads to the
-# intake queue.
+# promoted must still reach the public functions and read her own submissions.
 EXEMPT_ENDPOINTS = frozenset(
     {
         ("get_user", "GET"),
         ("logout", "GET"),
         ("login_handler", "POST"),
         ("google_token_login", "POST"),
+        ("code_login.status", "GET"),
+        ("code_login.request_code", "POST"),
+        ("code_login.verify_code", "POST"),
+        ("code_login.preview_link", "POST"),
+        ("code_login.redeem_link", "POST"),
         ("external_login_handler", "GET"),
         ("external_login_handler", "POST"),
         ("google.login", "GET"),
@@ -109,16 +113,15 @@ EXEMPT_ENDPOINTS = frozenset(
         # The public certificate verification (QR) page.
         ("certificates_v2.verify_certificate_get", "GET"),
         ("certificates_v2.verify_certificate_post", "POST"),
+        # The personal report link: the exchange checks the token, and mine only lists the session's codes.
+        ("rapport_link.open_link", "POST"),
+        ("rapport_link.mine", "GET"),
+        ("rapport_link.contacts", "GET"),
         # The public membership application (not its listing, which is GET)
         # and the genebank names its form shows.
         ("member_applications.create_application", "POST"),
         ("member_applications.list_public_genebanks", "GET"),
-        # Skicka in intyg and Mina inskick always reach production, also from
-        # the demo, or an upload would be gone by the next night. The upload
-        # takes the caller's own herds (any herd from a queue worker); the
-        # others answer with her own uploads and notice count. The queue's
-        # work and the originals stay gated.
-        ("inbox.upload", "POST"),
+        # A member can still read her own submissions and manage their notices.
         ("inbox.my_uploads", "GET"),
         ("inbox.uploads_seen", "POST"),
         ("inbox.notice_count", "GET"),
@@ -165,6 +168,13 @@ def is_legacy_host():
     return host in legacy_hosts()
 
 
+def report_link_only():
+    """Only code-aware report views can opt out of account access and require the link's grant instead."""
+    return request.args.get("via") == "lank" and getattr(
+        current_app.view_functions.get(request.endpoint), "accepts_report_code", False
+    )
+
+
 def refusal(endpoint, method, user):
     """
     The access rules for a logged-in `user`: the 403 text when this request
@@ -173,7 +183,7 @@ def refusal(endpoint, method, user):
     needs v2_prod_access or admin.
     """
     pair = (endpoint, "GET" if method == "HEAD" else method)
-    if pair in EXEMPT_ENDPOINTS:
+    if pair in EXEMPT_ENDPOINTS or report_link_only():
         return None
     if is_legacy_host() and pair in LEGACY_ENDPOINTS:
         message = None if user.validated else course_message()

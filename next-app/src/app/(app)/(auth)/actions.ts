@@ -1,10 +1,17 @@
 "use server";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { revalidatePath } from "next/cache";
+import { refresh, revalidatePath } from "next/cache";
 import { fetchApi } from "@/lib/api";
 import { forwardedFor } from "@/lib/forwardedFor";
-import { MODE_COOKIE, parseMode, type Mode } from "@/lib/mode";
+import {
+  MODE_COOKIE,
+  initialMode,
+  modeCookieOptions,
+  parseMode,
+  sessionCookieOptions,
+  type Mode,
+} from "@/lib/mode";
 
 const API_BASE = process.env.API_INTERNAL_URL || "http://api:9090";
 
@@ -21,32 +28,8 @@ function extractSessionValue(setCookieHeader: string): string | null {
   return match ? match[1] : null;
 }
 
-// Cookie settings must match Flask's session config (herdbook.py, APP.config):
-// - SameSite: "Lax"
-// - Secure: true in production only
-const isProduction = process.env.NODE_ENV === "production";
-const cookieOptions = {
-  httpOnly: true,
-  secure: isProduction,
-  sameSite: "lax" as const,
-  path: "/",
-};
-
-// The sb_mode UX cookie must be readable by the browser (RTK Query reads it to
-// pick demo vs. prod), so it is NON-httpOnly. Everything else mirrors the
-// session cookie. It is not an auth token (threat T-999.2-10, see lib/mode.ts).
-const modeCookieOptions = { ...cookieOptions, httpOnly: false };
-
-/**
- * Base-dev-safe initial mode from the promotion flag:
- * - promoted (v2_prod_access) -> "prod"
- * - non-promoted with a test API configured -> "demo"
- * - non-promoted in base dev (no test API) -> "prod" (nowhere to demo against)
- */
-function initialMode(v2ProdAccess: boolean): Mode {
-  const testConfigured = !!process.env.API_TEST_INTERNAL_URL;
-  return v2ProdAccess || !testConfigured ? "prod" : "demo";
-}
+// The session cookie's settings, shared with sb_mode (lib/mode.ts).
+const cookieOptions = { ...sessionCookieOptions };
 
 /**
  * Validate return_to is a same-site path (prevent open redirect). The client
@@ -56,7 +39,7 @@ function initialMode(v2ProdAccess: boolean): Mode {
  */
 function safeReturnTo(returnTo?: string): string {
   if (
-    !returnTo ||
+    typeof returnTo !== "string" ||
     !/^\/(?![/\\])/.test(returnTo) ||
     /[\t\r\n]/.test(returnTo)
   ) {
@@ -228,4 +211,153 @@ export async function logout() {
   // Don't redirect here — the client does a full page reload (window.location.href)
   // to reset Google Identity Services state. Server Action redirect() does client-side
   // navigation which keeps Google's disableAutoSelect() in effect.
+}
+
+type LoginResult =
+  | {
+      error:
+        | "unavailable"
+        | "invalidCode"
+        | "invalidLink"
+        | "expired"
+        | "accountConflict"
+        | "rulesChanged";
+    }
+  | { switchFrom: number }
+  | { demoAccountCreated: true };
+
+async function postCodeLogin(path: string, body: Record<string, unknown>) {
+  const store = await cookies();
+  const cookie = ["session", "login_request"]
+    .map((name) => store.get(name))
+    .filter((entry) => entry !== undefined)
+    .map(({ name, value }) => `${name}=${value}`)
+    .join("; ");
+  try {
+    const response = await fetch(`${API_BASE}/api/v2/login/${path}`, {
+      method: "POST",
+      cache: "no-store",
+      redirect: "error",
+      signal: AbortSignal.timeout(10000),
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: cookie,
+        ...forwardedFor(await headers()),
+      },
+      body: JSON.stringify(body),
+    });
+    return { response, data: await response.json() };
+  } catch {
+    return null;
+  }
+}
+
+function responseCookie(response: Response, name: string) {
+  const cookie = response.headers
+    .getSetCookie()
+    .find((line) => line.startsWith(name + "="));
+  return cookie?.split(";", 1)[0].slice(name.length + 1);
+}
+
+export async function requestLoginCode(email: string) {
+  const result = await postCodeLogin("kod", { email });
+  if (!result?.response.ok) return false;
+  const value = responseCookie(result.response, "login_request");
+  if (!value) return false;
+  (await cookies()).set("login_request", value, {
+    ...cookieOptions,
+    maxAge: 600,
+  });
+  return true;
+}
+
+export async function lookupLoginLink(token: string) {
+  const result = await postCodeLogin("lank/uppslag", { token });
+  if (!result?.response.ok || typeof result.data?.name !== "string")
+    return null;
+  const { name, switch_from } = result.data;
+  if (switch_from !== null && !Number.isInteger(switch_from)) return null;
+  return { name: name as string, switchFrom: switch_from as number | null };
+}
+
+async function finishCodeLogin(
+  path: "kod/verifiera" | "lank" | "skapa-konto",
+  body: Record<string, unknown>,
+  returnTo?: string,
+): Promise<LoginResult> {
+  const result = await postCodeLogin(path, body);
+  if (!result || result.response.status >= 500) return { error: "unavailable" };
+  const { response, data } = result;
+  if (!response.ok) {
+    if (
+      response.status === 409 &&
+      path !== "skapa-konto" &&
+      Number.isInteger(data?.switch_from)
+    )
+      return { switchFrom: data.switch_from };
+    if (path === "skapa-konto") {
+      if (response.status === 409) return { error: "accountConflict" };
+      if (response.status === 412) return { error: "rulesChanged" };
+      return { error: "expired" };
+    }
+    return { error: path === "lank" ? "invalidLink" : "invalidCode" };
+  }
+
+  const session = responseCookie(response, "session");
+  if (
+    !session ||
+    (data?.pending !== true && typeof data?.v2_prod_access !== "boolean")
+  )
+    return { error: "unavailable" };
+  const store = await cookies();
+  store.set("session", session, cookieOptions);
+  store.delete("login_request");
+  const mode =
+    data.pending === true ? "prod" : initialMode(data.v2_prod_access);
+  store.set(MODE_COOKIE, mode, modeCookieOptions);
+  const destination = safeReturnTo(returnTo);
+  if (data.pending === true) {
+    redirect(
+      returnTo
+        ? `/auth/skapa-konto?return_to=${encodeURIComponent(destination)}`
+        : "/auth/skapa-konto",
+    );
+  }
+  if (path === "skapa-konto" && mode === "demo")
+    return { demoAccountCreated: true };
+  redirect(destination);
+}
+
+export async function verifyLoginCode(
+  code: string,
+  returnTo?: string,
+  confirmUserId?: number,
+) {
+  return finishCodeLogin(
+    "kod/verifiera",
+    { code, confirm_user_id: confirmUserId },
+    returnTo,
+  );
+}
+
+export async function redeemLoginLink(token: string, confirmUserId?: number) {
+  return finishCodeLogin("lank", { token, confirm_user_id: confirmUserId });
+}
+
+export type DisplayedRules = { version: string; sha256: string };
+
+export async function createMemberAccount(
+  accepted: boolean,
+  rules: DisplayedRules,
+  returnTo?: string,
+): Promise<LoginResult> {
+  if (accepted !== true || !rules?.version || !rules.sha256)
+    return { error: "rulesChanged" };
+  const result = await finishCodeLogin(
+    "skapa-konto",
+    { accepted, rules_version: rules.version, rules_sha256: rules.sha256 },
+    returnTo,
+  );
+  if ("error" in result && result.error === "rulesChanged") refresh();
+  return result;
 }

@@ -20,6 +20,7 @@ from PIL import Image, ImageFilter
 import utils.settings as settings
 from utils.database import DB_PROXY, InboxDocument, InboxItem
 from utils.inbox_proposal import build_proposal
+from utils.log_masking import mask_cut
 
 logger = logging.getLogger(__name__)
 
@@ -78,15 +79,15 @@ def conform(value, schema):
     """
     The model's answer as `schema` describes it, or None: an object keeps only its known keys, a value of the
     wrong type counts as missing, a string loses its NUL characters and lone surrogates (jsonb takes neither)
-    and is cut to MAX_STRING, an enum keeps only its values. Nothing the model sends reaches the database or
-    the checks otherwise.
+    and is cut to MAX_STRING, a link token is masked after both, an enum keeps only its values. Nothing the
+    model sends reaches the database or the checks otherwise.
     """
     kind = schema.get("type")
     if kind == "object" and isinstance(value, dict):
         kept = {key: conform(value.get(key), sub) for key, sub in schema["properties"].items()}
         return {key: item for key, item in kept.items() if item is not None}
     if kind == "string" and isinstance(value, str):
-        text = value.replace("\x00", "").encode("utf-8", "ignore").decode()[:MAX_STRING]
+        text = mask_cut(value.replace("\x00", "").encode("utf-8", "ignore").decode(), MAX_STRING)
         return text if text in schema.get("enum", [text]) else None
     return None
 
@@ -170,12 +171,19 @@ def initial_status():
 
 
 def _waiting():
-    """A certificate waiting to be read, in an open item, with nothing saved from it yet and its original kept."""
+    """
+    A certificate waiting to be read, in an open item, with nothing saved from it yet and its original kept. A report
+    photo (4b) is read after its rabbit is saved too: the reading is compared with what the member registered (G5).
+    A purchase notice's photo never is, nor one held for a purchase until it is sent, whatever its status says.
+    """
+    report_photo = (InboxItem.kind == "kontroll") & (InboxItem.ref_type == "individual")
     return (
         (InboxDocument.interpretation_status == "vantar")
+        & (InboxItem.ref_type.is_null() | (InboxItem.ref_type != "kopanmalan"))
+        & (InboxItem.ref_data.is_null() | ~InboxItem.ref_data.has_key("syfte"))  # inbox.PURPOSE: held for a purchase
         & (InboxDocument.doc_type == "intyg")
         & InboxDocument.done_at.is_null()
-        & InboxDocument.individual.is_null()
+        & (InboxDocument.individual.is_null() | report_photo)
         & InboxDocument.original_path.is_null(False)
         & InboxItem.closed_at.is_null()
     )
@@ -234,7 +242,11 @@ def interpret_next():
         ):
             return document_id
         if raw is not None:
-            proposal = build_proposal(raw, item.genebank_id, item.herd_id)
+            # A report photo (utils/inbox.report_photo, which imports this module) is set beside the rabbit registered
+            # from it: the document re-read under the item's lock, as the registration binds it under that lock.
+            report_photo = item.kind == "kontroll" and item.ref_type == "individual"
+            registered = document.individual if report_photo else None
+            proposal = build_proposal(raw, item.genebank_id, item.herd_id, registered)
             _finish(document, "klar", interpretation=raw, proposal=proposal)
         elif document.attempts >= MAX_ATTEMPTS:
             _finish(document, "misslyckad")

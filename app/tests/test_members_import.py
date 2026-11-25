@@ -122,6 +122,28 @@ class TestMembersImport(DatabaseTest):
         membership = db.Membership.select().first()
         self.assertIn("2 identiska rader", membership.notes)
 
+    def test_patch_phone_of_imported_friexemplar_with_empty_first_name(self):
+        result = self._run_import(HEADER + _row(nr="0", name="Testbiblioteket"))
+        self.assertEqual(result.exit_code, 0, result.output)
+        person = db.Member.get()
+        self.assertEqual(person.first_name, "")
+        client = APP.test_client()
+        client.post("/api/login", json={"username": "admin", "password": "pass"})
+
+        for body in (
+            {"phone": "070-1234567"},
+            # what the person form sends: the unchanged names and role too
+            {"first_name": "", "last_name": "Testbiblioteket", "role": "huvudmedlem", "phone": "070-7654321"},
+        ):
+            with self.subTest(body=body):
+                response = client.patch(f"/api/v2/persons/{person.id}", json=body)
+
+                self.assertEqual(response.status_code, 200, response.data)
+                stored = db.Member.get_by_id(person.id)
+                self.assertEqual(
+                    (stored.first_name, stored.last_name, stored.phone), ("", "Testbiblioteket", body["phone"])
+                )
+
     def test_two_friexemplar_can_share_an_email(self):
         address = "redaktion@example.invalid"
         names = ["Tidskriften Moroten", "Tidskriften Klövern"]
@@ -246,6 +268,33 @@ class TestMembersImport(DatabaseTest):
         self.assertEqual(p9.first_name, "")
         org = db.Member.get(db.Member.last_name == "Studieförbundet Vuxenskolan")
         self.assertEqual(org.first_name, "")
+
+    def test_numberless_organization_is_adopted_by_registered_name_and_contact_email(self):
+        membership = db.Membership.create(organization_name="Testföreningen")
+        db.Member.create(membership=membership, first_name="Lo", last_name="Test", email="lo@example.invalid")
+        before = list(db.Member.select().dicts())
+        result = self._run_import(HEADER + _row(nr="12", name="Testföreningen", epost="lo@example.invalid"))
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(db.Membership.select().count(), 1)
+        self.assertEqual(db.Membership.get_by_id(membership.id).member_number, 12)
+        self.assertEqual(list(db.Member.select().dicts()), before)
+
+    def test_reimport_does_not_create_a_missing_org_contact_from_the_recipient_or_care_of(self):
+        db.Membership.create(member_number=12, organization_name="Testföreningen")
+        result = self._run_import(
+            HEADER.rstrip("\n") + ",c/o\n" + _row(nr="12", name="Testföreningen").rstrip("\n") + ",c/o Lo Test\n"
+        )
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(db.Member.select().count(), 0)
+
+    def test_blank_number_rows_fail_even_for_a_known_organization(self):
+        org = db.Membership.create(organization_name="Testklubben")
+        db.Member.create(membership=org, first_name="", last_name="", email="info@example.invalid")
+        rows = _row(name="Testklubben", epost="info@example.invalid") + _row(name="Okänd Mottagare")
+        result = self._run_import(HEADER + rows, ["--counts-only"])
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("row 2: nr-saknas", result.output)
+        self.assertIn("row 3: nr-saknas", result.output)
 
     def test_merge_adopts_numberless_membership_and_sets_number(self):
         existing = db.Membership.create(membership_status="active")

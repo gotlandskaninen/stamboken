@@ -22,6 +22,7 @@ export interface Notice {
   kind: string;
   text: string;
   item_id: number | null;
+  individual_number: string | null;
   created_at: string;
   read_at: string | null;
 }
@@ -103,8 +104,14 @@ export function planImage(
   };
 }
 
-/** Where a notice leads: `klar` goes to Mina inskick, the rest to the queue. */
-export function noticeHref(n: Pick<Notice, "kind" | "item_id">): string {
+/** Where a notice leads: a rabbit's page, `klar` to Mina inskick, the rest to the queue. */
+export function noticeHref(
+  n: Pick<Notice, "kind" | "item_id" | "individual_number">,
+): string {
+  if (n.kind === "kopare_adresskontroll" && n.individual_number != null)
+    return `/stamboken/notiser/koparadress/${encodeURIComponent(n.individual_number)}`;
+  if (n.individual_number != null)
+    return `/stamboken/individ/${encodeURIComponent(n.individual_number)}`;
   if (n.item_id == null) return "/stamboken/inskick";
   return n.kind === "klar"
     ? `/stamboken/inskick#arende-${n.item_id}`

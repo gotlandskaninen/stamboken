@@ -101,11 +101,13 @@ class TestMatrikelDomainFunctions(DatabaseTest):
         self.family.save()
         grant = db.HerdAccessGrant.create(member=self.family, herd=self.herds[0], granted_by=self.admin)
         db.User.update(name_on_check_page=True).where(db.User.id == user.id).execute()
-        account_audits = db.AuditLog.select().where(db.AuditLog.table_name == "hbuser").count()
         matrikel.anonymize_person(self.family, self.admin)
         self.assertFalse(db.User.get_by_id(user.id).name_on_check_page)  # off the public check page (#6)
-        # ...without an audit row that would copy the account's name and e-mail
-        self.assertEqual(db.AuditLog.select().where(db.AuditLog.table_name == "hbuser").count(), account_audits)
+        # ...and no audit row of the account keeps its name or e-mail (#190)
+        for row in db.AuditLog.select().where(
+            db.AuditLog.table_name == "hbuser", db.AuditLog.record_id == str(user.id)
+        ):
+            self.assertNotIn("fam", f"{row.old_data} {row.new_data} {row.changed_by}")
         person = db.Member.get_by_id(self.family.id)
         self.assertEqual(person.first_name, "Borttagen")
         self.assertEqual(person.last_name, "person")
@@ -147,6 +149,7 @@ class TestMatrikelDomainFunctions(DatabaseTest):
         with the last one; payment_note is accounting history and stays."""
         self.membership.postal_code, self.membership.city = "623 55", "Visby"
         self.membership.notes, self.membership.payment_note = "Anna bor ensam", "betalt 2026"
+        self.membership.organization_name, self.membership.organization_number = "Testföreningen", "552222-0002"
         self.membership.save()
 
         matrikel.anonymize_person(self.family, self.admin)
@@ -154,24 +157,32 @@ class TestMatrikelDomainFunctions(DatabaseTest):
         self.assertEqual(
             (ms.address, ms.postal_code, ms.city, ms.notes), ("Storgatan 1", "623 55", "Visby", "Anna bor ensam")
         )
+        self.assertEqual((ms.organization_name, ms.organization_number), ("Testföreningen", "552222-0002"))
 
         matrikel.anonymize_person(self.main, self.admin)
         ms = db.Membership.get_by_id(self.membership.id)
         self.assertEqual((ms.address, ms.postal_code, ms.city, ms.notes), (None, None, None, None))
+        self.assertEqual((ms.organization_name, ms.organization_number), (None, None))
         self.assertEqual(ms.payment_note, "betalt 2026")
 
     def test_anonymize_redacts_the_household_address_from_membership_audits(self):
         """A membership PATCH audits the old and new address (before v29 also as
         postal_address); clearing the row must not leave them in matrikel_audit.
         payment_note is not cleared, so it stays."""
-        matrikel.anonymize_person(self.family, self.admin)
+        organization = {"organization_name": "Testföreningen", "organization_number": "552222-0002"}
         patched = matrikel.write_matrikel_audit(
             self.admin,
             "membership_updated",
             self.membership,
             {
-                "before": {"address": "Storgatan 1", "city": "Visby", "payment_note": "betalt 2025"},
-                "after": {"address": "Kungsgatan 2", "postal_address": "623 55 Visby", "payment_note": "betalt 2026"},
+                "before": {"address": "Storgatan 1", "city": "Visby", "payment_note": "betalt 2025", **organization},
+                "after": {
+                    "address": "Kungsgatan 2",
+                    "postal_address": "623 55 Visby",
+                    "payment_note": "betalt 2026",
+                    "organization_name": "Nya testföreningen",
+                    "organization_number": "552222-0010",
+                },
             },
         )
         other = _make_membership(number=9)[0]
@@ -179,13 +190,21 @@ class TestMatrikelDomainFunctions(DatabaseTest):
             self.admin, "membership_updated", other, {"before": {"address": "Annan 3"}, "after": {"address": "Annan 4"}}
         )
 
+        matrikel.anonymize_person(self.family, self.admin)
+        self.assertEqual(db.MatrikelAudit.get_by_id(patched.id).payload, patched.payload)
         matrikel.anonymize_person(self.main, self.admin)
 
+        redacted = dict.fromkeys(organization, "[borttagen]")
         self.assertEqual(
             db.MatrikelAudit.get_by_id(patched.id).payload,
             {
-                "before": {"address": "[borttagen]", "city": "[borttagen]", "payment_note": "betalt 2025"},
-                "after": {"address": "[borttagen]", "postal_address": "[borttagen]", "payment_note": "betalt 2026"},
+                "before": {"address": "[borttagen]", "city": "[borttagen]", "payment_note": "betalt 2025", **redacted},
+                "after": {
+                    "address": "[borttagen]",
+                    "postal_address": "[borttagen]",
+                    "payment_note": "betalt 2026",
+                    **redacted,
+                },
             },
         )
         self.assertEqual(db.MatrikelAudit.get_by_id(elsewhere.id).payload["after"], {"address": "Annan 4"})
@@ -432,6 +451,123 @@ class TestMembershipPatchEndpoint(MatrikelAdminTestBase):
     def test_patch_unknown_membership_404(self):
         self.login()
         self.assertEqual(self.patch_membership({"notes": "x"}, membership_id=99999).status_code, 404)
+
+
+class TestOrganizationMembershipEndpoints(MatrikelAdminTestBase):
+    organization = {"organization_name": "Exempelby testmuseum", "organization_number": "552222-0002"}
+
+    def setUp(self):
+        super().setUp()
+        self.login()
+        self.url = f"/api/v2/memberships/{self.membership.id}"
+
+    def test_create_organization_without_named_contact(self):
+        resp = self.post_json("/api/v2/memberships", {**self.organization, "email": "kontakt@example.org"})
+        self.assertEqual(resp.status_code, 201, resp.data)
+        data = resp.get_json()
+        self.assertEqual(data["organization_number"], self.organization["organization_number"])
+        ms = db.Membership.get_by_id(data["id"])
+        self.assertEqual(ms.organization_name, self.organization["organization_name"])
+        contact = db.Member.get(db.Member.membership == ms)
+        self.assertEqual((contact.role, contact.first_name, contact.last_name), ("huvudmedlem", "", ""))
+        self.assertEqual(contact.email, "kontakt@example.org")
+
+    def test_invalid_organization_fields_rejected_on_create_and_patch(self):
+        for fields in (
+            {"organization_number": "552222-0002"},
+            {"organization_name": " ", "organization_number": "552222-0002"},
+            {**self.organization, "organization_number": "552222-0003"},  # incorrect check digit
+            {**self.organization, "organization_number": "551999-0005"},  # valid checksum, third digit < 2
+            {**self.organization, "organization_number": "5522220002"},
+            {**self.organization, "organization_number": "５５２２２２-０００２"},
+            {**self.organization, "organization_number": 1234},
+            {"organization_name": "x" * 201},
+            {"organization_name": []},
+        ):
+            with self.subTest(fields=fields):
+                for resp in (
+                    self.post_json("/api/v2/memberships", {"first_name": "En", "last_name": "Person", **fields}),
+                    self.patch_json(self.url, fields),
+                ):
+                    self.assertEqual(resp.status_code, 400, resp.data)
+                    self.assertEqual(resp.content_type, "application/problem+json")
+        self.assertEqual(db.Membership.select().count(), 1)
+        self.assertIsNone(db.Membership.get_by_id(self.membership.id).organization_name)
+
+    def test_patch_checks_the_resulting_fields_and_audits_changes(self):
+        self.assertEqual(self.patch_json(self.url, self.organization).status_code, 200)
+        audit = db.MatrikelAudit.get(db.MatrikelAudit.action == "membership_updated")
+        self.assertEqual(audit.payload, {"before": dict.fromkeys(self.organization), "after": self.organization})
+        self.assertEqual(self.patch_json(self.url, {"organization_name": None}).status_code, 400)
+        self.assertEqual(self.patch_json(self.url, {"organization_number": " "}).status_code, 200)
+        stored = db.Membership.get_by_id(self.membership.id)
+        self.assertIsNone(stored.organization_number)
+        self.assertEqual(stored.organization_name, self.organization["organization_name"])
+        self.assertEqual(self.patch_json(self.url, {"organization_number": "552222-0002"}).status_code, 200)
+        self.assertEqual(
+            self.patch_json(self.url, {"organization_name": "", "organization_number": None}).status_code, 200
+        )
+        self.assertIsNone(db.Membership.get_by_id(stored.id).organization_name)
+
+    def test_only_organization_main_can_have_blank_names(self):
+        main_url = f"/api/v2/persons/{self.main.id}"
+        self.assertEqual(self.patch_json(main_url, {"last_name": ""}).status_code, 400)
+        self.assertEqual(self.patch_json(self.url, {"organization_name": "Museet"}).status_code, 200)
+        self.assertEqual(self.patch_json(main_url, {"first_name": "", "last_name": ""}).status_code, 200)
+        self.assertEqual(self.patch_json(self.url, {"organization_name": None}).status_code, 400)
+        self.assertEqual(self.post_json(f"{self.url}/main-member", {"person_id": self.family.id}).status_code, 409)
+        self.assertEqual(self.patch_json(f"/api/v2/persons/{self.family.id}", {"last_name": ""}).status_code, 400)
+        self.assertEqual(self.post_json(f"{self.url}/persons", {"first_name": "En"}).status_code, 400)
+        self.assertEqual(self.patch_json(main_url, {"first_name": "En"}).status_code, 200)
+        self.assertEqual(self.patch_json(self.url, {"organization_name": None}).status_code, 400)
+        self.assertEqual(self.patch_json(main_url, {"last_name": "Kontakt"}).status_code, 200)
+        self.assertEqual(self.patch_json(self.url, {"organization_name": None}).status_code, 200)
+
+    def test_add_unnamed_contact_to_organization_without_active_main(self):
+        org = db.Membership.create(organization_name="Biblioteket")
+        resp = self.post_json(f"/api/v2/memberships/{org.id}/persons", {"role": "huvudmedlem"})
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertEqual(resp.get_json()["last_name"], "")
+
+    def test_ended_unnamed_contact_needs_a_name_after_organization_is_removed(self):
+        person_url = f"/api/v2/persons/{self.main.id}"
+        self.assertEqual(self.patch_json(self.url, {"organization_name": "Museet"}).status_code, 200)
+        self.assertEqual(self.patch_json(person_url, {"first_name": "", "last_name": ""}).status_code, 200)
+        self.assertEqual(self.client.delete(self.url).status_code, 200)
+        self.assertIsNotNone(db.Member.get_by_id(self.main.id).end_date)
+        self.assertEqual(self.patch_json(person_url, {"notes": "Arkiverad"}).status_code, 200)
+        # unchanged names change nothing: no name rule to apply
+        self.assertEqual(self.patch_json(person_url, {"first_name": "", "last_name": ""}).status_code, 200)
+        self.assertEqual(self.patch_json(person_url, {"role": "familjemedlem"}).status_code, 400)
+        self.assertEqual(self.patch_json(self.url, {"organization_name": None}).status_code, 200)
+        self.assertEqual(self.patch_json(person_url, {"role": "familjemedlem"}).status_code, 400)
+        self.assertEqual(db.Member.get_by_id(self.main.id).role, "huvudmedlem")
+
+    def test_search_and_visibility_of_organization_fields(self):
+        self.assertEqual(self.patch_json(self.url, self.organization).status_code, 200)
+        _make_membership(number=7)  # must not match the organization search
+        for username in ("matadmin", "admin", "man"):
+            with self.subTest(username=username):
+                self.client.get("/api/logout")
+                self.login(username)
+                listing = self.client.get("/api/v2/members?search=TESTMUSEUM").get_json()
+                self.assertEqual(listing["total"], 1)
+                detail = self.client.get(f"/api/v2/members/{self.membership.id}").get_json()
+                for view in (listing["items"][0], detail):
+                    self.assertEqual(view["organization_name"], self.organization["organization_name"])
+                    if username == "man":
+                        self.assertNotIn("organization_number", view)
+                    else:
+                        self.assertEqual(view["organization_number"], self.organization["organization_number"])
+
+    def test_self_service_hides_number_even_for_a_matrikel_admin(self):
+        self.assertEqual(self.patch_json(self.url, self.organization).status_code, 200)
+        db.Member.update(user=self.matadmin).where(db.Member.id == self.main.id).execute()
+        for path in ("/api/v2/my-membership", "/api/v2/members/me"):
+            with self.subTest(path=path):
+                view = self.client.get(path).get_json()["membership"]
+                self.assertEqual(view["organization_name"], self.organization["organization_name"])
+                self.assertNotIn("organization_number", view)
 
 
 class TestMembershipCreateRetireEndpoints(MatrikelAdminTestBase):

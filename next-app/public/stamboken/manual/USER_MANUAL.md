@@ -27,7 +27,7 @@ på skärmen) och slutar med **Skärmarna** (vad varje sida innehåller).
   - Skärmarna: [Min besättning](#min-besättning), [Kaninens sida](#kaninens-sida),
     [Alla kaniner](#alla-kaniner), [Provparning](#provparning), [Min profil](#min-profil),
     [Mina inskick](#mina-inskick), [Ladda upp intyg](#ladda-upp-intyg-skärmen), [Notiser](#notiser),
-    [Verifiera intyg](#verifiera-intyg)
+    [Verifiera intyg](#verifiera-intyg), [Ta bort köparens uppgifter](#ta-bort-köparens-uppgifter)
 - [Del 2 – Genbanksansvarig](#del-2--genbanksansvarig)
   - Så gör du: [rätta en kanin](#rätta-en-kanin-i-en-annan-besättning),
     [korrigera historik](#korrigera-besättningshistorik), [ändringshistorik](#läsa-och-ångra-i-ändringshistoriken),
@@ -168,11 +168,11 @@ i nya Stamboken är inte klar än; knappen **Årsrapportera** visar "Kommer snar
 Tills dess rapporterar du som tidigare.
 
 **Uppfödare** (besättningsägare), **genbanksansvarig** och **administratör** – rollerna
-som manualens tre delar handlar om. Dessutom finns **granskare**, som får se en genbank
-utan att ändra, **skötare**, som får sköta en annan medlems besättning, och
-**matrikeladministratör**, som hanterar medlemsregistret. Matrikeladministratören har
-en egen guide inne i medlemsregistret (**Guide** överst på sidorna), som bara syns
-för den rollen.
+som manualens tre delar handlar om. Dessutom kan ett konto ha **läsrätt** till en genbank
+och se allt i den utan att ändra. Det finns också **skötare**, som får sköta en annan
+medlems besättning, och **matrikeladministratör**, som hanterar medlemsregistret.
+Matrikeladministratören har en egen guide inne i medlemsregistret (**Guide** överst på
+sidorna), som bara syns för den rollen.
 
 ---
 
@@ -748,6 +748,88 @@ varning över en bild har inget sparats, **Skicka** byts mot **Skicka ändå**, 
 knappen **Ta om**. Har du ingen
 besättning säger sidan det. Se [Ladda upp intyg](#ladda-upp-intyg).
 
+#### Årsrapport
+
+<!-- route: /stamboken/arsrapport -->
+
+Dina besättningars årsrapporter i en öppen runda, med **Inskickad** eller **Inte
+inskickad** och sista dag. Har du en enda besättning och ingen roll i en genbank
+kommer du direkt till rapporten. Är ingen runda öppen säger sidan det.
+
+#### Årsrapport för en besättning
+
+<!-- route: /stamboken/arsrapport/[herd]/[year] -->
+
+Rapporten för ett avelsår. Dina kaniner står redan i listan; för varje kanin väljer du
+**Finns kvar** (med vikt och hull: mager, normal eller fet), **Död** (med månad,
+och om kaninen slaktades) eller **Såld** (till en besättning i genbanken, eller köparens namn och
+ort utanför genbanken). Har du 15 kaniner eller fler kan du söka med **Hitta en kanin**. Filtrera listan och se
+hur många som är klara. Under **Hälsa** svarar du **Inga sjukdomsfall eller defekter**
+eller **Ja, fyll i**. Avslutar du besättningen kryssar du **Jag avslutar min besättning** och
+väljer vad som händer med medlemskapet; då behöver kaninerna inget val.
+
+Det du fyller i sparas medan du skriver. **Skicka årsrapporten** visar ett kvitto.
+Därefter kan du **Ändra** och skicka ändringarna, eller **Dra tillbaka rapporten**
+inom sju dagar. En skötare kan inte registrera en försäljning. Säger rutan **Rapporten
+kan inte skickas** listar den vad som saknas, med länkar till kaninerna.
+
+**Från blankett.** Genbanksansvarig och genbankshjälpare matar in en pappersblankett
+från ett ärende i inkorgen (**Mata in årsrapporten**). Sidan heter då **Från blankett**,
+med fotot av blanketten bredvid formuläret (under **Visa blanketten** på en smal skärm)
+och samma formulär i pappersläge. Fyll i **Mottagen** och **Blankettens datum**, och
+skriv varje kanins nummer efter besättningens prefix och tryck Enter. Tangent 1, 2 och 3
+väljer **Finns kvar**, **Död** och **Såld**; Enter går vidare till nästa
+fält och sist till nästa rad. Kaniner som inte står på blanketten ligger under **Kvar i
+Stamboken men inte på blanketten**, där **Markera som ej angivna på blanketten** tar alla
+på en gång. Under **Uppgifter på blanketten** skriver du in svaret om Koharen och nya
+kontouppgifter; de sparas direkt i matrikeln när du skickar, och sidan visar aldrig de
+nuvarande värdena, bara de två sista siffrorna i kontot. Har medlemmen påbörjat rapporten
+frågar sidan om du vill fortsätta på utkastet eller börja från blanketten. Är besättningen
+redan rapporterad kan du **Arkivera blanketten** eller **Ändra rapporten** med en orsak.
+Orsak krävs också när blanketten kommer efter sista dagen. **Skicka och nästa blankett**
+går tillbaka till inkorgen; kvittot stannar kvar när matrikeln ändrades eller när en
+ändring hoppades över för att matrikeln ändrats efter blankettens datum.
+
+#### Status för årsrapporten
+
+<!-- route: /stamboken/arsrapport/status/[year] -->
+
+Genbanksansvarig, administratör och genbankshjälpare ser hur rundan går i en genbank; länken
+**Status för genbanken** finns på **Årsrapport** för genbanksansvariga. Överst väljer du
+genbank (om du har flera) och kan **Skriv ut tom blankett**. Är rundan inte aktiverad för
+genbanken visar sidan de tre datumen (**Öppnar**, **Sista dag för stödet**, **Stänger**) och
+**Aktivera**; datumen gäller alla genbanker. Under datumen står hur många besättningar
+inbjudan går till och hur många som saknar e-post och får blanketten med post, och
+**Skicka provmejl till mig** skickar inbjudan till din egen adress. I provmejlet finns länken
+`/rapport#prov`, som bara visar att länken fungerar; den riktiga länken skapas först i det
+riktiga mejlet. Inbjudningarna skickas klockan 07 på rundans första dag, med registerutdraget
+som PDF. Därefter står aktiveringen på en rad, med dagen då inbjudningarna skickades, och
+**Ändra datum** öppnar datumen igen. Aktivera, ändra datum och provmejl kan bara
+genbanksansvarig och administratör; hjälpare ser bara listan och antalen.
+
+**Länken i inbjudan** är personlig och ser ut som `/rapport#` följt av en kod. Medlemmen öppnar
+den utan att logga in, och länken gäller bara den besättningen till rundans sista dag. Koden
+står efter `#`, så den finns inte i adressen som webbläsaren ber servern om. Sidan tar
+bort koden ur adressfältet och skickar den sedan för att öppna rapporten. Skriv
+aldrig ut en riktig länk i ett ärende eller en rapport.
+
+Under det står ett filter per läge med antal (**Att ringa**, **Påbörjade**, **Alla** och de
+andra lägena); valet ligger i adressen. **Att ringa** är påbörjade rapporter
+från två dagar före sista dag för stödet, och besättningar vars blankett lämnade ut
+kaniner som avgör stödet. Varje rad visar besättningen (koden öppnar rapporten), läget,
+villkoren för stöd (**Hane**, **Hona**, **Kull**, **I tid**, med bock eller kryss), flaggor som
+**3 ej angivna** eller **Ingen e-post**, när rapporten togs emot och åtgärder. Under läget står
+inbjudans läge: **Inbjudan skickad**, **Inbjudan studsade**, **Inbjudan misslyckades** eller
+**Länken öppnad**. Studsade och misslyckade inbjudningar kommer också under **Att ringa** tills
+besättningen har rapporterat. **Mata in blankett** öppnar inkorgen
+för besättningen, och genbanksansvarig kan välja **I tid** (**Räknas**, **Ja** eller **Nej**)
+på en rad med rapport. **Ny länk** på en besättning med e-post frågar
+**Den gamla länken slutar gälla. Skicka en ny länk till huvudmedlemmen?**; svarar du ja
+får huvudmedlemmen ett mejl med en ny länk, och den gamla slutar fungera. Det du eller
+medlemmen redan fyllt i finns kvar, och en medlem som redan rapporterat behöver den nya
+länken för att ändra eller dra tillbaka. Genbanksansvariga ser också huvudmedlemmens telefonnummer på raden, så att de kan ringa;
+hjälpare ser det inte.
+
 #### Notiser
 
 <!-- route: /stamboken/notiser -->
@@ -756,6 +838,17 @@ Dina notiser om inskick, nyast först; olästa står med fet stil. Varje notis l
 sitt ärende, och en notis blir läst när du klickar på den. **Markera alla som lästa**
 läser alla. Antalet olästa visas i menyn, vid **Mina inskick** (eller **Inkorg**) och
 vid **Notiser** under kontomenyn.
+
+#### Kontrollera köparens e-postadress
+
+<!-- route: /stamboken/notiser/koparadress/[number] -->
+
+För genbanksansvariga. Sidan öppnas från en notis när en köpare utanför föreningen har
+registrerats med en e-postadress som en annan köpare med ett annat namn redan har.
+Försäljningen är sparad, men mejlen till köparen väntar tills du har kontrollerat
+adressen. Kontrollera mot försäljningsbeviset. Rätta namnet eller adressen om något är
+fel, eller bekräfta att adressen tillhör samma person vid båda köpen. Då skickas mejlen
+till köparen. Säljaren får inget besked om detta.
 
 #### Verifiera intyg
 
@@ -779,6 +872,27 @@ visar ett av fyra besked:
   föreningen med **Kontakta Föreningen Gotlandskaninen**.
 
 ![Verifierat intyg](verifiera-intyg-mobil.png)
+
+#### Ta bort köparens uppgifter
+
+<!-- route: /kopare/ta-bort -->
+
+Har du sålt kaninen till någon utanför föreningen och skrivit köparens e-post får köparen
+ett mejl från föreningen. Det säger vad föreningen sparar om köparen och har kaninens
+intyg som bilaga, om kaninen har ett digitalt intyg. Mejlet har en länk till den här
+sidan, som inte kräver inloggning.
+
+Sidan visar vad som tas bort, köparens namn, ort och kontaktuppgifter, och knappen
+**Ta bort mina uppgifter**. Inget tas bort förrän köparen trycker på knappen.
+Försäljningen står kvar i kaninens historik, utan köparen. Sedan visar sidan ett av tre
+besked:
+
+- **Dina uppgifter är borttagna.**
+- **Länken har redan använts eller ersatts.** – köparen hänvisas till länken i ett nyare mejl,
+  om det finns ett, och annars till `dataskydd@gotlandskaninen.se`.
+- **Länken gäller inte längre.** – länken är fel eller ofullständig, eller sidan har
+  laddats om. Köparen kan klicka på länken i mejlet igen eller skriva till
+  `dataskydd@gotlandskaninen.se`.
 
 ---
 
@@ -1016,6 +1130,9 @@ eller kom efter de tio första bilderna. På ett klart intyg finns **Gör om mas
 får. **Fråga uppfödaren** finns när ärendet är ditt
 och taget, se [Arbeta i inkorgen](#arbeta-i-inkorgen).
 
+På ett dokument av typen Årsblankett finns **Mata in årsrapporten**, som öppnar blanketten
+bredvid rapportformuläret, se [Årsrapport för en besättning](#årsrapport-för-en-besättning).
+
 ---
 
 ## Del 3 – Administratör
@@ -1029,7 +1146,7 @@ upp på sidan.
 ### Hitta en användare
 
 1. Klicka fliken **Användare**.
-2. Skriv i sökfältet (användarnamn, e-post eller namn) och klicka **Filtrera**.
+2. Skriv i sökfältet (kontonummer, användarnamn, e-post eller namn) och klicka **Filtrera**.
    Rullgardinerna **Roll**, **Konto**, **Riktiga stamboken** och **Webbkurs** avgränsar
    listan.
 3. Klicka användarnamnet för att öppna kontot.
@@ -1041,8 +1158,8 @@ Kolumnen **Status och åtkomst** visar märkena **Webbkurs** (validerad),
 
 1. Öppna användaren och gå till kortet **Roller**.
 2. Välj **Roll**: Administratör, Matrikeladministratör, Genbanksansvarig,
-   Genbankshjälpare, Granskare eller Besättningsägare. För Genbanksansvarig,
-   Genbankshjälpare och Granskare väljer du **Genbank**;
+   Genbankshjälpare, Läsrätt eller Besättningsägare. För Genbanksansvarig,
+   Genbankshjälpare och Läsrätt väljer du **Genbank**;
    för Besättningsägare söker du besättningen i **Besättning**.
 3. Klicka **Lägg till roll**.
 4. Ta bort en roll med **Ta bort** på raden.

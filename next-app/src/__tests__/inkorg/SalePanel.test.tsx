@@ -91,9 +91,12 @@ describe("SalePanel with a buyer outside the association", () => {
     );
     expect(screen.getByLabelText(/Köparens namn/)).toBeInTheDocument();
     expect(screen.getByLabelText(/^Ort/)).toBeInTheDocument();
+    expect(screen.getByTestId("sell-buyer").className).not.toContain(
+      "memberFields",
+    ); // the queue keeps its compact fields
     expect(
       screen.getByText(
-        "Ge köparen överlåtelsebeviset. Där står föreningens information till köparen.",
+        "Ge köparen försäljningsbeviset. Där står föreningens information till köparen.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/sparas inte/)).toBeNull();

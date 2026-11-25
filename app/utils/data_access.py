@@ -40,6 +40,7 @@ from utils.database import Genebank  # isort: skip
 from utils.database import Herd  # isort: skip
 from utils.database import HerdTracking  # isort: skip
 from utils.database import Individual  # isort: skip
+from utils.database import Member, Membership  # isort: skip
 from utils.database import User  # isort: skip
 from utils.database import Weight  # isort: skip
 from utils.database import next_individual_number  # isort: skip
@@ -55,6 +56,7 @@ from utils.herd_contact import ContactConflict, apply_contact_patch, check_flat_
 from utils.herd_contact import contact_field, herd_contact, herd_contacts, legacy_contact_form, lock_herd  # isort: skip
 from utils.database import lock_individuals  # isort: skip
 from utils.database import not_voided  # isort: skip
+from utils.database import snapshot_read  # isort: skip
 from utils.database import validate_date  # isort: skip
 from utils.database import YearlyHerdReport
 
@@ -63,6 +65,7 @@ from utils.database import AUDITED_TABLES  # isort: skip
 from utils.database import IndividualDisease  # isort: skip
 
 from utils.database import YearlyReportRound  # isort:skip
+from utils.database import YearlyReportRoundGenebank  # isort:skip
 from utils.csv_safe import csv_cell  # isort:skip
 from utils.herd_tracking import BIRTH_HERD_CHANGED_REASON  # isort:skip
 from utils.herd_tracking import HerdTrackingError  # isort:skip
@@ -79,6 +82,7 @@ from utils.individual_commands import update_birth_date_herd_tracking  # isort:s
 from utils.individual_commands import update_bodyfat, update_weights  # isort:skip
 from utils.individual_commands import IndividualRefused, execute, purge_command_free_text  # isort:skip
 from utils.individual_commands import known_color, known_litter, known_origin_herd, known_parent  # isort:skip
+from utils.individual_commands import lock_mother_litters  # isort:skip
 from utils.individual_legacy import translate  # isort:skip
 from utils import settings  # isort:skip
 from extensions import session_redis  # isort:skip
@@ -408,9 +412,9 @@ def storable_google_email(email, hosted_domain):
     return email
 
 
-def holds_role(user):
-    """The account has a role in ROLE_LEVELS, and ALLOW_ROLE_PASSWORD_LOGIN (development, tests) is off."""
-    return not settings.service.allow_role_password_login and any(
+def holds_role(user, *, password_override=True):
+    """A protected role. Only password sign-in in development and tests can opt out."""
+    return not (password_override and settings.service.allow_role_password_login) and any(
         p.get("level") in ROLE_LEVELS for p in user.privileges
     )
 
@@ -465,10 +469,10 @@ def add_user(form, user_uuid=None):
         return {"status": "error", "message": "missing data"}
 
     with DATABASE.atomic():
-        if User.select().where(User.email == email).first():
+        try:
+            user = register_user(email, password, username, validated, privileges, adopt_existing=False)
+        except AddressInUseError:
             return {"status": "error", "message": "already exists"}
-
-    user = register_user(email, password, username, validated, privileges)
     return {"status": "created", "data": user.id}
 
 
@@ -486,33 +490,27 @@ def register_user(
     object. An account that already has this exact e-mail is returned instead,
     unless adopt_existing is False: then an account holding the address in any
     casing raises AddressInUseError, and the user returned is always the row
-    this call inserted. (No unique index on e-mail: a concurrent request can
-    still insert a second account with the address, never hand back this one.)
+    this call inserted. New registrations serialize on the normalized address.
     """
     if privileges is None:
         privileges = []
 
-    if adopt_existing:
-        # Don't create a new user if the email exists already
-        user = User.select().where(User.email == email).first()
-    else:
-        taken = User.select(User.id).where(fn.LOWER(User.email) == email.lower()).first()
-        if taken:
-            raise AddressInUseError(taken.id)
-        user = None
-    if user is None:
-        user = User(
-            email=email,
-            uuid=uuid.uuid4().hex,
-            username=username,
-            fullname=fullname,
-            validated=validated,
-            privileges=privileges,
-        )
-        with DATABASE.atomic():
-            user.save()
+    with DATABASE.atomic():
+        if adopt_existing:
+            user = User.select().where(User.email == email).first()
+        else:
+            _lock_available_account_email(email)
+            user = None
+        if user is None:
+            user = User.create(
+                email=email,
+                uuid=uuid.uuid4().hex,
+                username=username,
+                fullname=fullname,
+                validated=validated,
+                privileges=privileges,
+            )
 
-    # By id, not e-mail: another account may hold the same address.
     user = User.get_by_id(user.id)
     auth_log.info("Registered user id=%s", user.id)
 
@@ -543,11 +541,24 @@ class InactiveAccountError(Exception):
 
 
 class AddressInUseError(Exception):
-    """register_user(adopt_existing=False): account `user_id` already holds the address."""
+    """Account `user_id` already holds the requested address."""
 
     def __init__(self, user_id):
         super().__init__(user_id)
         self.user_id = user_id
+
+
+def _lock_available_account_email(email, excluding=None):
+    """Hold the normalized address through the caller's insert or update."""
+    from utils.login_code import lock_addresses
+
+    lock_addresses([email])
+    accounts = User.select(User.id).where(fn.LOWER(fn.BTRIM(User.email)) == email.strip().lower())
+    if excluding is not None:
+        accounts = accounts.where(User.id != excluding)
+    taken = accounts.first()
+    if taken:
+        raise AddressInUseError(taken.id)
 
 
 def authenticate_user(name, password):
@@ -604,7 +615,8 @@ def change_password(active_user, changed_user, form, session_stamps=None):
     # The account's row, as a login takes it: the new password and the new mark (new_generation) are one change.
     with DATABASE.atomic():
         try:
-            target = User.select(User.id, User.uuid).where(User.id == changed_user).for_update().get()
+            # never an account an erasure emptied (#190), also one emptied while this waited for the lock
+            target = User.select(User.id, User.uuid).where((User.id == changed_user) & not_erased()).for_update().get()
         except DoesNotExist:
             return None
         if _revoked_meanwhile(target, session_stamps):
@@ -970,31 +982,29 @@ def update_user(form, user_uuid=None):
     if not user.is_admin and target_user.is_admin and target_user.id != user.id:
         return {"status": "error", "message": "forbidden"}
 
-    # No taking an address another account holds: it is the password-login key
-    # (stop-gap; CMS identity keys on google_email, never on this field).
-    if (
-        form["email"] != target_user.email
-        and User.select()
-        .where((fn.LOWER(User.email) == str(form["email"]).lower()) & (User.id != target_user.id))
-        .exists()
-    ):
+    if any(is_pseudonym(form.get(field)) for field in ("email", "username")):
         return {"status": "error", "message": "email already in use"}
 
-    # update target user data if needed
-    changed = []
-    for field in ["email", "username", "validated", "fullname"]:
-        if field in form and getattr(target_user, field) != form[field]:
-            setattr(target_user, field, form[field])
-            changed.append(getattr(User, field))
+    try:
+        changed = _save_user_fields(target_user, form, ("email", "username", "validated", "fullname"))
+    except User.DoesNotExist:
+        return {"status": "error", "message": "unknown user"}
+    except AddressInUseError:
+        return {"status": "error", "message": "email already in use"}
+    return {"status": "updated" if changed else "unchanged"}
 
-    if changed:
-        # Only the changed columns: target_user was read without a lock, so a
-        # full-row save would write back a stale is_active/_privileges.
-        with DATABASE.atomic():
-            target_user.save(only=changed)
-        return {"status": "updated"}
 
-    return {"status": "unchanged"}
+def _save_user_fields(user, fields, allowed):
+    changed = {name: fields[name] for name in allowed if name in fields and fields[name] != getattr(user, name)}
+    if not changed:
+        return False
+    with DATABASE.atomic():
+        if "email" in changed and str(fields["email"]).strip():
+            _lock_available_account_email(str(fields["email"]), excluding=user.id)
+        # Only the changed fields, and only if the account survived since it was read.
+        if not User.update(changed).where((User.id == user.id) & not_erased()).execute():
+            raise User.DoesNotExist
+    return True
 
 
 _ALLOWED_LEVELS = ("admin", "matrikel_admin", "manager", "helper", "viewer", "owner")
@@ -1130,6 +1140,8 @@ def set_account_active(u_id, active, actor_user_id=None):
                 target = next((u for u in locked if u.id == u_id), None)
                 if target is None:
                     raise ValueError("user-not-found")
+                if active and target.email == f"raderad-{target.id}":  # not_erased(), on the locked row
+                    raise ValidationError("erased", "Kontot tömdes när personen anonymiserades och kan inte aktiveras.")
                 if not active and _count_current_admins(locked, exclude_user_id=u_id) == 0:
                     raise ValidationError(
                         "last-admin",
@@ -1158,6 +1170,45 @@ def set_account_active(u_id, active, actor_user_id=None):
 def _is_int_id(value):
     """A real integer id: bool is an int subclass, str/float ids are not ids."""
     return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _owner_refused(user_id, herd_id):
+    """Checked only when the owner role is granted (existing owner roles stay): the reason the account may not own the
+    herd, or None when it is linked to an active person in the herd's active membership.
+
+    Locks: the caller (update_role) holds the account's row, and link_member_user and unlink_member_user lock that
+    row too, so a link or unlink of this account waits for the grant. Ending a person or changing the membership's
+    status locks only the membership, so it can still commit between this read and the grant. The membership is not
+    locked here: update_role must take the account rows first, and taking the membership after them is the reverse
+    of link_member_user's order (membership, then account), which could deadlock."""
+    herd = Herd.get_or_none(Herd.id == int(herd_id))
+    if herd is None:
+        return ValidationError("herd-not-found", f"Besättningen med id {int(herd_id)} finns inte.", status=404)
+    if herd.membership_id is None:
+        return ValidationError(
+            "herd-without-membership",
+            "Besättningen är inte kopplad till något medlemskap. "
+            "Koppla den i matrikeln innan du ger rollen besättningsägare.",
+        )
+    in_membership = (
+        Member.select()
+        .join(Membership)
+        .where(
+            Member.membership == herd.membership_id,
+            Member.user == user_id,
+            Member.end_date.is_null(True),
+            Membership.membership_status == "active",
+        )
+        .exists()
+    )
+    if in_membership:
+        return None
+    return ValidationError(
+        "owner-requires-person",
+        "Rollen besättningsägare kan bara ges till ett konto som är kopplat till en person "
+        "(huvudmedlem, familjemedlem eller skötare) i besättningens medlemskap, och medlemskapet måste vara aktivt. "
+        "Koppla kontot till en person i medlemskapet först.",
+    )
 
 
 def update_role(operation, user_uuid=None, skip_role_check=False):
@@ -1278,6 +1329,10 @@ def update_role(operation, user_uuid=None, skip_role_check=False):
                     target_user.remove_role(operation["role"], operation.get(target))
                     updated = True
                 elif not has_role and operation["action"] == "add":
+                    # Not for the Google sign-in's herd attribute (skip_role_check): the person is linked after it.
+                    if operation["role"] == "owner" and not skip_role_check:
+                        if refused := _owner_refused(target_user.id, operation["herd"]):
+                            raise refused
                     if (
                         operation["role"] in ROLE_LEVELS
                         and not settings.service.allow_role_password_login
@@ -1362,27 +1417,48 @@ HERD_EDITABLE_FIELDS = {
 
 def _herd_owner_map():
     """
-    Map numeric Herd.id -> list of owning Users, in ONE pass over hbuser.
+    Map numeric Herd.id -> list of owning Users: one scan of hbuser for the
+    owner roles, then one query for the main members and one for their herds.
 
-    `_privileges` is a TEXT JSON column, so owner lookups cannot be done
+    `_privileges` is a TEXT JSON column, so owner roles cannot be found
     in SQL. One scan of the small hbuser table (hundreds of rows)
     replaces the per-herd scans a naive join-substitute would do.
 
     A herd can have MULTIPLE owners (legacy parity — e.g. museum herds
     and shared family herds); lists are sorted by user id for stable
-    output.
+    output. The owners are those of User.transfer_herd_ids: legacy owner
+    roles plus the active main member of the herd's membership (#214),
+    never a caretaker with a herd-access grant.
     """
     owners = {}
     for u in User.select().order_by(User.id):
         for p in u.privileges:
             if p.get("level") == "owner" and isinstance(p.get("herd"), int):
                 owners.setdefault(p["herd"], []).append(u)
+    mains = {}
+    for person in (
+        Member.select(Member.membership, User)
+        .join(User)
+        .switch(Member)
+        .join(Membership)
+        .where(
+            (Member.role == "huvudmedlem") & Member.end_date.is_null(True) & (Membership.membership_status == "active")
+        )
+    ):
+        mains.setdefault(person.membership_id, []).append(person.user)
+    for herd in Herd.select(Herd.id, Herd.membership).where(Herd.membership.in_(list(mains))):
+        herd_owners = owners.setdefault(herd.id, [])
+        known = {u.id for u in herd_owners}
+        herd_owners += [u for u in mains[herd.membership_id] if u.id not in known]
+        herd_owners.sort(key=lambda u: u.id)
     return owners
 
 
-def list_all_herds(user, *, genebank_id=None, active=None, has_owner=None, search=None, page=1, page_size=50):
+def list_all_herds(user, *also, genebank_id=None, active=None, has_owner=None, search=None, page=1, page_size=50):
     """
-    Admin-only cross-genebank herd list. Joins genebank name +
+    Adminpanel herd list: every genebank for admin, only the managed
+    genebanks for a manager (#214). With `also` (the snapshot's user next to
+    the session's), only the genebanks all of them may see. Joins genebank name +
     owner usernames. Sorted by genebank + the numeric part of the herd
     code (an earlier design said herd.name asc, but `name` is the CONTACT person
     and NULL/empty for hundreds of rows — that order made specific herds
@@ -1391,13 +1467,22 @@ def list_all_herds(user, *, genebank_id=None, active=None, has_owner=None, searc
     filters run BEFORE pagination so `total` and page sizes stay correct.
     Returns {"herds": [...], "total": N, "page": ..., "page_size": ...}.
     """
-    if not user.is_admin:
-        raise ValueError("admin-required")
+    scope = None  # every genebank
+    for u in (user, *also):
+        if u.is_admin:
+            continue
+        if not u.is_manager:
+            raise ValueError("manager-required")
+        scope = set(u.is_manager) if scope is None else scope & set(u.is_manager)
     q = Herd.select(Herd, Genebank).join(Genebank)
+    if scope is not None:
+        q = q.where(Herd.genebank.in_(list(scope)))
     if genebank_id is not None:
         q = q.where(Herd.genebank == genebank_id)
-    if active is not None:
-        q = q.where(Herd.is_active == active)
+    if active:
+        q = q.where(Herd.is_active == True)  # noqa: E712
+    elif active is not None:  # a NULL status shows as Inaktiv, so it is found here (#214)
+        q = q.where((Herd.is_active == False) | Herd.is_active.is_null(True))  # noqa: E712
     # Materialise before slicing: herd is a small table (~1200 rows) and
     # the owner/search filters can only run Python-side (TEXT JSON).
     herds = list(q)
@@ -1438,7 +1523,7 @@ def list_all_herds(user, *, genebank_id=None, active=None, has_owner=None, searc
                 "is_active": bool(h.is_active),
                 "genebank_id": h.genebank_id,
                 "genebank_name": h.genebank.name,
-                "owner_usernames": [o.username or o.email for o in herd_owners],
+                "owner_usernames": [o.username or o.fullname or o.email for o in herd_owners],
             }
         )
     return {"herds": rows, "total": total, "page": page, "page_size": page_size}
@@ -1584,13 +1669,14 @@ def get_herd(herd_id, user_uuid=None):
     Returns information on the herd given by `herd_id`, including a list of all
     individuals belonging to that herd. The returned data is limited to the
     access permission of the user identified by `user_uuid`.
+    Call outside a transaction to read from a dedicated snapshot.
     """
-    user = fetch_user_info(user_uuid)
-    if user is None:
-        return None
     try:
         data = None
-        with DATABASE.atomic():
+        with snapshot_read():
+            user = fetch_user_info(user_uuid)
+            if user is None:
+                return None
             herd = Herd.get(Herd.herd == herd_id)
             data = herd.filtered_dict(user)
             data["individuals"] = []
@@ -1755,6 +1841,17 @@ def save_yearly_report(herd_id, form_data, user):
                     "message": "Report year does not match report round year",
                 }
 
+            # Legacy closes for a genebank once v2 activated it for the year, whatever the round's flags say
+            if (
+                YearlyReportRoundGenebank.select()
+                .where(
+                    (YearlyReportRoundGenebank.round == report_round.id)
+                    & (YearlyReportRoundGenebank.genebank == herd.genebank_id)
+                )
+                .exists()
+            ):
+                return {"status": "error", "message": "Årsrapporten för den här genbanken lämnas i nya Stamboken."}
+
             # Validate that no other report exists for this herd in this year
             existing_reports = (
                 YearlyHerdReport.select()
@@ -1763,6 +1860,7 @@ def save_yearly_report(herd_id, form_data, user):
                     (YearlyHerdReport.herd == herd_id)
                     & (YearlyReportRound.report_year == report_year)
                     & (YearlyHerdReport.round != report_round_id)
+                    & (YearlyHerdReport.status == "legacy")
                 )
             )
             if existing_reports.exists():
@@ -1779,7 +1877,11 @@ def save_yearly_report(herd_id, form_data, user):
         # Check if a report already exists for this herd and round
         existing_report = (
             YearlyHerdReport.select()
-            .where((YearlyHerdReport.herd == herd_id) & (YearlyHerdReport.round == report_round_id))
+            .where(
+                (YearlyHerdReport.herd == herd_id)
+                & (YearlyHerdReport.round == report_round_id)
+                & (YearlyHerdReport.status == "legacy")
+            )
             .first()
         )
 
@@ -3152,6 +3254,9 @@ def register_birth(form, user_uuid):
         return max(existing_numbers) if existing_numbers else 0
 
     with DATABASE.atomic():
+        # The mother's litters first, as RegisterLitter: the dates are decided again under it below.
+        if breeding.mother_id is not None:
+            lock_mother_litters(breeding.mother_id)
         # Serialise the herd/year litter-number space before reading it,
         # deterministic order to avoid deadlocks — mirrors renumber_litters.
         # This litter is in the same ascending lock call even when its breed date falls in another year.
@@ -3184,6 +3289,17 @@ def register_birth(form, user_uuid):
             Individual.get_by_id(locked.mother_id) if locked.mother_id else None
         ):
             return {"status": "error", "message": not_owned}
+        # The date rules again under the mother's lock: a litter of hers registered meanwhile counts.
+        date_errors, date_warnings = validate_breeding_dates(
+            breed_date=locked.breed_date,
+            birth_date=birth_date,
+            mother=breeding.mother,
+            father=breeding.father,
+            exclude_breeding_id=locked.id,
+            litter_size=litter_size,
+        )
+        if date_errors:
+            return {"status": "error", "message": ", ".join(date_errors)}
 
         suggestion = suggest_litter_number(herd_identifier, birth_date_only, exclude_breeding_id=breeding.id)
         litter_conflicts = suggestion["conflicts"]
@@ -3331,6 +3447,7 @@ def update_breeding(form, user_uuid):
         # a correction committed before the lock.
         if new_sizes[1] != breeding.litter_size6w:
             changes["litter_size6w"] = new_sizes[1]
+            changes["litter_size6w_preliminary"] = False  # a typed count is not the guess
     except (TypeError, ValueError):
         errors += ["Unknown litter size."]
 
@@ -3342,6 +3459,7 @@ def update_breeding(form, user_uuid):
         return {"status": "error", "message": ", ".join(errors)}
 
     parents_changed = "mother" in changes or "father" in changes
+    litter_dates_changed = bool(changes.keys() & {"mother", "father", "breed_date", "birth_date"})
     validation_input_changed = bool(changes.keys() & {"mother", "father", "breed_date", "birth_date", "litter_size"})
     # The BIRTH rows move below, in the same transaction as the breeding save.
     new_birth_date = changes.get("birth_date")
@@ -3350,9 +3468,21 @@ def update_breeding(form, user_uuid):
     # refused sibling (HerdTrackingError) must leave every kit and the breeding untouched.
     try:
         with DATABASE.atomic():
+            # A parent or date change takes the litter's mothers first, as RegisterLitter takes its mother's (the 3- and
+            # 35-day rules): the one it has now (read afresh, since a correction may have come after this request's
+            # read) and any new one, in ascending order. A count alone takes none: a certificate calls this holding
+            # the litter's row already, and that row lock serializes it with ConfirmLitterSize.
+            mothers = []
+            if litter_dates_changed:
+                now_mother = Breeding.select(Breeding.mother).where(Breeding.id == breeding.id).scalar()
+                mothers = sorted({m for m in (now_mother, getattr(changes.get("mother"), "id", None)) if m})
+            for mother_id in mothers:
+                lock_mother_litters(mother_id)
             # LOCK ORDER: Breeding first, then individuals in ascending id in ONE call — the order
             # delete_breeding and set_litter_number/renumber_litters take.
             stored = Breeding.select().where(Breeding.id == breeding.id).for_update().get()
+            if litter_dates_changed and stored.mother_id is not None and stored.mother_id not in mothers:  # not ours
+                return {"status": "error", "message": "Kullen ändrades samtidigt. Försök igen."}
             # Authorize again under the lock: the pre-check above read an unlocked herd.
             if not user.can_edit(stored.breeding_herd_id.herd):
                 return {"status": "error", "message": "Forbidden"}
@@ -3508,18 +3638,24 @@ def update_yearly_report_round(round_id, form, user_uuid):
     Updates an existing YearlyReportRound with data from the form.
     Only accessible to admin or manager users.
     """
+    import utils.arsrapport as arsrapport  # pylint: disable=import-outside-toplevel  # it imports half the app
+
     user = fetch_user_info(user_uuid)
     if not (user.is_admin or user.is_manager):
         return {"status": "error", "message": "Forbidden"}
     try:
-        yr_round = YearlyReportRound.get(YearlyReportRound.id == round_id)
-        yr_round.start_date = form.get("start_date", yr_round.start_date)
-        yr_round.end_date = form.get("end_date", yr_round.end_date)
-        yr_round.is_active = form.get("is_active", yr_round.is_active)
-        yr_round.manually_activated = form.get("manually_activated", yr_round.manually_activated)
-        yr_round.report_year = form.get("report_year", yr_round.report_year)
-        # Do not update 'created_by' or 'creation_date'
-        yr_round.save()
+        with DATABASE.atomic():  # as save_round: the UPDATE holds the round row until the end_date has been followed
+            yr_round = YearlyReportRound.get(YearlyReportRound.id == round_id)
+            yr_round.start_date = form.get("start_date", yr_round.start_date)
+            yr_round.end_date = form.get("end_date", yr_round.end_date)
+            yr_round.is_active = form.get("is_active", yr_round.is_active)
+            yr_round.manually_activated = form.get("manually_activated", yr_round.manually_activated)
+            yr_round.report_year = form.get("report_year", yr_round.report_year)
+            # Do not update 'created_by' or 'creation_date'
+            yr_round.save()
+            # Always, from the row read back under its lock: save() writes every column, so a form without end_date
+            # may still write back one read before a save_round that moved it
+            arsrapport.follow_end_date(YearlyReportRound.get_by_id(round_id))
         return {"status": "success", "round": yr_round.id}
     except YearlyReportRound.DoesNotExist:
         return {"status": "error", "message": "YearlyReportRound not found."}
@@ -3546,7 +3682,7 @@ def get_yearly_report_rounds_with_counts(user_uuid=None):
             .join(
                 YearlyHerdReport,
                 JOIN.LEFT_OUTER,
-                on=(YearlyHerdReport.round == YearlyReportRound.id),
+                on=((YearlyHerdReport.round == YearlyReportRound.id) & (YearlyHerdReport.status == "legacy")),
             )
             .group_by(YearlyReportRound, User.username)
             .dicts()
@@ -3584,7 +3720,11 @@ def get_yearly_report_by_round(herd_id, round_id):
     try:
         report = (
             YearlyHerdReport.select()
-            .where((YearlyHerdReport.herd == herd_id) & (YearlyHerdReport.round == round_id))
+            .where(
+                (YearlyHerdReport.herd == herd_id)
+                & (YearlyHerdReport.round == round_id)
+                & (YearlyHerdReport.status == "legacy")
+            )
             .get()
         )
         report_data = report.as_dict()
@@ -3608,7 +3748,11 @@ def get_yearly_reports(
             reports = (
                 YearlyHerdReport.select(YearlyHerdReport, Herd)
                 .join(Herd)
-                .where((YearlyHerdReport.round == round_id) & (Herd.genebank == genebank_id))
+                .where(
+                    (YearlyHerdReport.round == round_id)
+                    & (Herd.genebank == genebank_id)
+                    & (YearlyHerdReport.status == "legacy")
+                )
             )
 
             formatted_reports = []
@@ -4039,7 +4183,12 @@ def list_admin_users(
         q = q.where(User.last_active >= active_since)
     if search:
         s = f"%{search}%"
-        q = q.where((User.username**s) | (User.email**s) | (User.fullname**s))
+        match = (User.username**s) | (User.email**s) | (User.fullname**s)
+        # The account number, as "174" or "Konto 174" (what the inbox shows). ASCII digits, bounded to int4.
+        number = re.fullmatch(r"(?:konto\s*)?([0-9]{1,10})", search.strip(), re.IGNORECASE)
+        if number and int(number[1]) <= 2_147_483_647:
+            match = match | (User.id == int(number[1]))
+        q = q.where(match)
     sort_map = {
         "username": User.username,
         "email": User.email,
@@ -4100,17 +4249,15 @@ def edit_admin_user(u_id, fields):
     (POST /api/v2/admin/role) and flags through their dedicated endpoints;
     the endpoint rejects everything else before calling this.
     """
-    user = User.get_or_none(User.id == u_id)
+    user = User.get_or_none((User.id == u_id) & not_erased())
     if user is None:
         raise ValueError("user-not-found")
-    if "fullname" in fields:
-        user.fullname = fields["fullname"]
-    if "email" in fields:
-        user.email = fields["email"]
-    # Only the edited columns, never a stale is_active/_privileges.
-    only = [getattr(User, f) for f in ("fullname", "email") if f in fields]
-    if only:
-        user.save(only=only)
+    if is_pseudonym(fields.get("email")):
+        raise ValidationError("reserved-address", "Adressen är reserverad för konton som har tömts.")
+    try:
+        _save_user_fields(user, fields, ("fullname", "email"))
+    except User.DoesNotExist as exc:
+        raise ValueError("user-not-found") from exc
     return get_admin_user_detail(u_id)
 
 
@@ -4489,24 +4636,87 @@ PII_KEYS = [
 ]
 
 
+def is_pseudonym(value):
+    """The form of erase_account's e-mail and purge_user_audit_pii's author, which no account may take."""
+    return isinstance(value, str) and re.fullmatch(r"raderad-\d+", value.strip(), re.IGNORECASE) is not None
+
+
+def not_erased():
+    """A WHERE term: the account is not one erase_account emptied (its e-mail is the pseudonym)."""
+    return User.email != fn.CONCAT("raderad-", User.id)
+
+
+def profile_pictures_of(user):
+    """Every picture file the account `user` has had, from its row and its audit snapshots: read before the purge."""
+    cursor = DATABASE.execute_sql(
+        """
+        SELECT DISTINCT v FROM audit_log,
+            LATERAL (VALUES (old_data->>'profile_picture'), (new_data->>'profile_picture')) AS picture(v)
+        WHERE table_name = 'hbuser' AND record_id = %s AND v IS NOT NULL
+        """,
+        (str(user.id),),
+    )
+    return {row[0] for row in cursor} | ({user.profile_picture} if user.profile_picture else set())
+
+
+def erase_account(user):
+    """
+    Empties the account `user` (#190), inside the caller's transaction with its row locked: no name, address or
+    picture, no way to sign in and no role. The row stays, as other tables name its id; its e-mail (NOT NULL) becomes
+    the audit pseudonym. The caller keeps `user` as read before, for purge_user_audit_pii and
+    remove_profile_picture. The acceptance of the account rules (#187) holds no personal data and stays.
+    """
+    Authenticators.delete().where(Authenticators.user == user.id).execute()
+    User.update(
+        username=None,
+        fullname=None,
+        email=f"raderad-{user.id}",  # not_erased() knows the account by it
+        uuid=uuid.uuid4().hex,  # the session key and in PII_KEYS: the old one leads nowhere, also on the demo
+        google_email=None,
+        google_name=None,
+        google_picture=None,
+        profile_picture=None,
+        is_active=False,
+        _privileges="[]",
+    ).where(User.id == user.id).execute()
+    new_generation(user.uuid)  # the old key's mark, for a session store shared with the demo
+
+
+def remove_profile_picture(name):
+    """After the commit: removes an uploaded profile picture that no row names any more. Logs no names."""
+    base = os.path.basename(name or "")  # the row holds a bare file name; never let it reach outside the folder
+    if not base:
+        return
+    try:
+        os.remove(os.path.join(os.getenv("UPLOAD_FOLDER", "/app/uppladdningar"), "profiler", base))
+    except FileNotFoundError:
+        pass
+    except OSError:
+        logger.error("Could not remove the profile picture of an erased account")
+
+
 def purge_user_audit_pii(user_id: int, username: str, email: str) -> int:
     """GDPR Article 17 right-to-erasure helper for audit_log.
 
     Redacts PII_KEYS from old_data/new_data on every audit_log row about
-    the user (table_name='hbuser' AND record_id=<user_id>) or WRITTEN BY
-    them (changed_by IN (username, email) — changed_by stores
-    current_user.username-or-email, never the numeric id. Pseudonymises
-    changed_by to 'raderad-<user_id>' and NULLs ip_address on matched
-    rows. One transaction with the same DROP RULE → UPDATE → marker →
+    the user (table_name='hbuser' AND record_id=<user_id>). On those and on
+    the rows WRITTEN BY them (changed_by IN (username, email) — changed_by
+    stores current_user.username-or-email, never the numeric id), whose
+    values are another record's and stay, it pseudonymises changed_by to
+    'raderad-<user_id>' and NULLs ip_address. One transaction with the same DROP RULE → UPDATE → marker →
     CREATE RULE sequence as the credential-redaction migration; Postgres DDL is
     transactional, so a rollback also restores the rule.
     In the same transaction the free text of the user's command log rows
     goes too (ADR-0017); the actor id stays as their pseudonym.
 
-    The caller must capture username and email BEFORE deleting the hbuser
-    row. Returns the number of rows redacted (0 for a fresh account).
-    NOT wired to any endpoint in Phase 17 — user deletion is out of scope;
-    a future deletion endpoint calls this inside the same request atomic().
+    The caller must capture username and email BEFORE emptying the hbuser
+    row. The names the account had before them (its own hbuser snapshots) are
+    matched too. A name another account has or had is not, current or not:
+    changed_by is only a name, and such a row may be the other account's
+    (logged when it is a current name). Returns the number of
+    rows redacted (0 for a fresh account). Called by anonymize_person (#190),
+    last in its transaction: from the DROP RULE on, audit_log is locked until
+    the commit, and a lock wait over AUDIT_IP_LOCK_TIMEOUT raises instead.
     """
     pseudonym = f"raderad-{user_id}"
     marker_id = "purge-user-{}-{}".format(user_id, datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
@@ -4514,28 +4724,55 @@ def purge_user_audit_pii(user_id: int, username: str, email: str) -> int:
         # Before the DROP RULE: it locks audit_log exclusively until commit, and an Undo that holds one of these
         # rows writes audit_log through its trigger, so the other order can deadlock.
         purge_command_free_text(datetime.now(timezone.utc), actor_id=user_id)  # the actor stays: a pseudonym
+        # changed_by holds the username or e-mail as it was at the time; read them before the snapshots go
+        earlier = {
+            row[0]
+            for row in DATABASE.execute_sql(
+                """
+                SELECT DISTINCT v FROM audit_log,
+                    LATERAL (VALUES (old_data->>'username'), (old_data->>'email'),
+                                    (new_data->>'username'), (new_data->>'email')) AS earlier(v)
+                WHERE table_name = 'hbuser' AND record_id = %s AND v IS NOT NULL
+                """,
+                (str(user_id),),
+            )
+        }
+        candidates = list((earlier | {username, email}) - {None})
+        shared = {
+            row[0]
+            for row in DATABASE.execute_sql(
+                """
+                SELECT v FROM hbuser, LATERAL (VALUES (username), (email)) AS now(v)
+                WHERE user_id <> %s AND v = ANY(%s::text[])
+                UNION
+                SELECT v FROM audit_log,
+                    LATERAL (VALUES (old_data->>'username'), (old_data->>'email'),
+                                    (new_data->>'username'), (new_data->>'email')) AS before(v)
+                WHERE table_name = 'hbuser' AND record_id <> %s AND v = ANY(%s::text[])
+                """,
+                (user_id, candidates, str(user_id), candidates),
+            )
+        }
+        names = sorted((earlier | {username, email}) - shared - {None})
+        if shared & {username, email}:  # changed_by is only a name: such a row may be the other account's
+            logger.warning("purge_user_audit_pii: user %s keeps a current name another account has or had", user_id)
+        # A queued DROP RULE would hold up every audited write behind it, as in purge_audit_ip.
+        DATABASE.execute_sql("SELECT set_config('lock_timeout', %s, true)", (AUDIT_IP_LOCK_TIMEOUT,))
         DATABASE.execute_sql("DROP RULE IF EXISTS audit_log_no_update ON audit_log")
         cursor = DATABASE.execute_sql(
             """
             UPDATE audit_log
-            SET old_data   = old_data - %s::text[],
-                new_data   = new_data - %s::text[],
-                changed_by = CASE WHEN changed_by IN (%s, %s)
+            SET old_data   = CASE WHEN table_name = 'hbuser' AND record_id = %s
+                                  THEN old_data - %s::text[] ELSE old_data END,
+                new_data   = CASE WHEN table_name = 'hbuser' AND record_id = %s
+                                  THEN new_data - %s::text[] ELSE new_data END,
+                changed_by = CASE WHEN changed_by = ANY(%s::text[])
                                   THEN %s ELSE changed_by END,
                 ip_address = NULL
             WHERE (table_name = 'hbuser' AND record_id = %s)
-               OR changed_by IN (%s, %s)
+               OR changed_by = ANY(%s::text[])
             """,
-            (
-                PII_KEYS,
-                PII_KEYS,
-                username,
-                email,
-                pseudonym,
-                str(user_id),
-                username,
-                email,
-            ),
+            (str(user_id), PII_KEYS, str(user_id), PII_KEYS, names, pseudonym, str(user_id), names),
         )
         rows_redacted = cursor.rowcount or 0
         if rows_redacted == 0:
@@ -4638,6 +4875,10 @@ def purge_member_applications(now) -> int:
 LOGOUT_EPOCH_KEY = "logout-epoch"
 
 
+def logout_epoch():
+    return int(session_redis.get(LOGOUT_EPOCH_KEY) or 0)
+
+
 def _generation_key(user_uuid):
     # Beside LOGOUT_EPOCH_KEY, for the same reasons. Keyed on the uuid the session holds, read before any user is.
     return f"generation:{uuid.UUID(str(user_uuid)).hex}"
@@ -4658,7 +4899,7 @@ def session_holds(stamps):
     if not stamps.get("user_id"):
         return False
     generation = account_generation(stamps["user_id"])
-    epoch = int(session_redis.get(LOGOUT_EPOCH_KEY) or 0)
+    epoch = logout_epoch()
     return generation is not None and stamps.get("generation") == generation and stamps.get("logout_epoch", 0) >= epoch
 
 

@@ -118,10 +118,6 @@ rättar besättningshistorik, numrerar om kullar och lägger in kaniner som köp
 utanför genbanken. Tar emot pappersintyg och årsrapporter.\
 Kod: `manager` · Legacy-manual: samma · Legacy: samma, "Manager" · Nytt UI: samma
 
-**Granskare**\
-Ser allt i en genbank men kan inte ändra något.\
-Kod: `viewer` · Legacy-manual: – · Legacy: "Viewer" · Nytt UI: samma
-
 **GX1 / MX1**\
 Två påhittade besättningar för kaniner som sålts till någon utanför genbanken, till exempel som
 sällskapsdjur: GX1 för gotlandskanin, MX1 för mellerudskanin. En kanin utan intyg kan bara säljas
@@ -156,10 +152,20 @@ sitt nummer av Stamboken. När kaninen har ett intygsnummer kan uppfödaren inte
 individnummer eller härstamning, bara namn, färg, kön och anteckningar.\
 Kod: `certificate` (papper), `digital_certificate` (digitalt) · Legacy-manual: "intygsnummer" · Legacy: "Intygsnummer", "Nummer på pappersintyg" · Nytt UI: "Intygsnummer"
 
+**Juridisk person**\
+En organisation som själv är medlem i föreningen, till exempel en förening eller ett företag.
+Medlemskapet registreras i organisationens namn.\
+Kod: `Membership.organization_name` är ifyllt · Legacy-manual: – · Legacy: – · Nytt UI: "Juridisk person (organisation)"
+
 **Kastrerad**\
 En kastrerad kanin har ett kastreringsdatum. Den räknas inte som aktiv och inte som avelsdjur,
 även om den lever.\
 Kod: `castration_date` · Legacy-manual: – · Legacy: – · Nytt UI: "Kastrerad"
+
+**Kontaktperson**\
+I matrikeln är kontaktpersonen den som företräder en juridisk person och har rollen huvudmedlem.
+Kontaktpersonens namn kan lämnas tomt. På en besättning är kontaktpersonen den som valts för besättningens kontaktuppgifter.\
+Kod: `Member.role` = `huvudmedlem` för en juridisk person, `Herd.contact_member` för en besättning · Legacy-manual: – · Legacy: – · Nytt UI: samma
 
 **Kull**\
 Ungarna från en födsel. Parning och kull är samma post: först registreras parningen, sedan födseln
@@ -192,6 +198,11 @@ besättning än sin ursprungsbesättning märks Köpt på kaninens kort. Köpare
 det gör säljaren eller genbanksansvarig.\
 Kod: `origin_herd` · Legacy-manual: "köpt" · Legacy: "Ursprungsbesättning" · Nytt UI: "Köpt", "Ursprungsbesättning" (ändringsloggen)
 
+**Läsrätt**\
+Rollen som ser allt i en genbank men inte kan ändra något: "Läsrätt till Gotlandskaninen". Ingen
+granskar något, så rollen heter inte "Granskare".\
+Kod: `viewer` · Legacy-manual: – · Legacy: "Viewer" · Nytt UI: "Läsrätt" (#214)
+
 **Matrikeladministratör**\
 Sköter medlemsregistret: medlemskap, medlemsnummer, personer och medlemsansökningar.\
 Kod: `matrikel_admin` · Legacy-manual: – · Legacy: – · Nytt UI: samma
@@ -206,6 +217,15 @@ Kod: `Membership`, `member_number`, `Member` · Legacy-manual: "medlemsregistret
 Avgiften för ett års medlemskap i Föreningen Gotlandskaninen. Samma avgift har också kallats
 årsavgift; skriv medlemsavgift, som inte går att blanda ihop med årsrapporten.\
 Kod: – · Nytt UI: "Medlemsavgiften", "Betala medlemsavgiften"
+
+**Organisationsnamn**\
+Namnet på den juridiska person som har medlemskapet. Det används som mottagarnamn på föreningens tidning.\
+Kod: `Membership.organization_name` · Legacy-manual: – · Legacy: – · Nytt UI: samma
+
+**Organisationsnummer**\
+Den juridiska personens identitetsnummer. I matrikeln är numret frivilligt och skrivs med tio siffror
+och ett bindestreck, NNNNNN-NNNN.\
+Kod: `Membership.organization_number` · Legacy-manual: – · Legacy: – · Nytt UI: samma
 
 **Oregistrerad unge**\
 Gamla manualen: en unge som ännu inte fått ett intyg. I nya Stamboken är det en rad i kullistan
@@ -269,6 +289,14 @@ Släktträdet visar kaninens föräldrar, mor- och farföräldrar och längre ba
 kaninens mor och far; den anges när kaninen läggs in och kan inte ändras av uppfödaren när kaninen
 har intyg. På de publika sidorna används stamtavla i samma mening.\
 Kod: `Breeding.mother`, `Breeding.father` · Legacy-manual: "Släktträd", "härstamning" · Legacy: samma · Nytt UI: "Släktträd", "stamtavla", "Mor", "Far"
+
+**Stamboken / Stamboken Online**\
+Stamboken är föreningens register över kaninerna i genbankerna: det som står registrerat, vem som än
+har lagt in det. Stamboken Online är webbsystemet där registret förs, där medlemmar rapporterar och
+genbanksansvariga lägger in intyg. I texter som når medlemmen utanför systemet (blanketter, mejl,
+Koharen, hemsidan) skrivs Stamboken Online när läsaren ska gå dit och göra något, och Stamboken när
+texten gäller det som står registrerat. Inne i systemet räcker Stamboken. Stort O.\
+Kod: – · Legacy-manual: "Stamboken Online" · Legacy: "Stamboken Online" · Nytt UI: "Stamboken Online" på hemsidan och inloggningen
 
 **Sälja / säljdatum / såld**\
 När en kanin byter besättning registrerar säljaren försäljningen: ny besättning (eller GX1/MX1) och
@@ -351,8 +379,9 @@ ordet i `scripts/check-ui-terms.sh`, med datum om det beslutades 2026-10-30 (se 
 | Säljdatum | "försäljningsdatum" (manual:219) | "Köpdatum" (individual_sellingform.tsx:101), "Säljdatum" (felmeddelande, individual_add.tsx:428) | "Försäljningsdatum" (`individual.sell.dateLabel`) | "Säljdatum" (`individual.sell.dateLabel`) | Säljdatum (beslut 2026-10-30) |
 | Såld | "dit kaninen ska flytta", "flyttat" (manual:219–220) | "Individen har flyttats till besättning" (individual_sell.tsx:249), "flyttas till ... för flytten" (individual_sell.tsx:174–175) | "{{name}} har flyttats till {{herd}}." (`individual.sell.moved`) | "{{name}} är såld till {{herd}}." (`individual.sell.moved`); "Flytt", "Flyttad hit" i historiken (herdTracking.ts:58, 65) | Såld; flytt bara i historiken |
 | Försäljning i ändringsloggen | – | – | "Överlåtelse" (auditLabels.ts:158) | "Försäljning" (auditLabels.ts:158) | Försäljning |
+| Pappret vid försäljning | – | – | – | "Försäljningsbevis" (PurchaseDialog.tsx, `buyerNote`) | Försäljningsbevis, aldrig "överlåtelsebevis" (beslut 2026-11-25) |
 | Rollen genbanksansvarig | "genbanksansvarig" (manual:178, 201) | "Manager" (userForm.tsx:83, individual_view.tsx:453), "Endast Manager" (field_with_permission.tsx:73), "genbanksansvarig" (individual_form.tsx:131) | "Manager" (KontoCard.tsx:124), "Genbanksansvarig" (RolePicker.tsx:76) | "Genbanksansvarig" (KontoCard.tsx:124, RolePicker.tsx:76), "Endast genbanksansvarig" (min-besattning-ui.tsx:244) | Genbanksansvarig |
-| Övriga roller | "vanlig användare" (manual:188) | "Owner", "Viewer" (userForm.tsx:82, 84) | samma som nu | "Besättningsägare", "Granskare", "Administratör", "Matrikeladministratör" (RolePicker.tsx:74–78) | Besättningsägare bara som rollnamn i admin, Uppfödare i text (beslut 2026-10-30) |
+| Övriga roller | "vanlig användare" (manual:188) | "Owner", "Viewer" (userForm.tsx:82, 84) | samma som nu | "Besättningsägare", "Läsrätt", "Administratör", "Matrikeladministratör" (RolePicker.tsx:74–79) | Besättningsägare bara som rollnamn i admin, Uppfödare i text (beslut 2026-10-30); Läsrätt, inte "Granskare" (#214) |
 | Fliken med kullar | "Kullar och parningar" (manual:125, 128) | "Kullar och parningar" (herd_view.tsx:141, individual_form.tsx:290) | "Kullar & parningar" (min-besattning-ui.tsx:13), "Kullar & Parningar" (`breeding.listTitle`, används inte) | "Kullar och parningar" (min-besattning-ui.tsx:13, `breeding.listTitle`, används inte) | Kullar och parningar (beslut 2026-10-30) |
 | Fliken med kaniner | "Lista över individer" (manual:126) | "Lista över individer" (herd_view.tsx:134) | samma som nu | "Kaniner" (min-besattning-ui.tsx:12) | Kaniner (beslut 2026-10-30) |
 | Min besättning | "Min besättning" (manual:78) | "Min besättning", "Mina besättningar" (navigation.tsx:207–208) | "Min Besättning" (`sidebar.minBesattning`), "Min besättning" (`individual.breadcrumb.myHerd`) | "Min besättning" (`sidebar.minBesattning`, `individual.breadcrumb.myHerd`) | Min besättning (beslut 2026-10-30) |
@@ -419,6 +448,7 @@ Projektägaren beslutade 2026-10-30:
     (beslutat 2026-11-12).
 13. Beslutat 2026-11-12: **Besättning** om en enskild uppfödares kaniner, aldrig genbank. **Genbank** är hela rasens bevarade population, och föreningen har två. **Genbanksbesättning** får användas som förtydligande. Orden följer handlingsplanen och FAO, se posterna Besättning och Genbank.
 14. **Medlemsavgift**, inte årsavgift, om avgiften för ett års medlemskap (beslutat 2026-11-18).
+15. Beslutat 2026-11-21: **Stamboken Online** om webbsystemet när texten utanför systemet ber läsaren göra något där, **Stamboken** om registret. Se posten Stamboken / Stamboken Online.
 
 ## Öppna frågor
 

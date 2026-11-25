@@ -86,6 +86,7 @@ export default async function AdminUsersPage({
     fullname: u.fullname,
     email: u.email,
     roleLabel: roleSummaryLabel(u.role_summary),
+    hasRole: u.role_summary !== "ingen roll", // the backend's raw value, not the label
     last_active: formatLastActive(u.last_active),
     validated: u.validated,
     v2_prod_access: u.v2_prod_access,
@@ -113,8 +114,8 @@ export default async function AdminUsersPage({
             name="search"
             defaultValue={sp.search ?? ""}
             className={`sb-input ${ds["ad-search"]}`}
-            placeholder="Sök användarnamn, e-post eller namn…"
-            aria-label="Sök efter användarnamn, e-postadress eller namn"
+            placeholder="Sök kontonummer, användarnamn, e-post eller namn…"
+            aria-label="Sök efter kontonummer, användarnamn, e-postadress eller namn"
           />
           <FormControl size="small" className={ds["ad-filter"]}>
             <span className={ds["ad-filter-label"]} id="ad-f-role">
@@ -131,7 +132,7 @@ export default async function AdminUsersPage({
               <MenuItem value="matrikel_admin">Matrikeladministratör</MenuItem>
               <MenuItem value="manager">Genbanksansvarig</MenuItem>
               <MenuItem value="helper">Genbankshjälpare</MenuItem>
-              <MenuItem value="viewer">Granskare</MenuItem>
+              <MenuItem value="viewer">Läsrätt</MenuItem>
               <MenuItem value="owner">Besättningsägare</MenuItem>
               <MenuItem value="none">Ingen roll</MenuItem>
             </Select>

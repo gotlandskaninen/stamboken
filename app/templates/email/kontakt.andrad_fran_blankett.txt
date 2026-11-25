@@ -1,0 +1,13 @@
+{% block subject %}Dina uppgifter har ändrats från din pappersblankett{% endblock %}
+
+{% block body %}
+Hej!
+
+{% if konto %}Ditt konto för genbanksstödet har ändrats.{% if account_end %} Det nya kontot slutar på ••{{ account_end }}.{% endif %}
+{% endif %}{% if adress %}Din adress har ändrats.
+{% endif %}{% if telefon %}Ditt telefonnummer har ändrats.
+{% endif %}{% if epost %}Din e-postadress har ändrats.
+{% endif %}{% if publicering %}{% if ja %}Du svarade Ja på blanketten: din besättning får stå med i listan över aktiva besättningar som trycks i Koharen.{% if utan %} {{ utan }} står inte med.{% endif %}{% else %}Du svarade Nej på blanketten: din besättning står inte med i listan över aktiva besättningar som trycks i Koharen.{% endif %}
+{% endif %}
+Ändringen gjordes när din årsrapport för {{ herd }} matades in. Stämmer det inte? Kontakta genbanksansvarig genom att svara på det här mejlet.
+{% endblock %}

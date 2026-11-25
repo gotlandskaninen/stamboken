@@ -3,6 +3,18 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import { BreedingList } from "@/components/herd/BreedingList";
+import { checkLitterOrder } from "@/app/(app)/stamboken/(dashboard)/min-besattning/actions";
+
+vi.mock(
+  "@/app/(app)/stamboken/(dashboard)/min-besattning/actions",
+  async (original) => ({
+    ...(await original<object>()),
+    checkLitterOrder: vi.fn(async () => ({
+      success: true,
+      data: { consistent: true, conflicts: [] },
+    })),
+  }),
+);
 
 const theme = createTheme();
 
@@ -18,6 +30,8 @@ vi.mock("react-i18next", () => ({
         "breeding.born": "Född",
         "breeding.mating": "Parning",
         "breeding.details": "Detaljer",
+        "breeding.preliminary": "preliminärt",
+        "breeding.confirmCount": "Bekräfta antalet",
       };
       return translations[key] || key;
     },
@@ -158,5 +172,64 @@ describe("BreedingList", () => {
 
     // After expanding, "Stor kull" should be visible
     expect(screen.getByText("Stor kull")).toBeDefined();
+  });
+
+  it("marks a preliminary litter and confirms its count as it stands", () => {
+    const onConfirmCount = vi.fn(() => Promise.resolve(true));
+    const preliminary = [
+      {
+        ...mockBreedings[0],
+        litter_size6w: 6,
+        litter_size6w_preliminary: true,
+      },
+    ];
+    renderWithTheme(
+      <BreedingList
+        breedings={preliminary}
+        isLoading={false}
+        canEdit
+        onConfirmCount={onConfirmCount}
+      />,
+    );
+    expect(screen.getByText(/6 vid 6v \(preliminärt\)/)).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Detaljer" }));
+    fireEvent.click(screen.getByRole("button", { name: "Bekräfta antalet" }));
+    expect(onConfirmCount).toHaveBeenCalledWith(1, 6);
+  });
+
+  it("has no preliminary mark or button on a confirmed litter", () => {
+    renderWithTheme(
+      <BreedingList
+        breedings={[mockBreedings[0]]}
+        isLoading={false}
+        canEdit
+        onConfirmCount={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Detaljer" }));
+    expect(screen.queryByText(/preliminärt/)).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Bekräfta antalet" }),
+    ).toBeNull();
+  });
+});
+
+// Round 2 of the step-4b review: after paper litter 6 (litter 1 exists) the register button must not open the
+// renumber dialog, so it asks with promotion's rule, which lets a paper certificate's number skip ahead.
+describe("BreedingList's register button", () => {
+  it("checks the litter order as promotion does, gaps allowed", async () => {
+    renderWithTheme(
+      <BreedingList
+        breedings={[{ ...mockBreedings[1], birth_date: "2025-05-06" }]}
+        isLoading={false}
+        canEdit
+        herdId="G1274"
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Detaljer" }));
+    fireEvent.click(screen.getByRole("button", { name: "addRabbit.title" }));
+    await vi.waitFor(() =>
+      expect(checkLitterOrder).toHaveBeenCalledWith("G1274", 2025, true),
+    );
   });
 });

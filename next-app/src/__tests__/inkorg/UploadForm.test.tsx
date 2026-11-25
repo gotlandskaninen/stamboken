@@ -8,6 +8,11 @@ import {
   waitFor,
 } from "@testing-library/react";
 
+import "@/i18n";
+import { useMode } from "@/lib/mode-context";
+
+vi.mock("@/lib/mode-context", () => ({ useMode: vi.fn() }));
+
 const push = vi.fn();
 const uploadIntyg = vi.fn();
 
@@ -30,14 +35,24 @@ function pick() {
 }
 
 beforeEach(() => {
+  vi.mocked(useMode).mockReturnValue("prod");
   push.mockReset();
   uploadIntyg.mockReset();
 });
 afterEach(cleanup);
 
 describe("UploadForm", () => {
+  it("explains where demo submissions go before a file is chosen", () => {
+    vi.mocked(useMode).mockReturnValue("demo");
+    render(<UploadForm herds={["G9001"]} />);
+    expect(screen.getByRole("note")).toHaveTextContent(
+      "Det du laddar upp här stannar i testmiljön och läses inte in i Stamboken.",
+    );
+  });
+
   it("preselects the only herd and disables Skicka until a file is chosen", () => {
     render(<UploadForm herds={["G9001"]} />);
+    expect(screen.queryByRole("note")).toBeNull();
     expect(screen.getByLabelText("Besättning")).toHaveValue("G9001");
     expect(screen.getByRole("button", { name: "Skicka" })).toBeDisabled();
   });
@@ -67,19 +82,28 @@ describe("UploadForm", () => {
     );
   });
 
-  it("sends the files once, without accept_warnings", async () => {
-    uploadIntyg.mockResolvedValueOnce({ ok: true, documents: [], itemId: 12 });
-    render(<UploadForm herds={["G9001"]} />);
-    pick();
-    fireEvent.click(await screen.findByRole("button", { name: "Skicka" }));
-    await waitFor(() =>
-      expect(push).toHaveBeenCalledWith("/stamboken/inskick#arende-12"),
-    );
-    expect(uploadIntyg).toHaveBeenCalledTimes(1);
-    expect(
-      (uploadIntyg.mock.calls[0][0] as FormData).has("accept_warnings"),
-    ).toBe(false);
-  });
+  it.each(["demo", "prod"] as const)(
+    "sends the files once from the %s form",
+    async (mode) => {
+      vi.mocked(useMode).mockReturnValue(mode);
+      uploadIntyg.mockResolvedValueOnce({
+        ok: true,
+        documents: [],
+        itemId: 12,
+      });
+      render(<UploadForm herds={["G9001"]} />);
+      pick();
+      fireEvent.click(await screen.findByRole("button", { name: "Skicka" }));
+      await waitFor(() =>
+        expect(push).toHaveBeenCalledWith("/stamboken/inskick#arende-12"),
+      );
+      expect(uploadIntyg).toHaveBeenCalledTimes(1);
+      expect(uploadIntyg).toHaveBeenCalledWith(expect.any(FormData), mode);
+      expect(
+        (uploadIntyg.mock.calls[0][0] as FormData).has("accept_warnings"),
+      ).toBe(false);
+    },
+  );
 
   it("shows the warnings of a refused upload, then Skicka ändå sends again with accept_warnings", async () => {
     uploadIntyg

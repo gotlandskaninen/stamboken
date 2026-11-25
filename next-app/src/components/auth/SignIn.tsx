@@ -17,6 +17,7 @@ import {
   Typography,
 } from "@mui/material";
 
+import { CodeLoginForm } from "./CodeLogin";
 import GoogleSignInButton from "@/components/auth/GoogleSignInButton";
 import { loginWithPassword } from "@/app/(app)/(auth)/actions";
 
@@ -62,7 +63,7 @@ function FieldLabel({
   );
 }
 
-function SignIn() {
+function SignIn({ codeEnabled }: { codeEnabled: boolean }) {
   const searchParams = useSearchParams();
   const returnTo = searchParams.get("return_to") || undefined;
   const [error, setError] = useState<string | null>(null);
@@ -70,6 +71,7 @@ function SignIn() {
 
   return (
     <Box>
+      {codeEnabled && <CodeLoginForm returnTo={returnTo} />}
       <GoogleSignInButton returnTo={returnTo} onError={setError} />
 
       {/* Googles kontoväljare visar även privata konton (FedCM ignorerar
@@ -83,8 +85,8 @@ function SignIn() {
         }}
       >
         Har du ett föreningskonto (@gotlandskaninen.se)? Logga in med Google.
-        Annars loggar du in med användarnamn och lösenord nedan. Utan tillgång
-        till riktiga stamboken hamnar du i testmiljön.
+        Användarnamn och lösenord fungerar också. Utan tillgång till riktiga
+        stamboken hamnar du i testmiljön.
       </Typography>
 
       {error && (
@@ -322,10 +324,10 @@ function SignIn() {
   );
 }
 
-function SignInWithSuspense() {
+function SignInWithSuspense({ codeEnabled }: { codeEnabled: boolean }) {
   return (
     <Suspense>
-      <SignIn />
+      <SignIn codeEnabled={codeEnabled} />
     </Suspense>
   );
 }

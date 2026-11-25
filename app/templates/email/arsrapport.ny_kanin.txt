@@ -1,0 +1,9 @@
+{% block subject %}{{ namn }} har lagt till {{ number }} i {{ herd }}{% endblock %}
+
+{% block body %}
+Hej!
+
+{{ namn }} har lagt till kaninen {{ number }} i besättning {{ herd }} i årsrapporten. Den finns kvar även om du drar tillbaka rapporten.
+
+Stämmer det inte? Kontakta genbanksansvarig genom att svara på det här mejlet.
+{% endblock %}

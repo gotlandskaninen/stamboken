@@ -1,0 +1,54 @@
+"""Create the account of a member who signed in with a code for the first time."""
+
+from flask import Blueprint, current_app, jsonify, request, session
+from utils import login_account, login_code
+from utils.data_access import auth_log
+
+from blueprints.common import problem
+
+login_account_bp = Blueprint("login_account", __name__, url_prefix="/api/v2/login")
+
+
+@login_account_bp.post("/skapa-konto")
+def create_account():
+    if not login_code.enabled():
+        return problem(503, "Kodinloggning är stängd", "Försök igen senare.")
+    try:
+        login_code.refuse_unsafe()
+    except login_code.CodeRefused:
+        return problem(503, "Kodinloggning är stängd", "Försök igen senare.")
+
+    expired = "Begär en ny kod för att skapa ditt konto."
+    if not login_account.pending_valid():
+        return problem(401, "Inloggningen har gått ut", expired)
+    body = request.get_json(silent=True)
+    if (
+        not isinstance(body, dict)
+        or body.get("accepted") is not True
+        or not isinstance(body.get("rules_version"), str)
+        or not isinstance(body.get("rules_sha256"), str)
+    ):
+        return problem(400, "Godkänn reglerna", "Läs och godkänn reglerna för användarkonton.")
+    try:
+        user, generation = login_account.create_pending_account(body["rules_version"], body["rules_sha256"])
+    except login_account.RulesUnavailable:
+        return problem(503, "Reglerna kunde inte hämtas", "Försök igen senare.")
+    except login_account.RulesChanged:
+        return problem(412, "Reglerna har ändrats", "Läs de aktuella reglerna innan du skapar ditt konto.")
+    except login_account.AccountConflict:
+        return problem(
+            409,
+            "Det finns redan ett konto som kan vara ditt",
+            "Det finns redan ett konto som kan vara ditt. Logga in med det, eller kontakta matrikelansvarig.",
+        )
+    except login_code.CodeLoginClosed:
+        return problem(503, "Kodinloggning är stängd", "Försök igen senare.")
+    except login_account.InvalidPending:
+        return problem(401, "Inloggningen har gått ut", expired)
+
+    auth_log.info("Account created: kod, user id=%s", user.id)
+    epoch = session["logout_epoch"]
+    session.clear()
+    current_app.extensions["establish_session"](user, "kod", generation, verified_epoch=epoch)
+    auth_log.info("Login ok: kod, user id=%s", user.id)
+    return jsonify(v2_prod_access=user.v2_prod_access)

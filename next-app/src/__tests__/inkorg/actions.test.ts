@@ -2,11 +2,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { revalidatePath } from "next/cache";
 import { ApiError, fetchApi } from "@/lib/api";
 import {
+  assignHerd,
   assignItem,
   changeState,
   confirmMask,
+  previewHerd,
+  releaseItem,
   saveCertificate,
   takeItem,
+  undoAssignment,
   updateDocument,
   waitForParent,
 } from "@/app/(app)/stamboken/(dashboard)/inkorg/actions";
@@ -16,6 +20,9 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return { ...actual, fetchApi: vi.fn() };
 });
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("next/headers", () => ({
+  cookies: async () => ({ get: () => ({ value: "prod" }) }),
+}));
 const revalidated = vi.mocked(revalidatePath);
 
 const api = vi.mocked(fetchApi);
@@ -28,6 +35,39 @@ beforeEach(() => {
 });
 
 describe("the queue's server actions", () => {
+  it("sends the displayed assignment with the conditional takeover request", async () => {
+    const expected = {
+      assigned_to: 7,
+      assigned_at: "2026-11-14T08:00:00.123456+00:00",
+    };
+    await takeItem(12, expected);
+    expect(api.mock.calls[0][0]).toBe("/v2/inkorg/12/ta-over");
+    expect(api.mock.calls[0][1]?.method).toBe("PUT");
+    expect(body(0)).toEqual(expected);
+  });
+
+  it("previews a herd without refreshing the queue and submits the reviewed revision", async () => {
+    await previewHerd(" g9001 ");
+    expect(api.mock.calls[0][0]).toBe("/v2/inkorg/tilldela?herd=G9001");
+    expect(api.mock.calls[0][1]?.method).toBe("GET");
+    expect(revalidated).not.toHaveBeenCalled();
+    await assignHerd(" g9001 ", 7, "reviewed");
+    expect(body(1)).toEqual({
+      herd: "G9001",
+      user_id: 7,
+      revision: "reviewed",
+    });
+    expect((await assignHerd("G9001", 7, "")).ok).toBe(false);
+  });
+
+  it("releases the item and submits the server's undo receipt", async () => {
+    await releaseItem(12);
+    expect(api.mock.calls[0][0]).toBe("/v2/inkorg/12/slapp");
+    await undoAssignment("receipt");
+    expect(api.mock.calls[1][0]).toBe("/v2/inkorg/angra");
+    expect(body(1)).toEqual({ undo: "receipt" });
+    expect(revalidated).toHaveBeenCalledWith("/stamboken/inkorg", "layout");
+  });
   it("never put an id that is not a whole number into the URL", async () => {
     for (const bad of [0, -1, 1.5, NaN, "12/../x" as unknown as number]) {
       expect((await takeItem(bad)).ok).toBe(false);
@@ -59,6 +99,14 @@ describe("the queue's server actions", () => {
   it("pass only the document fields the UI changes", async () => {
     await updateDocument(12, 31, { rotation: 90, waiting_for: ["X"], foo: 1 });
     expect(body(0)).toEqual({ rotation: 90 });
+  });
+
+  it("refuse a document change made for the other environment", async () => {
+    const res = await updateDocument(12, 31, { dismissed: true }, "demo");
+    expect(res.ok).toBe(false);
+    expect(api).not.toHaveBeenCalled();
+    await updateDocument(12, 31, { dismissed: true }, "prod");
+    expect(body(0)).toEqual({ dismissed: true });
   });
 
   it("väntar på förälder: the number on the document first, then the state", async () => {

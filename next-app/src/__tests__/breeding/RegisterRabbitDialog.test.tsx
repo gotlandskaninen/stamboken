@@ -512,3 +512,73 @@ describe("RegisterRabbitDialog with a paper certificate", () => {
     ).toBeDefined();
   }, 20000);
 });
+
+// Round 2 of the step-4b review: a preliminary count (the count born, until confirmed) is asked for like a
+// missing one, and the certificate's count is sent, so it replaces the preliminary one.
+describe("RegisterRabbitDialog on a litter with a preliminary count", () => {
+  it("asks for alive at 6 weeks and sends it", async () => {
+    suggestIndividualNumber.mockResolvedValue({
+      success: true,
+      data: {
+        ...suggestion,
+        breeding_id: 4,
+        can_issue_certificate: true,
+        certificate_blocked_reason: null,
+      },
+    });
+    checkIndividualNumber.mockResolvedValue({
+      success: true,
+      data: {
+        stamboken_number: "G1-2511",
+        paper_number: "G1-2511",
+        status: "match",
+        conflicts: [],
+        choices: [],
+        actions: [],
+      },
+    });
+    registerIndividual.mockResolvedValue({ success: false, error: "x" });
+    render(
+      <RegisterRabbitDialog
+        open
+        onClose={() => {}}
+        herdId="G1"
+        breeding={{
+          id: 4,
+          birth_date: "2025-05-10",
+          litter_number: 1,
+          litter_size: 5,
+          litter_size6w: 5,
+          litter_size6w_preliminary: true,
+        }}
+      />,
+    );
+    await waitFor(() => expect(suggestIndividualNumber).toHaveBeenCalled());
+    fireEvent.change(screen.getByRole("textbox", { name: /^Färg(\s*\*)?$/ }), {
+      target: { value: "Viltgrå" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: /^Intygsnummer/ }), {
+      target: { value: "P-77" },
+    });
+    fireEvent.change(
+      screen.getByRole("textbox", { name: /^Individnummer på pappret/ }),
+      { target: { value: "G1-2511" } },
+    );
+    await waitFor(() => expect(checkIndividualNumber).toHaveBeenCalled());
+    const save = screen.getByRole("button", { name: "Registrera" });
+    const count = screen.getByRole("spinbutton", {
+      name: /Levande i kullen efter 6 veckor/,
+    });
+    expect((save as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(count, { target: { value: "3" } });
+    await waitFor(() =>
+      expect((save as HTMLButtonElement).disabled).toBe(false),
+    );
+    fireEvent.click(save);
+    await waitFor(() =>
+      expect(registerIndividual).toHaveBeenCalledWith(
+        expect.objectContaining({ breeding_id: 4, litter_size6w: 3 }),
+      ),
+    );
+  }, 20000);
+});

@@ -16,6 +16,8 @@ type FetchApiOptions = RequestInit & {
    * cookie (e.g. setMode's v2_prod_access re-check — code review WR-01).
    */
   forceProd?: boolean;
+  /** Keep submissions and their notices in the selected environment. */
+  isolateDemo?: boolean;
 };
 
 // WR-04 guard: warn once per server process when a demo-mode request must fall
@@ -27,18 +29,35 @@ export async function fetchApi<T>(
   path: string,
   options?: FetchApiOptions,
 ): Promise<T> {
-  const cookieStore = await cookies();
-  const { timeout = 10000, forceProd = false, ...fetchOptions } = options ?? {};
+  const cookieStore =
+    options?.credentials === "omit" ? undefined : await cookies();
+  const {
+    timeout = 10000,
+    forceProd = false,
+    isolateDemo = false,
+    ...fetchOptions
+  } = options ?? {};
 
   // Mode-aware base URL: reuse the already-fetched cookieStore (no second
   // cookies() call). Demo routes to api-test ONLY when a test URL is configured;
-  // base dev (API_TEST_BASE unset) always falls back to prod.
-  const mode = parseMode(cookieStore.get(MODE_COOKIE)?.value);
+  // base dev (API_TEST_BASE unset) normally falls back to prod.
+  const modeCookie = cookieStore?.get(MODE_COOKIE)?.value;
+  const mode = parseMode(modeCookie);
   // parseMode(undefined) is "demo", so a visitor with no sb_mode cookie reads as
   // demo. Only a signed-in user (login sets sb_mode together with the session)
   // can be in demo; an anonymous request must reach prod or it lands in the
   // nightly-wiped demo database.
-  const signedIn = !!cookieStore.get("session")?.value;
+  const signedIn = !!cookieStore?.get("session")?.value;
+  const demoBase =
+    !forceProd && mode === "demo" && signedIn ? API_TEST_BASE : undefined;
+  const needsDemo = mode === "demo";
+  if (isolateDemo && needsDemo && (!demoBase || demoBase === API_BASE)) {
+    throw new ApiError({
+      status: 503,
+      title: "Testmiljön är inte tillgänglig",
+      detail: "Det gick inte att nå testmiljön. Försök igen senare.",
+    });
+  }
   if (
     mode === "demo" &&
     !API_TEST_BASE &&
@@ -53,17 +72,17 @@ export async function fetchApi<T>(
         "build arg), or investigate why a demo cookie exists in this deployment.",
     );
   }
-  const base =
-    !forceProd && mode === "demo" && signedIn && API_TEST_BASE
-      ? API_TEST_BASE
-      : API_BASE;
+  const base = demoBase || API_BASE;
 
   // Forward ALL cookies (not just session) — more robust if Flask
   // or middleware adds additional cookies in the future
-  const cookieHeader = cookieStore
-    .getAll()
-    .map((c) => `${c.name}=${c.value}`)
-    .join("; ");
+  const forwardedCookies = (cookieStore?.getAll() ?? []).map(
+    (c) => `${c.name}=${c.value}`,
+  );
+  // Flask must also see the implicit demo mode if the demo URL points at the wrong instance.
+  if (isolateDemo && needsDemo && modeCookie === undefined)
+    forwardedCookies.push(`${MODE_COOKIE}=demo`);
+  const cookieHeader = forwardedCookies.join("; ");
   const clientIp = forwardedFor(await headers());
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeout);

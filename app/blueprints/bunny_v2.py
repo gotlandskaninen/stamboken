@@ -25,6 +25,7 @@ from utils.individual_number_v2 import (
     lock_litter,
     number_check,
     number_to_register,
+    number_unnumbered_litter,
     parse_number,
     provisional_number,
     record_number_choice,
@@ -426,7 +427,7 @@ def promote_bunny(
         # 4. Current-year litter-number conflict. Historical years are
         #    grandfathered — only the current year blocks registration.
         if breeding.birth_date.year == today.year:
-            order = check_litter_order(herd.herd, breeding.birth_date.year)
+            order = check_litter_order(herd.herd, breeding.birth_date.year, allow_gaps=True)
             if not order["consistent"]:
                 raise RosterActionError(
                     409,
@@ -463,11 +464,21 @@ def promote_bunny(
 
         # 5c. Certificate rules: litter_size6w declared, the roster in sync with it, and a free slot.
         #     Alive at 6 weeks sent with the registration is saved in this transaction: a refusal leaves it unset.
-        if litter_size6w is not None and breeding.litter_size6w is None:
+        #     A preliminary count is replaced by the certificate's confirmed one (L5), as in direct registration.
+        if litter_size6w is not None and (breeding.litter_size6w is None or breeding.litter_size6w_preliminary):
             if litter_size6w > breeding.litter_size:
                 raise RosterActionError(422, "litter_size6w_above_born", LITTER_SIZE6W_ABOVE_BORN)
             breeding.litter_size6w = litter_size6w
-            breeding.save(only=[Breeding.litter_size6w])
+            breeding.litter_size6w_preliminary = False
+            breeding.save(only=[Breeding.litter_size6w, Breeding.litter_size6w_preliminary])
+        check = position = None
+        if breeding.litter_number is None:  # a litter added without a certificate: this first one numbers it
+            try:
+                check, position = number_unnumbered_litter(
+                    user, breeding, certificate_type, paper_number, paper_certificate, resolution
+                )
+            except ValueError as exc:
+                raise RosterActionError(422, "litter_full", str(exc)) from exc
         try:
             validate_first_certificate(breeding)
         except RosterAliveExceeds6w as exc:
@@ -481,8 +492,7 @@ def promote_bunny(
             raise RosterActionError(422, str(exc), detail) from exc
 
         # 5d. The paper's number against Stamboken's, under the lock: conflict → 409, nothing written.
-        check = position = None
-        if certificate_type == "paper":
+        if certificate_type == "paper" and check is None:
             check = number_check(user, paper_number, breeding=breeding, paper_certificate=paper_certificate)
             try:
                 position = parse_number(number_to_register(check, resolution))[3]

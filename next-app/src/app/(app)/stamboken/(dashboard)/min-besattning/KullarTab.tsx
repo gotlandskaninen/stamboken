@@ -47,6 +47,7 @@ export interface KullarTabProps {
     id: number;
     [key: string]: unknown;
   }) => Promise<boolean>;
+  onConfirmCount?: (breedingId: number, count: number) => Promise<boolean>;
 }
 
 export default function KullarTab({
@@ -65,6 +66,7 @@ export default function KullarTab({
   onDeleteBreeding,
   onRegisterBirth,
   onUpdateBreeding,
+  onConfirmCount,
 }: KullarTabProps) {
   const breedingList = breedings;
 
@@ -131,6 +133,7 @@ export default function KullarTab({
         onRegisterFirst={() => onShowMatingForm(true)}
         onRegisterBirth={onRegisterBirth}
         onUpdate={onUpdateBreeding}
+        onConfirmCount={onConfirmCount}
       />
     </div>
   );

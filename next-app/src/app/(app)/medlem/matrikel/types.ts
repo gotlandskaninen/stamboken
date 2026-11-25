@@ -13,7 +13,13 @@ export type MembershipListPerson = {
   end_date: string | null;
 };
 
-export type MembershipRow = {
+export type Organization = {
+  organization_name: string | null;
+  /** Only admins and matrikel_admins receive the number. */
+  organization_number?: string | null;
+};
+
+export type MembershipRow = Organization & {
   id: number; // membership id
   member_number: number | null;
   membership_status: MembershipStatus;
@@ -26,6 +32,9 @@ export type MembershipRow = {
   city: string | null;
   postal_address: string | null;
   persons: MembershipListPerson[];
+  /** The membership's active herds; `letter` is the initial of each one's genebank (G/M), decided server-side.
+   *  Missing from an older API during a rolling deploy: the columns show it as unknown. */
+  active_herds?: { herd: string; letter: string }[];
 };
 
 export type Grant = {
@@ -50,10 +59,53 @@ export type Person = {
   grants: Grant[];
 };
 
+export function personName(person: Person) {
+  return `${person.first_name} ${person.last_name}`.trim();
+}
+
 export type MembershipHerd = {
   id: number;
   herd: string;
   herd_name: string | null;
+};
+
+export type HerdCandidate = MembershipHerd & {
+  is_active: boolean;
+  link: "ingen" | "detta" | "annat";
+  unavailable_reason: string | null;
+  member_number: number | null;
+};
+
+export type HerdAccount = { id: number; username: string | null };
+
+export type HerdLinkPreview = {
+  herd: MembershipHerd & {
+    is_active: boolean;
+    genebank_id: number;
+    genebank_name: string;
+  };
+  membership: Pick<
+    MembershipDetail,
+    "id" | "member_number" | "membership_status"
+  >;
+  new_access:
+    | (HerdAccount & { already_edits: boolean; already_manages: boolean })
+    | null;
+  inactive_main_account: HerdAccount | null;
+  new_readers: HerdAccount[];
+  grant_holders: HerdAccount[];
+  legacy_owners: (HerdAccount & {
+    in_membership: boolean;
+    gains_household_grants: boolean;
+  })[];
+  contact_rows:
+    | { field: string; label: string; case: string; effect: string }[]
+    | null;
+};
+
+export type HerdLinkConfirmation = {
+  preview: HerdLinkPreview;
+  confirm_token: string;
 };
 
 /** Optional invoice destination; all null means the postal address. */
@@ -79,21 +131,25 @@ export function hasBillingAddress(b: BillingAddress): boolean {
   return BILLING_KEYS.some((key) => Boolean(b[key]));
 }
 
-export type MembershipDetail = BillingAddress & {
-  id: number;
-  member_number: number | null;
-  membership_status: MembershipStatus;
-  address: string | null;
-  postal_code: string | null;
-  city: string | null;
-  postal_address: string | null;
-  publication_consent: Record<string, boolean>;
-  payment_note: string | null;
-  joined_date: string | null;
-  notes: string | null;
-  persons: Person[];
-  herds: MembershipHerd[];
-};
+export type MembershipDetail = BillingAddress &
+  Organization & {
+    id: number;
+    member_number: number | null;
+    membership_status: MembershipStatus;
+    address: string | null;
+    postal_code: string | null;
+    city: string | null;
+    postal_address: string | null;
+    publication_consent: Record<string, boolean>;
+    payment_note: string | null;
+    joined_date: string | null;
+    notes: string | null;
+    persons: Person[];
+    herds: (MembershipHerd & {
+      genebank_id: number;
+      is_active: boolean | null;
+    })[];
+  };
 
 // Default page size for the matrikel list — the RSC page uses it whenever the
 // URL carries no (valid) per_page.
@@ -104,3 +160,9 @@ export const ROLE_LABELS: Record<string, string> = {
   familjemedlem: "Familjemedlem",
   skotare: "Skötare",
 };
+
+export function roleLabel(role: string, organizationName?: string | null) {
+  return organizationName && role === "huvudmedlem"
+    ? "Kontaktperson"
+    : (ROLE_LABELS[role] ?? role);
+}

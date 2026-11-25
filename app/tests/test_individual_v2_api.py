@@ -185,12 +185,13 @@ class TestCreateIndividualV2(DatabaseTest):
         b = db.Breeding.get_by_id(self.test_breeding.id)
         self.assertEqual(b.litter_size6w, 4)
 
-    def test_breeding_without_litter_number_returns_400(self):
-        """Breeding without litter_number returns 400."""
+    def test_breeding_without_litter_number_takes_one_from_the_certificate(self):
+        """A litter without a number is numbered by its first certificate (spec 5.8); the paper's number is used."""
         b = db.Breeding.create(
             breeding_herd_id=self.herds[0],
-            birth_date=date(2030, 4, 1),
+            birth_date=date(2025, 4, 1),
             litter_size=3,
+            litter_size6w=3,
         )
         self._login()
         response = self.client.post(
@@ -201,9 +202,13 @@ class TestCreateIndividualV2(DatabaseTest):
                 "color": "bleighe",
                 "certificate_type": "paper",
                 "paper_certificate": "GK-TEST-001",
+                "paper_number": "G1-2521",
             },
         )
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 201, response.get_json())
+        self.assertEqual(
+            (response.get_json()["individual"]["number"], db.Breeding.get_by_id(b.id).litter_number), ("G1-2521", 2)
+        )
 
     def test_viewer_denied(self):
         """Viewer cannot register individuals."""

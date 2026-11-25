@@ -1,0 +1,1183 @@
+"""The mails to a buyer outside the association (utils.buyer_mail). Synthetic data only.
+
+isort:skip_file
+"""
+
+import os
+import re
+import subprocess
+import sys
+import textwrap
+import threading
+import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date, datetime, timedelta, timezone
+from unittest import mock
+from zoneinfo import ZoneInfo
+
+from peewee import OperationalError
+
+os.environ.setdefault("AUTHCONFIGFILE", os.path.join(os.path.dirname(__file__), "auth.ini.test"))
+
+import utils.database as db  # noqa: E402
+import utils.mail as mail  # noqa: E402
+import utils.settings as settings  # noqa: E402
+from herdbook import limiter  # noqa: E402
+from utils import buyer_contact, buyer_mail, inbox  # noqa: E402
+from utils.buyer_mail import ERASE_PURPOSE, queue_buyer_mails  # noqa: E402
+from utils.herd_tracking import (  # noqa: E402
+    HerdTrackingConflict,
+    attach_buyer,
+    correct_herd_tracking,
+    delete_buyer_contacts,
+    record_herd_tracking,
+)
+
+from tests.test_buyer_contact import BUYER, NAME, OLD, SALE_DATE, BuyerBase, on  # noqa: E402
+from tests.test_inbox_purge import PurgeTest  # noqa: E402
+from tests.test_mail_queue import HOST, SECRET, FakeRelay  # noqa: E402
+
+EMAIL = "zelda@example.org"
+WITH_EMAIL = {**BUYER, "email": EMAIL, "contact_consent": True}
+PDF = b"%PDF-1.7\nsynthetic certificate"
+
+
+class BuyerMailTest(BuyerBase):
+    def setUp(self):
+        super().setUp()
+        for patch in (
+            mock.patch.multiple(settings.mail, mode="live", link_secret=SECRET, allowlist=[]),
+            mock.patch.object(settings.service, "host", f"https://{HOST}"),
+        ):
+            patch.start()
+            self.addCleanup(patch.stop)
+        db.Individual.update(name="Stjärna").where(db.Individual.id == self.rabbit.id).execute()
+
+    def mails(self, kind=None):
+        rows = db.MailMessage.select().order_by(db.MailMessage.id)
+        return [row for row in rows if kind is None or row.kind == kind]
+
+    def send(self):
+        """One sender run against a fake relay; the messages it sent."""
+        relay = FakeRelay()
+        with mock.patch.object(mail.smtplib, "SMTP", relay):
+            mail.send_pending()
+        return [msg for msg, _sender, _to in relay.sent]
+
+    def text(self, kind="kopare.information"):
+        """(subject, body) of the queued mail as it would go now, without sending it."""
+        (row,) = self.mails(kind)
+        variables = mail.MAIL_KINDS[kind].build(row.params)
+        variables.pop("attachments", None)
+        return mail.render(kind, variables)
+
+
+class TestBuyerAddress(BuyerMailTest):
+    email = "kopare@example.org"
+    buyer = {**BUYER, "name": "Testköpare", "email": email, "contact_consent": True}
+    other = {**buyer, "name": "Annan testköpare", "email": email.upper()}
+    notice = "kopare_adresskontroll"
+
+    def sell_second_rabbit(self, buyer):
+        return record_herd_tracking(self.individuals[1], self.gx1, SALE_DATE, "TRANSFER", self.manager, buyer=buyer)
+
+    def held_sale(self):
+        self.sell_second_rabbit(self.other)
+        self.send()
+        response = self._sell(buyer={**self.buyer, "membership_optin": True})
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        for private in ("annan köpare", self.notice, "email_review", self.email):
+            self.assertNotIn(private, response.get_data(as_text=True))
+        sale = self._latest()
+        self.assertEqual(sale.holder_contact.name, self.buyer["name"])
+        self.assertEqual(self.send(), [])
+        notices = db.Notice.select().where(db.Notice.kind == self.notice)
+        self.assertEqual([(n.user_id, n.individual_id) for n in notices], [(self.manager.id, self.rabbit.id)])
+        listed = inbox.notices_json(self.manager, unread_only=True, limit=20, offset=0)
+        self.assertIn(
+            f"E-postadressen till köparen av {self.rabbit.number} finns redan hos en annan köpare. "
+            "Kontrollera adressen.",
+            [n["text"] for n in listed],
+        )
+        return sale
+
+    def test_only_a_manager_can_confirm_and_release_the_two_mails_once(self):
+        self.viewer.add_role("manager", self.genebanks[1].id)
+        sale = self.held_sale()
+        url = f"/api/v2/buyer-contacts/{sale.holder_contact_id}/review-email"
+        reviews = f"/api/v2/individual/{self.rabbit.number}/buyer-email-reviews"
+        self.assertIn(self.client.get(reviews).status_code, (403, 404))
+        self.assertIn(self.client.post(url, json={"confirm": True}).status_code, (403, 404))
+        self._login("spec")
+        self.assertEqual(self.client.get(reviews).get_json(), [])
+        self.assertEqual(self.client.post(url, json={"confirm": True}).status_code, 404)
+        self._login("man")
+        self.assertEqual(
+            self.client.get(reviews).get_json(),
+            [{"id": sale.holder_contact_id, "name": self.buyer["name"], "email": self.email}],
+        )
+        self.assertEqual(self.client.post(url, json={"confirm": True}).status_code, 204)
+        self.assertEqual(self.client.get(reviews).get_json(), [])
+        self.client.post(url, json={"confirm": True})
+        self.assertEqual([msg["To"] for msg in self.send()], [self.email, self.email])
+
+    def test_manager_corrects_held_address_before_the_link_goes(self):
+        sale = self.held_sale()
+        self._login("man")
+        url = f"/api/v2/buyer-contacts/{sale.holder_contact_id}/review-email"
+        data = {"name": self.buyer["name"], "email": self.email}
+        self.assertEqual(self.client.post(url, json=data).status_code, 400)
+        self.assertEqual(self.send(), [])
+        corrected = "rattad@example.org"
+        self.assertEqual(self.client.post(url, json={**data, "email": corrected}).status_code, 204)
+        self.assertEqual([msg["To"] for msg in self.send()], [corrected, corrected])
+        buyer_mail.erase_by_link(mail.link_token(ERASE_PURPOSE, sale.holder_contact_id))
+        self.assertEqual([c.email for c in db.BuyerContact.select()], [self.other["email"]])
+
+    def test_manager_can_match_the_name_in_the_review(self):
+        sale = self.held_sale()
+        self._login("man")
+        response = self.client.post(
+            f"/api/v2/buyer-contacts/{sale.holder_contact_id}/review-email",
+            json={"name": self.other["name"], "email": self.email},
+        )
+        self.assertEqual(response.status_code, 204)
+        self.assertEqual(self._contact(sale.holder_contact_id).name, self.other["name"])
+        self.assertEqual(len(self.send()), 2)
+
+    def test_resale_keeps_the_address_while_the_first_notice_waits_for_review(self):
+        sale = self.held_sale()
+        record_herd_tracking(self.rabbit, self.herds[1], on(30), "TRANSFER", self.manager)
+        now = sale.holder_contact.membership_optin_at + db.MEMBERSHIP_OPTIN_FOR
+        buyer_contact.run(now)
+        self.assertTrue(self._contact(sale.holder_contact_id).email_review_pending)
+        buyer_contact.review_buyer_email(sale.holder_contact_id, {"confirm": True}, self.manager)
+        (notice,) = self.send()
+        self.assertEqual(notice["To"], self.email)
+        buyer_contact.run(now + timedelta(days=1))
+        self.assertIsNone(self._contact(sale.holder_contact_id).email)
+
+    def test_corrected_name_releases_mail_and_the_link_erases_both_sales(self):
+        sale = self.held_sale()
+        event = {
+            "kind": "TRANSFER",
+            "date": SALE_DATE,
+            "herd": "GX1",
+            "buyer": {**self.other, "membership_optin": True},
+        }
+        (row,) = correct_herd_tracking(self.rabbit, self.manager, None, [sale.id], [event], "Stavfel")
+        self.assertEqual(len(self.send()), 2)
+        buyer_mail.erase_by_link(mail.link_token(ERASE_PURPOSE, row.holder_contact_id))
+        self.assertFalse(db.BuyerContact.select().exists())
+
+    def test_correct_spelling_on_same_sale_and_address(self):
+        sale = self._sale({**self.buyer, "name": "Testköpre"})
+        event = {"kind": "TRANSFER", "date": SALE_DATE, "herd": "GX1", "buyer": self.buyer}
+        (corrected,) = correct_herd_tracking(self.rabbit, self.manager, None, [sale.id], [event], "Stavfel")
+        self.assertEqual(corrected.holder_contact.name, self.buyer["name"])
+        self.assertEqual([row.id for row in db.BuyerContact.select()], [corrected.holder_contact_id])
+
+    def test_same_name_and_address_allow_another_sale(self):
+        sale = self.sell_second_rabbit(self.buyer)
+        # Older rows may have surrounding spaces, mixed case or decomposed characters.
+        db.BuyerContact.update(name=" TESTKO\u0308PARE ", email=f" {self.email.upper()} ").where(
+            db.BuyerContact.id == sale.holder_contact_id
+        ).execute()
+        self._sale(self.buyer)
+        self.assertEqual(db.BuyerContact.select().count(), 2)
+
+    def test_proof_registers_the_buyer_and_holds_the_mail(self):
+        self.sell_second_rabbit(self.other)
+        self.send()
+        legacy = record_herd_tracking(self.rabbit, self.gx1, SALE_DATE, "TRANSFER", self.manager)
+        with db.DB_PROXY.atomic():
+            contact = attach_buyer(legacy, self.buyer, self.manager)
+        self.assertEqual(self._latest().holder_contact_id, contact.id)
+        self.assertTrue(contact.email_review_pending)
+        self.assertEqual(self.send(), [])
+
+    def test_purged_email_still_identifies_a_contact_the_link_can_erase(self):
+        sale = self.sell_second_rabbit(self.other)
+        self.send()
+        record_herd_tracking(self.individuals[1], self.herds[1], on(30), "TRANSFER", self.manager)
+        self.assertEqual(buyer_contact.purge_sold_on(datetime.now(timezone.utc)), 1)
+        self.assertIsNone(self._contact(sale.holder_contact_id).email)
+        self._login("man")
+        event = {"kind": "TRANSFER", "herd": "GX1", "date": SALE_DATE, "buyer": self.buyer}
+        response = self.client.post(
+            f"/api/v2/individual/{self.rabbit.number}/herd-tracking/corrections", json={"events": [event]}
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(self._latest().holder_contact.email_review_pending)
+        self.assertEqual(self.send(), [])
+
+    def test_concurrent_sales_of_different_rabbits_hold_only_the_second_buyers_mail(self):
+        def second_sale():
+            with db.DB_PROXY.connection_context():
+                return self.sell_second_rabbit(self.other)
+
+        with ThreadPoolExecutor(1) as pool:
+            with db.DB_PROXY.atomic():
+                first = record_herd_tracking(
+                    self.rabbit, self.gx1, SALE_DATE, "TRANSFER", self.manager, buyer=self.buyer
+                )
+                second = pool.submit(second_sale)
+                # Keep the first sale uncommitted until PostgreSQL sees the other writer waiting for its lock.
+                waiting = """SELECT 1 FROM pg_locks WHERE NOT granted AND locktype = 'advisory'
+                             AND pg_backend_pid() = ANY(pg_blocking_pids(pid))"""
+                deadline = time.monotonic() + 10
+                while not db.DB_PROXY.execute_sql(waiting).fetchone():
+                    if second.done() or time.monotonic() >= deadline:
+                        self.fail("The second sale did not wait for the first sale's address lock")
+                    time.sleep(0.02)
+            held = second.result(timeout=10)
+        self.assertTrue(held.holder_contact.email_review_pending)
+        self.assertEqual([row.recipient_id for row in self.mails()], [first.holder_contact_id])
+
+
+class TestInformationQueued(BuyerMailTest):
+    def test_no_mail_without_an_email(self):
+        self._sale({**BUYER, "phone": "070-000 00 00", "contact_consent": True})
+        self.assertEqual(self.mails(), [])
+
+    def test_the_sale_queues_it_to_the_buyer(self):
+        sale = self._sale(WITH_EMAIL)
+        (row,) = self.mails()
+        self.assertEqual(
+            (row.kind, row.recipient_kind, row.recipient_id, row.genebank_id, row.priority, row.category),
+            ("kopare.information", "buyer_contact", sale.holder_contact_id, self.genebanks[0].id, 1, "T"),
+        )
+        self.assertEqual(row.params, {"buyer_contact_id": sale.holder_contact_id, "individual_id": self.rabbit.id})
+
+    def test_an_address_the_queue_cannot_send_to_is_refused_with_the_sale(self):
+        for typed in ("zelda @example.org", "zelda@example.org, per@example.org", "Zelda <zelda@example.org>", "zelda"):
+            with self.subTest(typed):
+                response = self._sell(buyer={**WITH_EMAIL, "email": typed})
+                self.assertEqual(response.status_code, 400, response.get_data(as_text=True))
+                self.assertIn("e-postadress", response.get_data(as_text=True))
+        self.assertEqual((self.mails(), db.BuyerContact.select().count()), ([], 0))
+        self._sale(
+            {**WITH_EMAIL, "email": "  Zelda@Example.ORG "}
+        )  # spaces around it are the typing's, not the address's
+
+    def test_a_rolled_back_sale_queues_nothing(self):
+        with self.assertRaises(RuntimeError), db.DB_PROXY.atomic():
+            record_herd_tracking(self.rabbit, self.gx1, SALE_DATE, "TRANSFER", self.owner, buyer=WITH_EMAIL)
+            self.assertEqual(len(self.mails()), 1)
+            raise RuntimeError("the sale's transaction fails")
+        self.assertEqual((self.mails(), db.BuyerContact.select().count()), ([], 0))
+
+    def test_a_late_sale_entered_as_a_correction_mails_its_buyer(self):
+        record_herd_tracking(self.rabbit, self.herds[1], on(214), "TRANSFER", self.manager)
+        event = {"kind": "TRANSFER", "date": SALE_DATE, "herd": "GX1", "buyer": WITH_EMAIL}
+        (sale,) = correct_herd_tracking(self.rabbit, self.manager, None, [], [event])
+        (row,) = self.mails()
+        self.assertEqual((row.kind, row.recipient_id), ("kopare.information", sale.holder_contact_id))
+
+    def test_a_corrected_sale_does_not_mail_the_buyer_twice(self):
+        sale = self._sale({**WITH_EMAIL, "membership_optin": True})
+        contact = db.BuyerContact.get_by_id(sale.holder_contact_id)
+        event = {"kind": "TRANSFER", "date": on(30), "herd": "GX1"}  # no buyer: the sale's own is carried over
+        correct_herd_tracking(self.rabbit, self.manager, None, [sale.id], [event], "Fel datum")
+        self.assertEqual(self._latest().holder_contact_id, contact.id)  # the correction kept the buyer
+        corrected = db.BuyerContact.get_by_id(contact.id).membership_optin_at.astimezone(ZoneInfo("Europe/Stockholm"))
+        self.assertEqual(corrected.date().isoformat(), on(30))
+        queue_buyer_mails(contact, self._latest())  # and if anything queued again, the dedupe_key holds
+        self.assertEqual(
+            [(row.kind, row.recipient_id) for row in self.mails()],
+            [("kopare.information", contact.id), ("kopare.medlemskap", contact.id)],
+        )
+
+    def invitations(self, status=None):
+        return [row.recipient_id for row in self.mails("kopare.medlemskap") if status in (None, row.status)]
+
+    def test_a_correction_that_replaces_the_buyer_sends_one_invitation(self):
+        optin = {**WITH_EMAIL, "membership_optin": True}
+        sale = self._sale(optin)
+        event = {"kind": "TRANSFER", "date": on(30), "herd": "GX1", "buyer": {**optin, "town": "Testort"}}
+        (written,) = correct_herd_tracking(self.rabbit, self.manager, None, [sale.id], [event], "Fel datum")
+        self.assertIsNone(db.BuyerContact.get_or_none(db.BuyerContact.id == sale.holder_contact_id))
+        self.assertEqual(self.invitations("cancelled"), [sale.holder_contact_id])  # the old buyer's, erased with it
+        self.assertEqual(self.invitations("queued"), [written.holder_contact_id])
+        self.assertEqual(len(self.send()), 2)  # the new buyer's notice and invitation
+
+    def test_two_sales_to_one_address_each_hold_an_invitation_and_one_goes(self):
+        optin = {**WITH_EMAIL, "membership_optin": True}
+        first = self._sale(optin)
+        second = record_herd_tracking(self.individuals[1], self.gx1, SALE_DATE, "TRANSFER", self.manager, buyer=optin)
+        self.assertEqual(self.invitations("queued"), [first.holder_contact_id, second.holder_contact_id])
+        subjects = [msg["Subject"] for msg in self.send()]
+        self.assertEqual(len([s for s in subjects if s.startswith("Välkommen")]), 1)
+        self.assertEqual(len(subjects), 3)  # a notice for each sale
+        self.assertEqual(sorted(row.status for row in self.mails("kopare.medlemskap")), ["cancelled", "sent"])
+
+    def test_a_bounced_invitation_counts_when_another_rabbit_is_sold_to_the_address(self):
+        optin = {**WITH_EMAIL, "membership_optin": True}
+        self._sale(optin)
+        _, invitation = self.send()
+        self.assertTrue(mail.record_bounce(invitation["Message-ID"], "5.1.1"))
+        record_herd_tracking(self.individuals[1], self.gx1, SALE_DATE, "TRANSFER", self.manager, buyer=optin)
+        (notice,) = self.send()
+        self.assertTrue(notice["Subject"].startswith("Din kanin"))
+        self.assertEqual([row.status for row in self.mails("kopare.medlemskap")], ["bounced", "cancelled"])
+
+    def test_one_buyer_going_leaves_the_other_sales_invitation(self):
+        optin = {**WITH_EMAIL, "membership_optin": True}
+        first = self._sale(optin)
+        second = record_herd_tracking(self.individuals[1], self.gx1, SALE_DATE, "TRANSFER", self.manager, buyer=optin)
+        delete_buyer_contacts([first.holder_contact_id], "forsaljning_ogiltig", None)
+        self.assertEqual(self.invitations("queued"), [second.holder_contact_id])
+        self.assertEqual(len(self.send()), 2)  # the second sale's notice and the invitation
+
+    def test_a_corrected_address_leaves_the_other_sales_invitation(self):
+        optin = {**WITH_EMAIL, "membership_optin": True}
+        first = self._sale(optin)
+        second = record_herd_tracking(self.individuals[1], self.gx1, SALE_DATE, "TRANSFER", self.manager, buyer=optin)
+        event = {"kind": "TRANSFER", "date": on(30), "herd": "GX1", "buyer": {**optin, "email": "ny@example.org"}}
+        (written,) = correct_herd_tracking(self.rabbit, self.manager, None, [first.id], [event], "Fel adress")
+        self.assertEqual(self.invitations("queued"), [second.holder_contact_id, written.holder_contact_id])
+
+    def test_a_correction_while_the_invitation_is_being_sent_sends_the_new_buyers(self):
+        optin = {**WITH_EMAIL, "membership_optin": True}
+        sale = self._sale(optin)
+        claimed = db.MailMessage.update(status="sending", claim_token=uuid.uuid4())
+        claimed.where(db.MailMessage.kind == "kopare.medlemskap").execute()
+        event = {"kind": "TRANSFER", "date": on(30), "herd": "GX1", "buyer": {**optin, "contact_consent": False}}
+        (written,) = correct_herd_tracking(self.rabbit, self.manager, None, [sale.id], [event], "Fel datum")
+        self.assertEqual(self.invitations("cancelled"), [sale.holder_contact_id])  # lost its claim: not sent
+        self.assertEqual(self.invitations("queued"), [written.holder_contact_id])
+
+    def test_retyping_the_same_contact_in_a_correction_preserves_deliveries(self):
+        optin = {**WITH_EMAIL, "membership_optin": True}
+        sale = self._sale(optin)
+        self.assertEqual(len(self.send()), 2)
+        event = {"kind": "TRANSFER", "date": on(30), "herd": "GX1", "buyer": optin}
+        (new,) = correct_herd_tracking(self.rabbit, self.manager, None, [sale.id], [event], "Fel datum")
+        self.assertEqual(new.holder_contact_id, sale.holder_contact_id)
+        self.assertEqual(self.send(), [])
+
+    def test_new_sale_after_erasure_sends_only_its_information(self):
+        optin = {**WITH_EMAIL, "membership_optin": True}
+        first = self._sale(optin)
+        delivered = self.send()
+        buyer_contact.erase_buyer_contact(first.holder_contact_id, self.manager)
+        self.assertTrue(all(row.address_hash is None for row in self.mails()))
+        record_herd_tracking(self.individuals[1], self.gx1, SALE_DATE, "TRANSFER", self.manager, buyer=optin)
+        delivered += self.send()
+        self.assertEqual(len(delivered), 3)
+        self.assertEqual(sum(msg["Subject"].startswith("Välkommen") for msg in delivered), 1)
+
+    def test_a_correction_never_mails_a_buyer_who_was_removed(self):
+        sale = self._sale(WITH_EMAIL)
+        delete_buyer_contacts([sale.holder_contact_id], "invandning", None)
+        mails = len(self.mails())
+        event = {"kind": "TRANSFER", "date": on(30), "herd": "GX1", "buyer": WITH_EMAIL}
+        with self.assertRaises(HerdTrackingConflict):
+            correct_herd_tracking(self.rabbit, self.manager, None, [sale.id], [event], "Fel datum")
+        self.assertEqual((len(self.mails()), db.BuyerContact.select().count()), (mails, 0))
+
+    def test_a_sale_past_its_five_years_stores_and_mails_no_buyer(self):
+        event = {"kind": "TRANSFER", "date": OLD, "herd": "GX1", "buyer": {**WITH_EMAIL, "membership_optin": True}}
+        (sale,) = correct_herd_tracking(self.rabbit, self.manager, None, [], [event])  # through a correction
+        self.assertEqual((sale.holder_contact_id, sale.buyer_removed, self.mails()), (None, True, []))
+
+    def test_a_proof_of_a_sale_past_its_five_years_stores_and_mails_no_buyer(self):
+        sale = record_herd_tracking(self.rabbit, self.gx1, OLD, "TRANSFER", self.manager)
+        with db.DB_PROXY.atomic():
+            self.assertIsNone(attach_buyer(sale, WITH_EMAIL, self.manager))
+        self.assertEqual((self.mails(), db.BuyerContact.select().count()), ([], 0))
+
+    def test_a_buyer_a_proof_adds_to_a_sale_registered_without_one_is_mailed(self):
+        sale = record_herd_tracking(self.rabbit, self.gx1, SALE_DATE, "TRANSFER", self.manager)  # the legacy form
+        with db.DB_PROXY.atomic():
+            contact = attach_buyer(sale, {**WITH_EMAIL, "membership_optin": True}, self.manager)
+        self.assertEqual(
+            [(row.kind, row.recipient_id) for row in self.mails()],
+            [("kopare.information", contact.id), ("kopare.medlemskap", contact.id)],
+        )
+
+    def test_the_dedupe_key_holds_no_address(self):
+        self._sale({**WITH_EMAIL, "membership_optin": True})
+        for row in self.mails():
+            self.assertNotIn("@", row.dedupe_key)
+            self.assertNotIn(mail.address_hash(EMAIL), row.dedupe_key)
+
+
+class TestInformationSent(BuyerMailTest):
+    def setUp(self):
+        super().setUp()
+        self.contact_id = self._sale(WITH_EMAIL).holder_contact_id
+
+    def certificate(self):
+        """A current v2 certificate with a synthetic PDF where the download route reads it."""
+        relative = f"certifikat/v2/{uuid.uuid4()}.pdf"
+        path = os.path.join("uppladdningar", relative)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as out:
+            out.write(PDF)
+        self.addCleanup(os.remove, path)
+        db.DigitalCertificateV2.create(individual=self.rabbit, issued_by=self.admin, file_path=relative, checksum="0")
+
+    def test_with_the_certificate_as_a_pdf_and_the_erase_link(self):
+        self.certificate()
+        (msg,) = self.send()
+        self.assertEqual(msg["To"], EMAIL)
+        self.assertEqual(msg["Subject"], "Din kanin Stjärna (G1-2111) är registrerad hos Föreningen Gotlandskaninen")
+        body = msg.get_body(("plain",)).get_content()
+        self.assertTrue(body.startswith(f"Hej {NAME},\n\ndu har köpt kaninen Stjärna, G1-2111. Säljaren"), body)
+        self.assertIn("föreningens register över genbankens kaniner. Kaninens genbanksintyg ligger som bilaga.\n", body)
+        (pdf,) = msg.iter_attachments()
+        self.assertEqual(
+            (pdf.get_filename(), pdf.get_content_type(), pdf.get_content()),
+            ("genbanksintyg-G1-2111.pdf", "application/pdf", PDF),
+        )
+        link = re.search(r"även namn och postadress: https://stambok\.example\.org/kopare/ta-bort#(\S+)\n", body)
+        self.assertEqual(mail.verify_link(ERASE_PURPOSE, link.group(1)), self.contact_id)
+        self.assertIn("Du kan också skriva till dataskydd@gotlandskaninen.se.\n\nHälsningar\n", body)
+        self.assertEqual(self.mails()[0].status, "sent")
+
+    def test_only_the_current_buyer_gets_the_certificate_after_a_resale(self):
+        buyer = {**WITH_EMAIL, "name": "Testköpare Två", "email": "andra@example.org"}
+        record_herd_tracking(self.rabbit, self.gx1, on(214), "TRANSFER", self.manager, buyer=buyer)
+        with mock.patch.object(buyer_mail, "_certificate_pdf", return_value=PDF) as fetch_pdf:
+            first, second = self.send()
+        self.assertEqual((first["To"], second["To"]), (EMAIL, buyer["email"]))
+        self.assertEqual(list(first.iter_attachments()), [])
+        self.assertNotIn("bilaga", first.get_body(("plain",)).get_content())
+        (attachment,) = second.iter_attachments()
+        self.assertEqual(attachment.get_content(), PDF)
+        fetch_pdf.assert_called_once()
+
+    def test_without_a_digital_certificate_no_attachment_and_no_word_of_one(self):
+        (msg,) = self.send()
+        body = msg.get_body(("plain",)).get_content()
+        self.assertIn("föreningens register över genbankens kaniner.\n\nFöreningen Gotlandskaninen sparar", body)
+        self.assertNotIn("bilaga", body)
+        self.assertEqual(list(msg.iter_attachments()), [])
+
+    def test_resale_after_pdf_fetch_rebuilds_the_notice_without_the_certificate(self):
+        self.certificate()
+        connect = mail._connect
+
+        def resell():
+            with db.DB_PROXY.connection_context():
+                record_herd_tracking(self.rabbit, self.herds[1], on(30), "TRANSFER", self.manager)
+
+        with ThreadPoolExecutor(1) as pool:
+
+            def resell_then_connect(conn):
+                pool.submit(resell).result(timeout=10)
+                connect(conn)
+
+            with mock.patch.object(mail, "_connect", resell_then_connect):
+                (msg,) = self.send()
+        self.assertEqual(msg["To"], EMAIL)
+        self.assertEqual(list(msg.iter_attachments()), [])
+        self.assertNotIn("bilaga", msg.get_body(("plain",)).get_content())
+
+    def test_resale_waits_while_smtp_has_the_certificate(self):
+        self.certificate()
+
+        def resell():
+            with db.DB_PROXY.connection_context(), db.DB_PROXY.atomic():
+                db.DB_PROXY.execute_sql("SET LOCAL lock_timeout = '250ms'")
+                record_herd_tracking(self.rabbit, self.herds[1], on(30), "TRANSFER", self.manager)
+
+        with ThreadPoolExecutor(1) as pool:
+
+            def handoff(_msg):
+                with self.assertRaisesRegex(OperationalError, "lock timeout"):
+                    pool.submit(resell).result(timeout=10)
+
+            relay = FakeRelay(gate=handoff)
+            with mock.patch.object(mail.smtplib, "SMTP", relay):
+                mail.send_pending()
+        (delivery,) = relay.sent
+        (pdf,) = delivery[0].iter_attachments()
+        self.assertEqual(pdf.get_content(), PDF)
+
+    def test_a_certificate_that_cannot_be_fetched_is_tried_again_not_left_out(self):
+        db.Individual.update(digital_certificate=9001).where(db.Individual.id == self.rabbit.id).execute()
+        with mock.patch("utils.cert_acess.download_certificate_s3", side_effect=OSError("S3 is down")):
+            self.assertEqual(self.send(), [])
+        (row,) = self.mails()
+        self.assertEqual((row.status, row.attempts), ("queued", 1))
+        self.assertIn("bygget misslyckades", row.last_error)
+
+    def test_the_third_attempt_sends_without_a_certificate_it_cannot_fetch(self):
+        db.Individual.update(digital_certificate=9001).where(db.Individual.id == self.rabbit.id).execute()
+        with mock.patch("utils.cert_acess.download_certificate_s3", side_effect=OSError("S3 is down")):
+            self.assertEqual(self.send(), [])  # attempt 1
+            db.MailMessage.update(attempts=1, next_attempt_at=datetime(2000, 1, 1)).execute()
+            self.assertEqual(self.send(), [])  # attempt 2: still tried again
+            self.assertEqual(self.mails()[0].status, "queued")
+            db.MailMessage.update(attempts=2, next_attempt_at=datetime(2000, 1, 1)).execute()
+            (msg,) = self.send()  # attempt 3
+        body = msg.get_body(("plain",)).get_content()
+        self.assertNotIn("bilaga", body)
+        self.assertIn("föreningens register över genbankens kaniner.\n\nFöreningen Gotlandskaninen sparar", body)
+        self.assertEqual(list(msg.iter_attachments()), [])
+        (row,) = self.mails()
+        self.assertEqual(
+            (row.status, row.attempts, row.last_error), ("sent", 3, "skickat utan bilaga: intyget kunde inte hämtas")
+        )
+
+    def test_log_mode_keeps_the_note_about_a_missing_certificate(self):
+        db.Individual.update(digital_certificate=9001).where(db.Individual.id == self.rabbit.id).execute()
+        db.MailMessage.update(attempts=2).execute()
+        with (
+            mock.patch.object(settings.mail, "mode", "log"),
+            mock.patch("utils.cert_acess.download_certificate_s3", side_effect=OSError("S3 is down")),
+        ):
+            mail.send_pending()
+        (row,) = self.mails()
+        self.assertEqual((row.status, row.last_error), ("logged", "skickat utan bilaga: intyget kunde inte hämtas"))
+
+    def test_a_certificate_that_works_leaves_last_error_empty_on_a_late_attempt(self):
+        self.certificate()
+        db.MailMessage.update(attempts=2).execute()
+        (msg,) = self.send()
+        self.assertEqual(len(list(msg.iter_attachments())), 1)
+        (row,) = self.mails()
+        self.assertEqual((row.status, row.last_error), ("sent", None))
+
+    def test_until_is_the_last_calendar_day_before_purge_in_stockholm(self):
+        cases = (
+            (datetime(2031, 11, 13, 23, tzinfo=timezone.utc), "13 november 2031"),
+            (datetime(2030, 2, 28, 23, tzinfo=timezone.utc), "28 februari 2030"),
+            (datetime(2026, 3, 29, 22, tzinfo=timezone.utc), "29 mars 2026"),  # 23-hour day in Sweden
+        )
+        for purge_at, shown in cases:
+            with self.subTest(shown=shown):
+                db.BuyerContact.update(purge_at=purge_at).where(db.BuyerContact.id == self.contact_id).execute()
+                self.assertIn(f"sparar ditt namn och din postadress till och med {shown}. Då vet vi", self.text()[1])
+
+    def test_a_postal_address_is_kept_with_the_name_and_not_on_consent(self):
+        mine = db.BuyerContact.id == self.contact_id
+        db.BuyerContact.update(contact_consent_at=datetime.now(timezone.utc)).where(mine).execute()
+        body = self.text()[1]
+        self.assertIn("sparar ditt namn och din postadress till och med", body)
+        self.assertIn("även namn och postadress: https://", body)
+        self.assertIn("Din e-postadress, och telefon om du har lämnat den, sparar vi bara för att du har sagt ja", body)
+        self.assertNotIn("postadress och telefon", body)  # the address is not kept on the buyer's yes (#111)
+        db.BuyerContact.update(postal_address=None).where(mine).execute()  # a manager's sale may lack the address
+        body = self.text()[1]
+        self.assertIn("sparar ditt namn och din ort till och med", body)
+        self.assertIn("även namn och ort: https://", body)
+
+    def test_a_rabbit_without_a_name_goes_by_its_number(self):
+        db.Individual.update(name=None).where(db.Individual.id == self.rabbit.id).execute()
+        subject, body = self.text()
+        self.assertEqual(subject, "Din kanin G1-2111 är registrerad hos Föreningen Gotlandskaninen")
+        self.assertIn("du har köpt kaninen G1-2111. Säljaren", body)
+
+    def test_the_retention_sentence_follows_the_consent_the_address_was_given_under(self):
+        consent = "sparar vi bara för att du har sagt ja till det, och bara tills kaninen byter ägare igen."
+        membership = (
+            "sparar vi bara för att du har sagt ja till att vi hör av oss om medlemskap, och i högst 12 månader."
+        )
+        both = "E-postadress och telefon kan vi ändå spara för att höra av oss om medlemskap, i högst 12 månader från"
+        takeback = "Ditt ja kan du ta tillbaka när du vill."
+        now = datetime.now(timezone.utc)
+        cases = (  # consent_at, membership_at, sentences that are there, sentences that are not
+            (now, None, [consent, takeback], [membership, both]),
+            (
+                None,
+                now,
+                [f"Din e-postadress, och telefon om du har lämnat den, {membership}"],
+                [consent, both, takeback],
+            ),
+            (now, now, [consent, both, takeback], [membership]),
+        )
+        for consent_at, membership_at, there, absent in cases:
+            with self.subTest(consent=consent_at is not None, membership=membership_at is not None):
+                db.BuyerContact.update(contact_consent_at=consent_at, membership_optin_at=membership_at).where(
+                    db.BuyerContact.id == self.contact_id
+                ).execute()
+                body = self.text()[1]
+                for sentence in there:
+                    self.assertIn(sentence, body)
+                for sentence in absent:
+                    self.assertNotIn(sentence, body)
+
+    def test_names_from_the_seller_stay_on_one_line(self):
+        db.Individual.update(name="Stjärna\r\n  igen").where(db.Individual.id == self.rabbit.id).execute()
+        db.BuyerContact.update(name="Test\n\nKöpare").where(db.BuyerContact.id == self.contact_id).execute()
+        subject, body = self.text()
+        self.assertEqual(subject, "Din kanin Stjärna igen (G1-2111) är registrerad hos Föreningen Gotlandskaninen")
+        self.assertIn("Hej Test Köpare,\n\ndu har köpt kaninen Stjärna igen, G1-2111.", body)
+
+    def test_erasure_waits_for_an_ongoing_smtp_handoff(self):
+        token = mail.link_token(ERASE_PURPOSE, self.contact_id)
+        started, resume = threading.Event(), threading.Event()
+
+        def handoff(_msg):
+            started.set()
+            resume.wait(timeout=10)
+
+        def send():
+            with db.DB_PROXY.connection_context():
+                return mail.send_pending()
+
+        with mock.patch.object(mail.smtplib, "SMTP", FakeRelay(gate=handoff)), ThreadPoolExecutor(1) as pool:
+            sending = pool.submit(send)
+            try:
+                self.assertTrue(started.wait(timeout=10))
+                with self.assertRaisesRegex(OperationalError, "lock timeout"), db.DB_PROXY.atomic():
+                    db.DB_PROXY.execute_sql("SET LOCAL lock_timeout = '250ms'")
+                    buyer_mail.erase_by_link(token)
+            finally:
+                resume.set()
+            self.assertEqual(sending.result(timeout=10), 1)
+        self.assertEqual(buyer_mail.erase_by_link(token), "removed")
+        (row,) = self.mails()
+        self.assertEqual((row.status, row.address_hash), ("sent", None))
+
+    def test_not_sent_once_the_buyer_is_erased(self):
+        buyer_contact.erase_buyer_contact(self.contact_id, self.admin)
+        self.assertEqual(self.send(), [])
+        self.assertEqual(self.mails()[0].status, "cancelled")
+
+
+class TestMembership(BuyerMailTest):
+    def test_resale_and_expired_optin_keep_the_queued_notice_until_delivery(self):
+        sale = self._sale({**WITH_EMAIL, "membership_optin": True, "phone": "000000"})
+        record_herd_tracking(self.rabbit, self.herds[1], on(30), "TRANSFER", self.manager)
+        now = sale.holder_contact.membership_optin_at + db.MEMBERSHIP_OPTIN_FOR
+        buyer_contact.run(now)
+        contact = self._contact(sale.holder_contact_id)
+        self.assertEqual((contact.email, contact.phone, contact.membership_optin_at), (EMAIL, None, None))
+        self.assertEqual(self.mails("kopare.information")[0].status, "queued")
+
+        with mock.patch.object(buyer_mail, "_certificate_pdf", return_value=PDF):
+            (notice,) = self.send()
+        self.assertEqual(notice["To"], EMAIL)
+        self.assertEqual(list(notice.iter_attachments()), [])
+        token = re.search(r"/kopare/ta-bort#(\S+)", notice.get_body(("plain",)).get_content()).group(1)
+        self.assertEqual(mail.verify_link(ERASE_PURPOSE, token), contact.id)
+        self.assertEqual([row.status for row in self.mails()], ["sent", "cancelled"])
+        buyer_contact.run(now + timedelta(days=1))
+        contact = self._contact(contact.id)
+        self.assertEqual((contact.email, contact.contact_consent_at), (None, None))
+
+    def test_failed_notice_survives_purge_and_can_be_retried_from_the_status_view(self):
+        buyer = {**BUYER, "email": EMAIL, "membership_optin": True}
+        sale = record_herd_tracking(
+            self.rabbit, self.gx1, date.today() - timedelta(days=370), "TRANSFER", self.manager, buyer=buyer
+        )
+        (row,) = self.mails("kopare.information")
+        db.MailMessage.update(attempts=len(mail.RETRY_DELAYS)).where(db.MailMessage.id == row.id).execute()
+        with mock.patch.object(mail.smtplib, "SMTP", FakeRelay(replies=[TimeoutError()])):
+            mail.send_pending()
+        self.assertEqual(db.MailMessage.get_by_id(row.id).status, "failed")
+        now = datetime.now(timezone.utc)
+        buyer_contact.run(now)
+        self.assertEqual(self._contact(sale.holder_contact_id).email, EMAIL)
+
+        self._login("man")
+        response = self.client.post(f"/api/v2/mail/messages/{row.id}/retry")
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertEqual(response.get_json()["status"], "queued")
+        (notice,) = self.send()
+        self.assertEqual(notice["To"], EMAIL)
+        token = re.search(r"/kopare/ta-bort#(\S+)", notice.get_body(("plain",)).get_content()).group(1)
+        self.assertEqual(mail.verify_link(ERASE_PURPOSE, token), sale.holder_contact_id)
+        self.assertEqual(db.MailMessage.get_by_id(row.id).status, "sent")
+        buyer_contact.run(now + timedelta(days=1))
+        self.assertIsNone(self._contact(sale.holder_contact_id).email)
+
+    def test_failed_notice_keeps_the_address_only_for_a_month(self):
+        sale = self._sale({**BUYER, "email": EMAIL, "membership_optin": True})
+        (row,) = self.mails("kopare.information")
+        db.MailMessage.update(status="failed").where(db.MailMessage.id == row.id).execute()
+        last_retry = row.created_at + buyer_contact.FAILED_NOTICE_KEPT
+        buyer_contact.run(last_retry)
+        self.assertEqual(self._contact(sale.holder_contact_id).email, EMAIL)
+        buyer_contact.run(last_retry + timedelta(microseconds=1))
+        self.assertIsNone(self._contact(sale.holder_contact_id).email)
+
+    def test_expiry_distinguishes_sent_and_pending_notices_in_the_same_purge(self):
+        day = date.today() - timedelta(days=370)
+        buyer = {**BUYER, "email": "forsta@example.org", "membership_optin": True, "phone": "000000"}
+        sent = record_herd_tracking(self.rabbit, self.gx1, day, "TRANSFER", self.manager, buyer=buyer)
+        self.assertEqual(len(self.send()), 1)
+        pending = record_herd_tracking(
+            self.individuals[1], self.gx1, day, "TRANSFER", self.manager, buyer={**buyer, "email": "andra@example.org"}
+        )
+        self.assertEqual(buyer_contact.purge_membership_optin(datetime.now(timezone.utc)), 2)
+        self.assertIsNone(self._contact(sent.holder_contact_id).email)
+        contact = self._contact(pending.holder_contact_id)
+        self.assertEqual((contact.email, contact.phone), ("andra@example.org", None))
+
+    def test_only_with_the_yes_to_membership_contact(self):
+        self._sale(WITH_EMAIL)
+        self.assertEqual(self.mails("kopare.medlemskap"), [])
+
+    def test_registering_an_old_proof_does_not_renew_the_optin(self):
+        sale_date = date.today() - timedelta(days=370)
+        sale = record_herd_tracking(self.rabbit, self.gx1, sale_date, "TRANSFER", self.manager)
+        with db.DB_PROXY.atomic():
+            contact = attach_buyer(sale, {**WITH_EMAIL, "membership_optin": True}, self.manager)
+        self.assertEqual(contact.membership_optin_at.date(), sale_date)
+        (notice,) = self.send()  # the independent consent to keep the address still holds
+        self.assertNotIn("12 månader", notice.get_body(("plain",)).get_content())
+        self.assertEqual(self.mails("kopare.medlemskap")[0].status, "cancelled")
+
+    def test_expired_membership_yes_at_registration_still_gives_the_buyer_an_erase_link(self):
+        sale_date = (date.today() - timedelta(days=370)).isoformat()
+        buyer = {**BUYER, "email": EMAIL, "phone": "000000", "membership_optin": True}
+        response = self._sell(buyer=buyer, date=sale_date)
+        self.assertEqual(response.status_code, 200)
+        contact_id = self._latest().holder_contact_id
+        # The night job can run between registration and the first sender run.
+        now = datetime.now(timezone.utc)
+        buyer_contact.purge_membership_optin(now)
+        self.assertEqual((self._contact(contact_id).email, self._contact(contact_id).phone), (EMAIL, None))
+        (notice,) = self.send()
+        body = notice.get_body(("plain",)).get_content()
+        self.assertEqual(notice["To"], EMAIL)
+        self.assertIn("Tiden för din medlemsinbjudan har gått ut.", body)
+        token = re.search(r"/kopare/ta-bort#(\S+)", body).group(1)
+        self.assertEqual(mail.verify_link(ERASE_PURPOSE, token), contact_id)
+        self.assertEqual(self.mails("kopare.information")[0].status, "sent")
+        self.assertFalse(db.BuyerInvitation.select().exists())
+        self.assertEqual(buyer_contact.purge_membership_optin(now), 1)
+        contact = self._contact(contact_id)
+        self.assertEqual(
+            (contact.email, contact.membership_optin_at, contact.erased_email_hash),
+            (None, None, mail.address_hash(EMAIL)),
+        )
+        self.assertEqual(buyer_mail.erase_by_link(token), "removed")
+
+    def test_old_membership_yes_with_a_collision_waits_for_review_before_the_notice(self):
+        record_herd_tracking(self.individuals[1], self.gx1, SALE_DATE, "TRANSFER", self.manager, buyer=WITH_EMAIL)
+        self.send()
+        buyer = {**BUYER, "name": "Testköpare två", "email": EMAIL, "membership_optin": True}
+        sale = record_herd_tracking(
+            self.rabbit, self.gx1, date.today() - timedelta(days=370), "TRANSFER", self.manager, buyer=buyer
+        )
+        now = datetime.now(timezone.utc)
+        self.assertEqual(buyer_contact.purge_membership_optin(now), 0)
+        self.assertEqual(self.send(), [])
+        buyer_contact.review_buyer_email(sale.holder_contact_id, {"confirm": True}, self.manager)
+        (notice,) = self.send()
+        self.assertIn("/kopare/ta-bort#", notice.get_body(("plain",)).get_content())
+        self.assertEqual(self.mails("kopare.medlemskap")[0].status, "cancelled")
+        self.assertEqual(buyer_contact.purge_membership_optin(now), 1)
+        self.assertIsNone(self._contact(sale.holder_contact_id).email)
+
+    def test_membership_expires_while_the_first_notice_waits_for_address_review(self):
+        record_herd_tracking(self.individuals[1], self.gx1, SALE_DATE, "TRANSFER", self.manager, buyer=WITH_EMAIL)
+        self.send()
+        buyer = {**BUYER, "name": "Testköpare B", "email": EMAIL, "membership_optin": True}
+        sale = self._sale(buyer)
+        contact = sale.holder_contact
+        expires = contact.membership_optin_at + db.MEMBERSHIP_OPTIN_FOR
+        self.assertLess(contact.created_at, expires)
+        self.assertTrue(contact.email_review_pending)
+        with mock.patch.object(buyer_mail, "datetime", wraps=datetime) as clock:
+            clock.now.return_value = expires + timedelta(days=1)
+            buyer_contact.purge_membership_optin(clock.now())
+            self.assertEqual(self._contact(contact.id).email, EMAIL)
+            self.assertEqual(self.send(), [])
+            buyer_contact.review_buyer_email(contact.id, {"confirm": True}, self.manager)
+            (notice,) = self.send()
+            body = notice.get_body(("plain",)).get_content()
+            token = re.search(r"/kopare/ta-bort#(\S+)", body).group(1)
+            self.assertEqual(mail.verify_link(ERASE_PURPOSE, token), contact.id)
+            self.assertIn("Tiden för din medlemsinbjudan har gått ut.", body)
+            self.assertEqual(self.mails("kopare.medlemskap")[0].status, "cancelled")
+            self.assertEqual(buyer_contact.purge_membership_optin(clock.now()), 1)
+            self.assertIsNone(self._contact(contact.id).email)
+
+    def test_only_the_first_notice_goes_if_the_optin_expires_before_sending(self):
+        sale = self._sale({**BUYER, "email": EMAIL, "membership_optin": True})
+        self.assertIn("Välkommen", self.text("kopare.medlemskap")[0])
+        expires = sale.holder_contact.membership_optin_at + timedelta(days=365)
+        with mock.patch.object(buyer_mail, "datetime") as clock:
+            clock.now.return_value = expires
+            (notice,) = self.send()
+            self.assertIn("/kopare/ta-bort#", notice.get_body(("plain",)).get_content())
+        self.assertEqual([row.status for row in self.mails()], ["sent", "cancelled"])
+
+    def test_log_mode_without_a_link_secret_builds_the_welcome(self):
+        contact_id = self._sale({**WITH_EMAIL, "membership_optin": True}).holder_contact_id
+        with mock.patch.multiple(settings.mail, mode="log", link_secret=""):
+            built = mail.MAIL_KINDS["kopare.medlemskap"].build(
+                {"buyer_contact_id": contact_id, "individual_id": self.rabbit.id}
+            )
+        self.assertEqual(built["buyer"], NAME)
+
+    def test_the_welcome_with_the_yes_alone(self):
+        contact_id = self._sale({**BUYER, "email": EMAIL, "membership_optin": True}).holder_contact_id
+        # The notice goes too: the e-mail given for membership alone still reaches the buyer with the erase link.
+        self.assertEqual([row.kind for row in self.mails()], ["kopare.information", "kopare.medlemskap"])
+        (row,) = self.mails("kopare.medlemskap")
+        self.assertEqual((row.recipient_kind, row.recipient_id, row.category), ("buyer_contact", contact_id, "T"))
+        subject, body = self.text("kopare.medlemskap")
+        self.assertEqual(subject, "Välkommen att bli medlem i Föreningen Gotlandskaninen")
+        self.assertTrue(body.startswith(f"Hej {NAME},\n\nnär du köpte Stjärna sa du att"), body)
+        self.assertIn("Läs mer och ansök på gotlandskaninen.se/ansok.\n\nVi sparar ditt ja", body)
+
+    def test_both_mails_use_only_the_number_for_a_name_with_a_link_or_contact(self):
+        self._sale({**WITH_EMAIL, "membership_optin": True})
+        for detail in ("https://example.org/x", "www.example.org", "example.org", "test@example.org", "070-000 00 00"):
+            with self.subTest(detail=detail):
+                db.Individual.update(name=f"Stjärna\n{detail}").where(db.Individual.id == self.rabbit.id).execute()
+                subject, notice = self.text()
+                _, invitation = self.text("kopare.medlemskap")
+                self.assertEqual(subject, "Din kanin G1-2111 är registrerad hos Föreningen Gotlandskaninen")
+                self.assertIn("du har köpt kaninen G1-2111. Säljaren", notice)
+                self.assertIn("när du köpte G1-2111 sa du", invitation)
+                self.assertNotIn("Stjärna", notice + invitation)
+
+    def test_not_sent_once_the_yes_is_gone(self):
+        contact_id = self._sale({**WITH_EMAIL, "membership_optin": True}).holder_contact_id
+        db.BuyerContact.update(membership_optin_at=None).where(db.BuyerContact.id == contact_id).execute()
+        self.assertEqual(
+            [msg["Subject"] for msg in self.send()],
+            ["Din kanin Stjärna (G1-2111) är registrerad hos Föreningen Gotlandskaninen"],
+        )
+        self.assertEqual(self.mails("kopare.medlemskap")[0].status, "cancelled")
+
+
+ERASE_URL = "/api/v2/kopare/ta-bort"
+
+
+class TestEraseLink(PurgeTest):
+    """POST /api/v2/kopare/ta-bort, the link in kopare.information, with the sale's proof in the intake queue."""
+
+    def setUp(self):
+        super().setUp()
+        patch = mock.patch.multiple(settings.mail, mode="log", link_secret=SECRET)
+        patch.start()
+        self.addCleanup(patch.stop)
+        gx1 = db.Herd.create(genebank=self.genebanks[0], herd="GX1", herd_name="Utanför genbanken")
+        rabbit = db.Individual.get(db.Individual.number == "G1-2112")
+        self.sale = record_herd_tracking(rabbit, gx1, "2026-01-01", "TRANSFER", self.manager, buyer=WITH_EMAIL)
+        self.contact_id = self.sale.holder_contact_id
+        self.proof = self.document(self.make(doc_type="bevis"))
+        db.InboxDocument.update(herd_tracking_id=self.sale.id).where(db.InboxDocument.id == self.proof.id).execute()
+        db.MailMessage.update(status="sent", address_hash="0" * 64).execute()  # the mail went
+        self.token = mail.link_token(ERASE_PURPOSE, self.contact_id)
+
+    def erase(self, token, **kwargs):
+        return self.client.post(ERASE_URL, json={"token": token}, **kwargs)
+
+    def deletions(self):
+        rows = db.AuditLog.select().where(
+            (db.AuditLog.table_name == "buyer_contact") & (db.AuditLog.operation == "DELETE")
+        )
+        return [(row.record_id, row.new_data, row.changed_by) for row in rows]
+
+    def assertPrivate(self, response):  # pylint: disable=invalid-name
+        self.assertEqual(
+            (response.headers["Cache-Control"], response.headers["Referrer-Policy"]), ("no-store", "no-referrer")
+        )
+
+    def test_a_genuine_link_erases_the_buyer_as_an_objection(self):
+        with mock.patch("utils.herd_tracking.delete_buyer_contacts", wraps=delete_buyer_contacts) as erasure:
+            response = self.erase(self.token)
+        self.assertEqual((response.status_code, response.get_json()), (200, {"result": "removed"}))
+        self.assertPrivate(response)
+        erasure.assert_called_once_with([self.contact_id], "invandning", whole_items=True)
+        self.assertIsNone(db.BuyerContact.get_or_none(db.BuyerContact.id == self.contact_id))
+        sale = db.HerdTracking.get_by_id(self.sale.id)
+        self.assertEqual((sale.voided_at, sale.holder_contact_id, sale.herd.herd), (None, None, "GX1"))
+        self.assertIsNone(db.InboxDocument.get_by_id(self.proof.id).original_path)  # the proof's original
+        self.assertFalse(self.exists(self.proof.original_path))
+        (sent,) = db.MailMessage.select()
+        self.assertEqual((sent.address_hash, sent.dedupe_key), (None, None))  # forget_recipient
+        self.assertEqual(self.deletions(), [(str(self.contact_id), {"action": "invandning"}, None)])
+
+    def queued_receipt(self, sender):
+        item_id = self.proof.item_id
+        db.InboxItem.update(kind="mail", sender_address=sender).where(db.InboxItem.id == item_id).execute()
+        return mail.enqueue_mail("inlasning.kvitto", "inbox_sender", item_id, {"item_id": item_id, "images": 1})
+
+    def check_held_buyer_survives(self, *, purge_email):
+        rabbit = db.Individual.get(db.Individual.number == "G1-2111")
+        held = record_herd_tracking(
+            rabbit, self.sale.herd, "2026-01-02", "TRANSFER", self.manager, buyer={**WITH_EMAIL, "name": "Testköpare B"}
+        )
+        proof = self.document(self.make(doc_type="bevis"))
+        db.InboxDocument.update(herd_tracking_id=held.id).where(db.InboxDocument.id == proof.id).execute()
+        if purge_email:
+            record_herd_tracking(self.sale.individual, self.herds[0], "2026-01-03", "TRANSFER", self.manager)
+            self.assertEqual(buyer_contact.purge_sold_on(datetime.now(timezone.utc)), 1)
+        self.assertEqual(self.erase(self.token).get_json(), {"result": "removed"})
+        self.assertIsNone(db.BuyerContact.get_or_none(db.BuyerContact.id == self.contact_id))
+        self.assertEqual(
+            buyer_contact.buyer_email_reviews(rabbit.number, self.manager),
+            [{"id": held.holder_contact_id, "name": "Testköpare B", "email": EMAIL}],
+        )
+        self.assertEqual(db.InboxDocument.get_by_id(proof.id).original_path, proof.original_path)
+        self.assertTrue(self.exists(proof.original_path))
+
+    def test_older_link_leaves_the_buyer_under_review_and_their_proof(self):
+        self.check_held_buyer_survives(purge_email=False)
+
+    def test_older_link_with_only_an_address_hash_leaves_the_review_and_proof(self):
+        self.check_held_buyer_survives(purge_email=True)
+
+    def test_erasure_forgets_the_buyer_who_sent_the_proof_and_cancels_the_receipt(self):
+        receipt = self.queued_receipt(EMAIL.upper())
+        self.assertEqual(self.erase(self.token).get_json(), {"result": "removed"})
+        self.assertIsNone(db.InboxItem.get_by_id(self.proof.item_id).sender_address)
+        self.assertEqual(db.MailMessage.get_by_id(receipt).status, "cancelled")
+
+    def test_erasure_keeps_the_sellers_address_and_receipt_when_the_seller_sent_the_proof(self):
+        seller = "saljare@example.org"
+        receipt = self.queued_receipt(seller)
+        self.assertEqual(self.erase(self.token).get_json(), {"result": "removed"})
+        self.assertEqual(db.InboxItem.get_by_id(self.proof.item_id).sender_address, seller)
+        self.assertEqual(db.MailMessage.get_by_id(receipt).status, "queued")
+
+    def notices(self):
+        return [
+            (n.user_id, n.kind, n.individual.number, n.item_id)
+            for n in db.Notice.select().where(db.Notice.kind == "kopare_borttagen")
+        ]
+
+    def test_the_link_tells_the_genebanks_managers_which_rabbit_and_nothing_about_the_buyer(self):
+        self.user("annanman", ("manager", self.genebanks[1].id))
+        self.erase(self.token)  # a manager of the other genebank is not told
+        self.assertEqual(self.notices(), [(self.manager.id, "kopare_borttagen", "G1-2112", None)])
+        digest = inbox._digest_mail({"user_id": self.manager.id})  # pylint: disable=protected-access
+        _subject, body = mail.render("notis.sammandrag", digest)
+        self.assertIn("- En köpare har tagit bort sina uppgifter (G1-2112)\n", body)
+        row = db.Notice.get(db.Notice.kind == "kopare_borttagen")
+        for text in (str(digest), body, str(row.__data__)):
+            for private in (NAME, "Visby", EMAIL):
+                self.assertNotIn(private, text)
+
+    def test_a_second_use_of_the_link_makes_no_notice(self):
+        self.erase(self.token)
+        self.erase(self.token)
+        self.assertEqual(len(self.notices()), 1)
+
+    def test_a_buyer_of_two_rabbits_gives_one_notice_per_rabbit(self):
+        late = db.Individual.get(db.Individual.number != "G1-2112")
+        record_herd_tracking(
+            late, db.Herd.get(db.Herd.herd == "GX1"), "2026-01-02", "TRANSFER", self.manager, buyer=WITH_EMAIL
+        )
+        self.erase(self.token)
+        self.assertEqual(sorted(n[2] for n in self.notices()), sorted(["G1-2112", late.number]))
+
+    def test_a_managers_own_erasure_makes_no_notice(self):
+        buyer_contact.erase_buyer_contact(self.contact_id, self.manager)
+        self.assertEqual(self.notices(), [])
+
+    def test_a_manager_who_lost_the_role_no_longer_sees_which_rabbit(self):
+        self.erase(self.token)
+        manager = db.User.get_by_id(self.manager.id)
+        listed = inbox.notices_json(manager, unread_only=True, limit=50, offset=0)
+        self.assertEqual([n["individual_number"] for n in listed if n["kind"] == "kopare_borttagen"], ["G1-2112"])
+        manager.remove_role("manager", self.genebanks[0].id)
+        manager = db.User.get_by_id(self.manager.id)
+        listed = inbox.notices_json(manager, unread_only=True, limit=50, offset=0)
+        self.assertEqual([n["individual_number"] for n in listed if n["kind"] == "kopare_borttagen"], [None])
+        digest = inbox._digest_mail({"user_id": manager.id})  # pylint: disable=protected-access
+        self.assertNotIn("G1-2112", str(digest))
+
+    def test_a_deactivated_manager_gets_no_digest(self):
+        self.erase(self.token)
+        db.User.update(is_active=False).where(db.User.id == self.manager.id).execute()
+        self.assertIsNone(inbox._digest_mail({"user_id": self.manager.id}))  # pylint: disable=protected-access
+
+    def test_a_manager_without_the_daily_mail_gets_the_notice_but_no_digest(self):
+        inbox.set_mail_enabled(self.manager, False)
+        self.erase(self.token)
+        self.assertEqual(len(self.notices()), 1)
+        inbox.queue_digests()  # the helper's own notices still go
+        digests = db.MailMessage.select().where(db.MailMessage.kind == "notis.sammandrag")
+        self.assertNotIn(self.manager.id, [row.recipient_id for row in digests])
+        self.assertIsNone(
+            db.Notice.get(db.Notice.kind == "kopare_borttagen", db.Notice.user == self.manager.id).mailed_at
+        )
+        self.assertEqual(
+            inbox.notices_json(self.manager, unread_only=True, limit=10, offset=0)[0]["individual_number"], "G1-2112"
+        )
+
+    def test_a_second_visit_says_it_is_already_done(self):
+        self.erase(self.token)
+        response = self.erase(self.token)
+        self.assertEqual((response.status_code, response.get_json()), (200, {"result": "already_removed"}))
+        self.assertEqual(len(self.deletions()), 1)
+
+    def test_the_link_erases_every_contact_with_the_same_address(self):
+        def contact(email):
+            return db.BuyerContact.create(
+                name="Zelda", town="Visby", email=email, contact_consent_at=datetime.now(timezone.utc),
+                created_by_user=self.manager, purge_at=db.BuyerContact.purge_at_for(date.today()),
+            ).id  # fmt: skip
+
+        same, other = contact(" Zelda@Example.ORG "), contact("link@example.org")
+        response = self.erase(self.token)
+        self.assertEqual((response.status_code, response.get_json()), (200, {"result": "removed"}))
+        self.assertEqual([row.id for row in db.BuyerContact.select()], [other])
+        self.assertEqual(sorted(row[0] for row in self.deletions()), sorted([str(self.contact_id), str(same)]))
+        self.assertEqual(self.erase(self.token).get_json(), {"result": "already_removed"})
+        self.assertEqual([row.id for row in db.BuyerContact.select()], [other])
+
+    def test_the_link_finds_the_other_contacts_after_its_own_address_was_purged(self):
+        """The real purge forgets the sent mail's hash, while the link still covers the other sale."""
+        consent = {"contact_consent_at": datetime.now(timezone.utc), "created_by_user": self.manager}
+        purge_at = db.BuyerContact.purge_at_for(date.today())
+        same = db.BuyerContact.create(name="Zelda", town="Visby", email=EMAIL, purge_at=purge_at, **consent).id
+        other = db.BuyerContact.create(
+            name="Per", town="Visby", email="per@example.org", purge_at=purge_at, **consent
+        ).id
+        db.MailMessage.update(address_hash=mail.address_hash(EMAIL)).execute()
+        record_herd_tracking(self.sale.individual, self.herds[0], "2026-01-03", "TRANSFER", self.manager)
+        self.assertEqual(buyer_contact.purge_sold_on(datetime.now(timezone.utc)), 1)
+        self.assertIsNone(db.BuyerContact.get_by_id(self.contact_id).email)
+        self.assertIsNone(db.MailMessage.get(db.MailMessage.recipient_id == self.contact_id).address_hash)
+        self.assertEqual(self.erase(self.token).get_json(), {"result": "removed"})
+        self.assertEqual([row.id for row in db.BuyerContact.select()], [other])
+        self.assertEqual(sorted(row[0] for row in self.deletions()), sorted([str(self.contact_id), str(same)]))
+
+    def test_a_sale_that_appears_while_the_locks_are_taken_stops_the_erasure(self):
+        """A new sale to the address, of a rabbit this erasure has not locked: nothing goes; the buyer tries again."""
+        late = db.Individual.get(db.Individual.number != "G1-2112")
+        gx1 = db.Herd.get(db.Herd.herd == "GX1")
+        real = buyer_mail._same_buyer
+        calls = []
+
+        def meanwhile(contact_id):
+            if calls:  # between the two reads, as if it committed while the erasure waited for its locks
+                record_herd_tracking(late, gx1, "2026-01-02", "TRANSFER", self.manager, buyer=WITH_EMAIL)
+            calls.append(contact_id)
+            return real(contact_id)
+
+        with mock.patch.object(buyer_mail, "_same_buyer", meanwhile):
+            response = self.erase(self.token)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(self.deletions(), [])
+        self.assertEqual(db.BuyerContact.select().count(), 1)  # the late sale rolled back with the erasure
+
+    def test_any_other_token_changes_nothing_and_answers_alike(self):
+        mac = self.token.split(".")[1]
+        tokens = {
+            "forged, the buyer's id": f"{self.contact_id}." + "A" * 22,
+            "forged, an unknown id": "9001." + "A" * 22,
+            "another buyer's mac": f"{self.contact_id + 1}.{mac}",
+            "another purpose": mail.link_token("annat_syfte", self.contact_id),
+            "trailing space": self.token + " ",
+            "no mac": f"{self.contact_id}.",
+            "empty": "",
+            "a number": self.contact_id,
+            "missing": None,
+        }
+        answers = {name: self.erase(token) for name, token in tokens.items()}
+        answers["no json"] = self.client.post(ERASE_URL, data=self.token)
+        answers["a list"] = self.client.post(ERASE_URL, json=[self.token])
+        for name, response in answers.items():
+            with self.subTest(name):
+                self.assertEqual(response.status_code, 404)
+                self.assertEqual(response.get_data(), answers["forged, an unknown id"].get_data())
+                self.assertPrivate(response)
+        self.assertEqual(
+            answers["empty"].get_json()["detail"], "Länken gäller inte längre. Skriv till dataskydd@gotlandskaninen.se."
+        )
+        self.assertIsNotNone(db.BuyerContact.get_or_none(db.BuyerContact.id == self.contact_id))
+        self.assertEqual(self.deletions(), [])
+
+    def test_a_get_never_erases(self):
+        for url in (ERASE_URL, f"{ERASE_URL}?token={self.token}"):
+            self.client.get(url)  # the route takes POST only; a GET falls through to the app's catch-all
+        self.assertIsNotNone(db.BuyerContact.get_or_none(db.BuyerContact.id == self.contact_id))
+        self.assertEqual(self.deletions(), [])
+
+    def test_at_most_ten_tries_an_hour_from_one_address(self):
+        limiter.reset()
+        limiter.enabled = True
+        self.addCleanup(setattr, limiter, "enabled", False)
+        for _ in range(10):
+            self.assertEqual(self.erase("1." + "A" * 22).status_code, 404)
+        blocked = self.erase(self.token)
+        self.assertEqual(blocked.status_code, 429)
+        self.assertPrivate(blocked)
+        self.assertIsNotNone(db.BuyerContact.get_or_none(db.BuyerContact.id == self.contact_id))
+        elsewhere = self.erase(self.token, environ_overrides={"REMOTE_ADDR": "127.0.0.2"})
+        self.assertEqual(elsewhere.status_code, 200)
+
+
+class TestNoTokenInLogs(BuyerMailTest):
+    """
+    The first route that takes a link token: the token reaches no app log line on its way in, when the erasure fails
+    or succeeds, nor in the mail's own text in log mode. A fresh process, so the handlers are the app's (as in
+    test_log_masking): its file handler, pointed at stderr, and the root's stderr handler. The access log is not
+    asserted: the token travels in the body, so the logged request line is the bare path whatever the code does.
+    """
+
+    PROBE = textwrap.dedent(
+        """
+        import importlib.util, logging, sys
+        from datetime import timedelta
+        from types import SimpleNamespace
+        from unittest import mock
+        import pytest  # no blocking startup
+        from gunicorn.config import Config
+        from gunicorn.glogging import Logger
+        from herdbook import APP
+        import utils.mail as mail
+        from utils.buyer_mail import ERASE_PURPOSE
+
+        contact_id = int(sys.argv[1])
+        for handler in APP.logger.handlers:
+            handler.setStream(sys.stderr)
+        APP.config["PROPAGATE_EXCEPTIONS"] = False  # log the exception as in production, not re-raise it
+        spec = importlib.util.spec_from_file_location("gunicorn_conf", "gunicorn.conf.py")
+        conf = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(conf)
+        config = Config()
+        config.set("accesslog", "-")
+        access = Logger(config)
+        logging.getLogger("gunicorn.access").addFilter(conf._TokenMaskFilter())
+
+        def post(token):
+            with APP.test_client() as client:
+                response = client.post("/api/v2/kopare/ta-bort", json={"token": token})
+            request = response.request
+            environ = dict(request.environ, RAW_URI=request.environ["PATH_INFO"])
+            sent = SimpleNamespace(status=response.status, headers=list(response.headers.items()), sent=1)
+            access.access(sent, SimpleNamespace(headers=list(request.headers.items())), environ, timedelta(0))
+            print("answer", response.status_code, file=sys.stderr)
+
+        mail.send_pending()  # kopare.information with the link, in log mode
+        token = mail.link_token(ERASE_PURPOSE, contact_id)
+        post(f"{contact_id}." + "B" * 22)  # forged
+        with mock.patch("utils.herd_tracking.delete_buyer_contacts", side_effect=RuntimeError("database gone")):
+            post(token)  # the view raises
+        post(token)  # erased
+        post(token)  # already erased
+        """
+    )
+
+    def test_neither_the_token_nor_the_buyers_name_reaches_the_log(self):
+        contact_id = self._sale({**WITH_EMAIL, "membership_optin": True}).holder_contact_id
+        queued = self.mails()
+        token = mail.link_token(ERASE_PURPOSE, contact_id)
+        app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        env = {**os.environ, "MAIL_MODE": "log", "LINK_SECRET": SECRET, "FLASK_ENV": "testing"}
+        p = subprocess.run(
+            [sys.executable, "-c", self.PROBE, str(contact_id)],
+            cwd=app_dir,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        logs = p.stdout + p.stderr
+        self.assertEqual(re.findall(r"^answer (\d+)$", logs, re.MULTILINE), ["404", "500", "200", "200"], logs)
+        for row in queued:
+            self.assertIn(f"Mail {row.id} ({row.kind}) logged", logs)
+        self.assertNotIn(NAME, logs)
+        self.assertNotIn("/kopare/ta-bort#", logs)
+        self.assertNotIn("Din kanin Stjärna", logs)
+        self.assertIn("Exception on /api/v2/kopare/ta-bort [POST]", logs)
+        self.assertNotIn(token, logs)
+        self.assertNotIn(token.split(".")[1], logs)  # nor the mac alone, which the mask would not catch
+        self.assertIsNone(db.BuyerContact.get_or_none(db.BuyerContact.id == contact_id))

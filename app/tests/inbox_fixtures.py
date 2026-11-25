@@ -67,6 +67,10 @@ class InboxTest(DatabaseTest):
         gotland, mellerud = self.genebanks
         self.helper = self.user("hjalp", ("helper", gotland.id))
         self.mellerud_helper = self.user("mhjalp", ("helper", mellerud.id))
+        # These accounts exercise the production queue with their usual herd and genebank rights.
+        db.User.update(v2_prod_access=True).where(
+            db.User.id.in_([self.owner.id, self.manager.id, self.helper.id, self.mellerud_helper.id, self.viewer.id])
+        ).execute()
 
     def user(self, name, *roles):
         user = da.register_user(name, "pass")

@@ -4,6 +4,7 @@
 // are loaded only in the stamboken dashboard layout.
 import { Source_Serif_4, IBM_Plex_Sans, IBM_Plex_Mono } from "next/font/google";
 import { RootThemeProvider } from "./root-theme-provider";
+import { CLEAR_HASH_SCRIPT } from "./rapport/clearHash";
 import "@/styles/tokens.css";
 
 // Stamboken design-system fonts (ADR-0009), hoisted from (public)/layout.tsx
@@ -47,6 +48,8 @@ export default function RootLayout({
   return (
     <html lang="sv">
       <head>
+        {/* The personal report link's hash is cleared before the app's own code runs; it is the first inline script, and not claimed to precede framework chunks (only on /rapport) */}
+        <script dangerouslySetInnerHTML={{ __html: CLEAR_HASH_SCRIPT }} />
         <link rel="icon" href="/static/img/icons/favicon.ico" sizes="any" />
         <link
           rel="icon"
@@ -64,7 +67,6 @@ export default function RootLayout({
           rel="apple-touch-icon"
           href="/static/img/icons/apple-touch-icon.png"
         />
-        <link rel="manifest" href="/static/manifest.json" />
       </head>
       <body
         className={`${sourceSerif.variable} ${ibmPlexSans.variable} ${ibmPlexMono.variable}`}

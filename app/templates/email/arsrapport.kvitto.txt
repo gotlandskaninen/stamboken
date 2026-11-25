@@ -1,0 +1,17 @@
+{% block subject %}Årsrapporten för {{ herd }} är inskickad{% endblock %}
+
+{% block body %}
+Hej!
+
+Årsrapporten för besättning {{ herd }} kom in den {{ datum }}. Du rapporterade {{ kvar }} {{ "kanin" if kvar == 1 else "kaniner" }} som finns kvar, {{ doda }} {{ "död" if doda == 1 else "döda" }} och {{ salda }} {{ "såld" if salda == 1 else "sålda" }}.
+{% if kullar %}
+Kullar som du lade till i Stamboken sedan förra inskicket: {{ kullar|join("; ") }}. De finns kvar även om du drar tillbaka rapporten.
+{% endif %}
+{% if vantar %}Försäljningen väntar på genbanksansvarig. Kaninen står kvar hos dig tills den är godkänd.
+
+{% endif %}{{ kvittens }}
+
+Du kan ändra den så länge rundan är öppen, till och med {{ end_date }}.
+
+Var det inte du? Kontakta genbanksansvarig genom att svara på det här mejlet.
+{% endblock %}

@@ -309,6 +309,17 @@ class TestAdminUsersList(DatabaseTest):
         rows = resp.get_json()["users"]
         self.assertEqual([r["id"] for r in rows], [self.owner.id])
 
+    def test_admin_users_list_search_matches_account_number(self):
+        """#192: the inbox names an account without a name "Konto <id>"; both forms find it."""
+        self.login("admin", "pass")
+        for search in (str(self.owner.id), f"Konto {self.owner.id}", f"konto{self.owner.id}"):
+            with self.subTest(search=search):
+                resp = self.client.get("/api/v2/admin/users", query_string={"search": search})
+                self.assertEqual(resp.status_code, 200, resp.data)
+                self.assertIn(self.owner.id, [r["id"] for r in resp.get_json()["users"]])
+        resp = self.client.get("/api/v2/admin/users", query_string={"search": "99999999999"})
+        self.assertEqual(resp.status_code, 200, resp.data)
+
     def test_admin_users_list_shows_and_filters_matrikel_admin(self):
         """matrikel_admin is shown alone and next to a studbook role
         (never hidden by the admin > manager > ... precedence) and filterable."""
@@ -471,6 +482,14 @@ class TestAdminUserMutations(DatabaseTest):
         body = resp.get_json()
         for key in ("id", "username", "email", "fullname", "_privileges"):
             self.assertIn(key, body)
+
+    def test_admin_users_patch_reports_a_taken_email_as_an_invalid_value(self):
+        self.login("admin")
+        db.User.update(email="taken@example.org").where(db.User.id == self.owner.id).execute()
+        response = self.client.patch(f"/api/v2/admin/users/{self.viewer.id}", json={"email": "TAKEN@example.org"})
+        self.assertEqual((response.status_code, response.mimetype), (400, "application/problem+json"))
+        self.assertEqual(response.get_json()["type"], "invalid-value")
+        self.assertEqual(db.User.get_by_id(self.viewer.id).email, self.viewer.email)
 
     def test_admin_users_patch_manager_gets_403(self):
         self.login("man")

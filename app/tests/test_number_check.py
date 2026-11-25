@@ -254,8 +254,14 @@ class TestDryRun(NumberCheckMixin, DatabaseTest):
         self.assertIn("Kullen: besättning G1, mor G1-1911, far G2-1711. Jag menar", message)
         self.assertNotIn("None", message)
 
-    def test_uncomputable_without_a_litter_number(self):
+    def test_a_litter_without_a_litter_number_takes_the_papers(self):
         litter = self._litter(date(2025, 4, 3), None)
+        self._login()
+        data = self._check(breeding_id=litter.id, paper_number="G1-2511").get_json()
+        self.assertEqual((data["status"], data["stamboken_number"], data["choices"]), ("match", "G1-2511", []))
+
+    def test_uncomputable_without_a_birth_date(self):
+        litter = db.Breeding.create(breeding_herd_id=self.herds[0], litter_size=5)
         self._login()
         data = self._check(breeding_id=litter.id, paper_number="G1-2511").get_json()
         self.assertEqual(
@@ -485,12 +491,28 @@ class TestRegistration(NumberCheckMixin, DatabaseTest):
         self.assertEqual((response.status_code, problem["stamboken_number"]), (409, "G1-2522"))
         self.assertEqual(self._kinds(problem), ["position", "number_taken"])
 
-    def test_promote_in_a_litter_without_litter_number_is_uncomputable(self):
+    def _unnumbered(self):
         db.Breeding.update(litter_number=None, litter_size6w=4).where(db.Breeding.id == self.litter.id).execute()
-        bunny = db.Bunny.create(breeding=self.litter, slot_order=1, observed_sex="female", observed_color="bleighe")
+        return db.Bunny.create(breeding=self.litter, slot_order=1, observed_sex="female", observed_color="bleighe")
+
+    def test_promote_in_a_litter_without_litter_number_numbers_it(self):
+        bunny = self._unnumbered()
         self._login()
-        response = self._promote(bunny, paper_number="G1-2521")
-        self.assertEqual((response.status_code, response.get_json()["check_status"]), (409, "uncomputable"))
+        response = self._promote(bunny, paper_number="G1-2561")
+        self.assertEqual(response.status_code, 201, response.get_json())
+        self.assertEqual(response.get_json()["individual"]["number"], "G1-2561")
+        self.assertEqual(db.Breeding.get_by_id(self.litter.id).litter_number, 6)
+
+    def test_promote_in_a_litter_without_litter_number_goes_to_the_manager_when_it_is_taken(self):
+        bunny = self._unnumbered()
+        self._litter(date(2025, 2, 1), 6)
+        self._login()
+        before = self._written()
+        response = self._promote(bunny, paper_number="G1-2561")
+        self.assertEqual((response.status_code, response.get_json()["title"]), (409, "number_conflict"))
+        self.assertEqual(self._kinds(response.get_json()), ["litter_number_taken"])
+        self.assertEqual(self._written(), before)
+        self.assertIsNone(db.Breeding.get_by_id(self.litter.id).litter_number)
 
 
 class TestImport(NumberCheckMixin, DatabaseTest):

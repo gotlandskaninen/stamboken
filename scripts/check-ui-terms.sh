@@ -5,10 +5,12 @@
 #   Kaninens nummer (G1274-2312)   Individnummer — inte "Genbanksnummer" eller "Kaninnummer"
 #   Besättningens nummer (G1274)   Besättningsnummer — inte "Genbanksnummer" eller "Besättningskod"
 #   Dokumentet                     intyg, Intygsnummer, Digitalt intyg, Pappersintyg — aldrig "certifikat"
-#   Byte av besättning             Sälj, Säljdatum, Såld, Försäljning — inte "Överlåtelse" eller "Flytta",
+#   Byte av besättning             Sälj, Säljdatum, Såld, Försäljning — inte "Överlåtelse" eller "Flytta";
+#                                  pappret heter försäljningsbevis, aldrig "överlåtelsebevis";
 #                                  inte "Försäljningsdatum" eller "Köpdatum";
 #                                  "flytt"/"Flyttad hit" bara i historiktext (lib/herdTracking.ts)
 #   Rollen                         Genbanksansvarig — "manager" bara som kodvärde
+#   Läsrätten till en genbank      Läsrätt — inte "Granskare" (rollen `viewer` granskar inget)
 #   Raserna i löptext              gotlandskanin, mellerudskanin — versal bara först i mening eller rubrik
 #   Död kanin                      Död är egen status; en död kanin är inte inaktiv
 #   Fliken med kullar              Kullar och parningar — aldrig "&", kullar först
@@ -31,9 +33,11 @@ set -euo pipefail
 export LC_ALL=C.UTF-8 # grep -i och [[:lower:]] känner bara igen åäö i en UTF-8-locale
 cd "$(dirname "$0")/.."
 
-FORBIDDEN='genbanksnummer|kaninnummer|certifikat|överlåt|byter hem|bekräfta flytt|sälj / flytta|genbanksmanager'
+FORBIDDEN='genbanksnummer|kaninnummer|certifikat|överlåtelse|överlåt(a|er|s|it|en)\b|byter hem|bekräfta flytt|sälj / flytta|genbanksmanager'
 FORBIDDEN+='|kullar & parningar|besättningshistoria|rapportera som död|dödsnotering|dödsanteckning'
 FORBIDDEN+='|försäljningsdatum|köpdatum|lista över individer|årsavgift'
+FORBIDDEN+='|förslag|torrkörning|kodinnehavare'
+FORBIDDEN+='|(min|din|utan) genbank\b|aktiva genbanker|granskare'
 # Versal mitt i menyvalet, och Moder/Fader som hel etikett: i en sträng eller JSX-text
 # ("Moder", >Moder<) eller ensam på raden, så att moderId och "Moder Jord" inte träffas.
 CASED="Min Besättning|Alla Kaniner|(^[[:space:]]*|[\"'>])(Moder|Fader)([\"'<]|[[:space:]]*$)"

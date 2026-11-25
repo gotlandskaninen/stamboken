@@ -1,8 +1,9 @@
+import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 import { loginInline, TEST_USERS } from "../e2e-shared/auth";
 
 // Inläsningskön från uppladdning till kaninens sida (docs/inkorg.md), med syntetiska data:
-// uppfödaren (test-gk-owner, äger G1274) fotograferar ett intyg på en telefon, en genbanks-
+// uppfödaren med produktionsåtkomst fotograferar ett intyg för G1274 på en telefon, en genbanks-
 // hjälpare (test-gk-helper, seedas av cli/create_test_users) tar ärendet och lägger in en
 // ny kanin med Visby Vilda × Visby Viking som föräldrar, och uppfödaren ser pappersintyget.
 // Filnamnet matchar inget mutation-/public-mönster, så specen körs i projektet owner-tests.
@@ -64,6 +65,12 @@ test("Ett intyg går från uppladdning till pappersintyg på kaninen", async ({
   browser,
   baseURL,
 }) => {
+  await loginInline(page, page.context(), {
+    username: "test-gk-owner-promoted",
+    password: "test-gk-owner-promoted-pass",
+  });
+  const prodMode = { name: "sb_mode", value: "prod", url: baseURL! };
+  await page.context().addCookies([prodMode]);
   let itemId = "";
   let rabbit = "";
 
@@ -131,13 +138,58 @@ test("Ett intyg går från uppladdning till pappersintyg på kaninen", async ({
   try {
     await test.step("3. Hjälparen tar ärendet i Inkorg", async () => {
       await loginInline(desk, worker, TEST_USERS.helper);
+      await worker.addCookies([prodMode]);
       const canvasSize = () =>
         desk
           .locator("canvas")
           .first()
           .evaluate((c: HTMLCanvasElement) => [c.width, c.height]);
       // Read the photo first and turn it for reading: nothing is saved before the case is taken.
-      await desk.goto(`/stamboken/inkorg/${itemId}`);
+      await desk.setViewportSize({ width: 375, height: 812 });
+      await desk.goto("/stamboken/inkorg?herd=G1274&order=newest");
+      const row = desk.locator(`#case-row-${itemId}`);
+      await expect(desk.getByText(/Upp- och nedpil.*Enter/)).toBeVisible();
+      expect(
+        await desk.evaluate(() => document.documentElement.scrollWidth),
+      ).toBeLessThanOrEqual(375);
+      await row.click();
+      await expect(desk).toHaveURL(
+        (url) => url.searchParams.get("arende") === itemId,
+      );
+      await desk.reload();
+      const back = desk.getByRole("link", { name: "Tillbaka till listan" });
+      await expect(back).toBeVisible();
+      expect(
+        await desk.evaluate(() => document.documentElement.scrollWidth),
+      ).toBeLessThanOrEqual(375);
+      await back.click();
+      await expect(row).toBeVisible();
+      await desk.setViewportSize({ width: 1280, height: 900 });
+      await row.click();
+      await expect(row).toHaveAttribute("aria-current", "true");
+      await expect(back).toBeHidden();
+      await expect(
+        desk.getByRole("heading", { name: "Foton", exact: true }),
+      ).toBeVisible();
+      const background = () =>
+        row.evaluate((link) => getComputedStyle(link).backgroundColor);
+      await desk.emulateMedia({ colorScheme: "light" });
+      const lightBackground = await background();
+      for (const colorScheme of ["dark", "light"] as const) {
+        await desk.emulateMedia({ colorScheme });
+        expect(await background()).toBe(lightBackground);
+        const contrast = await new AxeBuilder({ page: desk })
+          .include('aside[aria-label="Inkorgsverktyg"]')
+          .include('section[aria-label="Ärendelista"]')
+          .include('section[aria-label="Valt ärende"]')
+          .withRules(["color-contrast"])
+          .analyze();
+        expect(contrast.violations, colorScheme).toEqual([]);
+      }
+      await desk
+        .getByRole("link", { name: "Visa registrering och historik" })
+        .click();
+      await expect(desk).toHaveURL(`/stamboken/inkorg/${itemId}`);
       await expect
         .poll(async () => (await canvasSize())[0])
         .toBeGreaterThan(300);

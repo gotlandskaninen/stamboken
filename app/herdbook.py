@@ -20,6 +20,7 @@ import threading
 import time
 import uuid
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 import apscheduler.schedulers.background
 import click
@@ -63,6 +64,7 @@ from werkzeug.utils import secure_filename
 
 import utils.external_auth  # isort:skip
 import utils.data_access as da  # isort:skip
+from utils.data_access import logout_epoch as _logout_epoch  # isort:skip
 import utils.database as db  # isort:skip
 import utils.settings as settings  # isort:skip
 from utils import app_logging  # isort:skip
@@ -76,6 +78,7 @@ from utils import login_code  # isort:skip
 from utils.matrikel import purge_previous_addresses  # isort:skip
 from utils import inbox  # isort:skip
 from utils.inbox import queue_digests  # isort:skip
+from utils.arsrapport_invite import send_due_invitations  # isort:skip
 from utils import inbox_gmail  # isort:skip
 from utils import inbox_purge  # isort:skip
 from utils import buyer_contact  # isort:skip
@@ -338,6 +341,28 @@ def _expire_login_codes():
         genetics.ps._close_db_connection()  # pylint: disable=protected-access
 
 
+def _send_arsrapport_invitations():
+    """Leader job at 07:00 (step 3, FA9), built as _send_mail: it closes its thread's connection."""
+    try:
+        APP.logger.info(
+            "Queued %s yearly report invitations", send_due_invitations(datetime.datetime.now(datetime.timezone.utc))
+        )
+    except Exception:  # pylint: disable=broad-except
+        APP.logger.exception("Queueing the yearly report invitations failed")
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _catch_up_arsrapport_invitations(now=None):
+    """
+    At startup: a restart across 07:00 leaves the day's cron run to tomorrow, so run the job once now if it is past
+    07:00 (FA9). send_due_invitations only does what is due and unsent, so a second run changes nothing.
+    """
+    now = now or datetime.datetime.now(ZoneInfo("Europe/Stockholm"))
+    if now.astimezone(ZoneInfo("Europe/Stockholm")).hour >= 7:
+        _send_arsrapport_invitations()
+
+
 def _queue_notice_digests():
     """Leader job at 07:00 (docs/inkorg.md), built as _send_mail: it closes its thread's connection."""
     try:
@@ -379,6 +404,14 @@ def _interpret_document():
         APP.logger.exception("Interpreting an inbox document failed")
     finally:
         genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+@APP.after_request  # registered before Talisman, so it runs after Talisman's, which sets one policy for every route
+def _erase_link_referrer_policy(response):
+    """The buyer's erase link (blueprints/buyer_link.py) is named in no referrer."""
+    if request.blueprint == "buyer_link":
+        response.headers["Referrer-Policy"] = "no-referrer"
+    return response
 
 
 def _purge_audit_ip():
@@ -468,7 +501,7 @@ LOGIN.login_view = "/api/login/google"
 
 # Register domain-based Blueprints (ADR-0007)
 from blueprints import register_blueprints  # noqa: E402
-from blueprints.common import check_genebank_manager_access, contact_problem, problem  # noqa: E402
+from blueprints.common import check_genebank_manager_access, contact_problem, manager_required, problem  # noqa: E402
 
 register_blueprints(APP)
 
@@ -594,7 +627,7 @@ def refuse_demo_role_without_google():
     if (session.get("auth_method") == "google" and session.get("google_domain")) or request.endpoint == "logout":
         return None
     account = db.User.get_or_none(db.User.uuid == session["user_id"])
-    if account is None or not da.holds_role(account):
+    if account is None or not da.holds_role(account, password_override=session.get("auth_method") != "kod"):
         return None
     message = "Kontot har en roll. Logga in med föreningens Google-konto för att använda den i testmiljön."
     return jsonify({"status": "error", "message": message}), 403
@@ -735,10 +768,6 @@ def _drop_header_auth_session(response):
     return response
 
 
-def _logout_epoch():
-    return int(APP.config["SESSION_REDIS"].get(da.LOGOUT_EPOCH_KEY) or 0)
-
-
 def _session_revoked():
     """
     Every login stamps the logout epoch into the session, and a mass
@@ -767,21 +796,22 @@ def _session_revoked():
         if "auth_method" not in session or not da.session_holds(session):
             return True
         on_domain = session["auth_method"] == "google" and session.get("google_domain")
-        if on_domain or settings.service.allow_role_password_login:
+        password_override = session["auth_method"] != "kod"
+        if on_domain or (password_override and settings.service.allow_role_password_login):
             return False
         if settings.service.demo_instance and not session.get("demo_login"):
             # The demo's roles are a copy up to a day old: production judges the sessions it made, in the shared store,
             # and refuse_demo_role_without_google refuses their requests here.
             return False
         account = db.User.get_or_none(db.User.uuid == session["user_id"])
-        return account is not None and da.holds_role(account)
+        return account is not None and da.holds_role(account, password_override=password_override)
     return session.get("logout_epoch", 0) < _logout_epoch()
 
 
-def establish_session(user, method, generation, on_domain=False):
+def establish_session(user, method, generation, on_domain=False, *, verified_epoch=None):
     """
     The one way a login becomes a session: marks a demo login, stamps the
-    logout epoch, the sign-in method ("google" or "losenord"), whether a
+    logout epoch, the sign-in method ("google", "losenord" or "kod"), whether a
     Google login verified the association's domain (`on_domain`, stored
     only when true) and the account's mark read under its row lock, then
     rotates the sid. A session's stamps are never rewritten; a change of
@@ -790,7 +820,7 @@ def establish_session(user, method, generation, on_domain=False):
     if not user.is_active:
         # login_user refuses it too: a refused login must not leave a user and a mark that wake on reactivation.
         return
-    _stamp_login()
+    _stamp_login(verified_epoch)
     session["auth_method"] = method
     # A session an inactive account left uncleared must not lend its stamp to this login.
     session.pop("google_domain", None)
@@ -808,12 +838,15 @@ def establish_session(user, method, generation, on_domain=False):
     APP.session_interface.regenerate(session)
 
 
-def _stamp_login():
+APP.extensions["establish_session"] = establish_session
+
+
+def _stamp_login(verified_epoch=None):
     # Called before user_id is set, marker before the Redis read: a session
     # saved after a failure here must never carry a demo user unmarked.
     if settings.service.demo_instance:
         session["demo_login"] = True
-    session["logout_epoch"] = _logout_epoch()
+    session["logout_epoch"] = _logout_epoch() if verified_epoch is None else verified_epoch
 
 
 # pylint: disable=unused-argument
@@ -892,6 +925,10 @@ def user_profile():
     elif request.method == "PATCH":
         # Handle profile updates (profile picture and settings)
         profile_picture_url = None
+        # Before the upload: a file saved for an account that is gone would stay with no row naming it.
+        user = da.fetch_user_info(session.get("user_id", None))
+        if not user:
+            return jsonify({"status": "error", "message": "User not found"}), 404
 
         # Handle file upload for profile pictures
         if "profile_picture" in request.files:
@@ -908,6 +945,7 @@ def user_profile():
                     APP.logger.info("Profile picture uploaded")
                 except Exception as e:
                     APP.logger.error("Error uploading file: %s", type(e).__name__)  # e carries the path
+                    da.remove_profile_picture(unique_filename)  # a partly written file, which no row names
                     return jsonify({"status": "error", "message": "Failed to upload image"})
 
         # Get settings from JSON or form data
@@ -915,11 +953,6 @@ def user_profile():
             settings = request.form.to_dict()
         else:
             settings = request.json or {}
-
-        # Update profile
-        user = da.fetch_user_info(session.get("user_id", None))
-        if not user:
-            return jsonify({"status": "error", "message": "User not found"}), 404
 
         try:
             # Update profile picture if uploaded
@@ -930,13 +963,23 @@ def user_profile():
             if "use_google_picture" in settings:
                 user.use_google_picture = bool(settings["use_google_picture"])
 
-            # Only the profile columns: a full-row save of this unlocked read
-            # would write back a stale is_active/_privileges.
-            user.save(only=[db.User.profile_picture, db.User.use_google_picture])
+            # Only the profile columns, and only on an active account: a full-row save of this unlocked read would
+            # write back a stale is_active/_privileges, and an erasure (#190) committed since must stay erased.
+            saved = (
+                db.User.update(profile_picture=user.profile_picture, use_google_picture=user.use_google_picture)
+                .where((db.User.id == user.id) & (db.User.is_active == True))  # noqa: E712
+                .execute()
+            )
+            if not saved:
+                if profile_picture_url:
+                    da.remove_profile_picture(profile_picture_url)
+                return jsonify({"status": "error", "message": "User not found"}), 404
             return jsonify({"status": "updated", "message": "Profile updated successfully"})
 
         except Exception as e:
             APP.logger.error("Error updating profile: %s", type(e).__name__)
+            if profile_picture_url:
+                da.remove_profile_picture(profile_picture_url)
             return jsonify({"status": "error", "message": "Failed to update profile"})
 
 
@@ -1183,34 +1226,47 @@ def _opt_bool_arg(name):
     return raw == "true"
 
 
+# [Next.js] Only the v2 adminpanel calls this GET, so its 403 → 200 for managers (#214) is an accepted exception
+# to ADR-0006; legacy uses the POST/PATCH above.
 @APP.route("/api/manage/herd", methods=["GET"])
 @login_required
+@manager_required
 def list_all_herds():
     """
-    List every herd for the adminpanel list page.
+    List the herds for the adminpanel list page.
 
     Query params: genebank_id (int), active (bool), has_owner (bool),
     q (free text — herd code/name/contact), page, page_size.
 
-    Auth: admin only. Manager(gb) lists their gb's herds via the
-    existing GET /api/genebank/<gb_id>.
+    Auth: admin, or manager(gb) — scoped to the genebanks they manage (#214).
     """
-    user = current_user
-    if not user.is_admin:
-        return problem(
-            403, "Admin-behörighet krävs", "Endast admin får lista alla besättningar.", type="admin-required"
-        )
-    return jsonify(
-        da.list_all_herds(
-            user,
-            genebank_id=request.args.get("genebank_id", type=int),
-            active=_opt_bool_arg("active"),
-            has_owner=_opt_bool_arg("has_owner"),
-            search=request.args.get("q"),
-            page=request.args.get("page", 1, type=int),
-            page_size=request.args.get("page_size", 50, type=int),
-        )
-    ), 200
+    # The session's user and the row in the snapshot must both pass, as in get_herd_for_admin: the first misses
+    # a role revoked since the session check, the second one granted after update_role revoked this session.
+    with db.snapshot_read():
+        user = da.fetch_user_info(current_user.uuid)
+        if user is None:
+            return unauthorized()
+        if not user.is_admin and not user.is_manager:
+            return problem(403, "Åtkomst nekad", "Du saknar behörighet för denna åtgärd.")
+        genebank_id = request.args.get("genebank_id", type=int)
+        if genebank_id is not None:
+            err = check_genebank_manager_access(current_user, genebank_id) or check_genebank_manager_access(
+                user, genebank_id
+            )
+            if err is not None:
+                return err
+        return jsonify(
+            da.list_all_herds(
+                current_user,
+                user,
+                genebank_id=genebank_id,
+                active=_opt_bool_arg("active"),
+                has_owner=_opt_bool_arg("has_owner"),
+                search=request.args.get("q"),
+                page=request.args.get("page", 1, type=int),
+                page_size=request.args.get("page_size", 50, type=int),
+            )
+        ), 200
 
 
 def _resolve_admin_herd(h_ref):
@@ -1237,15 +1293,21 @@ def get_herd_for_admin(h_ref):
 
     Auth: admin OR manager(gb) of the herd's genebank.
     """
-    user = current_user
-    herd = _resolve_admin_herd(h_ref)
-    if herd is None:
-        return problem(404, "Besättning saknas", f"Ingen besättning med id {h_ref}.", type="herd-not-found")
-    if not user.is_admin:
-        err = check_genebank_manager_access(user, herd.genebank_id)
+    # Both the session's user and the row in the herd's snapshot must pass: the first misses a role revoked
+    # since the session check, the second could see a role granted after update_role revoked this session.
+    with db.snapshot_read():
+        user = da.fetch_user_info(current_user.uuid)
+        if user is None:
+            return unauthorized()
+        herd = _resolve_admin_herd(h_ref)
+        if herd is None:
+            return problem(404, "Besättning saknas", f"Ingen besättning med id {h_ref}.", type="herd-not-found")
+        err = check_genebank_manager_access(current_user, herd.genebank_id) or check_genebank_manager_access(
+            user, herd.genebank_id
+        )
         if err is not None:
             return err
-    return jsonify(da.get_herd_for_admin(user, herd)), 200
+        return jsonify(da.get_herd_for_admin(user, herd)), 200
 
 
 @APP.route("/api/manage/herd/<h_ref>", methods=["PATCH"])
@@ -1533,11 +1595,16 @@ def login_handler():
     return get_user()
 
 
-# The Google profile columns the login routes refresh. They save only these: the
-# user row was read without a lock, so a full-row save would write back a stale
-# is_active/_privileges and undo a concurrent deactivation or role change.
-# google_email is no profile column: da.google_login_generation writes it under the row lock.
-_GOOGLE_PROFILE_COLUMNS = [db.User.google_picture, db.User.google_name]
+def _save_google_profile(user):
+    """
+    The Google profile columns the login routes refresh, and only these: the user row was read without a lock, so a
+    full-row save would write back a stale is_active/_privileges and undo a concurrent deactivation or role change.
+    Only on an active account: a login racing an erasure (#190) never writes them back. google_email is no profile
+    column: da.google_login_generation writes it under the row lock.
+    """
+    db.User.update(google_picture=user.google_picture, google_name=user.google_name).where(
+        (db.User.id == user.id) & (db.User.is_active == True)  # noqa: E712
+    ).execute()
 
 
 def _storable_google_email(verified_email):
@@ -1637,7 +1704,7 @@ def google_token_login():
         if user and not user.validated:
             if _should_auto_validate_users():
                 user.validated = True
-                user.save(only=[db.User.validated])  # see _GOOGLE_PROFILE_COLUMNS
+                user.save(only=[db.User.validated])  # see _save_google_profile
             elif settings.service.access_rules != "enforce":
                 # The course belongs to the legacy frontend, and the access rules
                 # keep an unvalidated account out of it and off production; without
@@ -1653,7 +1720,7 @@ def google_token_login():
             # Update user with Google profile data in database
             user.google_picture = picture
             user.google_name = name
-            user.save(only=_GOOGLE_PROFILE_COLUMNS)
+            _save_google_profile(user)
 
             # After the save: a save that raises must not leave a session that
             # carries user_id without flask-login's _user_id.
@@ -1715,7 +1782,7 @@ def external_login_handler(service):
         if _should_auto_validate_users():
             # Auto-validate user since this environment opted in via env var
             user.validated = True
-            user.save(only=[db.User.validated])  # see _GOOGLE_PROFILE_COLUMNS
+            user.save(only=[db.User.validated])  # see _save_google_profile
         else:
             return _not_validated_response()
 
@@ -1744,7 +1811,7 @@ def external_login_handler(service):
         _link_member_if_any(user, verified_email)
         # Reload unfiltered: fetch_user_info hides an account deactivated mid-login (the
         # provider calls above can take long), and the profile save below writes only
-        # _GOOGLE_PROFILE_COLUMNS, so it cannot undo that deactivation.
+        # the profile columns of an active account (_save_google_profile).
         user = db.User.get_by_id(user.id)
 
         # Save Google profile data (picture, name)
@@ -1754,7 +1821,7 @@ def external_login_handler(service):
             if userinfo:
                 user.google_picture = userinfo.get("picture") or user.google_picture
                 user.google_name = userinfo.get("name") or user.google_name
-                user.save(only=_GOOGLE_PROFILE_COLUMNS)
+                _save_google_profile(user)
             else:
                 # Fallback to id_token if userinfo fails
                 idtoken = utils.external_auth.google_idtoken()
@@ -1763,7 +1830,7 @@ def external_login_handler(service):
                         user.google_picture = idtoken["picture"]
                     if idtoken.get("name"):
                         user.google_name = idtoken["name"]
-                    user.save(only=_GOOGLE_PROFILE_COLUMNS)
+                    _save_google_profile(user)
 
         # Check for saved return_to URL from before OAuth
         return_to = session.pop("return_to_after_oauth", None)
@@ -3170,6 +3237,24 @@ def initialize_app():
             id="mail_send",
             max_instances=1,
             coalesce=True,
+        )
+
+        # The yearly report's invitations on each genebank's send day, when someone is awake to see them (FA9).
+        scheduler.add_job(
+            _send_arsrapport_invitations,
+            "cron",
+            hour=7,
+            id="arsrapport_invitations",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+        )
+
+        scheduler.add_job(
+            _catch_up_arsrapport_invitations,
+            trigger="date",
+            id="arsrapport_invitations_catch_up",
+            misfire_grace_time=None,
         )
 
         scheduler.add_job(

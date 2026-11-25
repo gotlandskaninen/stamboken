@@ -103,6 +103,13 @@ def matrikel_read_required(f):
     return decorated
 
 
+def membership_organization_fields(membership, *, account_details: bool) -> dict:
+    fields = {"organization_name": membership.organization_name}
+    if account_details and (current_user.is_admin or current_user.is_matrikel_admin):
+        fields["organization_number"] = membership.organization_number
+    return fields
+
+
 def json_error(message, status=400):
     """Return a JSON error response matching the project's standard format."""
     return jsonify({"status": "error", "message": message}), status

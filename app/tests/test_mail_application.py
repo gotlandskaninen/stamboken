@@ -4,6 +4,7 @@ isort:skip_file
 """
 
 import os
+import smtplib
 from datetime import timedelta
 from unittest import mock
 
@@ -279,18 +280,42 @@ class TestMemberAdded(MailTest):
         matrikel.retire_membership(self.membership, self.actor)
         self.assertEqual(self.mails()[0].status, "cancelled")
 
-    def sent_to(self):
-        relay = self.relay()
+    def sent_to(self, **kwargs):
+        relay = self.relay(**kwargs)
         mail.send_pending(self.now)
         return [envelope_to[0] for _msg, _sender, envelope_to in relay.sent]
 
-    def test_an_address_gets_at_most_three_a_day_also_when_changed_to_before_the_mail_goes(self):
+    def later(self, **delta):
+        self.now += timedelta(**delta)
+        mail._utcnow.return_value = self.now  # pylint: disable=no-member  # MailTest's mock
+
+    def waiting(self):
+        return [(row.attempts, row.last_error) for row in self.mails() if row.status == "queued"]
+
+    def test_an_address_gets_at_most_three_a_day_also_when_changed_to_and_the_rest_the_next_day(self):
         for n in range(4):
             self.add(first_name=f"Nummer {n}", email=f"person{n}@example.org")
         db.Member.update(email=" Samma@Example.ORG ").where(db.Member.role == "familjemedlem").execute()
         self.assertEqual(self.sent_to(), ["samma@example.org"] * mail.ADDED_TO_AN_ADDRESS_A_DAY)
-        self.assertEqual(sorted(row.status for row in self.mails()), ["cancelled", "sent", "sent", "sent"])
+        self.assertEqual(self.waiting(), [(0, "uppskjutet: adressens gräns per dygn")])
         self.assertNotIn("example.org", "".join(row.dedupe_key for row in self.mails()))
+        self.later(hours=23)
+        self.assertEqual(self.sent_to(), [])
+        self.later(hours=1, seconds=1)
+        self.assertEqual(self.sent_to(), ["samma@example.org"])
+
+    def test_a_notice_held_by_the_address_limit_goes_before_newer_ones(self):
+        for n in range(3):
+            self.add(first_name=f"Nummer {n}", email="samma@example.org")
+        self.sent_to()
+        self.later(hours=12)
+        held = self.add(first_name="Fyra", email="samma@example.org")
+        self.sent_to()
+        self.later(hours=12, seconds=1)  # the first three are a day old: three places, the oldest waiting first
+        newer = [self.add(first_name=f"Ny {n}", email="samma@example.org") for n in range(3)]
+        self.sent_to()
+        sent = {row.recipient_id for row in self.mails() if row.status == "sent"}
+        self.assertEqual((held.id in sent, newer[-1].id in sent), (True, False))
 
     def test_log_mode_without_a_link_secret_logs_the_mail(self):
         self.add()
@@ -319,17 +344,183 @@ class TestMemberAdded(MailTest):
         (row,) = self.mails()
         self.assertEqual((relay.sent, row.status, row.claim_token), ([], "cancelled", None))
 
-    def test_a_membership_causes_at_most_ten_mails_a_day(self):
+    def test_a_membership_spreads_its_notices_ten_a_day_in_order(self):
         for n in range(mail.ADDED_A_DAY + 2):
             self.add(first_name=f"Nummer {n}", email=f"person{n}@example.org")
-        self.assertEqual(len(self.mails()), mail.ADDED_A_DAY)
         other = db.Membership.create(membership_status="active")  # another membership is not held back
         matrikel.add_person(other, {"first_name": "Ny", "last_name": "Person", "email": "x@example.org"}, self.actor)
-        self.assertEqual(len(self.mails()), mail.ADDED_A_DAY + 1)
+        self.assertEqual(len(self.mails()), mail.ADDED_A_DAY + 3)  # every one is queued, none dropped
+        self.assertEqual(len(self.sent_to()), mail.ADDED_A_DAY + 1)
+        self.later(days=1)
+        self.assertEqual(self.sent_to(), ["person10@example.org", "person11@example.org"])
+
+    def test_no_day_holds_more_than_ten_of_a_membership_s_notices(self):
+        for group, hours in enumerate((0, 23.98, 0.04)):  # ten at 10.00, ten the next day at 09.59 and at 10.01
+            self.later(hours=hours)
+            for n in range(mail.ADDED_A_DAY):
+                self.add(first_name=f"Nummer {group} {n}", email=f"person{group}-{n}@example.org")
+        due = sorted(row.next_attempt_at for row in self.mails())
+        self.assertTrue(all(b - a >= timedelta(days=1) for a, b in zip(due, due[mail.ADDED_A_DAY :], strict=False)))
+
+    def test_a_claim_taken_away_before_the_sender_reads_its_row_is_not_sent(self):
+        person = self.add()
+        relay = self.relay()
+        read = db.MailMessage.get_by_id
+
+        def meanwhile(row_id):  # between the claim and its read: a new address queues the row again, then "Stoppa"
+            matrikel.set_member_email(db.Member.get_by_id(person.id), "annan@example.org", self.actor, by="matrikel")
+            stopped = {"status": "cancelled", "last_error": "stoppat i statusvyn"}
+            db.MailMessage.update(**stopped).where(db.MailMessage.status == "queued").execute()
+            return read(row_id)
+
+        with mock.patch.object(db.MailMessage, "get_by_id", side_effect=meanwhile):
+            mail.send_pending(self.now)
+        self.assertEqual((relay.sent, self.mails()[0].status), ([], "cancelled"))
+
+    def test_a_refused_notice_uses_a_place_of_the_membership_s_day(self):
+        refusal = smtplib.SMTPRecipientsRefused({"x": (550, b"5.1.1 no such user")})
+        for n in range(mail.ADDED_A_DAY):
+            self.add(first_name=f"Nummer {n}", email=f"person{n}@example.org")
+        self.assertEqual(len(self.sent_to(replies=[refusal, None] * 5)), 5)
+        self.add(first_name="Elva", email="elva@example.org")
+        self.assertEqual(self.sent_to(), [])
+
+    def test_a_person_given_an_address_later_is_told_once(self):
+        person = self.add(email=None)
+        self.assertEqual(self.mails(), [])
+        matrikel.set_member_email(person, "senare@example.org", self.actor, by="matrikel")
+        self.assertEqual(self.sent_to(), ["senare@example.org"])
+        matrikel.set_member_email(person, "annan@example.org", self.actor, by="matrikel")
+        self.assertEqual((len(self.mails()), self.sent_to()), (1, []))
+
+    def test_an_address_given_later_to_someone_nobody_else_put_in_queues_nothing(self):
+        imported = db.Member.create(  # as the register import writes it
+            membership=self.membership, first_name="Från", last_name="Matrikeln", role="familjemedlem"
+        )
+        other = db.Membership.create(membership_status="active")
+        was_main = matrikel.add_person(
+            other,
+            {"first_name": "Var", "last_name": "Huvud", "email": "var@example.org", "role": "huvudmedlem"},
+            self.actor,
+        )
+        matrikel.swap_main_member(
+            other, matrikel.add_person(other, {"first_name": "Ny", "last_name": "Huvud"}, self.actor), self.actor
+        )
+        once_main = self.add(first_name="Blev", email=None)  # put in by another, then main member for a while
+        head = db.Member.get(db.Member.first_name == "Huvud")
+        matrikel.swap_main_member(self.membership, once_main, self.actor)
+        matrikel.swap_main_member(self.membership, db.Member.get_by_id(head.id), self.actor)
+        for n, person in enumerate((imported, was_main, once_main)):
+            matrikel.set_member_email(
+                db.Member.get_by_id(person.id), f"senare{n}@example.org", self.actor, by="matrikel"
+            )
+        self.assertEqual(db.Member.get_by_id(was_main.id).role, "familjemedlem")
+        self.assertEqual(self.mails(), [])
+
+    def test_a_notice_that_never_reached_the_person_goes_to_the_next_address(self):
+        stopped = self.add()
+        refused = self.add(first_name="Andra", email="fel@example.org")
+        bounced = self.add(first_name="Tredje", email="studs@example.org")
+        matrikel.set_member_email(stopped, None, self.actor, by="matrikel")  # before the sender ran
+        refusal = smtplib.SMTPRecipientsRefused({"fel@example.org": (550, b"5.1.1 no such user")})
+        self.assertEqual(self.sent_to(replies=[refusal, None]), ["studs@example.org"])
+        (row,) = [row for row in self.mails() if row.recipient_id == bounced.id]
+        self.assertTrue(mail.record_bounce(mail.message_id(row.id), "550 5.1.1 user unknown"))
+        self.assertEqual(sorted(row.status for row in self.mails()), ["bounced", "cancelled", "failed"])
+        for n, person in enumerate((stopped, refused, bounced)):
+            matrikel.set_member_email(person, f"ratt{n}@example.org", self.actor, by="matrikel")
+        self.assertEqual(sorted(self.sent_to()), ["ratt0@example.org", "ratt1@example.org"])  # not the bounced one:
+        self.assertEqual(sorted(row.status for row in self.mails()), ["bounced", "sent", "sent"])  # it may be late
+
+    def test_a_notice_held_for_its_address_goes_to_the_new_one(self):
+        for n in range(4):
+            self.add(first_name=f"Nummer {n}", email="samma@example.org")
+        self.sent_to()
+        held = db.Member.get(db.Member.first_name == "Nummer 3")
+        matrikel.set_member_email(held, "egen@example.org", self.actor, by="matrikel")
+        self.later(minutes=2)
+        self.assertEqual(self.sent_to(), ["egen@example.org"])
+
+    def test_notices_a_limit_puts_back_do_not_use_up_the_sender_s_run(self):
+        for n in range(3):
+            self.add(first_name=f"Nummer {n}", email="samma@example.org")
+        self.sent_to()
+        for m in range(4):  # 32 more to the address, from four memberships: more than one run takes
+            other = db.Membership.create(membership_status="active")
+            for n in range(8):
+                fields = {"first_name": f"Fler {m} {n}", "last_name": "Person", "email": "samma@example.org"}
+                matrikel.add_person(other, fields, self.actor)
+        self.queue("kvitto@example.org")
+        self.assertEqual(self.sent_to(), ["kvitto@example.org"])
+
+    def test_a_retry_in_the_status_view_never_writes_to_a_former_main_member(self):
+        person = self.add()
+        self.sent_to()
+        db.MailMessage.update(status="bounced").execute()  # as record_bounce leaves it
+        head = db.Member.get(db.Member.first_name == "Huvud")
+        matrikel.swap_main_member(self.membership, db.Member.get_by_id(person.id), self.actor)
+        matrikel.swap_main_member(self.membership, db.Member.get_by_id(head.id), self.actor)
+        db.MailMessage.update(status="queued", attempts=0).execute()  # "Försök igen"
+        self.assertEqual((self.sent_to(), self.mails()[0].status), ([], "cancelled"))
+
+    def test_a_notice_queued_again_is_not_purged_before_it_goes(self):
+        person = self.add(email="fel@example.org")
+        refusal = smtplib.SMTPRecipientsRefused({"fel@example.org": (550, b"5.1.1 no such user")})
+        self.sent_to(replies=[refusal])
+        db.MailMessage.update(created_at=self.now - mail.RETENTION - timedelta(days=1)).execute()
+        matrikel.set_member_email(person, "ratt@example.org", self.actor, by="matrikel")
+        self.assertEqual(mail.purge_old_mail(self.now), 0)  # queued again, it counts from now
+        self.assertEqual(self.sent_to(), ["ratt@example.org"])
+
+    def test_a_notice_stopped_by_hand_stays_stopped(self):
+        person = self.add()
+        db.MailMessage.update(status="cancelled", last_error="stoppat i statusvyn").execute()  # as "Stoppa" does
+        matrikel.set_member_email(person, "annan@example.org", self.actor, by="matrikel")
+        self.assertEqual([(row.status, row.last_error) for row in self.mails()], [("cancelled", "stoppat i statusvyn")])
+
+    def test_an_address_changed_while_the_sender_connects_is_the_one_told(self):
+        person = self.add()
+        relay = self.relay()
+        connect = mail._connect
+
+        def changed_meanwhile(conn):  # the sender has read the old address and built the mail
+            connect(conn)
+            matrikel.set_member_email(db.Member.get_by_id(person.id), "ratt@example.org", self.actor, by="matrikel")
+
+        with mock.patch.object(mail, "_connect", changed_meanwhile):
+            mail.send_pending(self.now)
+        self.assertEqual([envelope_to for _msg, _sender, envelope_to in relay.sent], [["ratt@example.org"]])
+        self.assertEqual([row.status for row in self.mails()], ["sent"])
+
+    def test_an_address_removed_while_the_sender_connects_is_not_written_to(self):
+        person = self.add()
+        relay = self.relay()
+        connect = mail._connect
+
+        def removed_meanwhile(conn):
+            connect(conn)
+            matrikel.set_member_email(db.Member.get_by_id(person.id), None, self.actor, by="matrikel")
+
+        with mock.patch.object(mail, "_connect", removed_meanwhile):
+            mail.send_pending(self.now)
+        self.assertEqual(relay.sent, [])
+        matrikel.set_member_email(db.Member.get_by_id(person.id), "ratt@example.org", self.actor, by="matrikel")
+        self.assertEqual(self.sent_to(), ["ratt@example.org"])
+
+    def test_an_address_given_to_someone_who_left_queues_nothing(self):
+        person = self.add(email=None)
+        matrikel.soft_delete_person(person, self.actor)
+        matrikel.set_member_email(person, "senare@example.org", self.actor, by="matrikel")
+        self.assertEqual(self.mails(), [])
 
     def test_the_register_import_does_not_go_through_add_person(self):
-        """The import writes its rows itself: the people in the register gave their details themselves."""
+        """The import writes its rows itself: the people in the register gave their details themselves. Only
+        link-household adds a person as a manual add does."""
+        import inspect
+
+        import cli.members
+
         source = open(
             os.path.join(os.path.dirname(os.path.dirname(__file__)), "cli", "members.py"), encoding="utf-8"
         ).read()
-        self.assertNotIn("add_person(", source)
+        self.assertNotIn("add_person(", source.replace(inspect.getsource(cli.members._add_household_person), ""))
