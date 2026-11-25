@@ -1,239 +1,17 @@
-"""Tests for Member↔User auto-linking helper."""
+"""Google sign-in never links an account to a Member by its workspace_email."""
 
-import json
 from unittest import mock
 
 import utils.data_access as da  # noqa: E402
 import utils.database as db  # noqa: E402
-from utils.members import try_auto_link_member  # noqa: E402
 
-from tests.database_test import DatabaseTest  # noqa: E402
 from tests.test_endpoints import FlaskTest  # noqa: E402
 
 
-class TestAutoLinkMember(DatabaseTest):
-    def setUp(self):
-        super().setUp()
-        # Reuse seeded genebank 0 and its herd 0
-        self.genebank = self.genebanks[0]
-        self.herd = self.herds[0]
-
-    def _user(self, email):
-        # Use the real registration path so uuid is a proper UUID hex and
-        # any side effects (authenticator, privileges list) happen correctly.
-        return da.register_user(email, "pass", username=email)
-
-    def test_link_matches_by_workspace_email_writes_no_privileges(self):
-        user = self._user("alfa@gotlandskaninen.se")
-        member = db.Member.create(
-            first_name="A",
-            last_name="A",
-            email="alfa-personal@example.com",  # contact email
-            workspace_email="alfa@gotlandskaninen.se",  # provisioned login
-            membership=db.Membership.create(),
-        )
-        linked = try_auto_link_member(member, user)
-        self.assertTrue(linked)
-        member = db.Member.get_by_id(member.id)
-        self.assertEqual(member.user_id, user.id)
-        # v2: herd rights are derived at check time (effective_herd_ids) —
-        # auto-link must not write owner entries to the privileges JSON.
-        user_reloaded = db.User.get_by_id(user.id)
-        self.assertEqual(json.loads(user_reloaded._privileges), [])
-        self.assertTrue(db.MatrikelAudit.select().where(db.MatrikelAudit.action == "person_user_linked").exists())
-
-    def test_link_leaves_existing_privileges_untouched(self):
-        user = self._user("delta@gotlandskaninen.se")
-        user._privileges = json.dumps([{"level": "owner", "herd": self.herds[0].id}])
-        user.save()
-        member = db.Member.create(
-            first_name="D",
-            last_name="D",
-            email="delta-personal@example.com",
-            workspace_email="delta@gotlandskaninen.se",
-            membership=db.Membership.create(),
-        )
-        try_auto_link_member(member, user)
-        privs = json.loads(db.User.get_by_id(user.id)._privileges)
-        self.assertEqual(privs, [{"level": "owner", "herd": self.herds[0].id}])
-
-    def test_link_ignores_contact_email_match(self):
-        """Auto-link must NOT fire when only contact email matches."""
-        user = self._user("contact-only@example.com")
-        member = db.Member.create(
-            first_name="X",
-            last_name="Y",
-            email="contact-only@example.com",  # same as user.email — irrelevant
-            workspace_email=None,
-            membership=db.Membership.create(),
-        )
-        linked = try_auto_link_member(member, user)
-        self.assertFalse(linked)
-        self.assertIsNone(db.Member.get_by_id(member.id).user_id)
-
-    def test_auto_link_skips_when_user_already_linked_elsewhere(self):
-        """idx_member_user_unique: a second workspace_email match is skipped, never an IntegrityError."""
-        user = self._user("dup@gotlandskaninen.se")
-        first = db.Member.create(first_name="A", last_name="A", membership=db.Membership.create(), user=user)
-        member = db.Member.create(
-            first_name="B", last_name="B", workspace_email="dup@gotlandskaninen.se", membership=db.Membership.create()
-        )
-        self.assertFalse(try_auto_link_member(member, user))
-        self.assertEqual(db.Member.get_by_id(first.id).user_id, user.id)
-        self.assertIsNone(db.Member.get_by_id(member.id).user_id)
-
-    def test_already_linked_skip_logs_ids_not_names(self):
-        """Log policy: the refusal line carries ids only — never the holder's
-        name or membership number, which LinkError.detail spells out for the admin UI."""
-        user = self._user("holder@gotlandskaninen.se")
-        holder = db.Member.create(
-            first_name="Hemlig",
-            last_name="Holmberg",
-            membership=db.Membership.create(member_number=6),
-            user=user,
-        )
-        member = db.Member.create(
-            first_name="B",
-            last_name="B",
-            workspace_email="holder@gotlandskaninen.se",
-            membership=db.Membership.create(),
-        )
-        with self.assertLogs("utils.members", level="INFO") as logs:
-            self.assertFalse(try_auto_link_member(member, user))
-        output = "\n".join(logs.output)
-        self.assertIn(f"member={member.id}", output)
-        self.assertIn(f"holder_person_id={holder.id}", output)
-        self.assertNotIn("Hemlig", output)
-        self.assertNotIn("Holmberg", output)
-        self.assertNotIn("nr 6", output)
-
-    def test_link_refuses_non_domain_workspace_email(self):
-        """Defense in depth: the flask-dance login path has no domain check,
-        so the helper itself must refuse non-@gotlandskaninen.se addresses
-        even if such a value ever ends up in workspace_email. The refusal
-        line names the member id and the required domain — never the private
-        address it refused (log policy)."""
-        user = self._user("foxtrot@gmail.com")
-        member = db.Member.create(
-            first_name="F",
-            last_name="F",
-            workspace_email="foxtrot@gmail.com",
-            membership=db.Membership.create(),
-        )
-        with self.assertLogs("utils.members", level="WARNING") as logs:
-            self.assertFalse(try_auto_link_member(member, user))
-        self.assertIsNone(db.Member.get_by_id(member.id).user_id)
-        output = "\n".join(logs.output)
-        self.assertIn(f"member={member.id}", output)
-        self.assertIn("@gotlandskaninen.se", output)
-        self.assertNotIn("foxtrot", output)
-        self.assertNotIn("gmail.com", output)
-
-    def test_auto_link_refuses_when_link_would_convey_herds(self):
-        """The OAuth path never conveys access — it logs and leaves the row for the admin flow."""
-        user = self._user("main@gotlandskaninen.se")
-        ms = db.Membership.create(membership_status="active")
-        self.herd.membership = ms
-        self.herd.save()
-        member = db.Member.create(
-            first_name="M", last_name="M", role="huvudmedlem", workspace_email="main@gotlandskaninen.se", membership=ms
-        )
-        with self.assertLogs("utils.members", level="WARNING") as logs:
-            self.assertFalse(try_auto_link_member(member, user))
-        self.assertIn("would convey herds", logs.output[0])
-        self.assertIn(self.herd.herd, logs.output[0])
-        self.assertIsNone(db.Member.get_by_id(member.id).user_id)
-        self.assertFalse(db.MatrikelAudit.select().exists())
-
-    def test_auto_link_links_empty_delta_and_audits_with_self_as_actor(self):
-        user = self._user("fam@gotlandskaninen.se")
-        member = db.Member.create(
-            first_name="F",
-            last_name="F",
-            role="familjemedlem",
-            workspace_email="fam@gotlandskaninen.se",
-            membership=db.Membership.create(membership_status="active"),
-        )
-        self.assertTrue(try_auto_link_member(member, user))
-        audit = db.MatrikelAudit.get(db.MatrikelAudit.action == "person_user_linked")
-        self.assertEqual((audit.actor_id, audit.payload["source"]), (user.id, "oauth"))
-
-
-class TestOAuthAutoLinkHook(DatabaseTest):
+class TestOAuthNeverLinksRoutes(FlaskTest):
     """
-    The OAuth hook must link an unlinked Member to the newly-authenticated
-    User. The hook lives in app/herdbook.py (not external_auth.py).
-
-    Helper coverage here; TestOAuthAutoLinkRoutes drives the three OAuth
-    routes with mocked Google responses.
-    """
-
-    def test_hook_links_unlinked_member_with_matching_workspace_email(self):
-        from herdbook import _link_member_if_any  # noqa: E402
-
-        db.Member.create(
-            first_name="Pre",
-            last_name="Existing",
-            email="pre-personal@example.com",  # contact
-            workspace_email="pre.existing@gotlandskaninen.se",  # login
-            membership=db.Membership.create(),
-        )
-        user = da.register_user(
-            "pre.existing@gotlandskaninen.se",
-            "pass",
-            username="pre-existing",
-        )
-
-        _link_member_if_any(user, "pre.existing@gotlandskaninen.se")
-
-        m = db.Member.get(db.Member.workspace_email == "pre.existing@gotlandskaninen.se")
-        self.assertEqual(m.user_id, user.id)
-
-    def test_hook_matches_verified_email_case_insensitively(self):
-        """Phase 9 or Google may deliver different casing than stored —
-        the DB index is on LOWER(workspace_email), match the same way."""
-        from herdbook import _link_member_if_any  # noqa: E402
-
-        user = da.register_user("echo@gotlandskaninen.se", "pass", username="echo")
-        member = db.Member.create(
-            first_name="E", last_name="E", workspace_email="Echo@Gotlandskaninen.se", membership=db.Membership.create()
-        )
-        _link_member_if_any(user, "ECHO@gotlandskaninen.se")
-        self.assertEqual(db.Member.get_by_id(member.id).user_id, user.id)
-
-    def test_hook_never_falls_back_to_user_email(self):
-        """Without a provider-verified address there is no link, even
-        when the self-editable User.email equals the workspace address."""
-        from herdbook import _link_member_if_any  # noqa: E402
-
-        user = da.register_user("golf@gotlandskaninen.se", "pass", username="golf")
-        member = db.Member.create(
-            first_name="G", last_name="G", workspace_email="golf@gotlandskaninen.se", membership=db.Membership.create()
-        )
-        _link_member_if_any(user, None)
-        self.assertIsNone(db.Member.get_by_id(member.id).user_id)
-
-    def test_hook_is_noop_when_no_matching_member(self):
-        from herdbook import _link_member_if_any  # noqa: E402
-
-        user = da.register_user(
-            "lonely@gotlandskaninen.se",
-            "pass",
-            username="lonely",
-        )
-        # Should not raise
-        _link_member_if_any(user, "lonely@gotlandskaninen.se")
-        self.assertEqual(
-            db.Member.select().where(db.Member.user == user).count(),
-            0,
-        )
-
-
-class TestOAuthAutoLinkRoutes(FlaskTest):
-    """
-    Every OAuth route links a provisioned Member by the address Google
-    verified in this login, to the account that signed in. The self-editable
-    User.email (PATCH /api/manage/user/) must play no part.
+    No OAuth route links a Member to the account that signed in, whatever
+    address Google verified (administrators link in the matrikel).
     """
 
     def setUp(self):
@@ -281,6 +59,17 @@ class TestOAuthAutoLinkRoutes(FlaskTest):
         ):
             return self.app.get("/api/login/google", headers={"Referer": "https://accounts.google.com/"})
 
+    def test_google_login_with_verified_workspace_email_does_not_link_the_person(self):
+        anna = da.register_user("anna@gotlandskaninen.se", "pass", username="anna")
+        db.Authenticators.create(user=anna.id, auth="google", auth_data="sub-anna")
+
+        with self.app as client:
+            resp = self._token_login(client, "anna@gotlandskaninen.se", "sub-anna")
+
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertIsNone(self._linked_to())
+        self.assertFalse(db.MatrikelAudit.select().where(db.MatrikelAudit.action == "person_user_linked").exists())
+
     def test_token_login_does_not_link_member_matching_self_set_email(self):
         eve = da.register_user("eve@gotlandskaninen.se", "pass", username="eve")
         db.Authenticators.create(user=eve.id, auth="google", auth_data="sub-eve")
@@ -299,7 +88,7 @@ class TestOAuthAutoLinkRoutes(FlaskTest):
             f"eve@gotlandskaninen.se: PATCH -> {patch.get_json()}, 2nd /api/auth/google -> {second.status_code}",
         )
 
-    def test_token_login_links_the_signed_in_account_not_an_email_twin(self):
+    def test_token_login_does_not_link_even_the_account_verified_as_the_workspace_address(self):
         # Eve's older row holds Anna's address in another casing; the old hook
         # re-resolved the User by LOWER(User.email).first() and got Eve.
         eve = da.register_user("Anna@gotlandskaninen.se", "pass", username="eve")
@@ -310,7 +99,7 @@ class TestOAuthAutoLinkRoutes(FlaskTest):
             resp = self._token_login(client, "anna@gotlandskaninen.se", "sub-anna")
 
         self.assertEqual(resp.status_code, 200, resp.get_json())
-        self.assertEqual(self._linked_to(), anna.id, f"anna={anna.id} eve={eve.id}")
+        self.assertIsNone(self._linked_to(), f"anna={anna.id} eve={eve.id}")
 
     def test_dance_login_does_not_link_member_matching_self_set_email(self):
         # Eve's User.email is self-set to Anna's address; Google verified eve@.
@@ -321,14 +110,14 @@ class TestOAuthAutoLinkRoutes(FlaskTest):
         self.assertEqual(resp.status_code, 302)
         self.assertIsNone(self._linked_to(), f"Anna's member row linked to eve (user {eve.id})")
 
-    def test_dance_login_links_by_verified_email(self):
+    def test_dance_login_does_not_link_by_verified_workspace_email(self):
         # Anna changed her contact address; Google still verifies anna@.
         anna = da.register_user("anna.privat@example.se", "pass", username="anna")
 
         resp = self._dance_login(anna, "anna@gotlandskaninen.se")
 
         self.assertEqual(resp.status_code, 302)
-        self.assertEqual(self._linked_to(), anna.id)
+        self.assertIsNone(self._linked_to())
 
     def _first_login_with_herd(self, address, username):
         """A first Google sign-in whose account details carry the herd attribute (herd G1)."""
@@ -337,7 +126,7 @@ class TestOAuthAutoLinkRoutes(FlaskTest):
         self.assertEqual(resp.status_code, 302)
         return db.User.get(db.User.username == username)
 
-    def test_first_login_with_herd_attribute_makes_the_main_member_owner_and_links_her(self):
+    def test_first_login_with_herd_attribute_makes_the_main_member_owner_without_linking(self):
         """The owner guard is for manual grants: the sign-in's own grant comes before the member link."""
         membership = db.Membership.create(membership_status="active")
         eva = db.Member.create(
@@ -352,15 +141,15 @@ class TestOAuthAutoLinkRoutes(FlaskTest):
         user = self._first_login_with_herd("eva@gotlandskaninen.se", "eva")
 
         self.assertTrue(user.has_role("owner", self.herds[0].id))
-        self.assertEqual(db.Member.get_by_id(eva.id).user_id, user.id)
+        self.assertIsNone(db.Member.get_by_id(eva.id).user_id)
 
-    def test_first_login_with_herd_attribute_makes_a_family_member_owner_and_links_him(self):
+    def test_first_login_with_herd_attribute_makes_a_family_member_owner_without_linking(self):
         db.Herd.update(membership=self.anna_member.membership).where(db.Herd.id == self.herds[0].id).execute()
 
         user = self._first_login_with_herd("anna@gotlandskaninen.se", "anna")
 
         self.assertTrue(user.has_role("owner", self.herds[0].id))
-        self.assertEqual(self._linked_to(), user.id)
+        self.assertIsNone(self._linked_to())
 
     def test_dance_login_links_no_member_without_the_domains_hd(self):
         """auth.ini may name no domain, so nothing upstream checks the token's hd: the member link does."""

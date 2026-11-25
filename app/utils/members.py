@@ -1,23 +1,13 @@
 """
-Helpers for Member entity — consent shape and User auto-linking.
+Helpers for Member entity — consent shape.
 
-Auto-link policy: `try_auto_link_member` is called ONLY from the Google
-OAuth callback in app/herdbook.py. Import and approve MUST NOT call it —
-they must not set Member.user_id or grant owner privileges. Rationale:
-automatic linking requires proof of email ownership in the same
-authentication session, which only OAuth provides.
-
-No locks and no transaction live here: the write goes
-through utils.matrikel.link_member_user(), the single lock-owning operation
-that writes member.user_id — it opens its own transaction and takes
-membership → user → person FOR UPDATE itself. Callers pass ids only.
+Accounts are never linked to a Member automatically: an administrator links them in the matrikel.
 """
 
 import logging
 from datetime import datetime, timezone
 
-from utils.database import Member, Membership, PublicationConsentChange, User
-from utils.matrikel import ConfirmRequired, LinkError, link_member_user
+from utils.database import Membership, PublicationConsentChange
 
 logger = logging.getLogger(__name__)
 
@@ -97,62 +87,4 @@ def set_consent(membership, value, *, source, text_version, user=None, report=No
         report=report,
         submission_id=submission,
     )
-    return True
-
-
-def try_auto_link_member(member: Member, user: User) -> bool:
-    """
-    Link `member` to `user`, the account that just signed in with an
-    OAuth-verified address equal to `member.workspace_email` (the caller
-    matched it), if member.user is unset. The user is never looked up
-    again by the self-editable User.email. Herd rights are NOT granted here
-    (Member Model v2): effective access is derived at check time via
-    User.effective_herd_ids(), so a main-member swap, person removal or
-    herd reassignment applies immediately, with nothing stale left in
-    the privileges JSON.
-
-    Returns True if a link was made.
-
-    NOTE: matches against `workspace_email`, NOT the contact `email`.
-    Contact email is what the applicant typed on /ansok; workspace email
-    is the @gotlandskaninen.se login that Phase 9 provisions. Auto-link
-    requires OAuth-verified email ownership, which only the workspace
-    address can guarantee. Non-workspace-domain addresses are refused
-    outright.
-    """
-    if member.user_id:
-        return False
-    if not member.workspace_email:
-        return False
-
-    workspace_email = member.workspace_email.strip().lower()
-    if not workspace_email.endswith(WORKSPACE_DOMAIN):
-        # ids only: the refused address is by construction a private one.
-        logger.warning(
-            "refusing auto-link for member=%s: workspace_email is not a %s address",
-            member.id,
-            WORKSPACE_DOMAIN,
-        )
-        return False
-
-    try:
-        link_member_user(member.id, user.id, actor=user, mode="oauth")
-    except ConfirmRequired as needs:
-        logger.warning(
-            "refusing auto-link for member=%s: would convey herds %s — left for the matrikel-admin flow",
-            member.id,
-            [h["herd"] for h in needs.conveys],
-        )
-        return False
-    except LinkError as err:
-        # ids only: err.detail names the current holder and the membership
-        # number for the admin UI — that PII must never reach the log.
-        logger.info(
-            "auto-link skipped for member=%s: %s (holder_person_id=%s)",
-            member.id,
-            err.title,
-            err.extensions.get("holder_person_id"),
-        )
-        return False
-    logger.info("auto-linked member=%s user=%s", member.id, user.id)
     return True
