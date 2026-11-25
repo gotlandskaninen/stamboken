@@ -87,8 +87,12 @@ export function UserEditClient({
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [plaintext, setPlaintext] = useState<string | null>(null);
-  const [fullname, setFullname] = useState(detail.fullname ?? "");
-  const [email, setEmail] = useState(detail.email ?? "");
+  // Only the profile fields the admin has typed in. The others show the
+  // server's current values, so a save after a refresh never writes back a
+  // value another admin changed meanwhile.
+  const [edits, setEdits] = useState<{ fullname?: string; email?: string }>({});
+  const fullname = edits.fullname ?? detail.fullname ?? "";
+  const email = edits.email ?? detail.email ?? "";
   const [activeDialogOpen, setActiveDialogOpen] = useState(false);
   const [logoutDialogOpen, setLogoutDialogOpen] = useState(false);
   const [googleDialogOpen, setGoogleDialogOpen] = useState(false);
@@ -239,7 +243,9 @@ export function UserEditClient({
                   id="ad-fullname"
                   className="sb-input"
                   value={fullname}
-                  onChange={(e) => setFullname(e.target.value)}
+                  onChange={(e) =>
+                    setEdits({ ...edits, fullname: e.target.value })
+                  }
                 />
               </div>
               <div>
@@ -250,16 +256,22 @@ export function UserEditClient({
                   id="ad-email"
                   className="sb-input"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) =>
+                    setEdits({ ...edits, email: e.target.value })
+                  }
                 />
               </div>
               <div>
                 <button
                   type="button"
                   className="sb-btn"
-                  disabled={pending}
+                  disabled={pending || Object.keys(edits).length === 0}
                   onClick={() =>
-                    run(() => updateUserProfile(detail.id, { fullname, email }))
+                    run(async () => {
+                      const result = await updateUserProfile(detail.id, edits);
+                      if (!result) setEdits({}); // the saved values come back from the server
+                      return result;
+                    })
                   }
                 >
                   Spara

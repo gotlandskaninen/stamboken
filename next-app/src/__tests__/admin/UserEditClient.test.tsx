@@ -15,6 +15,7 @@ const removeGoogleLogin = vi.hoisted(() => vi.fn());
 const setAccountActive = vi.hoisted(() => vi.fn());
 const setV2ProdAccess = vi.hoisted(() => vi.fn());
 const eraseAccount = vi.hoisted(() => vi.fn());
+const updateUserProfile = vi.hoisted(() => vi.fn());
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
 }));
@@ -28,7 +29,7 @@ vi.mock("@/app/(app)/stamboken/(dashboard)/admin/anvandare/actions", () => ({
   setAccountActive,
   setValidated: vi.fn(),
   setV2ProdAccess,
-  updateUserProfile: vi.fn(),
+  updateUserProfile,
 }));
 
 import { resetPassword } from "@/app/(app)/stamboken/(dashboard)/admin/anvandare/actions";
@@ -323,5 +324,41 @@ describe("UserEditClient Radera kontots uppgifter (#250)", () => {
     expect(
       screen.queryByRole("button", { name: "Radera kontots uppgifter" }),
     ).toBeNull();
+  });
+});
+
+describe("UserEditClient profile form", () => {
+  const props = {
+    actorId: 1,
+    genebanks: [],
+    herds: [],
+    recentAudit: [],
+    concurrentEditWarning: null,
+  };
+
+  it("sends only what the admin changed, and keeps another admin's address after a refresh", async () => {
+    updateUserProfile.mockClear();
+    updateUserProfile.mockResolvedValue(undefined);
+    const { rerender } = render(<UserEditClient detail={detail} {...props} />);
+    expect(screen.getByRole("button", { name: "Spara" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Fullständigt namn"), {
+      target: { value: "Nytt Namn" },
+    });
+    // Another admin changed the address; the page re-rendered with it.
+    rerender(
+      <UserEditClient
+        detail={{ ...detail, email: "ny@example.org" }}
+        {...props}
+      />,
+    );
+    expect(screen.getByLabelText("E-post")).toHaveValue("ny@example.org");
+    expect(screen.getByLabelText("Fullständigt namn")).toHaveValue("Nytt Namn");
+    fireEvent.click(screen.getByRole("button", { name: "Spara" }));
+    expect(updateUserProfile).toHaveBeenCalledWith(7, {
+      fullname: "Nytt Namn",
+    });
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Ändringen är sparad.",
+    );
   });
 });
