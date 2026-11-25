@@ -215,6 +215,19 @@ class TestMembersLinkHousehold(DatabaseTest):
 
         self.assertIn(f"konto {bo.id}: medlemskapet har redan en person med samma namn", plan.output)
 
+    def test_an_address_in_the_associations_domain_is_never_the_login_address(self):
+        membership, _, herd = self._household()
+        self._account("Anna Svensson", owns=[herd])
+        bo = self._account("Bo Svensson", owns=[herd], email="bo@example.org")
+        self._workspace_row("bo@example.org", "Bo", "Svensson", home="Bo.S@Gotlandskaninen.se ")
+
+        plan = self._run()
+
+        self.assertIn(f"konto {bo.id}: ingen reservadress", plan.output)
+        self.assertIn("Home Secondary Email: föreningens egen adress", plan.output)
+        self._apply()
+        self.assertEqual(self._added(membership), [])
+
     def test_the_next_address_column_is_used_when_one_fails_a_check(self):
         membership, _, herd = self._household()
         other, _, _ = self._household(902, first="Eva", last="Ek")

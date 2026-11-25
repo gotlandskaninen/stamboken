@@ -1579,6 +1579,8 @@ def _household_person(user, workspace, persons):
             continue
         if not EMAIL_RE.match(address):
             refused.append(f"{column}: ingen giltig e-postadress")
+        elif _norm_email(address).endswith(WORKSPACE_DOMAIN):  # the association's accounts sign in with Google
+            refused.append(f"{column}: föreningens egen adress")
         elif login_address_taken(address, 0):
             refused.append(f"{column}: en annan medlem loggar redan in med adressen (AddressTaken)")
         elif any(_norm_email(p.email) == _norm_email(address) for p in persons):
