@@ -1172,6 +1172,45 @@ def _is_int_id(value):
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+def _owner_refused(user_id, herd_id):
+    """Checked only when the owner role is granted (existing owner roles stay): the reason the account may not own the
+    herd, or None when it is linked to an active person in the herd's active membership.
+
+    Locks: the caller (update_role) holds the account's row, and link_member_user and unlink_member_user lock that
+    row too, so a link or unlink of this account waits for the grant. Ending a person or changing the membership's
+    status locks only the membership, so it can still commit between this read and the grant. The membership is not
+    locked here: update_role must take the account rows first, and taking the membership after them is the reverse
+    of link_member_user's order (membership, then account), which could deadlock."""
+    herd = Herd.get_or_none(Herd.id == int(herd_id))
+    if herd is None:
+        return ValidationError("herd-not-found", f"Besättningen med id {int(herd_id)} finns inte.", status=404)
+    if herd.membership_id is None:
+        return ValidationError(
+            "herd-without-membership",
+            "Besättningen är inte kopplad till något medlemskap. "
+            "Koppla den i matrikeln innan du ger rollen besättningsägare.",
+        )
+    in_membership = (
+        Member.select()
+        .join(Membership)
+        .where(
+            Member.membership == herd.membership_id,
+            Member.user == user_id,
+            Member.end_date.is_null(True),
+            Membership.membership_status == "active",
+        )
+        .exists()
+    )
+    if in_membership:
+        return None
+    return ValidationError(
+        "owner-requires-person",
+        "Rollen besättningsägare kan bara ges till ett konto som är kopplat till en person "
+        "(huvudmedlem, familjemedlem eller skötare) i besättningens medlemskap, och medlemskapet måste vara aktivt. "
+        "Koppla kontot till en person i medlemskapet först.",
+    )
+
+
 def update_role(operation, user_uuid=None, skip_role_check=False):
     """
     Takes a role change description `operation`, and returns a status message.
@@ -1290,6 +1329,10 @@ def update_role(operation, user_uuid=None, skip_role_check=False):
                     target_user.remove_role(operation["role"], operation.get(target))
                     updated = True
                 elif not has_role and operation["action"] == "add":
+                    # Not for the Google sign-in's herd attribute (skip_role_check): the person is linked after it.
+                    if operation["role"] == "owner" and not skip_role_check:
+                        if refused := _owner_refused(target_user.id, operation["herd"]):
+                            raise refused
                     if (
                         operation["role"] in ROLE_LEVELS
                         and not settings.service.allow_role_password_login
