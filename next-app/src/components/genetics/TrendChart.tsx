@@ -83,7 +83,7 @@ const TrendChart = ({ genebankId }: TrendChartProps) => {
     useFetchGeneticsTrendsQuery(genebankId);
   const theme = useTheme();
 
-  const [metricKey, setMetricKey] = useState<MetricKey>("ne");
+  const [chosen, setMetricKey] = useState<MetricKey>("ne");
 
   if (isLoading) {
     return <Skeleton variant="rounded" height={300} sx={{ mb: 6 }} />;
@@ -95,6 +95,10 @@ const TrendChart = ({ genebankId }: TrendChartProps) => {
 
   if (!data || data.length === 0) return null;
 
+  // An older API (demo may run main) sends a rolling-regression Ne without ne_n:
+  // not the card's estimator, so the Ne option is left out.
+  const olderApi = !data.some((d) => "ne_n" in d);
+  const metricKey: MetricKey = olderApi && chosen === "ne" ? "fe" : chosen;
   const metric = metrics[metricKey];
   const values = data.map((d) => d[metric.key] as number | null);
   const known = values.filter((v) => v != null).length;
@@ -204,11 +208,13 @@ const TrendChart = ({ genebankId }: TrendChartProps) => {
               if (next) setMetricKey(next);
             }}
           >
-            {(Object.keys(metrics) as MetricKey[]).map((key) => (
-              <ToggleButton key={key} value={key}>
-                {metrics[key].name}
-              </ToggleButton>
-            ))}
+            {(Object.keys(metrics) as MetricKey[])
+              .filter((key) => !(olderApi && key === "ne"))
+              .map((key) => (
+                <ToggleButton key={key} value={key}>
+                  {metrics[key].name}
+                </ToggleButton>
+              ))}
           </ToggleButtonGroup>
         </Box>
 

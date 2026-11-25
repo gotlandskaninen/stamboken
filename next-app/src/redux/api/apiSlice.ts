@@ -229,7 +229,7 @@ export interface PopulationMetrics {
   mean_equiv_gen: number;
   mean_full_gen: number;
   mean_max_gen: number;
-  reference_start?: string; // ISO date: life signs from this day on count for the reference population
+  reference_start?: string | null; // ISO date life signs count from; null: no snapshot; absent: an older API
 }
 
 export interface FounderStatistics {
