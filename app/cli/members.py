@@ -1554,6 +1554,24 @@ def _account_problem(user, incomplete, memberships_of) -> str | None:
     return None
 
 
+def _registry_holder(user, other_than=None):
+    """An active person anywhere in the register, other than `other_than`, whose Workspace or contact address is the
+    account's verified Google address: the Google sign-in would link that person, so the account is theirs to
+    review."""
+    address = _norm_email(user.google_email)
+    if not address:
+        return None
+    return (
+        Member.select()
+        .where(
+            Member.end_date.is_null(True),
+            Member.id != (other_than or 0),
+            (fn.LOWER(fn.TRIM(Member.workspace_email)) == address) | (fn.LOWER(fn.TRIM(Member.email)) == address),
+        )
+        .first()
+    )
+
+
 def _household_person(user, workspace, persons):
     """The person to add for the account from its Workspace row, or the reason none can be added. Only the Google
     address identifies the row: it was verified at a Google sign-in, the account's own e-mail was not."""
@@ -1642,6 +1660,9 @@ def _plan_household_links(workspace) -> tuple[list, list, int]:
         if reason := _account_problem(main_user, incomplete, memberships_of):
             listed.append((codes, f"huvudmedlemmens konto {main_user.id}: {reason}"))
             continue
+        if holder := _registry_holder(main_user, other_than=main.id):
+            listed.append((codes, f"huvudmedlemmens konto {main_user.id}: Google-adressen hör till person {holder.id}"))
+            continue
         # The main member's account must be clear before anyone else in the household is added.
         pairs, count = {}, len(listed)
         _check_owner("/".join(codes), main, main_user, incomplete, listed, already, pairs)
@@ -1669,6 +1690,11 @@ def _plan_household_links(workspace) -> tuple[list, list, int]:
                 continue
             if review:
                 listed.append((codes, f"konto {user.id}: medlemskapet har {review} (lägg till för hand)"))
+                continue
+            if holder := _registry_holder(user):
+                listed.append(
+                    (codes, f"konto {user.id}: Google-adressen hör till person {holder.id} (koppla för hand)")
+                )
                 continue
             planned = _account_problem(user, incomplete, memberships_of) or _household_person(user, workspace, persons)
             if isinstance(planned, str):

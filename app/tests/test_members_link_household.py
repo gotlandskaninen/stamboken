@@ -429,6 +429,42 @@ class TestMembersLinkHousehold(DatabaseTest):
         self.assertEqual(self._added(membership), [])
         self.assertEqual(self._notices(), [])
 
+    def test_google_address_of_a_person_in_another_membership_sends_the_account_to_review(self):
+        membership, _, herd = self._household()
+        other, _, _ = self._household(902, first="Eva", last="Ek")
+        bo_elsewhere = db.Member.create(
+            membership=other,
+            role="familjemedlem",
+            first_name="Bo",
+            last_name="Ek",
+            workspace_email="BO@gotlandskaninen.se",
+        )
+        self._account("Anna Svensson", owns=[herd])
+        bo = self._account("Bo Svensson", owns=[herd], email="bo@gotlandskaninen.se")
+        self._workspace_row("bo@gotlandskaninen.se", "Bo", "Svensson", home="bo.hemma@example.net")
+
+        plan = self._run()
+
+        self.assertIn(f"konto {bo.id}: Google-adressen hör till person {bo_elsewhere.id}", plan.output)
+        self._apply()
+        self.assertEqual(self._added(membership), [])
+
+    def test_main_member_account_whose_google_address_is_another_persons_lists_the_household(self):
+        membership, main, herd = self._household()
+        other, _, _ = self._household(902, first="Eva", last="Ek")
+        db.Member.update(email="anna@example.org").where(db.Member.membership == other).execute()
+        self._account("Anna Svensson", owns=[herd], email="anna@example.org")
+        self._account("Bo Svensson", owns=[herd], email="bo@example.org")
+        self._workspace_row("bo@example.org", "Bo", "Svensson", home="bo.hemma@example.net")
+
+        plan = self._run()
+
+        self.assertRegex(plan.output, r"G901: huvudmedlemmens konto \d+: Google-adressen hör till person \d+")
+        self.assertIn("Att koppla: 0", plan.output)
+        self._apply()
+        self.assertIsNone(db.Member.get_by_id(main.id).user_id)
+        self.assertEqual(self._added(membership), [])
+
     def test_changed_plan_writes_nothing(self):
         membership, main, herd = self._household()
         self._account("Anna Svensson", owns=[herd])
