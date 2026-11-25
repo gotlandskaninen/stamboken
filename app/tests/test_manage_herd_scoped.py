@@ -113,6 +113,8 @@ class TestManageHerdScoped(DatabaseTest):
 
         self.assertEqual(self._codes("has_owner=true"), {"G1": ["owner"], "G2": ["huvud"]})
         self.assertEqual(self._codes("has_owner=false"), {"M3": []})
+        detail = self.client.get(f"/api/manage/herd/{self.herds[1].herd}").get_json()
+        self.assertEqual([o["username"] for o in detail["owners"]], ["huvud"])
 
     def test_manage_herd_list_inactive_includes_unknown_status(self):
         # A NULL is_active row shows as Inaktiv, so the Inaktiva filter finds it.
