@@ -1,6 +1,12 @@
 import "@testing-library/jest-dom/vitest";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { NAV_ITEMS } from "@/components/shell/nav-items";
 import { TopbarNav } from "@/components/shell/TopbarNav";
 
@@ -20,13 +26,12 @@ afterEach(() => {
 });
 
 describe("TopbarNav", () => {
-  it("exports exactly the six breeder dashboard destinations in order", () => {
+  it("exports exactly the five breeder dashboard destinations in order", () => {
     expect(NAV_ITEMS.map((item) => item.href)).toEqual([
       "/stamboken/min-besattning",
       "/stamboken/alla-kaniner",
       "/stamboken/genetik",
       "/stamboken/provparning",
-      "/stamboken/fargatlas",
       "/stamboken/profil",
     ]);
     expect(NAV_ITEMS.map((item) => item.i18nKey)).toEqual([
@@ -34,7 +39,6 @@ describe("TopbarNav", () => {
       "sidebar.allaKaniner",
       "sidebar.genetik",
       "sidebar.provparning",
-      "sidebar.fargatlas",
       "sidebar.profil",
     ]);
   });
@@ -60,7 +64,7 @@ describe("TopbarNav", () => {
     ).toBe(true);
   });
 
-  it("renders the six Swedish dashboard links, Mina inskick and Årsrapport in navigation order", () => {
+  it("renders the five Swedish dashboard links, Mina inskick and Årsrapport in navigation order", () => {
     render(<TopbarNav />);
 
     const navigation = screen.getByRole("navigation", {
@@ -79,7 +83,6 @@ describe("TopbarNav", () => {
       { name: "Alla kaniner", href: "/stamboken/alla-kaniner" },
       { name: "Genetik", href: "/stamboken/genetik" },
       { name: "Provparning", href: "/stamboken/provparning" },
-      { name: "Färgatlas", href: "/stamboken/fargatlas" },
       { name: "Profil", href: "/stamboken/profil" },
       { name: "Mina inskick", href: "/stamboken/inskick" },
       { name: "Årsrapport", href: "/stamboken/arsrapport" },
@@ -106,5 +109,28 @@ describe("TopbarNav", () => {
       "aria-current",
       "page",
     );
+  });
+
+  it("gathers Färgatlas and Avelsråd under Resurser", () => {
+    pathname = "/stamboken/fargatlas";
+    render(<TopbarNav />);
+
+    const knapp = screen.getByRole("button", { name: "Resurser" });
+    expect(knapp).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("link", { name: "Färgatlas" })).toBeNull();
+
+    fireEvent.click(knapp);
+    expect(knapp).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("link", { name: "Färgatlas" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("link", { name: "Avelsråd" })).toHaveAttribute(
+      "target",
+      "_blank",
+    );
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("link", { name: "Färgatlas" })).toBeNull();
   });
 });

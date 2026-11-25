@@ -98,8 +98,9 @@ Felmeddelanden på sidan:
 ### Hitta i Stamboken
 
 Högst upp finns ett fält med länkarna **Min besättning**, **Alla kaniner**,
-**Genetik**, **Provparning**, **Färgatlas**, **Profil**, **Mina inskick** och
-**Årsrapport**, och **Inkorg** för den som arbetar i inläsningskön. På mobilen ligger de bakom
+**Genetik**, **Provparning**, **Profil**, **Mina inskick** och **Årsrapport**, och
+**Inkorg** för den som arbetar i inläsningskön. Under **Resurser** finns
+**Färgatlas** och **Avelsråd**. På mobilen ligger de bakom
 menyknappen (tre streck) längst till vänster. Logotypen **Stamboken** tar dig alltid
 till Min besättning.
 
@@ -720,6 +721,7 @@ avkomman F: bra upp till N %, utred närmare upp till M %, över det hög inavel
 
 <!-- route: /stamboken/fargatlas -->
 
+Du hittar sidan under **Resurser** i menyn.
 Föreningens färgnummer i grupper efter bestämningsnyckeln, och mellerudskaninens
 nummer i en egen grupp. Varje färg har ett kort med foto, nummer, namn, beskrivning och vad
 som skiljer den från närliggande färger. Saknas foto står det "Foto saknas". Klicka på
