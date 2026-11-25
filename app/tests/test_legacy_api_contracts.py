@@ -2285,6 +2285,12 @@ class TestManageRoleLegacyCompat(FlaskTest):
 
         return da.register_user("legacy-victim@example.com", "pass", username="legacy-victim")
 
+    def _person_in_herd(self, user, herd):
+        """The owner role needs the account linked to a person in the herd's membership."""
+        membership = db.Herd.get_by_id(herd.id).membership or db.Membership.create(membership_status="active")
+        db.Herd.update(membership=membership).where(db.Herd.id == herd.id).execute()
+        db.Member.create(membership=membership, role="familjemedlem", first_name="Test", last_name="Ägare", user=user)
+
     def test_manager_can_grant_manager_via_manage_role_in_own_gb(self):
         """Documented residual: legacy manager own-gb grants keep
         working — the earlier hardening stays reverted."""
@@ -2497,6 +2503,7 @@ class TestManageRoleLegacyCompat(FlaskTest):
         for i, extra in enumerate(({}, {"genebank": self.genebanks[0].id}, {"genebank": self.genebanks[1].id})):
             with self.subTest(extra=extra):
                 victim = da.register_user(f"owner-target-{i}@ex.se", "pass", username=f"owner-target-{i}")
+                self._person_in_herd(victim, self.herds[0])
                 status, body = self._manage_role(
                     self.manager, action="add", role="owner", user=victim.id, herd=self.herds[0].id, **extra
                 )
@@ -2519,6 +2526,7 @@ class TestManageRoleLegacyCompat(FlaskTest):
 
     def test_admin_who_is_also_manager_can_grant_owner_on_any_herd(self):
         victim = self._victim()
+        self._person_in_herd(victim, self.herds[2])
         self.admin.add_role("manager", self.genebanks[0].id)
         status, body = self._manage_role(
             self.admin,
