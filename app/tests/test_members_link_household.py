@@ -396,6 +396,39 @@ class TestMembersLinkHousehold(DatabaseTest):
         self.assertIn("Medlemskapet är inte längre aktivt", result.output)
         self.assertEqual(self._added(membership), [])
 
+    def test_an_ended_person_is_never_added_again_from_the_export(self):
+        membership, _, herd = self._household()
+        db.Member.create(
+            membership=membership,
+            role="familjemedlem",
+            first_name="Borttagen",
+            last_name="person",
+            end_date="2026-01-01",
+        )
+        self._account("Anna Svensson", owns=[herd])
+        bo = self._account("Bo Svensson", owns=[herd], email="bo@example.org")
+        self._workspace_row("bo@example.org", "Bo", "Svensson", home="bo.hemma@example.net")
+
+        plan = self._run()
+
+        self.assertIn(f"konto {bo.id}: medlemskapet har avslutade eller borttagna personer", plan.output)
+        self._apply()
+        self.assertEqual([p.first_name for p in self._added(membership)], ["Borttagen"])  # only the ended row
+
+    def test_a_person_ended_after_the_plan_stops_the_add(self):
+        membership, main, _, _ = self._household_of_two()
+        family = db.Member.create(membership=membership, role="skotare", first_name="Cia", last_name="Ek")
+
+        def end_family(person_id):
+            if person_id == main.id:
+                db.Member.update(end_date="2026-01-01").where(db.Member.id == family.id).execute()
+
+        result = self._apply_with(end_family)
+
+        self.assertIn("Medlemskapet har nu avslutade eller borttagna personer", result.output)
+        self.assertEqual(self._added(membership), [])
+        self.assertEqual(self._notices(), [])
+
     def test_changed_plan_writes_nothing(self):
         membership, main, herd = self._household()
         self._account("Anna Svensson", owns=[herd])

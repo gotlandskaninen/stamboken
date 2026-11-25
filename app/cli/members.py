@@ -1623,6 +1623,8 @@ def _plan_household_links(workspace) -> tuple[list, list, int]:
     actions, listed, already = [], [], set()
     for membership_id, (codes, herd_ids, users) in households.items():
         persons = list(Member.select().where(Member.membership == membership_id, Member.end_date.is_null(True)))
+        # An ended or erased person cannot be told from one the export merely lists, as in the import.
+        review = _manual_review_reason(Membership.get_by_id(membership_id))
         main = next((p for p in persons if p.role == "huvudmedlem"), None)
         if main is None:
             listed.append((codes, "medlemskapet har ingen aktiv huvudmedlem"))
@@ -1664,6 +1666,9 @@ def _plan_household_links(workspace) -> tuple[list, list, int]:
                 continue
             if any((p.id, user.id) in possible for p in persons):
                 listed.append((codes, f"konto {user.id}: kontot matchar en person i medlemskapet (koppla för hand)"))
+                continue
+            if review:
+                listed.append((codes, f"konto {user.id}: medlemskapet har {review} (lägg till för hand)"))
                 continue
             planned = _account_problem(user, incomplete, memberships_of) or _household_person(user, workspace, persons)
             if isinstance(planned, str):
@@ -1707,6 +1712,8 @@ def _add_household_person(main, user, data, planned, actor) -> None:
         account = User.select().where(User.id == user.id).for_update().get()
         if membership.membership_status != Status.ACTIVE:
             raise LinkError("Medlemskapet är inte aktivt", "Medlemskapet är inte längre aktivt")
+        if review := _manual_review_reason(membership):
+            raise LinkError("Medlemskapet ska granskas", f"Medlemskapet har nu {review}")
         main_linked = Member.select().where(
             Member.id == main.id,
             Member.role == "huvudmedlem",
