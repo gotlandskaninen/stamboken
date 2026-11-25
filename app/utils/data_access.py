@@ -40,6 +40,7 @@ from utils.database import Genebank  # isort: skip
 from utils.database import Herd  # isort: skip
 from utils.database import HerdTracking  # isort: skip
 from utils.database import Individual  # isort: skip
+from utils.database import Member, Membership  # isort: skip
 from utils.database import User  # isort: skip
 from utils.database import Weight  # isort: skip
 from utils.database import next_individual_number  # isort: skip
@@ -1140,7 +1141,7 @@ def set_account_active(u_id, active, actor_user_id=None):
                 if target is None:
                     raise ValueError("user-not-found")
                 if active and target.email == f"raderad-{target.id}":  # not_erased(), on the locked row
-                    raise ValidationError("erased", "Kontot tömdes när personen anonymiserades och kan inte aktiveras.")
+                    raise ValidationError("erased", "Kontots uppgifter är raderade, så kontot kan inte aktiveras.")
                 if not active and _count_current_admins(locked, exclude_user_id=u_id) == 0:
                     raise ValidationError(
                         "last-admin",
@@ -1169,6 +1170,45 @@ def set_account_active(u_id, active, actor_user_id=None):
 def _is_int_id(value):
     """A real integer id: bool is an int subclass, str/float ids are not ids."""
     return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _owner_refused(user_id, herd_id):
+    """Checked only when the owner role is granted (existing owner roles stay): the reason the account may not own the
+    herd, or None when it is linked to an active person in the herd's active membership.
+
+    Locks: the caller (update_role) holds the account's row, and link_member_user and unlink_member_user lock that
+    row too, so a link or unlink of this account waits for the grant. Ending a person or changing the membership's
+    status locks only the membership, so it can still commit between this read and the grant. The membership is not
+    locked here: update_role must take the account rows first, and taking the membership after them is the reverse
+    of link_member_user's order (membership, then account), which could deadlock."""
+    herd = Herd.get_or_none(Herd.id == int(herd_id))
+    if herd is None:
+        return ValidationError("herd-not-found", f"Besättningen med id {int(herd_id)} finns inte.", status=404)
+    if herd.membership_id is None:
+        return ValidationError(
+            "herd-without-membership",
+            "Besättningen är inte kopplad till något medlemskap. "
+            "Koppla den i matrikeln innan du ger rollen besättningsägare.",
+        )
+    in_membership = (
+        Member.select()
+        .join(Membership)
+        .where(
+            Member.membership == herd.membership_id,
+            Member.user == user_id,
+            Member.end_date.is_null(True),
+            Membership.membership_status == "active",
+        )
+        .exists()
+    )
+    if in_membership:
+        return None
+    return ValidationError(
+        "owner-requires-person",
+        "Rollen besättningsägare kan bara ges till ett konto som är kopplat till en person "
+        "(huvudmedlem, familjemedlem eller skötare) i besättningens medlemskap, och medlemskapet måste vara aktivt. "
+        "Koppla kontot till en person i medlemskapet först.",
+    )
 
 
 def update_role(operation, user_uuid=None, skip_role_check=False):
@@ -1260,7 +1300,8 @@ def update_role(operation, user_uuid=None, skip_role_check=False):
                 # FIRST statement: ordered lock of target + all admins.
                 locked = _lock_role_rows(target_id)
                 target_user = next((u for u in locked if u.id == target_id), None)
-                if target_user is None:
+                # not_erased(), on the locked row: an emptied account (#190, #250) takes no role
+                if target_user is None or target_user.email == f"raderad-{target_user.id}":
                     return {"status": "error", "message": "unknown user"}
 
                 if operation["action"] == "remove" and operation["role"] == "admin":
@@ -1289,6 +1330,10 @@ def update_role(operation, user_uuid=None, skip_role_check=False):
                     target_user.remove_role(operation["role"], operation.get(target))
                     updated = True
                 elif not has_role and operation["action"] == "add":
+                    # Not for the Google sign-in's herd attribute (skip_role_check): the person is linked after it.
+                    if operation["role"] == "owner" and not skip_role_check:
+                        if refused := _owner_refused(target_user.id, operation["herd"]):
+                            raise refused
                     if (
                         operation["role"] in ROLE_LEVELS
                         and not settings.service.allow_role_password_login
@@ -1373,27 +1418,48 @@ HERD_EDITABLE_FIELDS = {
 
 def _herd_owner_map():
     """
-    Map numeric Herd.id -> list of owning Users, in ONE pass over hbuser.
+    Map numeric Herd.id -> list of owning Users: one scan of hbuser for the
+    owner roles, then one query for the main members and one for their herds.
 
-    `_privileges` is a TEXT JSON column, so owner lookups cannot be done
+    `_privileges` is a TEXT JSON column, so owner roles cannot be found
     in SQL. One scan of the small hbuser table (hundreds of rows)
     replaces the per-herd scans a naive join-substitute would do.
 
     A herd can have MULTIPLE owners (legacy parity — e.g. museum herds
     and shared family herds); lists are sorted by user id for stable
-    output.
+    output. The owners are those of User.transfer_herd_ids: legacy owner
+    roles plus the active main member of the herd's membership (#214),
+    never a caretaker with a herd-access grant.
     """
     owners = {}
     for u in User.select().order_by(User.id):
         for p in u.privileges:
             if p.get("level") == "owner" and isinstance(p.get("herd"), int):
                 owners.setdefault(p["herd"], []).append(u)
+    mains = {}
+    for person in (
+        Member.select(Member.membership, User)
+        .join(User)
+        .switch(Member)
+        .join(Membership)
+        .where(
+            (Member.role == "huvudmedlem") & Member.end_date.is_null(True) & (Membership.membership_status == "active")
+        )
+    ):
+        mains.setdefault(person.membership_id, []).append(person.user)
+    for herd in Herd.select(Herd.id, Herd.membership).where(Herd.membership.in_(list(mains))):
+        herd_owners = owners.setdefault(herd.id, [])
+        known = {u.id for u in herd_owners}
+        herd_owners += [u for u in mains[herd.membership_id] if u.id not in known]
+        herd_owners.sort(key=lambda u: u.id)
     return owners
 
 
-def list_all_herds(user, *, genebank_id=None, active=None, has_owner=None, search=None, page=1, page_size=50):
+def list_all_herds(user, *also, genebank_id=None, active=None, has_owner=None, search=None, page=1, page_size=50):
     """
-    Admin-only cross-genebank herd list. Joins genebank name +
+    Adminpanel herd list: every genebank for admin, only the managed
+    genebanks for a manager (#214). With `also` (the snapshot's user next to
+    the session's), only the genebanks all of them may see. Joins genebank name +
     owner usernames. Sorted by genebank + the numeric part of the herd
     code (an earlier design said herd.name asc, but `name` is the CONTACT person
     and NULL/empty for hundreds of rows — that order made specific herds
@@ -1402,13 +1468,22 @@ def list_all_herds(user, *, genebank_id=None, active=None, has_owner=None, searc
     filters run BEFORE pagination so `total` and page sizes stay correct.
     Returns {"herds": [...], "total": N, "page": ..., "page_size": ...}.
     """
-    if not user.is_admin:
-        raise ValueError("admin-required")
+    scope = None  # every genebank
+    for u in (user, *also):
+        if u.is_admin:
+            continue
+        if not u.is_manager:
+            raise ValueError("manager-required")
+        scope = set(u.is_manager) if scope is None else scope & set(u.is_manager)
     q = Herd.select(Herd, Genebank).join(Genebank)
+    if scope is not None:
+        q = q.where(Herd.genebank.in_(list(scope)))
     if genebank_id is not None:
         q = q.where(Herd.genebank == genebank_id)
-    if active is not None:
-        q = q.where(Herd.is_active == active)
+    if active:
+        q = q.where(Herd.is_active == True)  # noqa: E712
+    elif active is not None:  # a NULL status shows as Inaktiv, so it is found here (#214)
+        q = q.where((Herd.is_active == False) | Herd.is_active.is_null(True))  # noqa: E712
     # Materialise before slicing: herd is a small table (~1200 rows) and
     # the owner/search filters can only run Python-side (TEXT JSON).
     herds = list(q)
@@ -1449,7 +1524,7 @@ def list_all_herds(user, *, genebank_id=None, active=None, has_owner=None, searc
                 "is_active": bool(h.is_active),
                 "genebank_id": h.genebank_id,
                 "genebank_name": h.genebank.name,
-                "owner_usernames": [o.username or o.email for o in herd_owners],
+                "owner_usernames": [o.username or o.fullname or o.email for o in herd_owners],
             }
         )
     return {"herds": rows, "total": total, "page": page, "page_size": page_size}
@@ -4109,7 +4184,12 @@ def list_admin_users(
         q = q.where(User.last_active >= active_since)
     if search:
         s = f"%{search}%"
-        q = q.where((User.username**s) | (User.email**s) | (User.fullname**s))
+        match = (User.username**s) | (User.email**s) | (User.fullname**s)
+        # The account number, as "174" or "Konto 174" (what the inbox shows). ASCII digits, bounded to int4.
+        number = re.fullmatch(r"(?:konto\s*)?([0-9]{1,10})", search.strip(), re.IGNORECASE)
+        if number and int(number[1]) <= 2_147_483_647:
+            match = match | (User.id == int(number[1]))
+        q = q.where(match)
     sort_map = {
         "username": User.username,
         "email": User.email,

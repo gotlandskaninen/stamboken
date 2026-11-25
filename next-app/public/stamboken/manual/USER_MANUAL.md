@@ -168,11 +168,11 @@ i nya Stamboken är inte klar än; knappen **Årsrapportera** visar "Kommer snar
 Tills dess rapporterar du som tidigare.
 
 **Uppfödare** (besättningsägare), **genbanksansvarig** och **administratör** – rollerna
-som manualens tre delar handlar om. Dessutom finns **granskare**, som får se en genbank
-utan att ändra, **skötare**, som får sköta en annan medlems besättning, och
-**matrikeladministratör**, som hanterar medlemsregistret. Matrikeladministratören har
-en egen guide inne i medlemsregistret (**Guide** överst på sidorna), som bara syns
-för den rollen.
+som manualens tre delar handlar om. Dessutom kan ett konto ha **läsrätt** till en genbank
+och se allt i den utan att ändra. Det finns också **skötare**, som får sköta en annan
+medlems besättning, och **matrikeladministratör**, som hanterar medlemsregistret.
+Matrikeladministratören har en egen guide inne i medlemsregistret (**Guide** överst på
+sidorna), som bara syns för den rollen.
 
 ---
 
@@ -960,19 +960,34 @@ pappersintyg; de byts ut för hand.
 första anropet och kan ta upp till en minut.
 
 1. Välj **Genbank** om du ansvarar för flera.
-2. **Översikt** – nyckeltalen **Aktiva individer**, **Effektiv pop.storlek (Ne)**,
-   **Founder-ekvivalenter (FE)** och **Genomsnittlig MK**, diagrammet **Founder-bidrag
-   (topp 10)**, **Populationssammanfattning**, **Genetiska trender** över åren och
-   tabellen **Founder-status** med statusarna Förlorad, Kritisk, Varning, Bevaka och Ok.
-3. **Prioriteringar** – individerna sorterade efter bevarandevärde: **Kritisk**,
-   **Viktig** eller **Normal**, med **Genetiskt värde**, **Genomunikhet** och **Skäl**.
-   Knapparna **Kritisk (N)**, **Viktig (N)** och **Normal (N)** slår av och på nivåerna.
+2. **Översikt** – nyckeltalen **Kaniner i beräkningen** (med datumet som räkningen
+   börjar från), **Effektiv populationsstorlek (Ne)** (målet är minst 50, helst 100),
+   **Effektivt antal founderdjur (FE)** och **Medelsläktskap (MK)**. Det finns ingen
+   gräns för vad som är ett högt medelsläktskap, så kortet visar i stället de två
+   senaste stängda åren under dagens tal; de räknas på varje års kaniner och jämförs
+   med varandra, inte med dagens tal. Sedan kommer
+   diagrammet **Founderdjur med störst andel av generna**, rutan **Inavel** med
+   genomsnittlig inavel (F) och inavelsökning per generation (ΔF), **Genetiska
+   trender** med ett mått i taget och tabellen **Founderdjurens läge** med statusarna
+   Ingen bärare, 1 bärare kvar, 2–3 bärare, Liten andel och Ok. Founderdjur är rasens
+   ursprungsdjur, kaniner utan kända föräldrar i stamboken. Korten visar läget i dag;
+   trenden har ett värde per stängd årsrapportering. I trenden för Ne är en ihålig
+   punkt en osäker skattning, från färre än 30 kaniner; för musen över punkten så syns
+   Ne med osäkerheten och antalet kaniner. **Visa som tabell** under diagrammet visar
+   samma värden år för år, också med tangentbord och skärmläsare.
+3. **Avelsprioritet** – kaninerna sorterade efter hur viktiga de är för aveln:
+   **Högsta**, **Hög** eller **Övriga**, med **Ovanliga gener (0–100)**, **Unika gener**
+   och **Skäl**. Knapparna **Högsta (N)**, **Hög (N)** och **Övriga (N)** slår av och på
+   nivåerna.
 4. **Parningsförslag** – ange **Max antal par**, **Max inavel (F)** och **Max per hane**
    och klicka **Beräkna**. Tabellen visar paren med **Förväntad F**, **ΔGD**, **MSI**
    (1 = utmärkt, 6 = dålig) och **Skäl**.
 
-Panelen **Förklaringar** på varje flik förklarar förkortningarna. Frågetecknen vid
-rubrikerna ger samma text som verktygstips.
+Panelen **Förklaringar** på varje flik förklarar förkortningarna och vilka kaniner som är
+med i beräkningen. Regeln för vilka kaniner som räknas är preliminär tills styrelsen har
+beslutat. Frågetecknen vid rubrikerna ger samma text som verktygstips; du når
+dem också med tabbtangenten. Står det under Genetiska trender att värdena för Ne räknas
+fram, laddar du om sidan om en stund.
 
 ### Skapa och redigera besättningar i din genbank
 
@@ -1065,12 +1080,12 @@ händelse. En korrigering lämnar hjälparen till genbanksansvarig.
 <!-- route: /stamboken/genetik -->
 
 Rubriken **Genetik** med rullgardinen **Genbank** och flikarna **Översikt**,
-**Prioriteringar** och **Parningsförslag**. Uppfödare utan ansvar för någon genbank ser
+**Avelsprioritet** och **Parningsförslag**. Uppfödare utan ansvar för någon genbank ser
 sidan men får ingen genbank att välja. Se [Använda genetiksidan](#använda-genetiksidan).
 
 ![Genetik, översikt](genetik-oversikt-desktop.png)
 
-![Genetik, prioriteringar](genetik-prioriteringar-desktop.png)
+![Genetik, avelsprioritet](genetik-prioriteringar-desktop.png)
 
 ![Genetik, parningsförslag](genetik-parningsforslag-desktop.png)
 
@@ -1146,7 +1161,7 @@ upp på sidan.
 ### Hitta en användare
 
 1. Klicka fliken **Användare**.
-2. Skriv i sökfältet (användarnamn, e-post eller namn) och klicka **Filtrera**.
+2. Skriv i sökfältet (kontonummer, användarnamn, e-post eller namn) och klicka **Filtrera**.
    Rullgardinerna **Roll**, **Konto**, **Riktiga stamboken** och **Webbkurs** avgränsar
    listan.
 3. Klicka användarnamnet för att öppna kontot.
@@ -1158,8 +1173,8 @@ Kolumnen **Status och åtkomst** visar märkena **Webbkurs** (validerad),
 
 1. Öppna användaren och gå till kortet **Roller**.
 2. Välj **Roll**: Administratör, Matrikeladministratör, Genbanksansvarig,
-   Genbankshjälpare, Granskare eller Besättningsägare. För Genbanksansvarig,
-   Genbankshjälpare och Granskare väljer du **Genbank**;
+   Genbankshjälpare, Läsrätt eller Besättningsägare. För Genbanksansvarig,
+   Genbankshjälpare och Läsrätt väljer du **Genbank**;
    för Besättningsägare söker du besättningen i **Besättning**.
 3. Klicka **Lägg till roll**.
 4. Ta bort en roll med **Ta bort** på raden.
@@ -1242,6 +1257,11 @@ Samma sak går att göra från användarens sida med rollen Genbanksansvarig.
    Borttagen, Systemhändelse, Gallring) och klicka **Filtrera**.
 3. Klicka en rad för tabellen **Fält / Före / Efter**. **Visa rådata** visar hela
    posten före och efter.
+
+Matrikelns ändringar (medlemskap, personer, konton och åtkomster) finns under
+**Matrikeln** överst på sidan. Där filtrerar du på **Åtgärd**, **Utförd av**,
+**Medlemsnummer**, **Från** och **Till**. Uppgifter om en anonymiserad person
+står som [borttagen].
 
 ### Logga ut alla användare
 
@@ -1371,8 +1391,8 @@ var 30:e sekund. Under listan **Massutloggning** med knappen **Logga ut alla anv
 
 <!-- route: /stamboken/admin/system/audit -->
 
-Alla ändringar i databasen med filter och detaljer per rad, se
-[Söka i aktivitetsloggen](#söka-i-aktivitetsloggen). Kan loggen inte läsas visas
+Ändringarna i Stamboken och, under **Matrikeln**, i matrikeln, med filter och
+detaljer per rad, se [Söka i aktivitetsloggen](#söka-i-aktivitetsloggen). Kan loggen inte läsas visas
 "Kunde inte läsa aktivitetsloggen just nu." med **Försök igen**.
 
 ![Aktivitetslogg](admin-aktivitetslogg-desktop.png)
@@ -1414,7 +1434,9 @@ funktion (inloggning, lösenordsåterställning, redigera kanin med flera). Bara
 | Försäljningen registrerades för mer än 7 dagar sedan | Ångra försäljning | Kontakta genbanksansvarig. |
 | Texten innehåller en e-postadress eller ett telefonnummer | Ångra, korrigera | Ta bort personuppgiften ur anledningen. |
 | Kunde inte ladda kaniner. Försök igen senare. | Alla kaniner | Tillfälligt fel; ladda om sidan. |
-| Kunde inte hämta genetikdata. Kontrollera att du har behörighet. | Genetik | Du är inte genbanksansvarig för vald genbank. |
+| Du har inte behörighet att se genetiken för den här genbanken. | Genetik | Du är inte genbanksansvarig för vald genbank. |
+| Beräkningen gick inte att hämta. Försök igen om en stund. | Genetik | Tillfälligt fel; klicka **Försök igen** eller ladda om sidan om en stund. |
+| Du är utloggad. Logga in igen för att se beräkningen. | Genetik | Logga in igen. |
 
 ### Kontakt
 

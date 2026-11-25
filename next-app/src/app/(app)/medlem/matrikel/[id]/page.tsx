@@ -9,9 +9,10 @@ import styles from "../../medlem.module.css";
 import { MembershipFormCard } from "./MembershipFormCard";
 import { OversiktCard } from "./OversiktCard";
 import { PersonsCard } from "./PersonsCard";
+import { HistorikCard } from "./HistorikCard";
 import { BillingAddressRows } from "../BillingAddressRows";
 import { hasBillingAddress } from "../types";
-import type { MembershipDetail } from "../types";
+import type { MatrikelAuditPage, MembershipDetail } from "../types";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +33,13 @@ export default async function MembershipDetailPage({
   }
 
   const user = await getUser();
+  // A log that cannot be read must not take the member page down with it.
+  // Same mode as the membership above, not forceProd: in demo mode the id is
+  // the demo database's, and the prod log would show another household. The
+  // admin tab is prod only because the admin panel only opens in prod.
+  const history = await fetchApi<MatrikelAuditPage>(
+    `/v2/members/audit?membership_id=${membership.id}&per_page=10`,
+  ).catch(() => null);
   // Edit affordances: admin or matrikel_admin only — managers read-only.
   const canEdit = Boolean(user?.is_admin) || Boolean(user?.is_matrikel_admin);
 
@@ -70,7 +78,14 @@ export default async function MembershipDetailPage({
             kolumner behöver ~1100px för att inte radbrytas på desktop, och
             Översikt blir en statusremsa ovanför (samma recept som
             /medlem/statistik). */}
-        <OversiktCard membership={membership} canEdit={canEdit} />
+        <OversiktCard
+          membership={membership}
+          canEdit={canEdit}
+          canOpenHerd={(gb) =>
+            Boolean(user?.is_admin) ||
+            (Array.isArray(user?.is_manager) && user.is_manager.includes(gb))
+          }
+        />
         <div className={ds["ad-col"]}>
           <PersonsCard membership={membership} canEdit={canEdit} />
           {canEdit ? <MembershipFormCard membership={membership} /> : null}
@@ -90,6 +105,12 @@ export default async function MembershipDetailPage({
               </div>
             </section>
           ) : null}
+          <HistorikCard
+            membershipId={membership.id}
+            memberNumber={membership.member_number}
+            history={history}
+            isAdmin={Boolean(user?.is_admin)}
+          />
         </div>
       </div>
     </>

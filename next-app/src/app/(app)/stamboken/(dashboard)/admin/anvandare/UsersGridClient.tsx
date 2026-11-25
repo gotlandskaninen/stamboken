@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { DataGrid, GridColDef, GridSortModel } from "@mui/x-data-grid";
@@ -13,6 +13,7 @@ export type UserRow = {
   fullname: string | null;
   email: string;
   roleLabel: string;
+  hasRole: boolean;
   last_active: string;
   validated: boolean;
   v2_prod_access: boolean;
@@ -30,14 +31,24 @@ function EmptyUsers() {
   return <div className={ds["ad-empty"]}>Inga användare matchar filtren.</div>;
 }
 
-const columns: GridColDef<UserRow>[] = [
+// `detailHref` carries the list's query to the account, for its back link (#249).
+const makeColumns = (
+  detailHref: (id: number) => string,
+): GridColDef<UserRow>[] => [
+  {
+    field: "id",
+    headerName: "Nr",
+    width: 70,
+    sortable: false,
+    cellClassName: ds["ad-cell-mono"],
+  },
   {
     field: "username",
     headerName: "Användarnamn",
     width: 130,
     renderCell: (params) => (
       <Link
-        href={`${LIST_PATH}/${params.row.id}`}
+        href={detailHref(params.row.id)}
         className={`${ds["ad-cell-mono"]} ${ds["ad-cell-link"]}`}
         onClick={(e) => e.stopPropagation()}
       >
@@ -50,7 +61,9 @@ const columns: GridColDef<UserRow>[] = [
     headerName: "Namn",
     flex: 1,
     minWidth: 160,
-    valueGetter: (_value, row) => row.fullname || "—",
+    // #192: an account with a role but no name shows as "Konto <nr>" elsewhere — flag it for fixing.
+    valueGetter: (_value, row) =>
+      row.fullname || (row.hasRole ? "Namn saknas" : "—"),
   },
   {
     field: "email",
@@ -119,11 +132,17 @@ export function UsersGridClient({
     [query, router],
   );
 
+  const detailHref = useCallback(
+    (id: number) => `${LIST_PATH}/${id}${query ? `?${query}` : ""}`,
+    [query],
+  );
+  const columns = useMemo(() => makeColumns(detailHref), [detailHref]);
+
   const handleRowClick = useCallback(
     (params: { row: UserRow }) => {
-      router.push(`${LIST_PATH}/${params.row.id}`);
+      router.push(detailHref(params.row.id));
     },
-    [router],
+    [detailHref, router],
   );
 
   return (

@@ -1,16 +1,22 @@
-import React, { useMemo, useState } from "react";
+import React, { useState } from "react";
 import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Card,
   CardContent,
   Typography,
   Skeleton,
-  Alert,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
   ToggleButton,
   ToggleButtonGroup,
   Box,
-  IconButton,
 } from "@mui/material";
-import { ChevronLeft, ChevronRight, ZoomOut } from "@mui/icons-material";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import dynamic from "next/dynamic";
 import { useTheme } from "@mui/material/styles";
 
@@ -20,12 +26,55 @@ import {
 } from "@/redux/api/apiSlice";
 import { useQueryView, StaleNote } from "./queryView";
 import { useMode } from "@/lib/mode-context";
+import { decimal, percent } from "@/lib/genetics";
+import GeneticsError from "./GeneticsError";
 
 const Chart = dynamic(() => import("react-apexcharts"), {
   ssr: false,
 });
 
-const DEFAULT_WINDOW = 5;
+type MetricKey = "ne" | "fe" | "mk" | "f";
+
+// Fewer rabbits than this behind a year's Ne give a shaky estimate (rp.MIN_HISTORY_MEMBERS).
+const RELIABLE_NE_N = 30;
+
+// Why no year has an Ne. ne_n is null only on rows stored before Ne was (not recomputed
+// yet); 0 means no rabbit with more than one generation known; above 0, inaveln did not rise.
+function noNeText(data: TrendDataPoint[]): string {
+  if (data.every((d) => d.ne_n == null))
+    return "Inga värden för Ne de här åren ännu. Efter en uppdatering räknas de fram i bakgrunden, så ladda om sidan om en stund.";
+  const fewRabbits = data.some((d) => d.ne_n === 0);
+  const flat = data.some((d) => d.ne_n != null && d.ne_n > 0);
+  if (fewRabbits && flat)
+    return "Ne går inte att skatta för de här åren: vissa år har för få kaniner med känd stamtavla, och andra år har inaveln inte ökat.";
+  return flat
+    ? "Inaveln har inte ökat de här åren, så Ne går inte att skatta."
+    : "Ne kan inte skattas för de här åren: för få kaniner med känd stamtavla i de här åren.";
+}
+
+const neWithUncertainty = (d: TrendDataPoint) =>
+  `${decimal(d.effective_population_size as number)}` +
+  (d.ne_se != null ? ` ± ${decimal(d.ne_se)}` : "") +
+  (d.ne_n != null ? `, ${decimal(d.ne_n)} kaniner` : "");
+
+// One metric at a time: two units never share a plot.
+const metrics: Record<
+  MetricKey,
+  { name: string; key: keyof TrendDataPoint; format: (v: number) => string }
+> = {
+  ne: {
+    name: "Ne",
+    key: "effective_population_size",
+    format: (v) => decimal(v),
+  },
+  fe: { name: "FE", key: "founder_equivalents", format: (v) => decimal(v, 1) },
+  mk: {
+    name: "Medelsläktskap (MK)",
+    key: "mean_kinship",
+    format: (v) => percent(v),
+  },
+  f: { name: "Inavel (F)", key: "mean_inbreeding", format: (v) => percent(v) },
+};
 
 interface TrendChartProps {
   genebankId: number;
@@ -33,148 +82,77 @@ interface TrendChartProps {
 
 const TrendChart = ({ genebankId }: TrendChartProps) => {
   const mode = useMode();
-  const { data, loading, failed, stale } = useQueryView(
-    useFetchGeneticsTrendsQuery(
-      { genebankId, mode },
-      {
-        refetchOnMountOrArgChange: true,
-      },
-    ),
+  const query = useFetchGeneticsTrendsQuery(
+    { genebankId, mode },
+    {
+      refetchOnMountOrArgChange: true,
+    },
   );
+  const { data, loading, failed, stale } = useQueryView(query);
   const theme = useTheme();
 
-  const [visibleSeries, setVisibleSeries] = useState<string[]>(["ne", "fe"]);
-  const [windowEnd, setWindowEnd] = useState<number | null>(null);
-  const [showAll, setShowAll] = useState(false);
-
-  const years = useMemo(() => data?.map((d) => d.year) ?? [], [data]);
-  const maxYear = years.length > 0 ? Math.max(...years) : 0;
-  const minYear = years.length > 0 ? Math.min(...years) : 0;
-
-  const effectiveEnd = windowEnd ?? maxYear;
-  const effectiveStart = showAll
-    ? minYear
-    : Math.max(minYear, effectiveEnd - DEFAULT_WINDOW + 1);
-
-  const windowData = useMemo(
-    () =>
-      data?.filter((d) => d.year >= effectiveStart && d.year <= effectiveEnd) ??
-      [],
-    [data, effectiveStart, effectiveEnd],
-  );
+  const [chosen, setMetricKey] = useState<MetricKey>("ne");
 
   if (loading) {
     return <Skeleton variant="rounded" height={300} sx={{ mb: 6 }} />;
   }
 
   if (failed) {
+    // A denial seen by another genetics panel hides this too; it reads as no access.
     return (
-      <Alert severity="error" sx={{ mb: 6 }}>
-        Kunde inte hämta trenddata.
-      </Alert>
+      <GeneticsError
+        error={query.error ?? { status: 403 }}
+        onRetry={query.refetch}
+      />
     );
   }
 
-  if (!data || data.length < 2) return null;
+  if (!data || data.length === 0) return null;
 
-  const seriesConfig: Record<
-    string,
-    { name: string; key: keyof TrendDataPoint; yAxis: number; color: string }
-  > = {
-    ne: {
-      name: "Ne",
-      key: "effective_population_size",
-      yAxis: 0,
-      color: theme.palette.skog.main,
-    },
-    fe: {
-      name: "FE",
-      key: "founder_equivalents",
-      yAxis: 0,
-      color: theme.palette.mossa.main,
-    },
-    mk: {
-      name: "Medel-MK",
-      key: "mean_kinship",
-      yAxis: 1,
-      color: theme.palette.himmel.main,
-    },
-    f: {
-      name: "Medel-F",
-      key: "mean_inbreeding",
-      yAxis: 1,
-      color: theme.palette.lera.main,
-    },
-  };
-
-  const series = visibleSeries
-    .filter((key) => key in seriesConfig)
-    .map((key) => {
-      const cfg = seriesConfig[key];
-      return {
-        name: cfg.name,
-        data: windowData.map((d) => {
-          const val = d[cfg.key];
-          return val !== null && val !== undefined
-            ? Math.round((val as number) * 1000) / 1000
-            : null;
-        }),
-      };
-    });
-
-  const categories = windowData.map((d) => d.year.toString());
-
-  const hasLowQuality = windowData.some((d) => d.data_quality === "low");
-
-  // Each metric gets its own independent y-axis so different scales
-  // (Ne ~380, FGE ~20, MK ~0.04) are all clearly visible.
-  // ApexCharts needs one yaxis entry per series.
-  const activeKeys = visibleSeries.filter((key) => key in seriesConfig);
-  const activeConfigs = activeKeys.map((key) => seriesConfig[key]);
-
-  let leftSeen = 0;
-  let rightSeen = 0;
-
-  const yaxis = activeConfigs.map((cfg) => {
-    const isRight = cfg.yAxis === 1;
-    if (isRight) {
-      rightSeen++;
-      return {
-        seriesName: cfg.name,
-        opposite: true,
-        title: { text: rightSeen === 1 ? cfg.name : "" },
-        show: rightSeen === 1,
-        min: 0,
-        forceNiceScale: true,
-      };
-    }
-    leftSeen++;
-    return {
-      seriesName: cfg.name,
-      opposite: false,
-      title: { text: leftSeen === 1 ? cfg.name : "" },
-      show: leftSeen === 1,
-      forceNiceScale: true,
-    };
-  });
-
-  // Key forces ApexCharts to fully re-mount when series or window changes,
-  // preventing corrupt axis state from dynamic updates.
-  const chartKey = `${activeKeys.join(",")}_${effectiveStart}_${effectiveEnd}`;
+  // An older API (demo may run main) sends a rolling-regression Ne without ne_n:
+  // not the card's estimator, so the Ne option is left out.
+  const olderApi = !data.some((d) => "ne_n" in d);
+  const metricKey: MetricKey = olderApi && chosen === "ne" ? "fe" : chosen;
+  const metric = metrics[metricKey];
+  const values = data.map((d) => d[metric.key] as number | null);
+  const known = values.filter((v) => v != null).length;
+  // Ne only: years estimated from few rabbits get a hollow marker.
+  const shaky =
+    metricKey === "ne"
+      ? data.flatMap((d, i) =>
+          d.effective_population_size != null &&
+          d.ne_n != null &&
+          d.ne_n < RELIABLE_NE_N
+            ? [i]
+            : [],
+        )
+      : [];
+  const categories = data.map((d) => d.year.toString());
+  const firstReliableYear = data.find((d) => d.data_quality !== "low")?.year;
+  const hasLowQuality =
+    firstReliableYear !== undefined && data[0].data_quality === "low";
 
   const options: ApexCharts.ApexOptions = {
     chart: {
       type: "line",
       toolbar: { show: false },
+      zoom: { enabled: false },
       background: "transparent",
       fontFamily: theme.typography.fontFamily,
       foreColor: theme.palette.ink["3"],
     },
     grid: { borderColor: theme.palette.line.faint },
     theme: { mode: theme.palette.mode },
-    stroke: {
-      width: 2,
-      curve: "smooth",
+    stroke: { width: 2, curve: "straight" },
+    markers: {
+      size: 4,
+      discrete: shaky.map((i) => ({
+        seriesIndex: 0,
+        dataPointIndex: i,
+        size: 4,
+        fillColor: theme.palette.background.paper,
+        strokeColor: theme.palette.skog.main,
+      })),
     },
     xaxis: {
       categories,
@@ -186,36 +164,42 @@ const TrendChart = ({ genebankId }: TrendChartProps) => {
       },
       tickAmount: Math.min(categories.length, 15),
     },
-    yaxis: yaxis.length > 0 ? yaxis : [{ show: true }],
-    colors: activeKeys.map((key) => seriesConfig[key].color),
+    yaxis: {
+      min: 0,
+      forceNiceScale: true,
+      title: { text: metric.name },
+      labels: { formatter: (v: number) => metric.format(v) },
+    },
+    colors: [theme.palette.skog.main],
     tooltip: {
-      shared: true,
       y: {
-        formatter: (val: number) => (val !== null ? val.toFixed(3) : "–"),
+        formatter: (v: number | null, opts?: { dataPointIndex: number }) =>
+          v == null
+            ? "–"
+            : metricKey === "ne" && opts
+              ? neWithUncertainty(data[opts.dataPointIndex])
+              : metric.format(v),
       },
     },
-    annotations: hasLowQuality
-      ? {
-          xaxis: [
+    // Always an object: an update with annotations undefined makes ApexCharts throw
+    // (it reads annotations.images) and drop the axes.
+    annotations: {
+      xaxis: hasLowQuality
+        ? [
             {
               x: categories[0],
-              x2: categories.find(
-                (_, i) => windowData[i]?.data_quality !== "low",
-              ),
+              x2: String(firstReliableYear),
               fillColor: theme.palette.paper["2"],
               label: {
-                text: "Lägre datakvalitet",
+                text: "Osäkrare värden",
                 style: { fontSize: "10px" },
               },
             },
-          ],
-        }
-      : undefined,
+          ]
+        : [],
+    },
     legend: { show: false },
   };
-
-  const canStepBack = effectiveStart > minYear && !showAll;
-  const canStepForward = effectiveEnd < maxYear && !showAll;
 
   return (
     <Card sx={{ mb: 6 }}>
@@ -224,87 +208,72 @@ const TrendChart = ({ genebankId }: TrendChartProps) => {
           Genetiska trender
         </Typography>
         {stale && <StaleNote />}
+        <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
+          Ett värde per stängd årsrapportering, räknat på kaninerna det året.
+          Korten ovan visar läget i dag.
+        </Typography>
 
-        <Box
-          sx={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            mb: 2,
-          }}
-        >
+        <Box sx={{ mb: 2 }}>
           <ToggleButtonGroup
             size="small"
-            value={visibleSeries}
-            onChange={(_, newVal) => {
-              if (newVal.length > 0) setVisibleSeries(newVal);
+            exclusive
+            value={metricKey}
+            aria-label="Mått i diagrammet"
+            onChange={(_, next: MetricKey | null) => {
+              if (next) setMetricKey(next);
             }}
           >
-            {Object.entries(seriesConfig).map(([key, cfg]) => (
-              <ToggleButton key={key} value={key}>
-                <Box
-                  component="span"
-                  sx={{
-                    width: 12,
-                    height: 3,
-                    bgcolor: cfg.color,
-                    borderRadius: 1,
-                    mr: 0.75,
-                    display: "inline-block",
-                  }}
-                />
-                {cfg.name}
-              </ToggleButton>
-            ))}
+            {(Object.keys(metrics) as MetricKey[])
+              .filter((key) => !(olderApi && key === "ne"))
+              .map((key) => (
+                <ToggleButton key={key} value={key}>
+                  {metrics[key].name}
+                </ToggleButton>
+              ))}
           </ToggleButtonGroup>
-
-          <Box>
-            <IconButton
-              size="small"
-              disabled={!canStepBack}
-              onClick={() =>
-                setWindowEnd((prev) =>
-                  Math.max(
-                    minYear + DEFAULT_WINDOW - 1,
-                    (prev ?? maxYear) - DEFAULT_WINDOW,
-                  ),
-                )
-              }
-            >
-              <ChevronLeft />
-            </IconButton>
-            <IconButton
-              size="small"
-              onClick={() => {
-                setShowAll(!showAll);
-                setWindowEnd(null);
-              }}
-              color={showAll ? "primary" : "default"}
-              title={showAll ? "Visa 5 år" : "Visa alla år"}
-            >
-              <ZoomOut />
-            </IconButton>
-            <IconButton
-              size="small"
-              disabled={!canStepForward}
-              onClick={() =>
-                setWindowEnd((prev) =>
-                  Math.min(maxYear, (prev ?? maxYear) + DEFAULT_WINDOW),
-                )
-              }
-            >
-              <ChevronRight />
-            </IconButton>
-          </Box>
         </Box>
 
-        <Chart
-          key={chartKey}
-          options={options}
-          series={series}
-          type="line"
-          height={300}
-        />
+        {known === 0 ? (
+          <Typography variant="body2" color="textSecondary">
+            {metricKey === "ne"
+              ? noNeText(data)
+              : `Inga värden för ${metric.name} de här åren.`}
+          </Typography>
+        ) : data.length < 2 ? (
+          <Typography variant="body2" color="textSecondary">
+            Diagrammet visas när det finns två stängda år. Värdet för{" "}
+            {data[0].year} står i tabellen nedan.
+          </Typography>
+        ) : (
+          <Chart
+            key={metricKey}
+            options={options}
+            series={[{ name: metric.name, data: values }]}
+            type="line"
+            height={300}
+          />
+        )}
+
+        {shaky.length > 0 && (
+          <Typography
+            variant="caption"
+            color="textSecondary"
+            sx={{ mt: 1, display: "block" }}
+          >
+            Ihålig punkt: osäker skattning, färre än {RELIABLE_NE_N} kaniner.
+          </Typography>
+        )}
+
+        {metricKey === "ne" && known > 0 && known < values.length && (
+          <Typography
+            variant="caption"
+            color="textSecondary"
+            sx={{ mt: 1, display: "block" }}
+          >
+            Ne saknas för år där ingen kanin har mer än en generation känd
+            bakåt, eller där inaveln inte ökade.
+          </Typography>
+        )}
 
         {hasLowQuality && (
           <Typography
@@ -312,10 +281,57 @@ const TrendChart = ({ genebankId }: TrendChartProps) => {
             color="textSecondary"
             sx={{ mt: 1, display: "block" }}
           >
-            Datapunkter före 2005 baseras på uppskattningar (death_note-år + max
-            ålder) och har lägre tillförlitlighet.
+            Värden före {firstReliableYear} är osäkrare: när dödsdatum saknas
+            uppskattas det från dödsorsaken eller kaninens högsta ålder.
           </Typography>
         )}
+
+        {/* The same values for keyboard and screen readers; the chart's tooltip needs a mouse. */}
+        <Accordion
+          defaultExpanded={data.length < 2}
+          disableGutters
+          sx={{ mt: 2, "&::before": { display: "none" } }}
+        >
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Typography variant="subtitle2">Visa som tabell</Typography>
+          </AccordionSummary>
+          <AccordionDetails sx={{ pt: 0 }}>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>År</TableCell>
+                  <TableCell align="right">{metric.name}</TableCell>
+                  {metricKey === "ne" && (
+                    <>
+                      <TableCell align="right">Osäkerhet (±)</TableCell>
+                      <TableCell align="right">Antal kaniner</TableCell>
+                    </>
+                  )}
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {data.map((d, i) => (
+                  <TableRow key={d.year}>
+                    <TableCell>{d.year}</TableCell>
+                    <TableCell align="right">
+                      {values[i] == null ? "–" : metric.format(values[i])}
+                    </TableCell>
+                    {metricKey === "ne" && (
+                      <>
+                        <TableCell align="right">
+                          {d.ne_se == null ? "–" : decimal(d.ne_se)}
+                        </TableCell>
+                        <TableCell align="right">
+                          {d.ne_n == null ? "–" : decimal(d.ne_n)}
+                        </TableCell>
+                      </>
+                    )}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </AccordionDetails>
+        </Accordion>
       </CardContent>
     </Card>
   );

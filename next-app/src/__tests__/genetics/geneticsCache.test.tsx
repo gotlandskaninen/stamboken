@@ -26,9 +26,9 @@ import { MODE_COOKIE, type Mode } from "@/lib/mode";
 // The genetics cache with a real RTK store: what an hour-long cache may show.
 
 const theme = createTheme();
-const rows = () => screen.queryByText("Kritisk (1)");
+const rows = () => screen.queryByText("Högsta (1)");
 const failedAlert = () =>
-  screen.queryByText(/Kunde inte hämta prioriteringsdata/);
+  screen.queryByText(/inte behörighet|gick inte att hämta/);
 
 const priorities = () =>
   new Response(
@@ -342,7 +342,7 @@ describe("genetics cache", () => {
     fetchMock.mockResolvedValueOnce(failure(403));
     await refetch(42, "prod"); // the priorities tab is denied
     expect(pairsShown()).toBeNull();
-    expect(screen.getByText(/Kunde inte hämta parningsförslag/)).toBeTruthy();
+    expect(screen.getByText(/inte behörighet/)).toBeTruthy();
 
     await new Promise((resolve) => setTimeout(resolve, 5)); // access restored later
     for (const asked of [2, 3]) {

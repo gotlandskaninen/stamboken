@@ -4,6 +4,7 @@ import { getUser } from "@/lib/auth";
 import { AdminBackLink } from "../../_components/AdminBackLink";
 import { UserStatusBadges } from "../../_components/UserStatusBadges";
 import { requireAdmin } from "../../_lib/requireAdmin";
+import { userListQuery } from "../../_lib/userListQuery";
 import type { AdminUserDetail } from "../../_lib/types";
 import { UserEditClient, type AuditRow } from "./UserEditClient";
 import ds from "@/styles/ds-admin.module.css";
@@ -29,8 +30,10 @@ const FIVE_MINUTES_MS = 5 * 60 * 1000;
 
 export default async function AdminUserDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ userId: string }>;
+  searchParams: Promise<Record<string, string | undefined>>;
 }) {
   await requireAdmin(); // Page-level gate, layout renders concurrently
   const { userId } = await params;
@@ -89,14 +92,20 @@ export default async function AdminUserDetailPage({
       : null;
 
   const allHerds = genebanks.flatMap((g) => g.herds);
+  // Back to the list with the search and filters it had (#249).
+  const listQuery = userListQuery(await searchParams);
 
   return (
     <>
-      <AdminBackLink href="/stamboken/admin/anvandare" label="Alla användare" />
+      <AdminBackLink
+        href={`/stamboken/admin/anvandare${listQuery ? `?${listQuery}` : ""}`}
+        label="Alla användare"
+      />
       <div className={ds["ad-page-head"]}>
         <div>
           <h2 className={ds["ad-page-title"]}>{displayName}</h2>
           <div className={ds["ad-page-sub"]}>
+            <span className="sb-meta">Konto {detail.id}</span> ·{" "}
             {detail.fullname ?? "—"} ·{" "}
             <span className="sb-meta">{detail.email}</span>
           </div>

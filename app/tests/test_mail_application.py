@@ -514,8 +514,13 @@ class TestMemberAdded(MailTest):
         self.assertEqual(self.mails(), [])
 
     def test_the_register_import_does_not_go_through_add_person(self):
-        """The import writes its rows itself: the people in the register gave their details themselves."""
+        """The import writes its rows itself: the people in the register gave their details themselves. Only
+        link-household adds a person as a manual add does."""
+        import inspect
+
+        import cli.members
+
         source = open(
             os.path.join(os.path.dirname(os.path.dirname(__file__)), "cli", "members.py"), encoding="utf-8"
         ).read()
-        self.assertNotIn("add_person(", source)
+        self.assertNotIn("add_person(", source.replace(inspect.getsource(cli.members._add_household_person), ""))

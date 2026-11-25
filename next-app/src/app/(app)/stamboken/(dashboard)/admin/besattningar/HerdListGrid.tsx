@@ -75,10 +75,9 @@ const columns: GridColDef<HerdListRow>[] = [
 
 /**
  * Alltid paginationMode="server": sidan (page.tsx) har redan skurit ut
- * PAGE_SIZE-sidan — admin via API:ets page-param, manager via slice() på
- * den ihopsamlade mängden. MIT-DataGrid tillåter inte pageSize > 100
- * (fel 83), så managerns tidigare allt-på-en-sida-läge var omöjligt mot
- * riktig data (GK har 1000+ besättningar).
+ * PAGE_SIZE-sidan via API:ets page-param, för admin och manager. MIT-DataGrid
+ * tillåter inte pageSize > 100 (fel 83), så ett allt-på-en-sida-läge är
+ * omöjligt mot riktig data (GK har 1000+ besättningar).
  * Fotraden är alltid dold — sidnumreringen är URL-driven och renderas av
  * Server-komponenten som riktiga <Link>:ar (.ad-grid-foot).
  */

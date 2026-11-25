@@ -3,7 +3,7 @@
 import React from "react";
 import CheckRounded from "@mui/icons-material/CheckRounded";
 import type { Individual } from "@/redux/api/apiSlice";
-import { MANUAL_PATH } from "@/lib/constants";
+import { MANUAL_PATH, TRIED_DEMO_KEY } from "@/lib/constants";
 import { readModeCookieClient } from "@/lib/mode";
 import { useUser } from "@/lib/user-context";
 import {
@@ -29,13 +29,15 @@ export interface OnboardingStep {
 export function onboardingSteps(
   individuals: Individual[],
   breedings: BreedingRecord[],
+  // undefined: no test environment step (the user has no menu item for it)
+  triedDemo?: boolean,
 ): OnboardingStep[] {
   // Living, uncastrated breeding stock. Not "Aktiv": that needs a life sign
   // within 13 months, which a herd that has not bred may lack.
   const stock = individuals.filter(
     (i) => rabbitStatus(i) !== "Död" && !i.castration_date,
   );
-  return [
+  const steps: OnboardingStep[] = [
     {
       title: "Ta emot dina startdjur",
       text: "När du har köpt dina startdjur säljer uppfödaren dem till din besättning i Stamboken. De syns sedan under Kaniner. Du behöver minst en hane och en hona.",
@@ -60,12 +62,24 @@ export function onboardingSteps(
       more: "Så registrerar du en parning",
     },
   ];
+  if (triedDemo === undefined) return steps;
+  return [
+    ...steps,
+    {
+      title: "Prova i testmiljön",
+      text: "Vill du prova utan att ändra något på riktigt? Byt till testmiljön i menyn under din bild. Där kan du klicka runt fritt, och allt återställs varje natt.",
+      done: triedDemo,
+      manual: "#testmiljön-och-riktiga-stamboken",
+      more: "Om testmiljön",
+    },
+  ];
 }
 
 /**
  * Getting-started steps for a herd that has not bred yet (issue #41). Whether
  * a step is done comes from the herd's own data, so it holds across browsers
- * and logins; only "Stäng" is remembered per browser.
+ * and logins; only "Stäng" and the test environment step (#228) are
+ * remembered per browser.
  */
 export default function OnboardingChecklist({
   herd,
@@ -89,8 +103,11 @@ export default function OnboardingChecklist({
   // localStorage here cannot cause a markup mismatch.
   const [closedKey, setClosedKey] = React.useState<string | null>(null);
   let dismissed = closedKey === key;
+  // Set by the avatar menu when the user switches to the test environment.
+  let triedDemo = false;
   try {
     dismissed ||= localStorage.getItem(key) === "1";
+    triedDemo = localStorage.getItem(TRIED_DEMO_KEY) === "1";
   } catch {
     // unavailable storage: only this visit's Stäng counts
   }
@@ -102,7 +119,11 @@ export default function OnboardingChecklist({
   if (breedings.length > 0) return null;
 
   const individuals = herd.individuals ?? [];
-  const steps = onboardingSteps(individuals, breedings);
+  const steps = onboardingSteps(
+    individuals,
+    breedings,
+    user.v2_prod_access ? triedDemo : undefined,
+  );
   // The mating form needs a doe in the herd; the buck may be borrowed.
   const hasDoe = individuals.some(
     (i) => i.sex === "female" && rabbitStatus(i) !== "Död",

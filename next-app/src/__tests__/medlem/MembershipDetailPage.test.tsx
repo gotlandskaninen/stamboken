@@ -16,6 +16,12 @@ vi.mock("@/app/(app)/medlem/matrikel/[id]/MembershipFormCard", () => ({
 vi.mock("@/app/(app)/medlem/matrikel/[id]/PersonsCard", () => ({
   PersonsCard: () => null,
 }));
+// HistorikCard has its own test; here only what the page hands it.
+vi.mock("@/app/(app)/medlem/matrikel/[id]/HistorikCard", () => ({
+  HistorikCard: ({ history }: { history: unknown }) => (
+    <p>{history === null ? "historik saknas" : "historik finns"}</p>
+  ),
+}));
 
 const org: MembershipDetail = {
   id: 1,
@@ -66,3 +72,50 @@ it.each([true, false])(
     }
   },
 );
+
+it("shows each herd's own status and links the herds the reader may open (#214)", async () => {
+  fetchApi.mockResolvedValue({
+    ...org,
+    herds: [
+      {
+        id: 3,
+        herd: "G9001",
+        herd_name: null,
+        genebank_id: 1,
+        is_active: true,
+      },
+      {
+        id: 4,
+        herd: "M9002",
+        herd_name: null,
+        genebank_id: 2,
+        is_active: null,
+      },
+    ],
+  });
+  getUser.mockResolvedValue({ is_admin: false, is_manager: [1] });
+  render(await MembershipDetailPage({ params: Promise.resolve({ id: "1" }) }));
+  expect(screen.getByRole("link", { name: "G9001 · aktiv" })).toHaveAttribute(
+    "href",
+    "/stamboken/admin/besattningar/G9001",
+  );
+  expect(screen.getByText("M9002 · inaktiv")).not.toHaveAttribute("href");
+  expect(screen.queryByRole("link", { name: /M9002/ })).toBeNull();
+});
+
+it("reads the membership's last ten log events and survives a log that fails (#244)", async () => {
+  fetchApi.mockImplementation((path: string) =>
+    path.startsWith("/v2/members/audit")
+      ? Promise.reject(new Error("503"))
+      : Promise.resolve(org),
+  );
+  getUser.mockResolvedValue({ is_admin: true });
+  render(await MembershipDetailPage({ params: Promise.resolve({ id: "1" }) }));
+  expect(fetchApi).toHaveBeenCalledWith(
+    "/v2/members/audit?membership_id=1&per_page=10",
+  );
+  expect(screen.getByText("historik saknas")).toBeInTheDocument();
+  expect(
+    screen.getByRole("heading", { level: 1, name: "Exempelföreningen" }),
+  ).toBeInTheDocument();
+});

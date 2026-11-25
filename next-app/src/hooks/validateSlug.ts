@@ -32,6 +32,7 @@ const RESERVED_SLUGS = new Set([
   "favicon.ico",
   "robots.txt",
   "sitemap.xml",
+  "manifest.webmanifest",
   "error",
   "not-found",
   "preview",

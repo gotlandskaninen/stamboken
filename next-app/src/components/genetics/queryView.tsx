@@ -42,8 +42,9 @@ export function useQueryView<T>(query: GeneticsQuery<T>) {
   return {
     data,
     loading: data === undefined && isFetching,
-    // Signed out: no error, the session-expired flow takes over.
-    failed: !signedOut && data === undefined && (error != null || forbidden),
+    // Its own error names the cause (GeneticsError, 401 included); another
+    // panel's 403 for this genebank counts as one, another panel's 401 does not.
+    failed: data === undefined && (error != null || (forbidden && !signedOut)),
     denied: forbidden && !signedOut, // this genebank's genetics, in this mode
     stale: error != null && data !== undefined,
   };

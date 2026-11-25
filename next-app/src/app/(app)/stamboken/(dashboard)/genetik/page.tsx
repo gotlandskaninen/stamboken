@@ -87,7 +87,7 @@ function GenetikPage() {
       <Masthead
         eyebrow="Stamboken"
         title="Genetik"
-        meta="Populationsgenetisk analys och avelsrekommendationer"
+        meta="Genbankens genetiska läge och vilka kaniner som är viktigast att avla på"
         actions={
           <FormControl size="small" sx={{ minWidth: 200 }}>
             <InputLabel>Genbank</InputLabel>
@@ -112,16 +112,18 @@ function GenetikPage() {
         <>
           <Tabs value={activeTab} onChange={handleTabChange}>
             <Tab label="Översikt" value="oversikt" />
-            <Tab label="Prioriteringar" value="prioriteringar" />
+            <Tab label="Avelsprioritet" value="prioriteringar" />
             <Tab label="Parningsförslag" value="parningsforslag" />
           </Tabs>
 
           <TabPanel value={activeTab} index="oversikt">
-            <OverviewTab genebankId={genebankId} />
+            {/* keyed so no number from the previous genebank survives a switch */}
+            <OverviewTab key={genebankId} genebankId={genebankId} />
           </TabPanel>
 
           <TabPanel value={activeTab} index="prioriteringar">
-            <PrioritiesTab genebankId={genebankId} />
+            {/* keyed: the previous genebank's rabbits never show while the new list loads */}
+            <PrioritiesTab key={genebankId} genebankId={genebankId} />
           </TabPanel>
 
           <TabPanel value={activeTab} index="parningsforslag">

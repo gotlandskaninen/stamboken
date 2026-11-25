@@ -3,17 +3,24 @@ import styled from "@emotion/styled";
 
 import { Box, Chip as MuiChip, Skeleton, Alert } from "@mui/material";
 import { DataGrid, GridColDef } from "@mui/x-data-grid";
-import { red, orange, grey } from "@mui/material/colors";
 
 import {
   useFetchGeneticPrioritiesQuery,
   GeneticPriority,
 } from "@/redux/api/apiSlice";
+import { decimal, percent } from "@/lib/genetics";
 import HelpTooltip from "./HelpTooltip";
 import GeneticsInfoPanel from "./GeneticsInfoPanel";
 import { useQueryView, StaleNote } from "./queryView";
 import { useMode } from "@/lib/mode-context";
+import GeneticsError from "./GeneticsError";
+import { readableChip } from "./readableChip";
 import { translateReasons } from "@/utils/translateReasons";
+
+const RARE_GENES =
+  "Hur stor andel av kaninerna i beräkningen som är mer släkt med resten än den här kaninen. 100 betyder minst släkt, alltså mest ovanliga gener.";
+const UNIQUE_GENES =
+  "Sannolikheten att kaninen bär genvarianter från founderdjuren som ingen annan kanin i beräkningen bär, enligt en simulering av hur generna ärvs genom stamtavlan.";
 
 const FilterChip = styled(MuiChip)<{ selected: boolean }>`
   margin-right: ${(props) => props.theme.spacing(1)};
@@ -23,11 +30,11 @@ const FilterChip = styled(MuiChip)<{ selected: boolean }>`
 
 const priorityConfig: Record<
   string,
-  { label: string; color: string; chipColor: "error" | "warning" | "default" }
+  { label: string; chipColor: "error" | "warning" | "default" }
 > = {
-  critical: { label: "Kritisk", color: red[500], chipColor: "error" },
-  important: { label: "Viktig", color: orange[500], chipColor: "warning" },
-  normal: { label: "Normal", color: grey[500], chipColor: "default" },
+  critical: { label: "Högsta", chipColor: "error" },
+  important: { label: "Hög", chipColor: "warning" },
+  normal: { label: "Övriga", chipColor: "default" },
 };
 
 interface PrioritiesTabProps {
@@ -36,19 +43,13 @@ interface PrioritiesTabProps {
 
 const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
   const mode = useMode();
-  const {
-    data: priorities,
-    loading,
-    failed,
-    stale,
-  } = useQueryView(
-    useFetchGeneticPrioritiesQuery(
-      { genebankId, mode },
-      {
-        refetchOnMountOrArgChange: true,
-      },
-    ),
+  const query = useFetchGeneticPrioritiesQuery(
+    { genebankId, mode },
+    {
+      refetchOnMountOrArgChange: true,
+    },
   );
+  const { data: priorities, loading, failed, stale } = useQueryView(query);
 
   const [filters, setFilters] = useState({
     critical: true,
@@ -70,17 +71,22 @@ const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
   const columns: GridColDef[] = [
     {
       field: "individual_id",
-      headerName: "Individ",
+      headerName: "Individnummer",
       width: 150,
     },
     {
       field: "priority",
-      headerName: "Prioritet",
-      width: 130,
+      headerName: "Avelsprioritet",
+      width: 180,
       renderCell: (params) => {
         const config = priorityConfig[params.value] || priorityConfig.normal;
         return (
-          <MuiChip label={config.label} color={config.chipColor} size="small" />
+          <MuiChip
+            label={config.label}
+            color={config.chipColor}
+            size="small"
+            sx={readableChip}
+          />
         );
       },
       sortComparator: (v1, v2) => {
@@ -93,31 +99,22 @@ const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
     },
     {
       field: "genetic_value_score",
-      headerName: "Genetiskt värde",
-      description:
-        "Inverterad MK-percentil (0–100). Högt = låg MK = genetiskt värdefullt.",
-      width: 140,
+      headerName: "Ovanliga gener (0–100)",
+      width: 190,
       type: "number",
-      valueFormatter: (value: number) => value?.toFixed(1),
+      valueFormatter: (value: number) => (value != null ? decimal(value) : "–"),
       renderHeader: () => (
-        <HelpTooltip tooltip="Inverterad MK-percentil (0–100). Högt = låg MK = genetiskt värdefullt.">
-          Genetiskt värde
-        </HelpTooltip>
+        <HelpTooltip tooltip={RARE_GENES}>Ovanliga gener (0–100)</HelpTooltip>
       ),
     },
     {
       field: "genome_uniqueness",
-      headerName: "Genomunikhet",
-      description:
-        "Sannolikhet att individen bär alleler som inte finns hos andra. Från gene drop-simulering.",
+      headerName: "Unika gener",
       width: 140,
       type: "number",
-      valueFormatter: (value: number) =>
-        value != null ? `${(value * 100).toFixed(1)}%` : "-",
+      valueFormatter: (value: number) => (value != null ? percent(value) : "–"),
       renderHeader: () => (
-        <HelpTooltip tooltip="Sannolikhet att individen bär unika alleler. Från gene drop-simulering.">
-          Genomunikhet
-        </HelpTooltip>
+        <HelpTooltip tooltip={UNIQUE_GENES}>Unika gener</HelpTooltip>
       ),
     },
     {
@@ -125,8 +122,10 @@ const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
       headerName: "Skäl",
       flex: 1,
       minWidth: 200,
-      valueFormatter: (value: string[]) =>
-        Array.isArray(value) ? translateReasons(value).join(", ") : "",
+      valueFormatter: (value: string[], row) =>
+        Array.isArray(value)
+          ? translateReasons(value, row.individual_id).join("; ") // the reasons contain commas
+          : "",
     },
   ];
 
@@ -142,10 +141,12 @@ const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
   }
 
   if (failed) {
+    // A denial seen by another genetics panel hides this too; it reads as no access.
     return (
-      <Alert severity="error">
-        Kunde inte hämta prioriteringsdata. Kontrollera att du har behörighet.
-      </Alert>
+      <GeneticsError
+        error={query.error ?? { status: 403 }}
+        onRetry={query.refetch}
+      />
     );
   }
 
@@ -170,6 +171,7 @@ const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
               priorities?.filter((p) => p.priority === level).length || 0
             })`}
             color={priorityConfig[level].chipColor}
+            sx={readableChip}
             selected={filters[level as keyof typeof filters]}
             onClick={() => toggleFilter(level as keyof typeof filters)}
             variant={
@@ -191,7 +193,7 @@ const PrioritiesTab = ({ genebankId }: PrioritiesTabProps) => {
           pageSizeOptions={[10, 25, 50]}
           disableRowSelectionOnClick
           localeText={{
-            noRowsLabel: "Inga individer att visa",
+            noRowsLabel: "Inga kaniner att visa",
             paginationRowsPerPage: "Rader per sida:",
             paginationItemAriaLabel: (type) =>
               type === "first"

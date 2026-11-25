@@ -5,37 +5,64 @@ import { ThemeProvider, createTheme } from "@mui/material/styles";
 
 const prioritiesQuery = vi.fn();
 
+// The answer is the current argument's own, as RTK Query's currentData after a fetch.
+const own = (r: { data?: unknown; isLoading?: boolean }) => ({
+  currentData: r.data,
+  isFetching: Boolean(r.isLoading),
+  ...r,
+});
+
+// The genetics hooks take the rendered mode with the genebank (ModeProvider in the app).
+vi.mock("@/lib/mode-context", () => ({ useMode: () => "prod" }));
+
 vi.mock("@/redux/api/apiSlice", () => ({
-  useFetchGeneticPrioritiesQuery: (...args: unknown[]) =>
-    prioritiesQuery(...args),
+  useFetchGeneticPrioritiesQuery: () => own(prioritiesQuery()),
+}));
+
+// jsdom has no layout, so the real grid renders no cells. The stub renders each
+// cell through the column's valueFormatter with the row, as the grid does.
+type Column = {
+  field: string;
+  valueFormatter?: (value: unknown, row: Record<string, unknown>) => string;
+};
+vi.mock("@mui/x-data-grid", () => ({
+  DataGrid: ({
+    rows,
+    columns,
+  }: {
+    rows: Record<string, unknown>[];
+    columns: Column[];
+  }) => (
+    <table>
+      <tbody>
+        {rows.map((row) => (
+          <tr key={String(row.id)}>
+            {columns.map((c) => (
+              <td key={c.field}>
+                {c.valueFormatter
+                  ? c.valueFormatter(row[c.field], row)
+                  : String(row[c.field])}
+              </td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  ),
 }));
 
 import PrioritiesTab from "@/components/genetics/PrioritiesTab";
-import { ModeProvider } from "@/lib/mode-context";
 
-const theme = createTheme();
-const cached = [
-  {
-    individual_id: "G1-1",
-    priority: "critical",
-    reasons: [],
-    genetic_value_score: 1,
-    genome_uniqueness: 0.5,
-  },
-];
-
-function renderTab(state: Record<string, unknown>) {
-  prioritiesQuery.mockReturnValue(state);
-  return render(
-    <ThemeProvider theme={theme}>
-      <ModeProvider mode="prod">
-        <PrioritiesTab genebankId={1} />
-      </ModeProvider>
-    </ThemeProvider>,
-  );
-}
-
-const banner = () => screen.queryByText(/Beräknar genetiska prioriteringar/);
+const row = (individual_id: string, founder: string) => ({
+  individual_id,
+  priority: "critical",
+  reasons: [
+    `Sole active carrier of founder ${founder}`,
+    "Mean kinship 0.0023 is below 5th percentile (0.0023)",
+  ],
+  genetic_value_score: 91.4,
+  genome_uniqueness: 0.103,
+});
 
 describe("PrioritiesTab", () => {
   afterEach(() => {
@@ -43,74 +70,28 @@ describe("PrioritiesTab", () => {
     vi.clearAllMocks();
   });
 
-  const rows = () => screen.queryByText("Kritisk (1)");
-  const failedAlert = () =>
-    screen.queryByText(/Kunde inte hämta prioriteringsdata/);
-  const staleNote = () => screen.queryByText(/Kunde inte uppdatera/);
-
-  it("refetches on mount and keeps the cached rows on screen meanwhile", () => {
-    renderTab({ data: cached, currentData: cached, isFetching: true });
-    expect(prioritiesQuery).toHaveBeenCalledWith(
-      { genebankId: 1, mode: "prod" },
-      { refetchOnMountOrArgChange: true },
-    );
-    expect(banner()).toBeNull();
-    expect(rows()).toBeTruthy();
-  });
-
-  it("shows the banner only while there is no data yet", () => {
-    renderTab({
-      data: undefined,
-      currentData: undefined,
-      isLoading: true,
-      isFetching: true,
-    });
-    expect(banner()).toBeTruthy();
-  });
-
-  it("does not show the previous genebank's rows while the new one loads", () => {
-    // After a switch A→B, data is still A's until B answers (and isLoading is false).
-    renderTab({
-      data: cached,
-      currentData: undefined,
+  it("translates each row's reasons with that row's own number", () => {
+    prioritiesQuery.mockReturnValue({
+      data: [row("G1-2050", "G1-2050"), row("G1-2115", "G1-1101")],
       isLoading: false,
-      isFetching: true,
+      refetch: vi.fn(),
     });
-    expect(banner()).toBeTruthy();
-    expect(rows()).toBeNull();
-  });
-
-  it("keeps the cached rows with a note when a refetch fails", () => {
-    renderTab({
-      data: cached,
-      currentData: cached,
-      isFetching: false,
-      error: { status: 500 },
-    });
-    expect(failedAlert()).toBeNull();
-    expect(staleNote()).toBeTruthy();
-    expect(rows()).toBeTruthy();
-  });
-
-  it("shows the error when the failed genebank has no data of its own", () => {
-    renderTab({
-      data: cached,
-      currentData: undefined,
-      isFetching: false,
-      error: { status: 500 },
-    });
-    expect(failedAlert()).toBeTruthy();
-    expect(rows()).toBeNull();
-  });
-
-  it("hides the cached rows after a 403 or 401", () => {
-    const denied = { data: cached, currentData: cached, isFetching: false };
-    renderTab({ ...denied, error: { status: 403 } });
-    expect(failedAlert()).toBeTruthy();
-    expect(rows()).toBeNull();
-    cleanup();
-    const { container } = renderTab({ ...denied, error: { status: 401 } });
-    // The session-expired flow takes over: no alert, no empty table behind it.
-    expect(container.innerHTML).toBe("");
+    render(
+      <ThemeProvider theme={createTheme()}>
+        <PrioritiesTab genebankId={1} />
+      </ThemeProvider>,
+    );
+    expect(
+      screen.getByText(
+        "Är själv founderdjur och har inga ättlingar i beräkningen; Medelsläktskap 0,23 %, på eller under gränsen för de 5 % minst släkta (0,23 %)",
+      ),
+    ).toBeDefined();
+    expect(
+      screen.getByText(
+        /^Enda kaninen i beräkningen med gener från founderdjuret G1-1101; /,
+      ),
+    ).toBeDefined();
+    expect(screen.getAllByText("91")).toHaveLength(2);
+    expect(screen.getAllByText("10,3 %")).toHaveLength(2);
   });
 });

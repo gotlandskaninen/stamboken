@@ -140,7 +140,9 @@ Personen blir huvudmedlem i det nya medlemskapet.
 Koharen**, hushållets **Besättningar** och hur många personer som har ett
 konto i Stamboken (**Kopplade konton**).
 
-Därunder finns **Personer** och **Medlemskap**.
+Därunder finns **Personer**, **Medlemskap** och **Historik**. **Historik** visar
+de tio senaste ändringarna av medlemskapet och dess personer: när, vem och vad.
+Administratören når hela listan med **Visa hela historiken**.
 
 ![Ett medlemskap](medlemskap.png)
 
@@ -294,7 +296,8 @@ CSV-fil som går att öppna i Excel.
   avgiftsuppföljning. Den finns kvar under en övergångstid.
 - **Exportera adresslista** ger listan till tryckeriet för Koharen: en rad per
   hushåll med medlemsnummer, huvudmedlemmens namn, adress och postadress,
-  sorterad på postnummer. Aktiva medlemskap och friexemplar ingår, men inte de
+  sorterad på postnummer. För en organisation står organisationsnamnet och c/o
+  kontaktpersonen. Aktiva medlemskap och friexemplar ingår, men inte de
   som saknar adress. Kryssa i **Med Betala nu** till årets två första nummer.
   Då står "Betala nu" hos dem vars betalningsnotering har ett år före i år.
 - **Exportera Koharen** ger personerna i aktiva medlemskap, med bara de

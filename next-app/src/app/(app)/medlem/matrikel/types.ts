@@ -32,6 +32,9 @@ export type MembershipRow = Organization & {
   city: string | null;
   postal_address: string | null;
   persons: MembershipListPerson[];
+  /** The membership's active herds; `letter` is the initial of each one's genebank (G/M), decided server-side.
+   *  Missing from an older API during a rolling deploy: the columns show it as unknown. */
+  active_herds?: { herd: string; letter: string }[];
 };
 
 export type Grant = {
@@ -142,7 +145,10 @@ export type MembershipDetail = BillingAddress &
     joined_date: string | null;
     notes: string | null;
     persons: Person[];
-    herds: MembershipHerd[];
+    herds: (MembershipHerd & {
+      genebank_id: number;
+      is_active: boolean | null;
+    })[];
   };
 
 // Default page size for the matrikel list — the RSC page uses it whenever the
@@ -160,3 +166,22 @@ export function roleLabel(role: string, organizationName?: string | null) {
     ? "Kontaktperson"
     : (ROLE_LABELS[role] ?? role);
 }
+
+/** One row of GET /v2/members/audit (#244, app/utils/matrikel.py query_matrikel_audit). */
+export type MatrikelAuditRow = {
+  id: number;
+  action: string;
+  created_at: string; // ISO 8601 with offset
+  // null: the nightly anonymisation. id null: an anonymised person's former account, name "[borttagen]".
+  actor: { id: number | null; name: string } | null;
+  membership: { id: number; member_number: number | null };
+  person: { id: number; name: string } | null;
+  payload: Record<string, unknown>;
+};
+
+export type MatrikelAuditPage = {
+  rows: MatrikelAuditRow[];
+  total: number;
+  page: number;
+  per_page: number;
+};

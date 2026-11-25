@@ -40,4 +40,4 @@ stateDiagram-v2
 | SET_STATUS | PATCH /api/v2/memberships/{id}, PATCH /api/v2/members/{id} | admin, matrikel_admin |
 | RETIRE | DELETE /api/v2/memberships/{id} | admin, matrikel_admin |
 | ERASE_MAIN | POST /api/v2/persons/{id}/anonymize | admin, matrikel_admin |
-| ADD_MAIN | POST /api/v2/memberships/{id}/persons, POST /api/v2/memberships/{id}/main-member | admin, matrikel_admin |
+| ADD_MAIN | POST /api/v2/memberships/{id}/persons, POST /api/v2/memberships/{id}/main-member, POST /api/v2/persons/{id}/reactivate | admin, matrikel_admin |

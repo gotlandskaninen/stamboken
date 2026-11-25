@@ -25,6 +25,7 @@ from extensions import limiter
 from flask import Blueprint, current_app, jsonify, request, session
 from flask_login import current_user
 from peewee import OperationalError
+from utils.matrikel import LinkError, erase_unlinked_account
 
 from blueprints.common import admin_required, problem
 
@@ -181,7 +182,7 @@ def list_users_admin():
       active=true|false       (hbuser.is_active — the Aktiv/Inaktiv filter)
       v2_prod_access=true|false  (hbuser.v2_prod_access — the yes/no filter)
       active_since=<ISO8601>  (last_active >= this)
-      search=<str>            (matches username | email | fullname)
+      search=<str>            (matches username | email | fullname, or the account id as "174" or "konto 174")
       page=<int>              (default 1)
       per_page=<int>          (default 25, cap 200)
       sort=username|email|fullname|last_active   (default: last_active)
@@ -508,6 +509,27 @@ def remove_google_login(u_id):
             type="google-unlink-refused",
         )
     auth_log.info("google login removed actor=%s target=%s", current_user.id, u_id)
+    return "", 204
+
+
+@admin_bp.route("/users/<int:u_id>/erase", methods=["POST"])
+@admin_required
+def erase_account_admin(u_id):
+    """
+    "Radera kontots uppgifter" (#250): empties an account that belongs to no person and has no role, as the
+    anonymization of a person empties hers (matrikel.erase_unlinked_account). Refused with 409 for the admin's own
+    account, an account with a role or a person, and one already emptied. 204 No Content.
+    """
+    try:
+        erase_unlinked_account(u_id, current_user.id)
+    except LinkError as err:
+        return problem(err.status, err.title, err.detail, **err.extensions)
+    except OperationalError as exc:
+        # The audit purge locks audit_log: another erasure or a long write held it, and all of it rolled back.
+        if not any(getattr(e, "pgcode", None) in ("40P01", "55P03") for e in (exc, exc.__cause__, exc.__context__)):
+            raise
+        return problem(503, "Försök igen", "Raderingen krockade med en annan ändring. Försök igen om en stund.")
+    auth_log.info("account erased actor=%s target=%s", current_user.id, u_id)
     return "", 204
 
 

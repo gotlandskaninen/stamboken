@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useTranslation } from "react-i18next";
 import { formatTime } from "@/lib/inkorg";
+import { AccountRef } from "./AccountRef";
 import { ItemControls } from "./ItemControls";
 import { AskForAttachment } from "./[id]/AskForAttachment";
 import {
@@ -86,7 +87,19 @@ export function CasePane({
           {queueStatus(item, user.id, t)}
         </span>
         {item.assigned_to ? (
-          <span>{t("queue.with", { name: item.assigned_to.name })}</span>
+          // Always a span: the "·" separators (.caseStatus span + span) count spans only.
+          <span>
+            {user.is_admin ? (
+              <Link
+                href={`/stamboken/admin/anvandare/${item.assigned_to.id}`}
+                className="sb-link"
+              >
+                {t("queue.with", { name: item.assigned_to.name })}
+              </Link>
+            ) : (
+              t("queue.with", { name: item.assigned_to.name })
+            )}
+          </span>
         ) : (
           item.state === "ny" && <span>{t("queue.untaken")}</span>
         )}
@@ -148,7 +161,12 @@ export function CasePane({
         <dl className={styles.caseFacts}>
           <dt>{t("queueDetail.sender")}</dt>
           <dd>
-            {senderText(item) || t("queue.unknownSender")}
+            {/* senderText shows item.sender's name first. */}
+            {item.sender ? (
+              <AccountRef person={item.sender} user={user} />
+            ) : (
+              senderText(item) || t("queue.unknownSender")
+            )}
             <SenderUnconfirmed item={item} paneT={t} />
           </dd>
           <dt>{t("queueDetail.kind")}</dt>
