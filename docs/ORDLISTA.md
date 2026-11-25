@@ -263,8 +263,9 @@ Kod: `Individual`, `Bunny.fate` (`registered`) · Legacy-manual: "Registrerade d
 
 **Riktiga stamboken / testmiljön**\
 Riktiga stamboken är den som gäller; det du sparar där syns för alla. Testmiljön är en kopia där du
-kan öva fritt. Den skrivs över varje natt, och en gul rad överst visar att du är där. Alla aktiva
-konton har tillgång till riktiga stamboken och hamnar där vid inloggning; testmiljön nås i avatarmenyn.\
+kan öva fritt. Den skrivs över varje natt, och en gul rad överst visar att du är där. Ett konto med
+tillgång till riktiga stamboken hamnar där vid inloggning (alla aktiva konton fick den 2026-11-25) och
+når testmiljön i avatarmenyn; ett konto utan tillgång hamnar i testmiljön.\
 Kod: `sb_mode` (`prod`, `demo`), `v2_prod_access` · Legacy-manual: "den skarpa sidan", "Testsystemet" · Legacy: "TESTSYSTEMET" · Nytt UI: "riktiga stamboken", "testmiljön"
 
 **Skötare**\

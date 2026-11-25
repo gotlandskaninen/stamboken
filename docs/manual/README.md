@@ -72,9 +72,19 @@ Så förs bilderna in:
 
 1. Kör workflowet: Actions → Manual screenshots → Run workflow, på `main` eller på en
    gren. Det körs också av sig självt på en PR som ändrar skärmbildsskripten.
-2. Hämta artefakten och lägg bilderna i en PR:
-   `gh run download <run-id> -n manual-screenshots -D .` från repots rot. Artefakten
-   innehåller hela sökvägen.
+2. Hämta artefakten till en tom katalog utanför repot och kopiera bara PNG-filerna
+   till de två bildkatalogerna, så att en artefakt aldrig skriver över annat i din
+   checkout. Hämta bara från en körning på `main` eller på en gren du har granskat:
+   en PR kan ändra workflowet och därmed vad artefakten innehåller.
+
+   ```bash
+   tmp=$(mktemp -d)
+   gh run download <run-id> -n manual-screenshots -D "$tmp"
+   cp "$tmp"/next-app/public/stamboken/manual/*.png next-app/public/stamboken/manual/ 2>/dev/null
+   cp "$tmp"/next-app/content/matrikel-guide/*.png next-app/content/matrikel-guide/ 2>/dev/null
+   ```
+
+   Lägg bilderna i en PR.
 3. Läs om avsnitten som visar de ändrade bilderna.
 
 Bilderna visar seedens påhittade besättningar (Visby Kaninuppfödning, G1274) och

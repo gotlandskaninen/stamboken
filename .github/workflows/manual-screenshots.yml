@@ -155,6 +155,7 @@ jobs:
         run: |
           MANUAL_CERT_UUID=$(PGPASSWORD=testpass psql -h localhost -U herdbook herdbook_test -tAc \
             "select verification_token from digitalcertificatev2 where is_current order by id desc limit 1")
+          [ -n "$MANUAL_CERT_UUID" ] || { echo "::error::The flows issued no certificate"; exit 1; }
           export MANUAL_CERT_UUID
           pnpm exec playwright test --config playwright.manual-screenshots.config.ts --project=manual --update-snapshots=changed --reporter=line --output=test-results/manual
         working-directory: next-app
@@ -177,9 +178,10 @@ jobs:
             echo "Läs om avsnitten som visar dem. Hämta bilderna under Artifacts (manual-screenshots)."
             for dir in "${dirs[@]}"; do
               doc=$(ls "$dir"/*.md)
-              for png in $(grep -oE '\]\([a-z0-9-]+\.png\)' "$doc" | tr -d '()]' | sort -u); do
-                [ -f "$dir/$png" ] || echo "- Saknas: \`$dir/$png\` (står i $(basename "$doc"))"
-              done
+              grep -oE '\]\([^)[:space:]]+\.png\)' "$doc" | sed -E 's/^\]\(//; s/\)$//' | sort -u |
+                while read -r png; do
+                  [ -f "$dir/$png" ] || echo "- Saknas: \`$dir/$png\` (står i $(basename "$doc"))"
+                done
             done
           } >> "$GITHUB_STEP_SUMMARY"
           mkdir -p "$RUNNER_TEMP/bilder"

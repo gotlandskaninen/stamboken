@@ -16,9 +16,11 @@ Bilderna är tagna med påhittade personer.
 - **Logga in med föreningskontot.** Klicka **Logga in med ditt föreningskonto
   (Google)** och välj föreningskontot. Ett konto med en roll kan inte logga in
   med kod eller lösenord.
-- **Riktiga stamboken.** När du loggar in hamnar du i riktiga stamboken. Vill
-  du öva väljer du **Byt till testmiljön** i menyn under din bild. Allt du gör
-  i testmiljön försvinner nästa natt.
+- **Riktiga stamboken.** När du loggar in hamnar du i riktiga stamboken, om
+  ditt konto har tillgång till den. Ser du en gul rad överst med "TESTMILJÖ" är
+  du i testmiljön: ändra inget där, utan be administratören om tillgång till
+  riktiga stamboken. Vill du öva väljer du **Byt till testmiljön** i menyn
+  under din bild. Allt du gör i testmiljön försvinner nästa natt.
 - **Hitta sidorna.** Klicka på din bild uppe till höger. Längre ner i menyn
   finns **Medlemsansökningar**, **Matrikel** och **Statistik**. Står
   det en siffra efter Medlemsansökningar väntar så många ansökningar. Överst på
@@ -276,8 +278,10 @@ friexemplar.
 
 - Ändrar du adressen gäller den nya genast, och den gamla slutar fungera för
   inloggning.
-- Varje ändring gör personens oanvända koder ogiltiga och loggar ut kontot
-  överallt där det är inloggat.
+- Varje ändring gör personens oanvända koder ogiltiga. Kan personen logga in
+  med adressen loggas kontot också ut överallt där det är inloggat. Vill du
+  logga ut ett konto i andra fall ber du administratören om **Logga ut
+  överallt**.
 - En adress kan bara vara inloggningsadress för en person. Kan en annan person
   redan logga in med adressen går ändringen inte att spara. Stamboken visar då
   "En annan medlem kan redan logga in med e-postadressen". Samma slags besked

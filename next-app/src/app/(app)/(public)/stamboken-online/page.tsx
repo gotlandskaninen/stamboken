@@ -63,12 +63,13 @@ export default function StambokenOnlinePage() {
             }}
           >
             Du kan logga in med en kod som du får till e-postadressen i
-            matrikeln. Det fungerar för huvudmedlemmen och för den som redan har
-            ett konto. Du kan också logga in med ditt föreningskonto, alltså en
-            e-postadress på gotlandskaninen.se, eller med användarnamn och
-            lösenord från gamla Stamboken. Har ditt konto en roll, till exempel
-            genbanksansvarig, loggar du in med föreningskontot. Frågor om konton
-            och inloggning besvaras på{" "}
+            matrikeln. Det fungerar för huvudmedlemmen och för den vars konto är
+            kopplat till sin rad i matrikeln. Du kan också logga in med ditt
+            föreningskonto, alltså en e-postadress på gotlandskaninen.se, eller
+            med användarnamn och lösenord från gamla Stamboken.
+            Genbanksansvariga, genbankshjälpare, matrikeladministratörer och
+            administratörer loggar in med föreningskontot. Frågor om konton och
+            inloggning besvaras på{" "}
             <Link
               href="mailto:admin@gotlandskaninen.se"
               color="inherit"

@@ -36,7 +36,7 @@ const STEPS: Array<{
   },
   {
     title: "Ditt konto",
-    text: "Är du huvudmedlem skapar du ditt konto själv första gången du loggar in med kod. Du godkänner reglerna för kontot och kommer sedan direkt in i riktiga stamboken. Har du redan ett konto loggar du in med det. Är du inte huvudmedlem och har inget konto får du ingen kod. Skriv då till admin@gotlandskaninen.se.",
+    text: "Är du huvudmedlem skapar du ditt konto själv första gången du loggar in med kod. Du godkänner reglerna för kontot och kommer sedan direkt in i riktiga stamboken. Är ditt konto kopplat till din rad i matrikeln loggar du in med det. Är du inte huvudmedlem och har inget sådant konto får du ingen kod. Skriv då till admin@gotlandskaninen.se.",
     link: {
       href: "/kontoregler",
       label: "Läs reglerna för användarkonton",
@@ -44,7 +44,7 @@ const STEPS: Array<{
   },
   {
     title: "Logga in",
-    text: "Klicka på Stamboken uppe till höger och sedan på Logga in i Stamboken. Skriv e-postadressen i matrikeln och klicka Skicka kod. Du får ett mejl med en kod på åtta siffror. Du kan också logga in med föreningskontot (Google) eller med användarnamn och lösenord. Har ditt konto en roll, till exempel genbanksansvarig, använder du föreningskontot.",
+    text: "Klicka på Stamboken uppe till höger och sedan på Logga in i Stamboken. Skriv e-postadressen i matrikeln och klicka Skicka kod. Du får ett mejl med en kod på åtta siffror. Du kan också logga in med föreningskontot (Google) eller med användarnamn och lösenord. Är du genbanksansvarig, genbankshjälpare, matrikeladministratör eller administratör använder du föreningskontot.",
     link: { href: `${MANUAL_PATH}#logga-in`, label: "Logga in steg för steg" },
   },
   {

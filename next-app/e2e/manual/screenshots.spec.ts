@@ -20,6 +20,8 @@ type Shot = {
   path: string;
   actions?: string[];
   fullPage?: boolean;
+  /** A heading that must be on the page, where a 200 can still be an error page. */
+  heading?: string;
 };
 
 const SHOTS: Shot[] = [
@@ -222,6 +224,7 @@ if (process.env.MANUAL_CERT_UUID) {
     name: "verifiera-intyg",
     role: "anonymous",
     path: `/stamboken/verifiera/${process.env.MANUAL_CERT_UUID}`,
+    heading: "Äkta genbanksintyg",
   });
 }
 
@@ -302,6 +305,10 @@ for (const shot of SHOTS) {
       expect(res?.status(), shot.path).toBeLessThan(400);
       if (shot.role !== "anonymous")
         expect(new URL(page.url()).pathname).not.toBe("/auth/sign-in");
+      if (shot.heading)
+        await expect(
+          page.getByRole("heading", { name: shot.heading }),
+        ).toBeVisible();
       await page
         .getByText("Laddar")
         .first()

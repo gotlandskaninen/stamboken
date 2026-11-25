@@ -66,14 +66,14 @@ Där finns tre sätt att logga in:
 
 - **Med en kod i ett mejl.** Du skriver den e-postadress som står i föreningens
   matrikel och får en kod dit. Det fungerar för huvudmedlemmen i ett
-  medlemskap och för den som redan har ett konto i Stamboken.
+  medlemskap och för den vars konto är kopplat till sin rad i matrikeln.
 - **Med föreningskontot (Google)**, om du har en adress som slutar på
   @gotlandskaninen.se.
 - **Med användarnamn och lösenord**, samma uppgifter som i gamla Stamboken.
 
-Har ditt konto en roll, till exempel genbanksansvarig, genbankshjälpare,
-matrikeladministratör eller administratör, loggar du in med föreningskontot.
-Kod och lösenord fungerar inte för de kontona.
+Är du genbanksansvarig, genbankshjälpare, matrikeladministratör eller
+administratör loggar du in med föreningskontot. Kod och lösenord fungerar inte
+för de kontona.
 
 Du hamnar på Min besättning i riktiga stamboken. Saknar ditt konto tillgång
 till riktiga stamboken hamnar du i [testmiljön](#testmiljön-och-riktiga-stamboken):
@@ -154,7 +154,7 @@ Under formuläret leder länken **Kom igång** till introduktionen för nya anv�
 | Reglerna har uppdaterats. … | Reglerna ändrades medan du läste. Läs dem igen och kryssa i rutan. |
 | Det finns redan ett konto som kan vara ditt. … | Logga in med det kontot, eller mejla <admin@gotlandskaninen.se>. |
 | Tjänsten är tillfälligt otillgänglig. Försök igen senare. | Tillfälligt fel i tjänsten. |
-| Felaktigt användarnamn eller lösenord | Kontrollera stavning och versaler. Har kontot en roll fungerar bara föreningskontot. |
+| Felaktigt användarnamn eller lösenord | Kontrollera stavning och versaler. Är du genbanksansvarig, genbankshjälpare, matrikeladministratör eller administratör fungerar bara föreningskontot. |
 | För många inloggningsförsök. Vänta en minut och försök igen. | Fem försök per minut är gränsen. |
 | Inloggning misslyckades. Försök igen senare. | Tillfälligt fel i tjänsten. |
 | Endast @gotlandskaninen.se-konton kan användas för Google-inloggning. … | Du valde ett privat Google-konto. Välj föreningskontot. |
