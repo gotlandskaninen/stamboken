@@ -38,9 +38,10 @@ export default async function MembershipsListPage({
   const qs = new URLSearchParams();
   if (sp.search) qs.set("search", sp.search);
   if (sp.status) qs.set("status", sp.status);
-  // Only the two letters reach the API; anything else would be answered 400.
-  if (sp.active_herd === "G" || sp.active_herd === "M")
-    qs.set("active_herd", sp.active_herd);
+  // Only a single G or M reaches the API and the select (?active_herd=G&active_herd=M is an array).
+  const activeHerd =
+    sp.active_herd === "G" || sp.active_herd === "M" ? sp.active_herd : "";
+  if (activeHerd) qs.set("active_herd", activeHerd);
   qs.set("per_page", String(perPage));
   qs.set("page", String(requestedPage));
   const body = await fetchApi<ListResponse>(`/v2/members?${qs.toString()}`);
@@ -114,7 +115,7 @@ export default async function MembershipsListPage({
               </span>
               <Select
                 name="active_herd"
-                defaultValue={sp.active_herd ?? ""}
+                defaultValue={activeHerd}
                 aria-labelledby="mat-f-herd"
                 sx={{ width: 190 }}
               >
