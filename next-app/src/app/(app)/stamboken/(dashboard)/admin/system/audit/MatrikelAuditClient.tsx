@@ -43,7 +43,10 @@ function Detail({ row }: { row: MatrikelAuditRow }) {
   // "fields" (names only) is already in the summary's chips.
   const { before, after, fields: _fields, ...rest } = row.payload;
   const hasDiff = before !== undefined || after !== undefined;
-  const changed = matrikelChangedFields(row.payload);
+  // The diff table only for fields with values; names alone are the summary's chips.
+  const changed = matrikelChangedFields(row.payload).filter(
+    (f) => f in asRecord(before) || f in asRecord(after),
+  );
   return (
     <div className={styles["ad-audit-detail"]}>
       <p className={ds["ad-hint"]}>

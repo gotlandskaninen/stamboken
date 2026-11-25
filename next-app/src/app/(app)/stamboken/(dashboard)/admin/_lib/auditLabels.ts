@@ -256,20 +256,20 @@ export const matrikelFieldLabel = (f: string) =>
   MATRIKEL_FIELD_LABELS[f] ?? fieldLabel(f);
 
 /**
- * Fälten en händelse ändrade: nycklarna i after/before, eller listan
- * "fields" (kontakt_andrad från profilen och pappersblanketten bär bara
- * namnen, aldrig värdena).
+ * Fälten en händelse ändrade: nycklarna i before/after och listan "fields",
+ * tillsammans. kontakt_andrad bär namnen i "fields" och från pappersblanketten
+ * dessutom e-postens före/efter.
  */
 export function matrikelChangedFields(
   payload: Record<string, unknown>,
 ): string[] {
   const { before, after, fields } = payload;
-  const isObject = (v: unknown) =>
-    typeof v === "object" && v !== null && !Array.isArray(v);
-  if (isObject(before) || isObject(after)) {
-    return Object.keys({ ...(before as object), ...(after as object) });
-  }
-  return Array.isArray(fields) ? fields.map(String) : [];
+  const keys = (v: unknown) =>
+    typeof v === "object" && v !== null && !Array.isArray(v)
+      ? Object.keys(v)
+      : [];
+  const named = Array.isArray(fields) ? fields.map(String) : [];
+  return [...new Set([...keys(before), ...keys(after), ...named])];
 }
 
 /** Ett värde i payloaden som text: roll och status på svenska, tomt som tankstreck. */

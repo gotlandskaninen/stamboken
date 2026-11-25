@@ -81,6 +81,14 @@ describe("matrikel log labels (#244)", () => {
       "phone",
     ]);
     expect(matrikelChangedFields({ person_id: 1, user_id: 2 })).toEqual([]);
+    // kontakt_andrad from the paper form: e-mail before/after plus the other fields by name (Opus #248)
+    expect(
+      matrikelChangedFields({
+        fields: ["email", "phone", "address"],
+        before: { email: "a@example.com" },
+        after: { email: "b@example.com" },
+      }),
+    ).toEqual(["email", "phone", "address"]);
   });
 
   it("labels matrikel fields before the studbook's", () => {

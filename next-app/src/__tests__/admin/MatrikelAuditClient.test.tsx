@@ -124,3 +124,33 @@ it("does not link a masked actor", () => {
     screen.queryByRole("link", { name: "[borttagen]" }),
   ).not.toBeInTheDocument();
 });
+
+it("chips every changed field but diffs only those with values", () => {
+  render(
+    <MatrikelAuditClient
+      rows={[
+        {
+          ...rows[1],
+          action: "kontakt_andrad",
+          payload: {
+            person_id: 3,
+            fields: ["email", "phone"],
+            before: { email: "a@example.com" },
+            after: { email: "b@example.com" },
+          },
+        },
+      ]}
+      total={1}
+      page={1}
+      perPage={50}
+      filters={filters}
+    />,
+  );
+  const summary = screen.getByRole("button", {
+    name: /Kontaktuppgifter ändrade/,
+  });
+  expect(summary).toHaveTextContent("E-post");
+  expect(summary).toHaveTextContent("Telefon");
+  fireEvent.click(summary);
+  expect(screen.getAllByRole("row")).toHaveLength(2); // header + e-mail
+});
