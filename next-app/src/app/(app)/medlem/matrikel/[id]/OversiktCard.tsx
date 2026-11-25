@@ -1,3 +1,4 @@
+import Link from "next/link";
 import ds from "@/styles/ds-admin.module.css";
 import styles from "../../medlem.module.css";
 import type { MembershipDetail } from "../types";
@@ -38,9 +39,12 @@ function Cell({
 export function OversiktCard({
   membership,
   canEdit,
+  canOpenHerd = () => false,
 }: {
   membership: MembershipDetail;
   canEdit: boolean;
+  /** Whether the reader may open the herd's admin page (admin, or manager of its genebank). */
+  canOpenHerd?: (genebankId: number) => boolean;
 }) {
   const consent =
     Object.entries(membership.publication_consent)
@@ -68,11 +72,24 @@ export function OversiktCard({
           "inga"
         ) : (
           <span className={styles.badgeRow}>
-            {membership.herds.map((h) => (
-              <span key={h.id} className="sb-badge sb-badge-mossa">
-                {h.herd_name ? `${h.herd} — ${h.herd_name}` : h.herd}
-              </span>
-            ))}
+            {membership.herds.map((h) => {
+              // The herd's own status in words: green alone read as "aktiv" for every linked herd (#214).
+              const label = `${h.herd_name ? `${h.herd} — ${h.herd_name}` : h.herd} · ${h.is_active ? "aktiv" : "inaktiv"}`;
+              const className = `sb-badge${h.is_active ? " sb-badge-mossa" : ""}`;
+              return canOpenHerd(h.genebank_id) ? (
+                <Link
+                  key={h.id}
+                  href={`/stamboken/admin/besattningar/${h.herd}`}
+                  className={className}
+                >
+                  {label}
+                </Link>
+              ) : (
+                <span key={h.id} className={className}>
+                  {label}
+                </span>
+              );
+            })}
           </span>
         )}
       </Cell>

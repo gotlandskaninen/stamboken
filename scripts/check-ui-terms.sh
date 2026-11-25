@@ -10,6 +10,7 @@
 #                                  inte "Försäljningsdatum" eller "Köpdatum";
 #                                  "flytt"/"Flyttad hit" bara i historiktext (lib/herdTracking.ts)
 #   Rollen                         Genbanksansvarig — "manager" bara som kodvärde
+#   Läsrätten till en genbank      Läsrätt — inte "Granskare" (rollen `viewer` granskar inget)
 #   Raserna i löptext              gotlandskanin, mellerudskanin — versal bara först i mening eller rubrik
 #   Död kanin                      Död är egen status; en död kanin är inte inaktiv
 #   Fliken med kullar              Kullar och parningar — aldrig "&", kullar först
@@ -36,7 +37,7 @@ FORBIDDEN='genbanksnummer|kaninnummer|certifikat|överlåtelse|överlåt(a|er|s|
 FORBIDDEN+='|kullar & parningar|besättningshistoria|rapportera som död|dödsnotering|dödsanteckning'
 FORBIDDEN+='|försäljningsdatum|köpdatum|lista över individer|årsavgift'
 FORBIDDEN+='|förslag|torrkörning|kodinnehavare'
-FORBIDDEN+='|(min|din|utan) genbank\b|aktiva genbanker'
+FORBIDDEN+='|(min|din|utan) genbank\b|aktiva genbanker|granskare'
 # Versal mitt i menyvalet, och Moder/Fader som hel etikett: i en sträng eller JSX-text
 # ("Moder", >Moder<) eller ensam på raden, så att moderId och "Moder Jord" inte träffas.
 CASED="Min Besättning|Alla Kaniner|(^[[:space:]]*|[\"'>])(Moder|Fader)([\"'<]|[[:space:]]*$)"

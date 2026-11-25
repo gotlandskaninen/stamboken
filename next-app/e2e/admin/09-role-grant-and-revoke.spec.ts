@@ -43,6 +43,8 @@ test("owner(herd) is refused; grant + revoke viewer(genebank) writes two privile
 
   // Owner(herd) via RolePicker (level select + herd autocomplete) is refused
   // with the backend's reason, whether the herd has a membership or not.
+  // (Task 26 level labels: Admin / Genbanksansvarig / Läsrätt /
+  // Besättningsägare).
   await page.getByLabel(ROLE_LEVEL_FIELD).click();
   await page.getByRole("option", { name: "Besättningsägare" }).click();
   await page.getByLabel(ROLE_HERD_FIELD, { exact: true }).fill(herdCode);
@@ -72,12 +74,12 @@ test("owner(herd) is refused; grant + revoke viewer(genebank) writes two privile
       `FROM jsonb_array_elements(privileges::jsonb) e WHERE NOT (${gotlandViewer})) WHERE ${victim};`,
   );
   const entry = () =>
-    page.getByRole("button", { name: "Ta bort Granskare — Gotlandskanin" });
+    page.getByRole("button", { name: "Ta bort Läsrätt till Gotlandskanin" });
   try {
     await page.goto(`/stamboken/admin/anvandare/${userId}`);
     await expect(entry()).toHaveCount(0);
     await page.getByLabel(ROLE_LEVEL_FIELD).click();
-    await page.getByRole("option", { name: "Granskare" }).click();
+    await page.getByRole("option", { name: "Läsrätt" }).click();
     await page
       .getByLabel(GENEBANK_FIELD, { exact: true })
       .fill("Gotlandskanin");

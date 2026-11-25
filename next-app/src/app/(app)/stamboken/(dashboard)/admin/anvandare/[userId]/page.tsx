@@ -97,6 +97,7 @@ export default async function AdminUserDetailPage({
         <div>
           <h2 className={ds["ad-page-title"]}>{displayName}</h2>
           <div className={ds["ad-page-sub"]}>
+            <span className="sb-meta">Konto {detail.id}</span> ·{" "}
             {detail.fullname ?? "—"} ·{" "}
             <span className="sb-meta">{detail.email}</span>
           </div>

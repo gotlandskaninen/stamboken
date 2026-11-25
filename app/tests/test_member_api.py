@@ -116,6 +116,24 @@ class TestMembershipList(MatrikelApiTest):
         self.assertEqual(len(data["items"]), 2)
         self.assertEqual(data["total"], 3)
 
+    def test_active_herds_and_filter(self):
+        """#214: the G/M columns — the membership's active herds, split and filtered by genebank, not code letter."""
+        db.Herd.create(herd="G9001", genebank=self.genebanks[0], membership=self.ms1, is_active=True)
+        db.Herd.create(herd="m9002", genebank=self.genebanks[1], membership=self.ms2, is_active=True)
+        db.Herd.create(herd="G9003", genebank=self.genebanks[0], membership=self.ms2, is_active=False)
+        self.login("man")
+        rows = {r["id"]: r for r in self.client.get("/api/v2/members").get_json()["items"]}
+        self.assertEqual(rows[self.ms1.id]["active_herds"], [{"herd": "G9001", "letter": "G"}])
+        self.assertEqual(rows[self.ms2.id]["active_herds"], [{"herd": "m9002", "letter": "M"}])
+        self.assertEqual(rows[self.ms3.id]["active_herds"], [])
+        for letter, membership in (("G", self.ms1), ("M", self.ms2)):
+            with self.subTest(letter=letter):
+                data = self.client.get(f"/api/v2/members?active_herd={letter}").get_json()
+                self.assertEqual([r["id"] for r in data["items"]], [membership.id])
+        for bad in ("X", "g", "GM"):
+            with self.subTest(bad=bad):
+                self.assertEqual(self.client.get(f"/api/v2/members?active_herd={bad}").status_code, 400)
+
 
 class TestMembershipDetailAndPatch(MatrikelApiTest):
     def setUp(self):

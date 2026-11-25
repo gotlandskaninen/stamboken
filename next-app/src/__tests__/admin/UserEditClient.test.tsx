@@ -73,6 +73,37 @@ describe("UserEditClient roles", () => {
     expect(revokeRole).toHaveBeenCalledWith(7, { level: "matrikel_admin" });
   });
 
+  it("shows each owned herd's status in words and links it to the herd page (#214)", () => {
+    render(
+      <UserEditClient
+        detail={{
+          ...detail,
+          _privileges: [
+            { level: "owner", herd: 1 },
+            { level: "owner", herd: 2 },
+          ],
+        }}
+        actorId={1}
+        genebanks={[]}
+        herds={[
+          { id: 1, herd: "G9001", herd_name: "Exempelgården", is_active: true },
+          { id: 2, herd: "M9002", herd_name: null, is_active: false },
+        ]}
+        recentAudit={[]}
+        concurrentEditWarning={null}
+      />,
+    );
+    const rows = screen.getAllByRole("listitem");
+    expect(
+      within(rows[0]).getByRole("link", { name: "G9001 — Exempelgården" }),
+    ).toHaveAttribute("href", "/stamboken/admin/besattningar/G9001");
+    expect(within(rows[0]).getByText("Aktiv")).toBeInTheDocument();
+    expect(
+      within(rows[1]).getByRole("link", { name: "M9002" }),
+    ).toHaveAttribute("href", "/stamboken/admin/besattningar/M9002");
+    expect(within(rows[1]).getByText("Inaktiv")).toBeInTheDocument();
+  });
+
   it("hides the newly issued password from the Tyck till picture", async () => {
     vi.mocked(resetPassword).mockResolvedValue({ plaintext: "nytt-hemligt" });
     render(
