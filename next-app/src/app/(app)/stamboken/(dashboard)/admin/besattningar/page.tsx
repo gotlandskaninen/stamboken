@@ -16,10 +16,6 @@ interface HerdListResponse {
 }
 
 const PAGE_SIZE = 50;
-const GENEBANKS = [
-  { id: 1, name: "Gotlandskanin" },
-  { id: 2, name: "Mellerudskanin" },
-];
 
 export default async function HerdListPage({
   searchParams,
@@ -32,10 +28,14 @@ export default async function HerdListPage({
   // omdirigeras till sista sidan nedan.
   const page = Math.max(1, Math.trunc(Number(sp.page ?? "1")) || 1);
 
-  // A manager of a single genebank has nothing to choose between.
-  const genebanks = GENEBANKS.filter(
-    (gb) => user.is_admin || user.is_manager?.includes(gb.id),
-  );
+  // /api/genebanks scopes by access (viewer included); the panel by
+  // management. A manager of a single genebank has nothing to choose between.
+  const genebanks = (
+    await fetchApi<{ genebanks: { id: number; name: string }[] }>(
+      "/genebanks",
+      { forceProd: true },
+    )
+  ).genebanks.filter((gb) => user.is_admin || user.is_manager?.includes(gb.id));
   // A genebank the user cannot choose is dropped, not sent: the API says 403.
   if (!genebanks.some((gb) => String(gb.id) === sp.genebank_id)) {
     delete sp.genebank_id;

@@ -29,25 +29,39 @@ import HerdListPage from "@/app/(app)/stamboken/(dashboard)/admin/besattningar/p
 const renderPage = async (sp: Record<string, string> = {}) =>
   render(await HerdListPage({ searchParams: Promise.resolve(sp) }));
 
+const genebanks = [
+  { id: 1, name: "Gotlandskanin" },
+  { id: 2, name: "Mellerudskanin" },
+];
+const herdCall = () =>
+  new URL(
+    fetchApi.mock.calls.find(([p]) => p.startsWith("/manage/herd"))![0],
+    "http://x",
+  );
+
 beforeEach(() => {
   vi.clearAllMocks();
-  fetchApi.mockResolvedValue({
-    herds: [
-      {
-        id: 1,
-        herd: "G1",
-        herd_name: null,
-        genebank_name: "Gotlandskanin",
-        owner_usernames: [],
-        is_active: true,
-      },
-    ],
-    total: 1,
-    page: 1,
-    page_size: 50,
-  });
+  fetchApi.mockImplementation(async (path: string) =>
+    path === "/genebanks" ? { genebanks } : herdList,
+  );
 });
 afterEach(cleanup);
+
+const herdList = {
+  herds: [
+    {
+      id: 1,
+      herd: "G1",
+      herd_name: null,
+      genebank_name: "Gotlandskanin",
+      owner_usernames: [],
+      is_active: true,
+    },
+  ],
+  total: 1,
+  page: 1,
+  page_size: 50,
+};
 
 describe("herd list page (#214)", () => {
   it("shows a manager the search box and filters, from the scoped API", async () => {
@@ -63,8 +77,7 @@ describe("herd list page (#214)", () => {
     expect(screen.queryByLabelText("Genbank")).not.toBeInTheDocument();
     expect(screen.getByText("G1")).toBeInTheDocument();
 
-    expect(fetchApi).toHaveBeenCalledTimes(1);
-    const url = new URL(fetchApi.mock.calls[0][0], "http://x");
+    const url = herdCall();
     expect(url.pathname).toBe("/manage/herd");
     expect(url.searchParams.get("q")).toBe("G1");
     expect(url.searchParams.get("active")).toBe("true");
@@ -74,8 +87,7 @@ describe("herd list page (#214)", () => {
     requireHerdAdmin.mockResolvedValue({ id: 3, is_manager: [1] });
     await renderPage({ genebank_id: "2" });
 
-    const url = new URL(fetchApi.mock.calls[0][0], "http://x");
-    expect(url.searchParams.has("genebank_id")).toBe(false);
+    expect(herdCall().searchParams.has("genebank_id")).toBe(false);
   });
 
   it("shows an admin the genebank filter too", async () => {
@@ -86,5 +98,13 @@ describe("herd list page (#214)", () => {
       screen.getByRole("textbox", { name: "Sök besättningsnummer eller namn" }),
     ).toBeInTheDocument();
     expect(screen.getByLabelText("Genbank")).toBeInTheDocument();
+  });
+
+  it("offers a manager of two genebanks both, from /genebanks", async () => {
+    requireHerdAdmin.mockResolvedValue({ id: 4, is_manager: [1, 2] });
+    await renderPage({ genebank_id: "2" });
+
+    expect(screen.getByLabelText("Genbank")).toBeInTheDocument();
+    expect(herdCall().searchParams.get("genebank_id")).toBe("2");
   });
 });
