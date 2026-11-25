@@ -253,7 +253,9 @@ def get_matrikel_audit():
         per_page = _parse_int_arg("per_page", 50, maximum=200)
         dates = {k: date.fromisoformat(request.args[k]) if request.args.get(k) else None for k in ("from", "to")}
     except ValueError:
-        return problem(400, "Ogiltig parameter", "Sidor och id är heltal, datum skrivs ÅÅÅÅ-MM-DD.")
+        return problem(
+            400, "Ogiltig parameter", "Medlemsnummer, id och sidor är positiva heltal. Datum skrivs ÅÅÅÅ-MM-DD."
+        )
     return jsonify(
         query_matrikel_audit(
             full_access=current_user.is_admin or current_user.is_matrikel_admin,

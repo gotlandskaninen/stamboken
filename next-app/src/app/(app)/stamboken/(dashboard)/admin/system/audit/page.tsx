@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Alert, Stack, Typography } from "@mui/material";
 import { LinkButton } from "../../_components/AdminLink";
-import { fetchApi } from "@/lib/api";
+import { ApiError, fetchApi } from "@/lib/api";
 import { AdminBackLink } from "../../_components/AdminBackLink";
 import { SystemPillNav } from "../../_components/SystemPillNav";
 import { requireAdmin } from "../../_lib/requireAdmin";
@@ -73,14 +73,16 @@ async function matrikelAudit(sp: Record<string, string | undefined>) {
     if (sp[k]) qs.set(k, sp[k] as string);
   }
   let body: MatrikelAuditPage | null = null;
+  let refused: string | null = null; // a 400: the filter is wrong, the form stays
   try {
     body = await fetchApi<MatrikelAuditPage>(
       `/v2/members/audit?${qs.toString()}`,
       { forceProd: true },
     );
-  } catch {
-    body = null;
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 400) refused = err.detail;
   }
+  if (refused !== null) body = { rows: [], total: 0, page: 1, per_page: 50 };
   if (body === null) {
     return (
       <Alert severity="error" sx={{ mt: 2 }}>
@@ -104,6 +106,11 @@ async function matrikelAudit(sp: Record<string, string | undefined>) {
           Matrikelns logg <span className={ds["ad-count"]}>{body.total}</span>
         </h2>
       </div>
+      {refused !== null && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {refused}
+        </Alert>
+      )}
       <MatrikelAuditClient
         rows={body.rows}
         total={body.total}

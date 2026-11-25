@@ -7,12 +7,16 @@ vi.mock("next/navigation", () => ({
   redirect: vi.fn(),
   usePathname: () => "",
 }));
-vi.mock("@/lib/api", () => ({ fetchApi }));
+vi.mock("@/lib/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api")>()),
+  fetchApi,
+}));
 vi.mock("@/app/(app)/stamboken/(dashboard)/admin/_lib/requireAdmin", () => ({
   requireAdmin: vi.fn(),
 }));
 
 import AuditPage from "@/app/(app)/stamboken/(dashboard)/admin/system/audit/page";
+import { ApiError } from "@/lib/api";
 
 const renderPage = async (sp: Record<string, string> = {}) =>
   render(await AuditPage({ searchParams: Promise.resolve(sp) }));
@@ -62,4 +66,20 @@ it("says so when the matrikel's log cannot be read", async () => {
   expect(
     screen.getByText("Kunde inte läsa matrikelns logg just nu."),
   ).toBeInTheDocument();
+});
+
+it("shows the API's reason for a wrong filter and keeps the form (Opus #248)", async () => {
+  fetchApi.mockRejectedValue(
+    new ApiError({
+      status: 400,
+      title: "Ogiltig parameter",
+      detail: "member_number måste vara ett positivt heltal",
+    }),
+  );
+  await renderPage({ source: "matrikel", member_number: "0" });
+  expect(
+    screen.getByText("member_number måste vara ett positivt heltal"),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Filtrera" })).toBeInTheDocument();
+  expect(screen.getByLabelText("Medlemsnummer")).toHaveValue("0");
 });
