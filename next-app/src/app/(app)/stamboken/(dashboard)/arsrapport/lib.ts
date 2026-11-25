@@ -1167,19 +1167,30 @@ export const defaultRoundDates = (year: number) => ({
   end_date: `${year + 1}-03-30`,
 });
 
-// The round managers work on: last year's until it closes, then this year's.
+// The round managers work on: the oldest one still open, else last year's until it would close, then this year's.
 export function currentRoundYear(rounds: Round[], today: string): number {
+  const open = rounds
+    .filter((r) => r.end_date && today <= r.end_date)
+    .map((r) => r.year);
+  if (open.length > 0) return Math.min(...open);
   const year = Number(today.slice(0, 4));
   const last = rounds.find((r) => r.year === year - 1);
-  return last?.end_date && today <= last.end_date ? year - 1 : year;
+  const lastEnd = last?.end_date ?? defaultRoundDates(year - 1).end_date;
+  return today <= lastEnd ? year - 1 : year;
 }
 
-// A phone field can hold two numbers, "08 - 510 122 07 0709 - 55 72 08": split before each "NN - ".
-export const phoneNumbers = (text: string): string[] =>
-  text
-    .split(/\s+(?=\d+\s*-\s*\d)/)
-    .map((n) => n.trim())
-    .filter(Boolean);
+// A phone field can hold two numbers, "08 - 510 122 07 0709 - 55 72 08": split before each "NN - ", but a
+// piece with too few digits to be a number ("+46", "070 123") stays with the next one.
+export function phoneNumbers(text: string): string[] {
+  const numbers: string[] = [];
+  for (const piece of text.trim().split(/\s+(?=\d+\s*-\s*\d)/)) {
+    const prev = numbers.at(-1);
+    if (prev !== undefined && prev.replace(/\D/g, "").length < 7)
+      numbers[numbers.length - 1] = `${prev} ${piece}`;
+    else if (piece) numbers.push(piece);
+  }
+  return numbers;
+}
 
 export interface StatusView {
   round: Round;

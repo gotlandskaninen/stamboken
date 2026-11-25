@@ -8,6 +8,7 @@ import { Masthead } from "@/components/shell/Masthead";
 import { manages, type QueueList } from "../../../inkorg/lib";
 import {
   currentRoundYear,
+  defaultRoundDates,
   parseFilter,
   todayStockholm,
   type Round,
@@ -85,12 +86,12 @@ export default async function StatusPage({
   const activation = view?.round.genebanks.find(
     (g) => g.genebank_id === genebank.id,
   );
-  // A round that closed without being activated here (the old app's rounds): nothing to report or show.
+  // A round that closed without being activated here (the old app's rounds): nothing to report or show. A legacy
+  // round can lack its end date; the default's then counts.
   const closed =
     !!view &&
     !activation &&
-    !!view.round.end_date &&
-    view.round.end_date < today;
+    (view.round.end_date ?? defaultRoundDates(Number(year)).end_date) < today;
 
   // How many invitations go out, while none has: counts only, readable by helpers too.
   const recipients =
@@ -109,6 +110,7 @@ export default async function StatusPage({
         actions={
           <div className={styles.mastActions}>
             <StatusSwitch
+              key={`${genebank.id}-${year}`} // Back to another genebank keeps this page mounted: start from its choice
               year={Number(year)}
               years={years}
               genebankId={genebank.id}

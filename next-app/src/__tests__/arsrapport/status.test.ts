@@ -211,6 +211,15 @@ describe("phoneNumbers", () => {
     expect(phoneNumbers("070-000 00 01")).toEqual(["070-000 00 01"]);
     expect(phoneNumbers("0730601951")).toEqual(["0730601951"]);
   });
+  it("keeps a piece too short to be a number with the next one", () => {
+    for (const one of [
+      "+46 70-123 45 67",
+      "070 123 45-67",
+      "0498 12-34-56",
+      "Mobil 070-1234567",
+    ])
+      expect(phoneNumbers(one)).toEqual([one]);
+  });
 });
 
 describe("currentRoundYear", () => {
@@ -232,6 +241,16 @@ describe("currentRoundYear", () => {
       2026,
     );
     expect(currentRoundYear([], "2026-11-25")).toBe(2026);
+  });
+  it("is an older round that is still open, whatever the year", () => {
+    expect(currentRoundYear([round(2025, "2027-01-24")], "2027-01-01")).toBe(
+      2025,
+    );
+  });
+  it("is last year's until its default close when it does not exist yet", () => {
+    expect(currentRoundYear([round(2025, "2026-03-30")], "2027-01-15")).toBe(
+      2026,
+    );
   });
   it("gives the server's default dates for a new round", () => {
     expect(defaultRoundDates(2026)).toEqual({

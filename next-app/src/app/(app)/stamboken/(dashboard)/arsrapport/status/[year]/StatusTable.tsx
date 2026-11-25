@@ -287,8 +287,8 @@ function Row({
           <div className={inkorg.muted}>{row.herd_name}</div>
         )}
         {row.telefon &&
-          phoneNumbers(row.telefon).map((phone) => (
-            <div key={phone}>
+          phoneNumbers(row.telefon).map((phone, i) => (
+            <div key={i}>
               <a
                 className={styles.phone}
                 href={`tel:${phone.replace(/[^\d+]/g, "")}`}

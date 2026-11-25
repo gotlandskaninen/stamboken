@@ -51,7 +51,8 @@ export function RoundPanel({
   }, [error]);
 
   const changedKeys = DATES.filter(
-    ([key]) => dates[key] !== "" && dates[key] !== (round?.[key] ?? ""),
+    ([key]) =>
+      dates[key] !== "" && dates[key] !== (round?.[key] ?? defaults[key]),
   ).map(([key]) => key);
   // Dates the server has not filled in yet get its defaults before activation.
   const incomplete = round === null || DATES.some(([key]) => !round[key]);
@@ -153,14 +154,14 @@ export function RoundPanel({
     </p>
   );
 
-  if (closed && round?.end_date)
+  if (closed)
     return (
       <section className={`sb-card ${styles.roundCard}`}>
         <h2>Rundan {year} är stängd</h2>
         <p className={inkorg.muted} style={{ margin: 0 }}>
-          Den stängde {fmtDate(round.end_date)} utan att ha aktiverats för{" "}
-          {genebankName}. Rapporter som skickades i gamla Stamboken visas inte
-          här.
+          Den stängde {fmtDate(round?.end_date ?? defaults.end_date)} utan att
+          ha aktiverats för {genebankName}. Rapporter som skickades i gamla
+          Stamboken visas inte här.
         </p>
       </section>
     );
