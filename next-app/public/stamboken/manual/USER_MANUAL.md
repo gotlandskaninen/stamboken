@@ -41,7 +41,8 @@ på skärmen) och slutar med **Skärmarna** (vad varje sida innehåller).
 - [Del 3 – Administratör](#del-3--administratör)
   - Så gör du: [hitta användare](#hitta-en-användare), [roller](#ge-eller-ta-bort-en-roll),
     [lösenord](#återställa-ett-lösenord), [åtkomst](#ge-tillgång-till-riktiga-stamboken),
-    [inaktivera](#inaktivera-eller-aktivera-ett-konto), [ny besättning](#skapa-en-besättning),
+    [inaktivera](#inaktivera-eller-aktivera-ett-konto), [radera](#radera-kontots-uppgifter),
+    [ny besättning](#skapa-en-besättning),
     [ägare](#byta-ägare-på-en-besättning), [genbanksansvarig](#utse-genbanksansvarig),
     [aktivitetslogg](#söka-i-aktivitetsloggen), [massutloggning](#logga-ut-alla-användare)
   - Skärmarna: [Adminpanel](#adminpanel), [Användare](#användare), [Användare – redigera](#användare--redigera),
@@ -723,8 +724,8 @@ under rubriken. Sidan har fyra flikar.
   den första parningen och **Prova i testmiljön**) som bockas av när de är gjorda.
   Startdjuren räknas som klara när besättningen har en levande, okastrerad hane och
   hona. Steget **Prova i testmiljön** säger "Vill du prova utan att ändra något på
-  riktigt? Byt till testmiljön i menyn. Där kan du klicka runt fritt, och allt återställs
-  varje natt." Länken **Om testmiljön** leder till
+  riktigt? Byt till testmiljön i menyn under din bild. Där kan du klicka runt fritt, och
+  allt återställs varje natt." Länken **Om testmiljön** leder till
   [Testmiljön och riktiga stamboken](#testmiljön-och-riktiga-stamboken). Steget visas
   för konton med tillgång till riktiga stamboken, och det bockas av när du har bytt till
   testmiljön i menyn under din bild i den här webbläsaren. Knappen **Ny parning** visas
@@ -1492,7 +1493,20 @@ Reglagen sparas direkt.
 2. Bekräfta "Inaktivera kontot?" med **Inaktivera**. Alla användarens sessioner
    avslutas.
 
-Aktivera igen med samma reglage och **Aktivera**. Ett konto kan inte raderas härifrån.
+Aktivera igen med samma reglage och **Aktivera**.
+
+### Radera kontots uppgifter
+
+Gäller ett konto som inte har någon annan roll än läsrätt och inte är kopplat till
+någon person i matrikeln. En person i matrikeln anonymiseras i stället där, och då töms
+kontot också. Ditt eget konto kan du inte radera.
+
+1. Öppna användaren och klicka **Radera kontots uppgifter** i kortet med samma namn.
+2. Bekräfta "Radera kontots uppgifter?" med **Radera**.
+
+Namn, e-post, inloggningar och profilbild raderas, och kontot maskeras i
+ändringsloggen. Det går inte att ångra. Raden finns kvar som raderad-*nummer*, eftersom
+andra uppgifter pekar på den, och sidan visar en gul ruta om det.
 
 ### Skapa en besättning
 
@@ -1598,8 +1612,10 @@ medlemsansökan lägger in medlemmen i matrikeln men skapar inget konto.
 Överst användarnamnet och raden "Konto" med kontonumret, namnet och e-posten. Korten
 **Profil** (**Användarnamn** låst, **Fullständigt namn**, **E-post**, **Spara**),
 **Roller**, **Lösenord**, **Sessioner**, **Status och åtkomst**, **Google-konto länkat**
-(om det finns) och **Senaste aktivitet** (de tio senaste ändringarna användaren gjort).
-En gul ruta varnar om en annan administratör ändrat kontot de senaste fem minuterna.
+(om det finns), **Radera kontots uppgifter** och **Senaste aktivitet** (de tio senaste
+ändringarna användaren gjort). En gul ruta varnar om en annan administratör ändrat kontot
+de senaste fem minuterna. På ett raderat konto finns inget kvar att ändra, se [Radera
+kontots uppgifter](#radera-kontots-uppgifter).
 
 Under **Roller** länkar en Besättningsägare-roll till besättningen och visar **Aktiv**
 eller **Inaktiv**. Kortet **Sessioner** har två knappar:

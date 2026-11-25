@@ -239,7 +239,9 @@ Under **Personer** står hushållets personer med roll, kontakt, konto och
   (**Familjemedlem** eller **Skötare**) och klicka **Spara**. Har personen en
   e-postadress mejlar Stamboken hen att hen har lagts in, vem som är
   huvudmedlem och var föreningens dataskyddspolicy finns.
-- **Ändra en person:** klicka **Redigera** på personens rad. Ska du ändra
+- **Ändra en person:** klicka **Redigera** på personens rad. Där kan du också
+  byta **Roll** mellan **Familjemedlem** och **Skötare**, och rutan säger vad
+  rollen innebär. Huvudmedlem byts med **Gör till huvudmedlem**. Ska du ändra
   **E-post**, läs först [E-postadressen är
   inloggningsadressen](#e-postadressen-är-inloggningsadressen).
 - **Fler åtgärder:** klicka **⋯** på personens rad:
@@ -248,7 +250,13 @@ Under **Personer** står hushållets personer med roll, kontakt, konto och
     tomt gäller åtkomsten tills vidare för en familjemedlem och ett år för en
     skötare.
   - **Gör till huvudmedlem** byter huvudmedlem i hushållet.
-  - **Ta bort** avslutar personen i medlemskapet och drar in hens åtkomster.
+  - **Avsluta** avslutar personen i medlemskapet och drar in hens åtkomster.
+    Raden finns kvar i historiken.
+  - **Återaktivera** finns för en avslutad person som inte är anonymiserad,
+    när medlemskapet inte är inaktivt. Personen blir aktiv igen med sin
+    tidigare roll, men åtkomsterna kommer inte tillbaka. Har personen ett
+    kopplat konto kopplar du bort det först. En huvudmedlem går bara att
+    återaktivera när hushållet inte har någon annan aktiv huvudmedlem.
   - **Anonymisera** ersätter personens namn med en platshållare, tar bort
     kontaktuppgifterna och drar in åtkomsterna. Personens konto töms: namn,
     e-post, Google-uppgifter, profilbild och roller tas bort, och kontot kan inte
@@ -341,7 +349,7 @@ Stamboken anonymiserar personer automatiskt: namnen ersätts med en platshållar
 och kontaktuppgifterna tas bort. Personens konto töms på samma sätt som vid
 **Anonymisera**. Intyg och bevis i inkorgen som är kopplade
 till personen förlorar sina original. Tiden räknas från när personerna avslutades, alltså från
-**Avsluta medlemskap**, **Ta bort** eller **Anonymisera**. Att bara välja status
+**Avsluta medlemskap**, **Avsluta** eller **Anonymisera**. Att bara välja status
 Inaktiv avslutar ingen, och då börjar ingen tid räknas.
 
 - **Ett avslutat medlemskap** anonymiseras när det har gått 12 månader sedan den
