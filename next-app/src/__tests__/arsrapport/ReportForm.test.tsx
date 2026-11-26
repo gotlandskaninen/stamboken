@@ -615,6 +615,42 @@ describe("ReportForm", () => {
     expect(within(row(1)).getByText("✓ Klar")).toBeTruthy();
   });
 
+  it("keeps såld utanför genbanken through the draft: klar again after a reload (#273)", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    const { unmount } = render(
+      <ReportForm env="demo" view={view()} actions={a} />,
+    );
+    choose(1, "Såld");
+    fireEvent.click(screen.getByLabelText("Utanför genbanken"));
+    fireEvent.click(
+      screen.getByRole("radio", { name: "Nej, såld utanför genbanken" }),
+    );
+    fireEvent.change(screen.getByLabelText("Månad"), {
+      target: { value: "6" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Spara försäljningen" }),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    const [, , data, , , , , , sent] = a.saveDraft.mock.calls[0];
+    expect(sent).toEqual({}); // nothing for the server to keep
+    expect(data.form.rabbits["1"].sald.kopare).toEqual({ not_recorded: true });
+    unmount();
+    const draft = {
+      data,
+      updated_at: "2026-12-31T10:00:00+00:00",
+      submission_key: null,
+      own: true,
+    } as unknown as ReportView["draft"];
+    render(
+      <ReportForm env="demo" view={view({ draft })} actions={actions()} />,
+    );
+    expect(within(row(1)).getByText("✓ Klar")).toBeTruthy();
+  });
+
   it("shows the server's refusal of a typed buyer on the row and in the dialog, and keeps the buyer typed", async () => {
     vi.useFakeTimers();
     const a = actions();

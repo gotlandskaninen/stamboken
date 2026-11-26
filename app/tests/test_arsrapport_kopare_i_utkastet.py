@@ -147,6 +147,36 @@ class DialogBuyerTest(KeptBuyerBase):
         self.assertEqual((answer["kopare"], answer["refusals"], contacts()), ({}, [], {}))
         self.assertNotIn("kopare_id", json.dumps(self.draft()))
 
+    def test_sald_utanfor_genbanken_stays_in_the_draft_and_skicka_takes_it_as_before(self):  # #273
+        key, data = str(self.a.id), self.sold()
+        data["rabbits"][key]["sald"]["kopare"] = {"not_recorded": True}  # the body and the form copy alike
+        self.save(data)
+        for body in (self.draft(), self.draft()["form"], self.page()["draft"]["data"]["form"]):
+            self.assertEqual(body["rabbits"][key]["sald"]["kopare"], {"not_recorded": True})
+        self.ok(self.sent(kopare={"not_recorded": True}))  # the sale as a reloaded page sends it
+        (sale,) = sales(self.a, active=True)
+        self.assertEqual((sale.herd.herd, sale.holder_contact_id, sale.buyer_removed), ("GX1", None, False))
+        self.assertEqual(contacts(), {})
+
+    def test_a_draft_takes_only_the_bare_marker(self):  # anything more may name the buyer
+        key = str(self.a.id)
+        for kopare in ({"not_recorded": True, "name": "Zelda Keptbuyer"}, {"not_recorded": 1}, {**OTHER}):
+            for where in ("body", "form"):
+                with self.subTest(kopare=kopare, where=where):
+                    data = json.loads(json.dumps(self.sold()))
+                    (data if where == "body" else data["form"])["rabbits"][key]["sald"]["kopare"] = kopare
+                    response = self.api("PUT", "/besattning/G9001/2025/utkast", data=data, updated_at=None)
+                    self.assertEqual(response.status_code, 400, response.get_data(as_text=True))
+        self.assertFalse(db.YearlyReportDraft.select().exists())
+
+    def test_choosing_sald_utanfor_genbanken_drops_the_kept_buyer(self):  # #273: not even a kept one
+        answer, contact = self.kept()
+        data = self.sold()
+        data["rabbits"][str(self.a.id)]["sald"] |= {"kopare": {"not_recorded": True}, "kopare_id": contact.id}
+        self.save(data, updated_at=answer["updated_at"])
+        self.assertEqual(contacts(), {})
+        self.assertNotIn("kopare_id", json.dumps(self.draft()))
+
     def test_an_invalid_buyer_is_refused_beside_a_saved_draft(self):
         email_only = {**OTHER, "email": "xena@example.invalid"}
         answer = self.save(self.sold(), {str(self.a.id): email_only})

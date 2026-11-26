@@ -78,7 +78,8 @@ får bara `kopare_id` och försäljningens datum som det skrevs (`kopare_datum`)
 `kopare: {"<kaninens id>": {kopare_id, kept_buyer_date}}` för de köpare som sparades och
 `refusals` med koden `kopare` för dem som inte gjorde det, och utkastet sparas ändå. Bara en roll
 som får sälja sparar en köpare så. En försäljning som rapporten redan har registrerat utanför
-genbanken och "såld utanför genbanken" sparar ingen. Skicka kopplar köparen till försäljningen och
+genbanken och "såld utanför genbanken" sparar ingen. Valet "såld utanför genbanken" står i utkastet
+som `{"not_recorded": true}` och inget annat. Skicka kopplar köparen till försäljningen och
 köar köparens mejl. Ändras försäljningen eller köparen raderas den sparade köparen direkt, och
 skickas rapporten aldrig raderas den av gallringen. Se tillägget 2026-11-26 i
 [ADR-0016](adr/0016-agarbyte-flytt-dag-0-och-berattigat-intresse.md).

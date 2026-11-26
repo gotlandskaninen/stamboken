@@ -537,6 +537,26 @@ describe("a buyer typed in the sale dialog", () => {
     expect(typedBuyers(state, { ...seller, report })).toEqual({});
   });
 
+  it("keeps såld utanför genbanken in the draft, and only as the bare marker (#273)", () => {
+    const state = form({ 1: sold({ not_recorded: true }), 2: sold(ola) });
+    const draft = toDraft(state);
+    expect(draft.rabbits["1"].sald?.kopare).toEqual({ not_recorded: true });
+    expect(draft.form!.rabbits[1].sald?.kopare).toEqual({ not_recorded: true });
+    expect(draft.rabbits["2"].sald).not.toHaveProperty("kopare");
+    expect(draft.form!.rabbits[2].sald).not.toHaveProperty("kopare");
+    const restored = fromBody(JSON.parse(JSON.stringify(draft)));
+    expect(restored.rabbits[1].sald?.kopare).toEqual({ not_recorded: true });
+    expect(isDone(rabbit(1), restored.rabbits[1], false)).toBe(true);
+    const named = {
+      not_recorded: true,
+      name: "Ola Köpare",
+    } as unknown as Buyer;
+    const forged = toDraft(form({ 1: sold(named) }));
+    expect(JSON.stringify(forged)).not.toMatch(/Ola|kopare/);
+    const read = fromBody({ form: form({ 1: sold(named) }) });
+    expect(read.rabbits[1].sald?.kopare).toBeNull();
+  });
+
   it("leaves memory for the kept id only where the row still holds the very buyer sent", () => {
     const state = form({ 1: sold(ola), 2: sold({ ...ola }) });
     const sent = { "1": ola, "2": ola };

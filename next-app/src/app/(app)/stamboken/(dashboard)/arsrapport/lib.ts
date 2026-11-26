@@ -796,6 +796,9 @@ const num = (v: unknown): number | null => {
   return typeof n === "number" && Number.isFinite(n) ? n : null;
 };
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
+// "Såld utanför genbanken" names no buyer (#273): the one buyer value a draft keeps, and only as it is.
+const notRecorded = (v: unknown) =>
+  isObj(v) && Object.keys(v).length === 1 && v.not_recorded === true;
 function pickEntry(raw: unknown): Entry {
   const e = (isObj(raw) ? raw : {}) as Partial<Entry>;
   const val = (["kvar", "dod", "sald", "ej_angiven"] as const).find(
@@ -824,7 +827,7 @@ function pickEntry(raw: unknown): Entry {
           ar: num(sald.ar) ?? 0,
           manad: num(sald.manad),
           dag: num(sald.dag),
-          kopare: null,
+          kopare: notRecorded(sald.kopare) ? { not_recorded: true } : null,
           ...(num(sald.kopare_id) !== null
             ? { kopare_id: num(sald.kopare_id)! }
             : {}),
@@ -869,15 +872,17 @@ export function pickForm(raw: unknown): FormState {
 }
 
 // The draft is the body without the key, the revision and the buyers (D10).
+// Såld utanför genbanken stays: it names no buyer.
 export function toDraft(state: FormState): DraftData {
   const { submission_key, revision, ...draft } = toBody(state, "", null);
   void submission_key;
   void revision;
   for (const e of Object.values(draft.rabbits))
-    if (e.sald) delete e.sald.kopare; // the buyer goes beside it (typedBuyers)
+    if (e.sald && !notRecorded(e.sald.kopare)) delete e.sald.kopare; // the buyer goes beside it (typedBuyers)
   const form = pickForm(state);
   for (const e of Object.values(form.rabbits))
-    if (e.sald) delete (e.sald as { kopare?: unknown }).kopare; // memory only
+    if (e.sald && !notRecorded(e.sald.kopare))
+      delete (e.sald as { kopare?: unknown }).kopare; // memory only
   return { ...draft, form };
 }
 

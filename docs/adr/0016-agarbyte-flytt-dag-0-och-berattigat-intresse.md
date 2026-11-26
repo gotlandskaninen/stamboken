@@ -297,7 +297,8 @@ sparas aldrig i ett utkast.
   personliga länkens försäljning är ett förslag, och dess köpare finns kvar i
   minnet till Skicka som förut. Detsamma gäller en försäljning som rapporten
   redan har registrerat utanför genbanken, som rättas vid Skicka. "Såld
-  utanför genbanken" sparar ingen köpare.
+  utanför genbanken" sparar ingen köpare och tar bort en sparad. Själva valet
+  står i utkastet (`not_recorded`), eftersom det inte säger något om köparen.
 * Ingen rad håller köparen medan den sparas. Säljaren ser bara "Köparen finns
   sparad", och genbanksansvarig ser köparen först när rapporten har skickats.
   En köpare utan bevis (`email_notice_only`) raderas om mejlet inte har gått

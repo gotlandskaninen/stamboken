@@ -700,10 +700,19 @@ def report_list(herd, year, report=None):
 PRIVATE_KEYS = ("matrikel", "kopare")  # never stored in a draft, at any depth under `form`
 
 
+def _not_recorded(value):
+    """Exactly "såld utanför genbanken" (#273): it says nothing about the buyer, so a draft keeps it."""
+    return isinstance(value, dict) and value.keys() == {"not_recorded"} and value["not_recorded"] is True
+
+
+def _private(key, value):
+    return key in PRIVATE_KEYS and value is not None and not (key == "kopare" and _not_recorded(value))
+
+
 def _has_private(value):
-    """A non-null matrikel or kopare anywhere inside `value` (a null is only stripped)."""
+    """A non-null matrikel or kopare anywhere inside `value` (a null is only stripped), but såld utanför genbanken."""
     if isinstance(value, dict):
-        return any((k in PRIVATE_KEYS and v is not None) or _has_private(v) for k, v in value.items())
+        return any(_private(k, v) or _has_private(v) for k, v in value.items())
     if isinstance(value, list):
         return any(_has_private(v) for v in value)
     return False
@@ -711,7 +720,8 @@ def _has_private(value):
 
 def _without_private(value):
     if isinstance(value, dict):
-        return {k: _without_private(v) for k, v in value.items() if k not in PRIVATE_KEYS}
+        kept = (k for k in value if k not in PRIVATE_KEYS or (k == "kopare" and _not_recorded(value[k])))
+        return {k: _without_private(value[k]) for k in kept}
     if isinstance(value, list):
         return [_without_private(v) for v in value]
     return value
@@ -719,11 +729,11 @@ def _without_private(value):
 
 def stored_body(body: dict) -> dict:
     """D10: the body without matrikel, every buyer (kopare), submission_key and revision; a copy, never mutated.
-    The client's whole-form copy (`form`) is stripped the same way, at any depth."""
+    The client's whole-form copy (`form`) is stripped the same way, at any depth. Såld utanför genbanken stays."""
     stored = {key: value for key, value in body.items() if key not in ("matrikel", "submission_key", "revision")}
     if isinstance(body.get("rabbits"), dict):
         stored["rabbits"] = {
-            key: {**entry, "sald": {k: v for k, v in entry["sald"].items() if k != "kopare"}}
+            key: {**entry, "sald": {k: v for k, v in entry["sald"].items() if k != "kopare" or _not_recorded(v)}}
             if isinstance(entry, dict) and isinstance(entry.get("sald"), dict)
             else entry
             for key, entry in body["rabbits"].items()
@@ -740,7 +750,9 @@ def _holds_private(body):
     return (
         body.get("matrikel") is not None
         or any(
-            isinstance(entry, dict) and isinstance(entry.get("sald"), dict) and entry["sald"].get("kopare") is not None
+            isinstance(entry, dict)
+            and isinstance(entry.get("sald"), dict)
+            and _private("kopare", entry["sald"].get("kopare"))
             for entry in entries
         )
         or _has_private(body.get("form"))
@@ -781,9 +793,13 @@ def _dialog_claims(data):
 
 
 def _holds_claim(entry, claim):
-    """The draft's entry still has the sale the claim is for: outside the genebank, and on the day a dialog's was."""
-    dialog = claim["fran_rapport"] is None
-    return _sale_outside(entry) and (not dialog or _entered(entry["sald"]) == claim["kopare_datum"])
+    """
+    The draft's entry still has the sale the claim is for: outside the genebank, and on the day a dialog's was.
+    Såld utanför genbanken keeps no buyer (#273), so it lets go of a kept one too.
+    """
+    if not _sale_outside(entry) or _not_recorded(entry["sald"].get("kopare")):
+        return False
+    return claim["fran_rapport"] is not None or _entered(entry["sald"]) == claim["kopare_datum"]
 
 
 def _with_kept(data, claims):
