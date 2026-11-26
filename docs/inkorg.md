@@ -984,6 +984,12 @@ ett annat intyg, digitalt eller ett annat pappersnummer, försvinner märkningen
 har ett digitalt intyg bredvid ett gammalt pappersnummer visar det digitala, och får ingen märkning
 (409 vid `matches_registry`).
 
+Vad märkningen betyder, och det enda den betyder: handläggaren X kryssade vid tiden T i att fotot av
+intyget N för kaninen R stämmer med registret. Den visas bara så länge kaninen fortfarande heter R och
+har pappersintyget N, och inte har något digitalt intyg. Ändras annat på kaninen efteråt, till exempel
+namn eller föräldrar, står märkningen kvar: den säger vad som stämde när det jämfördes, inte att
+allt i registret är oförändrat sedan dess.
+
 ## Fråga uppfödaren
 
 ### `POST /api/v2/inkorg/{id}/fraga`

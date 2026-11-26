@@ -314,6 +314,14 @@ class TestExistingRabbit(ProposalTest):
     def existing(self, number, **changes):
         return reading(**{"ar_kull_individ": number, "fodelsedatum": "240420", "intygsnummer": "SYN-777", **changes})
 
+    def test_a_photo_of_the_certificate_the_rabbit_has_reads_it_as_its_own(self):
+        db.Individual.update(certificate="SYN-777").where(db.Individual.number == "G9001-2411").execute()
+        proposal = self.propose(self.existing("2411", namn="Elsa"))
+        self.assertEqual(self.source(proposal, "individual"), ("läst", "G9001-2411"))
+        self.assertEqual(self.source(proposal, "paper_certificate"), ("läst", "SYN-777"))
+        self.assertIn("Intygsnumret är kaninens.", self.texts(proposal, True))
+        self.assertEqual(self.texts(proposal, False), [])  # what "Förslag: stämmer" in the queue needs
+
     def test_a_digital_certificate_needs_nothing_more(self):
         proposal = self.propose(self.existing("2412", kon="Hane", namn="Ebbe"))
         self.assertEqual(

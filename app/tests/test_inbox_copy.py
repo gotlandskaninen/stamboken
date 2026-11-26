@@ -118,6 +118,27 @@ class TestCopy(CopyTest):
         self.assertFalse(os.path.exists(os.path.join(self.folder, old)))
         self.assertIsNone(self.client.get("/api/v2/individual/G1-2112").get_json()["paper_certificate_checked"])
 
+    def test_an_old_certificate_linked_masked_and_checked_shows_its_badge_to_a_member(self):
+        # The case the feature is for: G1-2111 has had certificate "12" since the old registry.
+        self.login("owner")
+        resp = self.upload(("intyg.jpg", encoded(red_over_blue())), accept_warnings="1")
+        item = db.InboxItem.get_by_id(resp.get_json()["item"]["id"])
+        document = item.documents.get()
+        self.login("hjalp")
+        self.post(f"/{item.id}/ta")
+        body = {"action": "pappersintyg", "individual": "G1-2111", "paper_certificate": "12", "paper_number": "G1-2111"}
+        self.assertEqual(self.post(f"/{item.id}/dokument/{document.id}/spara", **body).status_code, 200)
+        self.assertFalse(db.IndividualCommand.select().exists())  # nothing written to the registry
+        rects = [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+        resp = self.mask(item, document, mask_rects=rects, matches_registry=True)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertEqual(resp.get_json()["item"]["state"], "klar")
+        self.login("owner")  # a member without a genebank role
+        rabbit = self.client.get("/api/v2/individual/G1-2111").get_json()
+        self.assertEqual(
+            rabbit["paper_certificate_checked"], db.InboxDocument.get_by_id(document.id).verified_at.isoformat()
+        )
+
     def test_removing_the_copy_removes_its_check(self):
         item, document = self.saved_document()
         self.mask(item, document, mask_rects=[{"x": 0, "y": 0.5, "w": 1, "h": 0.5}], matches_registry=True)
