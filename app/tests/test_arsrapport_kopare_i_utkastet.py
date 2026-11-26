@@ -8,15 +8,17 @@ isort:skip_file
 """
 
 import json
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from unittest import mock
 
 import utils.arsrapport as arsrapport
 import utils.buyer_contact as buyer_contact
 import utils.database as db
 import utils.herd_tracking as herd_tracking
+import utils.inbox as inbox
 from utils.herd_tracking import BUYER_REMOVED, CONTACT_OR_MEMBERSHIP_NEEDED
 
+from tests.inbox_fixtures import QUALITY
 from tests.test_arsrapport_kept_buyer import (
     BUYER,
     BUYER_TEXTS,
@@ -388,6 +390,28 @@ class DialogBuyerTest(KeptBuyerBase):
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
         self.assertEqual(contacts(), {})
         self.assertNotIn("kopare_id", json.dumps(self.draft()))
+
+    def test_after_the_last_day_nothing_is_kept_as_the_dialog_says(self):  # review r1: one rule for both
+        self.at(date(2026, 3, 31))  # the day after end_date: only an editor or a helper still enters
+        self.login("man")
+        answer = self.save(self.sold(), {str(self.a.id): BUYER})
+        self.assertEqual((answer["kopare"], contacts()), ({}, {}))
+
+    def test_a_paper_autosave_after_the_item_left_the_helper_writes_nothing(self):  # review r1
+        item, _ = inbox.create_upload(self.owner, self.h, None, [("inkorg/original/x.jpg", "0" * 64, QUALITY)])
+        db.InboxDocument.update(doc_type="arsblankett").where(db.InboxDocument.item == item.id).execute()
+        helper = db.User.get_by_id(self.helper.id)
+        inbox.take(db.InboxItem.get_by_id(item.id), helper, over=False)
+        access = arsrapport.report_access(helper, self.h, item.id)
+        self.assertEqual((access.role, access.source), ("helper", "paper"))
+        inbox.take(db.InboxItem.get_by_id(item.id), db.User.get_by_id(self.manager.id), over=True)  # meanwhile
+        with self.assertRaises(arsrapport.ArsrapportError) as caught:
+            arsrapport.save_draft(
+                self.h, self.round_, access, helper, self.sold(), None, None, None, {str(self.a.id): BUYER}
+            )
+        self.assertEqual(caught.exception.status, 409)
+        self.assertEqual(contacts(), {})
+        self.assertFalse(db.YearlyReportDraft.select().exists())
 
     def test_a_reason_may_not_name_the_kept_buyer(self):  # it lives in audit_log; no row holds the buyer yet
         self.login("man")

@@ -907,11 +907,11 @@ def _keep_buyers(herd, round_, access, user, report, stored, buyers, claims):
     kept for its sale as Dra tillbaka keeps one, in place of the rabbit's claim (Jonas 2026-11-26): a BuyerContact
     until kept_until, checked now as Skicka checks a typed one, which only a role that sells uses (F1). Not kept: a
     rabbit Skicka would not take; a sale the report already holds outside the genebank, corrected at Skicka as
-    before; såld utanför genbanken (#273); and anything once kept_until has passed. Returns (stored, {rabbit: the
-    new claim as the client gets it}, the refusals of typed buyers not kept).
+    before; såld utanför genbanken (#273); and anything after end_date, as the dialog says. Returns (stored,
+    {rabbit: the new claim as the client gets it}, the refusals of typed buyers not kept).
     """
     until = kept_until(round_)
-    if not access.can_sell or until is None or until <= now():
+    if not access.can_sell or until is None or today() > round_.end_date:  # the dialog's rule (ReportForm `late`)
         buyers = {}
     judged = stored["form"] if isinstance(stored.get("form"), dict) else stored
     rabbits = judged.get("rabbits") if isinstance(judged.get("rabbits"), dict) else {}
@@ -1002,6 +1002,10 @@ def save_draft(herd, round_, access, user, data, updated_at, submission_key, rev
         require_open(round_, herd, access, day)
         lock_report(round_, herd)
         _recheck_code(access, herd, day)
+        if access.item is not None:  # paper: the item still the user's, as Skicka checks it (_lock_form)
+            item = InboxItem.select().where(InboxItem.id == access.item.id).for_update("FOR SHARE").first()
+            if item is None or not _form_item(item, user, herd):
+                raise ArsrapportError(409, "Posten kan inte matas in längre. Öppna den i kön.")
         draft = _draft(herd, round_)
         report = current_report(herd, round_)
         first = draft is None and updated_at is None and revision == (report.revision if report else None)
