@@ -32,12 +32,38 @@ export function parseMode(value: string | undefined): Mode {
 }
 
 /**
+ * Host of the test environment (demo). The same app serves it and production;
+ * on this host the mode is always "demo". Override with TEST_HOST.
+ */
+export const TEST_HOST = (
+  process.env.TEST_HOST || "sb.gotlandskaninen.se"
+).toLowerCase();
+
+/** Production origin that a switch to "prod" on the test host goes to. */
+export const PROD_ORIGIN =
+  process.env.PROD_ORIGIN || "https://gotlandskaninen.se";
+
+/**
+ * True when the request was made to {@link TEST_HOST} (port ignored). Host
+ * only: nginx sets Host on the Next.js routes, X-Forwarded-Host is client-supplied.
+ */
+export function isTestHost(h: Pick<Headers, "get">): boolean {
+  const host = (h.get("host") || "").trim().toLowerCase().replace(/:\d+$/, "");
+  return host === TEST_HOST;
+}
+
+/**
  * Base-dev-safe initial mode from the promotion flag:
+ * - on the test host -> always "demo"
  * - promoted (v2_prod_access) -> "prod"
  * - non-promoted with a test API configured -> "demo"
  * - non-promoted in base dev (no test API) -> "prod" (nowhere to demo against)
  */
-export function initialMode(v2ProdAccess: boolean): Mode {
+export function initialMode(
+  v2ProdAccess: boolean,
+  h?: Pick<Headers, "get">,
+): Mode {
+  if (h && isTestHost(h)) return "demo";
   const testConfigured = !!process.env.API_TEST_INTERNAL_URL;
   return v2ProdAccess || !testConfigured ? "prod" : "demo";
 }
