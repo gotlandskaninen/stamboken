@@ -1,0 +1,245 @@
+#!/usr/bin/env python3
+"""
+Tests for the buyer outside the genebank kept from the report's sale dialog (Jonas 2026-11-26): the autosave carries
+the typed buyer beside the draft, and the server keeps it as Dra tillbaka keeps one (K1, K2, FB6) until Skicka links
+it. Synthetic herds, rabbits and buyers only.
+
+isort:skip_file
+"""
+
+import json
+from datetime import datetime
+from unittest import mock
+
+import utils.arsrapport as arsrapport
+import utils.buyer_contact as buyer_contact
+import utils.database as db
+import utils.herd_tracking as herd_tracking
+from utils.herd_tracking import BUYER_REMOVED, CONTACT_OR_MEMBERSHIP_NEEDED
+
+from tests.test_arsrapport_kept_buyer import (
+    BUYER,
+    BUYER_TEXTS,
+    EXTENDED,
+    EXTENDED_UNTIL,
+    KEPT_UNTIL,
+    OTHER,
+    PURGE_NIGHT,
+    SOLD_ON,
+    STOCKHOLM,
+    KeptBuyerBase,
+    contacts,
+    sales,
+)
+from tests.test_buyer_notice_only import REAL_REPORT_BEVIS_FROM
+
+
+class DialogBuyerTest(KeptBuyerBase):
+    def sold(self, rabbit=None, ar=2025, manad=10, dag=10, till="utanfor"):
+        """The draft as the client sends it (toDraft): `rabbit` sold, b Finns kvar, the buyer left out."""
+        rabbit = rabbit or self.a
+        sald = {"till": till, "ar": ar, "manad": manad, "dag": dag}
+        entries = {str(rabbit.id): {"val": "sald", "sald": sald}, str(self.b.id): {"val": "kvar", "vikt": 2.8}}
+        return {**arsrapport.stored_body(self.body()), "rabbits": entries, "form": {"rabbits": entries}}
+
+    def save(self, data, kopare=None, updated_at=None, revision=None):
+        response = self.api(
+            "PUT",
+            "/besattning/G9001/2025/utkast",
+            data=data,
+            updated_at=updated_at,
+            submission_key=None,
+            revision=revision,
+            kopare=kopare,
+        )
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        return response.get_json()
+
+    def kept(self, buyer=BUYER):
+        """a sold outside the genebank on SOLD_ON, its buyer typed in the dialog and kept: (the answer, the buyer)."""
+        answer = self.save(self.sold(), {str(self.a.id): buyer})
+        return answer, db.BuyerContact.get_by_id(answer["kopare"][str(self.a.id)]["kopare_id"])
+
+    def page(self):
+        return self.api("GET", "/besattning/G9001/2025").get_json()
+
+    def row(self, view=None):
+        return next(row for row in (view or self.page())["rabbits"] if row["id"] == self.a.id)
+
+    def sent(self, kopare_id=None, kopare=None, **body):
+        """Skicka as the client sends it after a reload: the row's kept id, no buyer typed."""
+        sald = {"kopare_id": kopare_id} if kopare_id is not None else {}
+        sald |= {"kopare": kopare} if kopare is not None else {}
+        entry = self.sald(self.a, "utanfor", 2025, 10, 10, kopare=kopare)
+        entry[1]["sald"] |= sald
+        return self.body(entry, self.kvar(self.b, vikt=2.8), **body)
+
+    def buyer_mails(self):
+        rows = db.MailMessage.select().where(db.MailMessage.recipient_kind == "buyer_contact")
+        return [(m.kind, m.recipient_id) for m in rows.order_by(db.MailMessage.id)]
+
+    def test_saving_the_dialog_keeps_the_buyer_and_the_draft_only_its_claim(self):
+        answer, contact = self.kept()
+        key = str(self.a.id)
+        self.assertEqual(answer["kopare"], {key: {"kopare_id": contact.id, "kept_buyer_date": SOLD_ON.isoformat()}})
+        self.assertEqual(answer["refusals"], [])
+        self.assertEqual((contact.name, contact.email, contact.purge_at), (BUYER["name"], BUYER["email"], KEPT_UNTIL))
+        claim = {"kopare_id": contact.id, "fran_rapport": None, "kopare_datum": {"ar": 2025, "manad": 10, "dag": 10}}
+        for body in (self.draft(), self.draft()["form"]):
+            self.assertEqual(
+                body["rabbits"][key]["sald"], {"till": "utanfor", "ar": 2025, "manad": 10, "dag": 10, **claim}
+            )
+        view = self.page()
+        self.assertEqual(self.row(view)["kept_buyer_date"], SOLD_ON.isoformat())
+        for text in (json.dumps(self.draft()), json.dumps(view), json.dumps(answer)):
+            self.assertFalse([value for value in BUYER_TEXTS if value in text], text[:200])
+        self.assertEqual(self.buyer_mails(), [])  # the buyer is told once the sale is registered
+
+    def test_skicka_registers_the_kept_buyer_and_queues_its_mail(self):
+        _, contact = self.kept()
+        self.assertEqual(self.refused(self.sent()), [(self.a.id, "kopare_saknas")])  # the body names no buyer
+        self.ok(self.sent(contact.id))
+        (sale,) = sales(self.a, active=True)
+        self.assertEqual(sale.holder_contact_id, contact.id)
+        self.assertEqual(contacts(), {contact.id: db.BuyerContact.purge_at_for(SOLD_ON)})
+        self.assertEqual(self.buyer_mails(), [("kopare.information", contact.id)])
+        self.assertFalse(db.YearlyReportDraft.select().exists())
+
+    def test_skicka_before_the_autosave_answers_takes_the_kept_buyer(self):
+        _, contact = self.kept()
+        self.ok(self.sent(contact.id, kopare=BUYER))  # Skicka cancelled the autosave that would drop the values
+        self.assertEqual([sale.holder_contact_id for sale in sales(self.a, active=True)], [contact.id])
+        self.assertEqual(self.buyer_mails(), [("kopare.information", contact.id)])
+
+    def test_a_new_buyer_replaces_the_kept_one_in_the_same_save(self):
+        answer, contact = self.kept()
+        replaced = self.save(self.sold(), {str(self.a.id): OTHER}, updated_at=answer["updated_at"])
+        new = replaced["kopare"][str(self.a.id)]["kopare_id"]
+        self.assertEqual(contacts(), {new: KEPT_UNTIL})
+        self.assertNotEqual(new, contact.id)
+        self.assertEqual(self.draft()["rabbits"][str(self.a.id)]["sald"]["kopare_id"], new)
+
+    def test_another_choice_a_herd_in_the_genebank_or_a_new_date_drops_it(self):
+        moved = self.sold(manad=9)
+        for case, data in {
+            "Finns kvar": {**self.sold(), "rabbits": {str(self.a.id): {"val": "kvar", "vikt": 2.8}}},
+            "a herd in the genebank": self.sold(till="G9002"),
+            "another month": moved,
+        }.items():
+            with self.subTest(case):
+                db.YearlyReportDraft.delete().execute()
+                answer, _ = self.kept()
+                data = {**data, "form": {"rabbits": data["rabbits"]}}
+                self.save(data, updated_at=answer["updated_at"])
+                self.assertEqual(contacts(), {})
+                self.assertNotIn("kopare_id", json.dumps(self.draft()))
+
+    def test_the_client_keeps_the_claim_it_was_given(self):  # the client sends kopare_id back; the server's stays
+        answer, contact = self.kept()
+        data = self.sold()
+        data["rabbits"][str(self.a.id)]["sald"]["kopare_id"] = contact.id + 1
+        self.save(data, updated_at=answer["updated_at"])
+        self.assertEqual(self.draft()["rabbits"][str(self.a.id)]["sald"]["kopare_id"], contact.id)
+        self.assertEqual(list(contacts()), [contact.id])
+
+    def test_sald_utanfor_genbanken_keeps_no_buyer(self):  # #273
+        answer = self.save(self.sold(), {str(self.a.id): {"not_recorded": True}})
+        self.assertEqual((answer["kopare"], answer["refusals"], contacts()), ({}, [], {}))
+        self.assertNotIn("kopare_id", json.dumps(self.draft()))
+
+    def test_an_invalid_buyer_is_refused_beside_a_saved_draft(self):
+        email_only = {**OTHER, "email": "xena@example.invalid"}
+        answer = self.save(self.sold(), {str(self.a.id): email_only})
+        self.assertEqual(
+            answer["refusals"],
+            [{"individual_id": self.a.id, "code": "kopare", "message": CONTACT_OR_MEMBERSHIP_NEEDED}],
+        )
+        self.assertEqual((answer["kopare"], contacts()), ({}, {}))
+        self.assertTrue(db.YearlyReportDraft.select().exists())
+
+    def test_the_year_rules_are_the_sales(self):  # #273: the report takes the bevis from 2027
+        with mock.patch.object(herd_tracking, "REPORT_BEVIS_FROM", REAL_REPORT_BEVIS_FROM):
+            answer = self.save(self.sold(), {str(self.a.id): BUYER})
+            self.assertEqual(
+                answer["refusals"],
+                [{"individual_id": self.a.id, "code": "kopare", "message": herd_tracking.REPORT_BEVIS_NOT_YET}],
+            )
+            notice = {**OTHER, "email": "xena@example.invalid", "notice_only": True}
+            answer = self.save(self.sold(), {str(self.a.id): notice}, updated_at=answer["updated_at"])
+        contact = db.BuyerContact.get_by_id(answer["kopare"][str(self.a.id)]["kopare_id"])
+        self.assertTrue(contact.email_notice_only)
+
+    def test_the_owner_needs_the_address_and_a_manager_does_not(self):
+        no_address = {k: v for k, v in OTHER.items() if k != "postal_address"}
+        answer = self.save(self.sold(), {str(self.a.id): no_address})
+        self.assertEqual([r["message"] for r in answer["refusals"]], ["Ange köparens postadress."])
+        self.login("man")
+        answer = self.save(self.sold(), {str(self.a.id): no_address}, updated_at=answer["updated_at"])
+        self.assertEqual(answer["refusals"], [])
+        self.assertEqual([c.postal_address for c in db.BuyerContact.select()], [None])
+
+    def test_a_caretaker_keeps_no_buyer(self):  # F1: a caretaker's sale is a proposal, whose buyer stays in memory
+        self.caretaker()
+        self.login("skotare")
+        answer = self.save(self.sold(), {str(self.a.id): BUYER})
+        self.assertEqual((answer["kopare"], answer["refusals"], contacts()), ({}, [], {}))
+
+    def test_a_sale_the_report_holds_is_corrected_at_skicka(self):  # Ändra: the old way, no kept buyer
+        self.ok(self.body(self.sald(self.a, "utanfor", 2025, 10, 10, kopare=BUYER), self.kvar(self.b, vikt=2.8)))
+        before = contacts()
+        answer = self.save(self.sold(), {str(self.a.id): OTHER}, revision=1)
+        self.assertEqual((answer["kopare"], contacts()), ({}, before))
+
+    def test_a_new_sale_in_andra_keeps_its_buyer_and_skicka_links_it(self):
+        self.ok(self.body(self.kvar(self.a, vikt=2.8), self.kvar(self.b, vikt=2.8)))
+        answer = self.save(self.sold(), {str(self.a.id): BUYER}, revision=1)
+        contact_id = answer["kopare"][str(self.a.id)]["kopare_id"]
+        self.ok(self.sent(contact_id, revision=1))
+        self.assertEqual([sale.holder_contact_id for sale in sales(self.a, active=True)], [contact_id])
+
+    def test_an_erased_buyers_sale_keeps_no_new_buyer(self):
+        self.ok(self.body(self.sald(self.a, "utanfor", 2025, 10, 10, kopare=BUYER), self.kvar(self.b, vikt=2.8)))
+        buyer_contact.erase_buyer_contact(sales(self.a)[0].holder_contact_id, self.admin)
+        self.withdrawn(1)
+        answer = self.save(self.sold(), {str(self.a.id): OTHER}, updated_at=self.page()["draft"]["updated_at"])
+        self.assertEqual(answer["refusals"], [{"individual_id": self.a.id, "code": "kopare", "message": BUYER_REMOVED}])
+        self.assertEqual(contacts(), {})
+
+    def test_never_sent_it_goes_at_kept_until(self):
+        _, contact = self.kept()
+        buyer_contact.run(datetime(2026, 3, 31, 3, 50, tzinfo=STOCKHOLM))  # the night after end_date
+        self.assertEqual(list(contacts()), [contact.id])
+        self.at(PURGE_NIGHT)
+        self.assertEqual(buyer_contact.purge_expired(arsrapport.now()), 1)
+        deleted = db.AuditLog.get(
+            db.AuditLog.table_name == "buyer_contact",
+            db.AuditLog.operation == "DELETE",
+            db.AuditLog.record_id == str(contact.id),
+        )
+        self.assertEqual(deleted.new_data, {"action": "gallring_kvar"})
+        # The claim stays in the draft, but names nothing: the row needs a buyer again, and Skicka says so.
+        self.assertNotIn("kept_buyer_date", self.row())
+        self.login("man")  # after end_date only an editor sends
+        refusals = self.refused(self.sent(contact.id, reason="Kom in sent"))
+        self.assertEqual(refusals, [(self.a.id, "kopare_saknas")])
+
+    def test_an_extended_round_moves_it(self):  # K2
+        _, contact = self.kept()
+        arsrapport.save_round(2025, self.admin, end_date=EXTENDED)
+        self.assertEqual(contacts(), {contact.id: EXTENDED_UNTIL})
+
+    def test_dra_tillbaka_keeps_an_open_drafts_buyer(self):
+        self.ok(self.body(self.kvar(self.a, vikt=2.8), self.kvar(self.b, vikt=2.8)))
+        answer = self.save(self.sold(), {str(self.a.id): BUYER}, revision=1)
+        contact_id = answer["kopare"][str(self.a.id)]["kopare_id"]
+        self.withdrawn(1)
+        self.assertEqual(self.draft()["rabbits"][str(self.a.id)]["sald"]["kopare_id"], contact_id)
+        self.assertEqual(list(contacts()), [contact_id])
+        self.ok(self.sent(contact_id))
+        self.assertEqual([sale.holder_contact_id for sale in sales(self.a, active=True)], [contact_id])
+
+    def test_a_reason_may_not_name_the_kept_buyer(self):  # it lives in audit_log; no row holds the buyer yet
+        self.login("man")
+        _, contact = self.kept()
+        refusals = self.refused(self.sent(contact.id, reason="Zelda hämtade den i oktober"))
+        self.assertIn((None, "orsak_kopare"), refusals)

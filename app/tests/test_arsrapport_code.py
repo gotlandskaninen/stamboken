@@ -226,7 +226,7 @@ class CodeReportTest(ArsrapportTest):
 
     def test_draft_by_code_and_own_flag(self):
         actor = CodeActor(self.code)
-        draft = arsrapport.save_draft(
+        draft, _, _ = arsrapport.save_draft(
             self.h, self.round_, self.access(), actor, self.body(*self.entries), None, None, None
         )
         self.assertEqual((draft.updated_by_user_id, draft.updated_by_access_code_id), (None, self.code.id))

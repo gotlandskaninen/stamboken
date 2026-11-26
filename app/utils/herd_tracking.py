@@ -477,8 +477,9 @@ def record_herd_tracking(
     from_herd to the holder at the date, checks I1–I4 as a delta and writes.
     Idempotent per (individual, operation_id). `buyer` (a sale to GX1/MX1 only) is the buyer outside the
     association as buyer_contact_fields reads it, stored with the row in the same transaction. `holder_contact` (a
-    BuyerContact id) links a buyer kept across Dra tillbaka instead (K1): one no active row holds, whose purge_at goes
-    back to five years from the sale; only utils.arsrapport passes it, once it has checked where the buyer came from.
+    BuyerContact id) links a buyer kept across Dra tillbaka, or from the report's sale dialog, instead (K1): one no
+    active row holds, whose purge_at goes back to five years from the sale; only utils.arsrapport passes it, once it
+    has checked where the buyer came from. A buyer no row has held before gets a new buyer's mails.
     """
     if kind not in WRITER_KINDS:
         raise HerdTrackingInvalid(f"Okänd händelsetyp: {kind!r}.")
@@ -530,12 +531,14 @@ def record_herd_tracking(
                 f"Kaninen finns redan i {target.herd}. En ny köpare utanför föreningen registreras av "
                 "genbanksansvarig, med köparens namn och ort."
             )
-        contact = None
+        contact, fresh = None, False
         if holder_contact is not None:  # locked against the nightly purge, which deletes by id
             contact = BuyerContact.select().where(BuyerContact.id == holder_contact).for_update().first()
             held = HerdTracking.select().where(HerdTracking.holder_contact == holder_contact, ht_not_voided())
             if contact is None or held.exists():
                 raise HerdTrackingInvalid(KEPT_BUYER_GONE)
+            # kept from the report's sale dialog: no sale has held it, so its mails go now, as a new buyer's
+            fresh = not HerdTracking.select().where(HerdTracking.holder_contact == holder_contact).exists()
             if contact_fields is None:
                 _set_buyer_sale_date(contact.id, when)
         if contact_fields:
@@ -560,7 +563,7 @@ def record_herd_tracking(
             if _violated_constraint(exc) != "idx_herdtracking_report_attestation":
                 raise
             raise HerdTrackingConflict("Kaninen har redan en aktiv rad för den här rapporten.") from exc
-        if contact_fields and contact is not None and contact.id != holder_contact:
+        if contact is not None and (fresh or (contact_fields and contact.id != holder_contact)):
             queue_buyer_mails(contact, row)
         _assert_no_new_violations(ind, before, before + [row])
     return row
@@ -1591,8 +1594,9 @@ def delete_buyer_contacts(contact_ids, action, user=None, whole_items=False):
     sales = list(HerdTracking.select().where(HerdTracking.holder_contact.in_(ids)))
     kept = set()
     if action == "gallring_fem_ar":
-        # Only voided sales hold a buyer kept across Dra tillbaka. An active sale has the five-year deadline.
-        kept = {s.holder_contact_id for s in sales} - {s.holder_contact_id for s in sales if s.voided_at is None}
+        # A buyer kept across Dra tillbaka is held by voided sales only, one kept from the report's sale dialog by
+        # none. An active sale has the five-year deadline.
+        kept = set(ids) - {s.holder_contact_id for s in sales if s.voided_at is None}
     # WHITELISTED in-place UPDATE #4: only permanent removals block a new buyer after an undo.
     if removed := set(ids) - kept:
         HerdTracking.update(buyer_removed=True).where(HerdTracking.holder_contact.in_(removed)).execute()

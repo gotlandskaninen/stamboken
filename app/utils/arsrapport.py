@@ -80,6 +80,7 @@ from utils.herd_tracking import (
     QueueChanged,
     _buyer_name_key,
     _reject_buyer_name,
+    buyer_address_conflicts,
     buyer_contact_fields,
     buyer_items,
     drop_kept_buyers,
@@ -257,7 +258,8 @@ def kept_until(round_):
 def _move_kept_buyers(round_):
     """
     K2: the kept buyers of the round's voided reports follow a changed end_date: those a TRANSFER the reports' own
-    operations wrote held, now voided, and that no active row holds.
+    operations wrote held, now voided, and that no active row holds. So do the buyers the round's drafts keep from
+    the sale dialog; a save_draft that would add one waits for the round row (_lock_round).
     """
     voided = YearlyHerdReport.select(YearlyHerdReport.id).where(
         YearlyHerdReport.round == round_.id, YearlyHerdReport.status == "voided"
@@ -280,7 +282,9 @@ def _move_kept_buyers(round_):
     # buyers in id order, as the purge locks them, and `held` read after: a resubmission that linked one again has
     # committed by then, and keeps its five years
     lock_individuals({rabbit for rabbit, _ in sold})
-    locked = BuyerContact.select(BuyerContact.id).where(BuyerContact.id.in_([c for _, c in sold]))
+    drafts = YearlyReportDraft.select(YearlyReportDraft.data).where(YearlyReportDraft.round == round_.id)
+    dialog = [claim["kopare_id"] for (data,) in drafts.tuples() for claim in _dialog_claims(data).values()]
+    locked = BuyerContact.select(BuyerContact.id).where(BuyerContact.id.in_([c for _, c in sold] + dialog))
     locked = locked.order_by(BuyerContact.id)
     ids = [contact_id for (contact_id,) in locked.for_update().tuples()]
     BuyerContact.update(purge_at=kept_until(round_)).where(
@@ -743,7 +747,9 @@ def _holds_private(body):
     )
 
 
-KEPT_KEYS = ("kopare_id", "fran_rapport")  # K1: a buyer kept across Dra tillbaka; only the server writes them
+# K1: a buyer kept across Dra tillbaka, or kept from the sale dialog (Jonas 2026-11-26); only the server writes them.
+# A buyer kept from the dialog has no fran_rapport and is bound to the sale as entered (kopare_datum).
+KEPT_KEYS = ("kopare_id", "fran_rapport", "kopare_datum")
 
 
 def _sale_outside(entry):
@@ -752,16 +758,32 @@ def _sale_outside(entry):
     return isinstance(sald, dict) and entry.get("val") == "sald" and sald.get("till") == "utanfor"
 
 
+def _entered(sald):
+    """A sale's date as entered: {ar, manad, dag}, the day possibly None."""
+    return {key: sald.get(key) for key in ("ar", "manad", "dag")}
+
+
 def _kept_claims(data):
-    """K1: {rabbit (id as text): {"kopare_id", "fran_rapport"}} that the server wrote into a draft's body or form."""
+    """K1: {rabbit (id as text): the KEPT_KEYS it has} that the server wrote into a draft's body or form."""
     claims = {}
     for body in (data, data.get("form")):
         rabbits = body.get("rabbits") if isinstance(body, dict) else None
         for key, entry in rabbits.items() if isinstance(rabbits, dict) else ():
             sald = entry.get("sald") if isinstance(entry, dict) else None
             if isinstance(sald, dict) and sald.get("kopare_id") is not None:
-                claims[key] = {k: sald.get(k) for k in KEPT_KEYS}
+                claims[key] = {k: sald[k] for k in KEPT_KEYS if k in sald}
     return claims
+
+
+def _dialog_claims(data):
+    """The claims of the buyers a draft keeps from the sale dialog: no fran_rapport."""
+    return {key: claim for key, claim in _kept_claims(data).items() if claim["fran_rapport"] is None}
+
+
+def _holds_claim(entry, claim):
+    """The draft's entry still has the sale the claim is for: outside the genebank, and on the day a dialog's was."""
+    dialog = claim["fran_rapport"] is None
+    return _sale_outside(entry) and (not dialog or _entered(entry["sald"]) == claim["kopare_datum"])
 
 
 def _with_kept(data, claims):
@@ -772,7 +794,7 @@ def _with_kept(data, claims):
     """
     judged = data["form"] if isinstance(data.get("form"), dict) else data
     rabbits = judged.get("rabbits") if isinstance(judged.get("rabbits"), dict) else {}
-    held = {key: claim for key, claim in claims.items() if _sale_outside(rabbits.get(key))}
+    held = {key: claim for key, claim in claims.items() if _holds_claim(rabbits.get(key), claim)}
 
     def put(body):
         if not isinstance(body.get("rabbits"), dict):
@@ -825,7 +847,84 @@ def require_open(round_, herd, access, day):
         raise ArsrapportError(409, "Rundan är inte öppen.", code="rundan_stangd")
 
 
-def save_draft(herd, round_, access, user, data, updated_at, submission_key, revision):
+def _drafted(claims):
+    """The claims of buyers kept from the sale dialog whose BuyerContact is still there (a purge may have taken it)."""
+    drafted = {key: claim for key, claim in claims.items() if claim["fran_rapport"] is None}
+    if not drafted:
+        return {}
+    there = BuyerContact.select(BuyerContact.id).where(BuyerContact.id.in_([c["kopare_id"] for c in drafted.values()]))
+    there = {contact_id for (contact_id,) in there.tuples()}
+    return {key: claim for key, claim in drafted.items() if claim["kopare_id"] in there}
+
+
+def _kept_date(claim):
+    """The day a buyer kept from the sale dialog is for, as partial_date and the client's eventDate make it today."""
+    sale = claim["kopare_datum"]
+    return partial_date(sale["ar"], sale["manad"], sale["dag"], today())
+
+
+def _keep_buyers(herd, round_, access, user, report, stored, buyers, claims):
+    """
+    K1 in save_draft, under its locks. The stored `claims` stay on the sales still outside the genebank, and go with
+    a cleared or moved one (FB6). Each buyer the sale dialog typed (`buyers`, rabbit id as text: the buyer object) is
+    kept for its sale as Dra tillbaka keeps one, in place of the rabbit's claim (Jonas 2026-11-26): a BuyerContact
+    until kept_until, checked now as Skicka checks a typed one, which only a role that sells uses (F1). Not kept: a
+    sale the report already holds outside the genebank, corrected at Skicka as before; såld utanför genbanken
+    (#273); and anything once kept_until has passed. Returns (stored, {rabbit: the new claim as the client gets
+    it}, the refusals of typed buyers not kept).
+    """
+    until = kept_until(round_)
+    if not access.can_sell or until is None or until <= now():
+        buyers = {}
+    judged = stored["form"] if isinstance(stored.get("form"), dict) else stored
+    rabbits = judged.get("rabbits") if isinstance(judged.get("rabbits"), dict) else {}
+    latest = (_submissions(report)[-1].data.get("rabbits") or {}) if report is not None else {}
+    ops = report_ops(report) if report is not None else set()
+    removed, removed_dates = _removed_buyers(herd, round_, [int(key) for key in buyers], ops)
+    typed, refusals = {}, []
+    for key, buyer in sorted(buyers.items()):
+        entry = rabbits.get(key)
+        if not _sale_outside(entry) or buyer.get("not_recorded") or _sale_outside(latest.get(key)):
+            continue
+        try:
+            sale = _month(_entered(entry["sald"]), "sald", ())
+        except ArsrapportError:  # a row still being filled in
+            continue
+        if _erased(int(key), {"till": "utanfor", **sale}, removed, removed_dates):
+            refusals.append(_refusal(int(key), "kopare", BUYER_REMOVED))
+            continue
+        try:
+            fields = buyer_contact_fields(
+                buyer,
+                partial_date(sale["ar"], sale["manad"], sale["dag"], today()),
+                address_required=not (access.editor or access.source == "paper"),
+                new_sale=True,
+                report=True,
+            )
+        except HerdTrackingInvalid as exc:
+            refusals.append(_refusal(int(key), "kopare", str(exc)))
+            continue
+        typed[key] = (fields, sale)
+    rest = {key: claim for key, claim in claims.items() if key not in typed}
+    stored, gone = _with_kept(stored, rest)
+    try:  # the rabbits' locks before the addresses'
+        drop_kept_buyers(gone | {claims[key]["kopare_id"] for key in typed if key in claims}, user, lock=True)
+    except QueueChanged as exc:
+        raise ArsrapportError(409, QUEUE_CHANGED) from exc
+    if not typed:
+        return stored, {}, refusals
+    lock_buyer_addresses([fields["email"] for fields, _ in typed.values()])
+    new = {}
+    for key, (fields, sale) in typed.items():
+        held = bool(fields["email"] and buyer_address_conflicts(fields["email"], fields["name"]))
+        contact = BuyerContact.create(**fields, email_review_pending=held, created_by_user=user.id, purge_at=until)
+        new[key] = {"kopare_id": contact.id, "fran_rapport": None, "kopare_datum": sale}
+    stored, _ = _with_kept(stored, rest | new)
+    kept = {key: {"kopare_id": c["kopare_id"], "kept_buyer_date": _kept_date(c).isoformat()} for key, c in new.items()}
+    return stored, kept, refusals
+
+
+def save_draft(herd, round_, access, user, data, updated_at, submission_key, revision, buyers=None):
     """
     The herd's server draft (5.1), saved under the report's lock. `updated_at` is the version the client saw (None
     for a first save) and `revision` the report revision it started from (None when it saw no report). A first save
@@ -833,6 +932,8 @@ def save_draft(herd, round_, access, user, data, updated_at, submission_key, rev
     409 that carries the current draft. Only while the round is open, or after end_date for an editor or a helper on
     paper (D11, P39c); otherwise a 409 with code rundan_stangd. A kept buyer's id is the server's alone (K1): the
     client's is dropped, the stored one stays on a sale still outside the genebank, and goes with a cleared one.
+    `buyers` are the sale dialog's typed buyers, sent beside `data` (_keep_buyers). Returns (the draft, the new
+    claims, the refusals of the typed buyers not kept).
     """
     day = today()
     require_open(round_, herd, access, day)
@@ -842,6 +943,11 @@ def save_draft(herd, round_, access, user, data, updated_at, submission_key, rev
         raise ArsrapportError(400, "Utkastets formulärkopia ska vara ett objekt.")
     if _holds_private(data):
         raise ArsrapportError(400, "Utkastet sparar inte dina uppgifter eller köparens uppgifter.")
+    buyers = {} if buyers is None else buyers
+    if not isinstance(buyers, dict) or not all(
+        isinstance(key, str) and key.isdecimal() and isinstance(buyer, dict) for key, buyer in buyers.items()
+    ):
+        raise ArsrapportError(400, "Ange köparna som ett objekt med kaninernas id.")
     stored = stored_body(data)
     if len(json.dumps(stored, ensure_ascii=False).encode()) > DRAFT_MAX_BYTES:
         raise ArsrapportError(400, "Utkastet är för stort.")
@@ -852,11 +958,14 @@ def save_draft(herd, round_, access, user, data, updated_at, submission_key, rev
         _recheck_code(access, herd, day)
         draft = _draft(herd, round_)
         report = current_report(herd, round_)
-        stored, gone = _with_kept(stored, _kept_claims(draft.data) if draft is not None else {})
-        if draft is None and updated_at is None and revision == (report.revision if report else None):
+        first = draft is None and updated_at is None and revision == (report.revision if report else None)
+        if first or (draft is not None and draft.updated_at == updated_at):
+            claims = _kept_claims(draft.data) if draft is not None else {}
+            stored, kept, refusals = _keep_buyers(herd, round_, access, user, report, stored, buyers, claims)
+        if first:
             try:
                 with DB_PROXY.atomic():  # a savepoint: a racing first save leaves the transaction usable
-                    return YearlyReportDraft.create(
+                    created = YearlyReportDraft.create(
                         herd=herd.id,
                         round=round_.id,
                         data=stored,
@@ -864,6 +973,7 @@ def save_draft(herd, round_, access, user, data, updated_at, submission_key, rev
                         updated_at=now().astimezone(timezone.utc),
                         **_by(user, "updated_by_user", "updated_by_access_code"),
                     )
+                return created, kept, refusals
             except IntegrityError:
                 draft = _draft(herd, round_)
         elif draft is not None and draft.updated_at == updated_at:
@@ -873,11 +983,7 @@ def save_draft(herd, round_, access, user, data, updated_at, submission_key, rev
             for field, value in _by(user, "updated_by_user", "updated_by_access_code").items():
                 setattr(draft, field, value)
             draft.save()
-            try:
-                drop_kept_buyers(gone, user, lock=True)  # FB6: a cleared sale takes its kept buyer now
-            except QueueChanged as exc:
-                raise ArsrapportError(409, QUEUE_CHANGED) from exc
-            return draft
+            return draft, kept, refusals
         if report is not None and draft is None:
             raise ArsrapportError(409, "Rapporten är redan inskickad.", draft=None)
         raise ArsrapportError(
@@ -1104,6 +1210,9 @@ def report_view(herd, round_, access, user):
         for sale in dates:
             key = "registered_buyer_date" if sale.voided_at is None else "kept_buyer_date"
             rabbits[sale.individual_id][key] = _iso(sale.herd_tracking_date)
+    for key, claim in _drafted(claims).items():  # kept from the sale dialog: no row holds it yet
+        if int(key) in rabbits:
+            rabbits[int(key)]["kept_buyer_date"] = _kept_date(claim).isoformat()
     return {
         "herd": {
             "id": herd.id,
@@ -2150,17 +2259,36 @@ def _removed_buyers(herd, round_, rabbits, current_ops):
     return current, dates
 
 
+def _erased(rabbit, sale, removed, removed_dates):
+    """_removed_buyers' answer for the rabbit and its `sale`: an erased buyer is never registered again."""
+    return rabbit in removed or bool(
+        sale
+        and sale["till"] == "utanfor"
+        and any(
+            day.year == sale["ar"] and day.month == sale["manad"] and (sale["dag"] is None or day.day == sale["dag"])
+            for day in removed_dates.get(rabbit, ())
+        )
+    )
+
+
 def _kept_contact(herd, round_, entry, claim, sale):
     """
     K1: the buyer kept across Dra tillbaka that a sale outside the genebank links again in place of a typed buyer,
     or None. The body names it (kopare_id) and the server's draft says where it came from (`claim`). It is taken
     only when that report is a voided one of the same herd and round, one of its operations wrote a TRANSFER of this
-    rabbit holding the buyer, and no active row holds it now.
+    rabbit holding the buyer, and no active row holds it now. A buyer kept from the sale dialog (no fran_rapport) is
+    taken for the sale as entered when it was kept, while it is still there and no active row holds it.
     """
     if claim is None:
         return None
     kopare_id = claim["kopare_id"] if entry.sald["kopare"] is not None else entry.sald["kopare_id"]
-    if kopare_id is None or claim["kopare_id"] != kopare_id or not _is_int(claim["fran_rapport"]):
+    if kopare_id is None or claim["kopare_id"] != kopare_id:
+        return None
+    held = HerdTracking.select().where(HerdTracking.holder_contact == kopare_id, ht_not_voided())
+    if claim["fran_rapport"] is None:
+        there = BuyerContact.select().where(BuyerContact.id == kopare_id).exists()
+        return kopare_id if _entered(entry.sald) == claim["kopare_datum"] and there and not held.exists() else None
+    if not _is_int(claim["fran_rapport"]):
         return None
     report = YearlyHerdReport.get_or_none(
         (YearlyHerdReport.id == claim["fran_rapport"])
@@ -2179,7 +2307,6 @@ def _kept_contact(herd, round_, entry, claim, sale):
         HerdTracking.holder_contact == kopare_id,
         HerdTracking.operation_id.in_(sorted(report_ops(report))),
     )
-    held = HerdTracking.select().where(HerdTracking.holder_contact == kopare_id, ht_not_voided())
     return kopare_id if sold.exists() and not held.exists() else None
 
 
@@ -2291,9 +2418,13 @@ def check(
     # Only the report's own rabbits: another herd's rabbit would make the refusal an oracle on its buyer's name.
     own = [rabbit for rabbit in sub.rabbits if rabbit in rows]
     proposals = _proposals(report)
-    refusals += _reason_refusals(sub.reason, own, _typed_buyers(sub) + _waiting_buyers(proposals.values()))
     draft = _draft(herd, round_)  # K1: a proposal takes no kept buyer, so only a role that sells reads them (F1)
     claims = _kept_claims(draft.data) if draft is not None and access.can_sell else {}
+    # a buyer kept from the sale dialog is held by no row yet, so _reject_buyer_name needs its name
+    drafted = [claim["kopare_id"] for claim in _drafted(claims).values()]
+    names = [name for (name,) in BuyerContact.select(BuyerContact.name).where(BuyerContact.id.in_(drafted)).tuples()]
+    names += _typed_buyers(sub) + _waiting_buyers(proposals.values())
+    refusals += _reason_refusals(sub.reason, own, names)
     removed, removed_dates = _removed_buyers(herd, round_, [rid for rid in own if sub.rabbits[rid].sald], ops)
     for rabbit, row in rows.items():
         entry, before = sub.rabbits.get(rabbit), before_entries.get(rabbit)
@@ -2313,15 +2444,7 @@ def check(
         if entry.sald and date(entry.sald["ar"], entry.sald["manad"], entry.sald["dag"] or 1) > on:
             refusals.append(_refusal(rabbit, "forsaljning", "Säljdatumet får inte ligga i framtiden."))
             continue
-        erased = rabbit in removed
-        if entry.sald and entry.sald["till"] == "utanfor":
-            sale = entry.sald
-            erased |= any(
-                day.year == sale["ar"]
-                and day.month == sale["manad"]
-                and (sale["dag"] is None or day.day == sale["dag"])
-                for day in removed_dates.get(rabbit, ())
-            )
+        erased = _erased(rabbit, entry.sald, removed, removed_dates)
         if erased and entry.sald and entry.sald["kopare"] not in (None, NOT_RECORDED):
             refusals.append(_refusal(rabbit, "kopare", BUYER_REMOVED))
             continue
@@ -3388,7 +3511,8 @@ def withdraw(herd, round_, access, user, *, revision, reason=None, now=None) -> 
         # D10: the submission's data is already stored_body
         latest = {k: v for k, v in submissions[-1].data.items() if k != "litters_added"}  # not the form's
         data = _pruned(latest if draft is None else draft.data, choosing, {row["id"] for row in listed})
-        data, gone = _with_kept(data, kept)
+        # an open draft's buyers kept from the sale dialog stay with it, or go with their sale
+        data, gone = _with_kept(data, (_dialog_claims(draft.data) if draft else {}) | kept)
         drop_kept_buyers(gone, user)  # FB6; Skicka's locks hold the items and the rabbits
         if draft is None:
             YearlyReportDraft.create(

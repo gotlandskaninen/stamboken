@@ -64,7 +64,9 @@ def contacts():
     return {c.id: c.purge_at for c in db.BuyerContact.select()}
 
 
-class KeptBuyerTest(ArsrapportTest):
+class KeptBuyerBase(ArsrapportTest):
+    """The herd G9001, its owner logged in, rabbits a and b, and helpers; test_arsrapport_kopare_i_utkastet too."""
+
     def setUp(self):
         super().setUp()
         context = APP.app_context()  # request_hash and the mail templates read the app
@@ -127,6 +129,17 @@ class KeptBuyerTest(ArsrapportTest):
         rabbits = {**data["rabbits"], key: {**data["rabbits"][key], "sald": {**kept, **sald}}}
         return self.body(**{**{k: v for k, v in data.items() if k != "form"}, "rabbits": rabbits})
 
+    def caretaker(self):
+        """An account with a herd-access grant to G9001 through the membership: the caretaker (skötare)."""
+        user = self.user("skotare")
+        person = db.Member.create(
+            first_name="Test", last_name="Skötare", membership=self.h.membership, role="skotare", user=user
+        )
+        db.HerdAccessGrant.create(member=person, herd=self.h, granted_by=self.admin)
+        return user
+
+
+class KeptBuyerTest(KeptBuyerBase):
     def test_withdraw_keeps_outside_buyer_unlinked_until_end_date(self):
         contact, rid = self.sold_and_withdrawn()
         (sale,) = sales(self.a)
@@ -620,15 +633,6 @@ class KeptBuyerTest(ArsrapportTest):
         (proposal,) = db.SaleProposal.select()
         self.assertEqual((proposal.state, proposal.buyer["name"]), ("foreslagen", OTHER["name"]))
         self.assertEqual(contacts(), {})  # the kept buyer went with the draft
-
-    def caretaker(self):
-        """An account with a herd-access grant to G9001 through the membership: the caretaker (skötare)."""
-        user = self.user("skotare")
-        person = db.Member.create(
-            first_name="Test", last_name="Skötare", membership=self.h.membership, role="skotare", user=user
-        )
-        db.HerdAccessGrant.create(member=person, herd=self.h, granted_by=self.admin)
-        return user
 
     def test_a_seller_cannot_probe_the_kept_buyer_through_the_reason(self):  # Codex P1: the system reason
         self.sold_and_withdrawn()

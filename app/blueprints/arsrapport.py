@@ -296,7 +296,8 @@ def register_extract(herd, year):
     return response
 
 
-# [Next.js] Autosave of the server draft; a stale version is a 409 with the current draft.
+# [Next.js] Autosave of the server draft; a stale version is a 409 with the current draft. `kopare` beside `data` are
+# the sale dialog's typed buyers: the answer gives the claims of those kept, and refusals for those not.
 @arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/utkast", methods=["PUT"])
 @report_actor_required
 def save_draft(herd, year):
@@ -312,8 +313,17 @@ def save_draft(herd, year):
         key = uuid.UUID(body["submission_key"]) if body.get("submission_key") is not None else None
     except (AttributeError, TypeError, ValueError) as exc:
         raise ArsrapportError(400, "Ange updated_at som en tidpunkt och submission_key som ett UUID.") from exc
-    draft = arsrapport.save_draft(herd, round_, access, _actor(access), body.get("data"), updated_at, key, revision)
-    return jsonify({"updated_at": draft.updated_at.isoformat(), "submission_key": str(key) if key else None})
+    draft, kept, refusals = arsrapport.save_draft(
+        herd, round_, access, _actor(access), body.get("data"), updated_at, key, revision, body.get("kopare")
+    )
+    return jsonify(
+        {
+            "updated_at": draft.updated_at.isoformat(),
+            "submission_key": str(key) if key else None,
+            "kopare": kept,
+            "refusals": [asdict(refusal) for refusal in refusals],
+        }
+    )
 
 
 # [Next.js] The dry run before Skicka: every refusal per rabbit, and the warnings; nothing is written.

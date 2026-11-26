@@ -317,7 +317,7 @@ class ProposalApiTest(ArsrapportTest):
         access, actor = arsrapport.code_access(self.h, self.round_, [self.code.id]), CodeActor(self.code)
         sold = {"val": "sald", "sald": {"till": "G9002", "ar": 2025, "manad": 10, "dag": 3}}
         data = {"rabbits": {str(self.a.id): sold}, "form": {"rabbits": {str(self.a.id): sold}}}
-        draft = arsrapport.save_draft(self.h, self.round_, access, actor, data, None, None, 1)
+        draft, _, _ = arsrapport.save_draft(self.h, self.round_, access, actor, data, None, None, 1)
         self.assertEqual(self.decide(proposal, "avvisa", reason="Fel köpare", then="valj_igen").status_code, 200)
         self.assertEqual(db.YearlyReportDraft.get().data["form"]["rabbits"], {})
         with self.assertRaises(ArsrapportError) as caught:  # the old tab's autosave gets the draft as it is now
