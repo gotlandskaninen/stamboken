@@ -212,6 +212,12 @@ describe("phoneNumbers", () => {
     expect(phoneNumbers("070-000 00 01")).toEqual(["070-000 00 01"]);
     expect(phoneNumbers("0730601951")).toEqual(["0730601951"]);
   });
+  it("keeps a mobile number whole after a first number", () => {
+    expect(phoneNumbers("08 - 510 122 07 070-123 04-56")).toEqual([
+      "08 - 510 122 07",
+      "070-123 04-56",
+    ]);
+  });
   it("keeps a piece too short to be a number with the next one", () => {
     for (const one of [
       "+46 70-123 45 67",

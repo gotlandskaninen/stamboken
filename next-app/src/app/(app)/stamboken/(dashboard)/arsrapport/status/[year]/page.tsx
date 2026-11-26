@@ -27,6 +27,30 @@ async function BlankForm({ check }: { check: Promise<boolean> }) {
   return <BlankFormLink available={await check} />;
 }
 
+type Switch = {
+  year: number;
+  genebankId: number;
+  genebanks: { id: number; name: string }[];
+};
+
+// The rounds there are, the regular year's (which may not exist yet, also while an older round is open) and
+// this page's.
+async function YearSwitch({
+  rounds,
+  today,
+  ...props
+}: Switch & { rounds: Promise<Round[]>; today: string }) {
+  const list = await rounds;
+  const years = [
+    ...new Set([
+      ...list.map((r) => r.year),
+      regularRoundYear(list, today),
+      props.year,
+    ]),
+  ].sort((a, b) => b - a);
+  return <StatusSwitch {...props} years={years} />;
+}
+
 export default async function StatusPage({
   params,
   searchParams,
@@ -49,16 +73,16 @@ export default async function StatusPage({
     () => true,
     (e) => !(e instanceof ApiError && e.status === 404),
   );
+  // Only the switch needs the rounds, inside its own Suspense: without them it offers the page's year.
+  const rounds = fetchApi<{ rounds: Round[] }>("/v2/arsrapport/rundor").then(
+    (r) => r.rounds,
+    () => [] as Round[],
+  );
   // The genebanks the user may open: admin all, others where they manage or help.
-  const [queue, all, rounds] = await Promise.all([
+  const [queue, all] = await Promise.all([
     fetchApi<QueueList>("/v2/inkorg?limit=1"),
     fetchApi<{ genebanks: { id: number; name: string }[] }>("/genebanks").then(
       (r) => r.genebanks ?? [],
-    ),
-    // Only the switch needs the list: without it, the page still shows the year in its address.
-    fetchApi<{ rounds: Round[] }>("/v2/arsrapport/rundor").then(
-      (r) => r.rounds,
-      () => [] as Round[],
     ),
   ]);
   const mine = queue.my_genebanks ?? [];
@@ -76,15 +100,11 @@ export default async function StatusPage({
   if (!genebank) notFound();
   const canEdit = manages(user, genebank.id);
   const today = todayStockholm();
-  // The rounds there are, the regular year's (which may not exist yet, also while an older round is open) and
-  // this page's.
-  const years = [
-    ...new Set([
-      ...rounds.map((r) => r.year),
-      regularRoundYear(rounds, today),
-      Number(year),
-    ]),
-  ].sort((a, b) => b - a);
+  const switchProps = {
+    year: Number(year),
+    genebankId: genebank.id,
+    genebanks: options,
+  };
 
   // 404: the year has no round yet. The panel offers to create it.
   let view: StatusView | null = null;
@@ -121,13 +141,14 @@ export default async function StatusPage({
         meta={`${genebank.name}${view && !closed ? ` · ${view.rows.length} besättningar` : ""}`}
         actions={
           <div className={styles.mastActions}>
-            <StatusSwitch
+            <Suspense
               key={`${genebank.id}-${year}`} // Back to another genebank keeps this page mounted: start from its choice
-              year={Number(year)}
-              years={years}
-              genebankId={genebank.id}
-              genebanks={options}
-            />
+              fallback={
+                <StatusSwitch {...switchProps} years={[Number(year)]} />
+              }
+            >
+              <YearSwitch {...switchProps} rounds={rounds} today={today} />
+            </Suspense>
             <Suspense fallback={null}>
               <BlankForm check={blankFormCheck} />
             </Suspense>
