@@ -9,6 +9,8 @@ from datetime import datetime, timedelta
 from unittest import mock
 from zoneinfo import ZoneInfo
 
+from apscheduler.triggers.cron import CronTrigger
+
 os.environ.setdefault("AUTHCONFIGFILE", os.path.join(os.path.dirname(__file__), "auth.ini.test"))
 
 import herdbook  # noqa: E402
@@ -105,9 +107,12 @@ class TestMailJobs(MailTest):
             for c in scheduler_cls.return_value.add_job.call_args_list
             if herdbook._send_arsrapport_followups in c.args
         ]
-        self.assertEqual(
-            sorted((c.kwargs["trigger"], c.kwargs.get("hours")) for c in calls), [("date", None), ("interval", 1)]
-        )
+        (hourly,) = [c for c in calls if c.args[1:] == ("cron",)]
+        self.assertEqual((hourly.kwargs["minute"], str(hourly.kwargs["timezone"])), (0, "Europe/Stockholm"))
+        self.assertEqual([c.kwargs["trigger"] for c in calls if c is not hourly], ["date"])
+        trigger = CronTrigger(minute=0, timezone=hourly.kwargs["timezone"])
+        started = datetime(2026, 12, 15, 6, 58, tzinfo=ZoneInfo("Europe/Stockholm"))  # a leader up at 06:58
+        self.assertEqual(trigger.get_next_fire_time(None, started), started.replace(hour=7, minute=0))
         with (
             mock.patch.object(herdbook, "send_due_reminders", side_effect=RuntimeError("database gone")),
             mock.patch.object(herdbook, "send_due_unanswered", return_value=0) as unanswered,

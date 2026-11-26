@@ -54,6 +54,7 @@ class ReminderTest(ArsrapportTest):
         self.h3 = self.herd_with_member("G9003", email=None)
         self.m1 = self.herd_with_member("M9001", genebank=self.mellerud)
         self.assertEqual(invite.send_due_invitations(INVITED), 2)  # G9001 and G9002 have their links
+        self.send()  # and the invitations went on 31 December
 
     def herd_with_member(self, code, email="x", genebank=None):
         herd = db.Herd.create(genebank=genebank or self.gotland, herd=code, herd_name=f"Namn {code}", is_active=True)
@@ -209,8 +210,10 @@ class TestEligibility(ReminderTest):
         mails = db.MailMessage.select().count()
         with mock.patch.object(settings.service, "demo_instance", True):
             self.assertEqual(self.job(SLOT1), 0)
-            with self.assertRaises(ArsrapportError):
-                self.button(self.h3)
+            self.assertEqual(remind.send_due_unanswered(datetime(2026, 2, 1, 8, 0, tzinfo=STOCKHOLM)), 0)
+            with self.assertRaises(ArsrapportError) as refused:
+                self.button(self.h)  # an invited herd with an address: the demo alone refuses it
+        self.assertEqual(refused.exception.detail, "Påminnelser skickas inte från demon.")
         self.assertEqual(list(db.ReportAccessCode.select().dicts()), codes)
         self.assertEqual(db.MailMessage.select().count(), mails)
 
@@ -265,16 +268,59 @@ class TestQueue(ReminderTest):
         self.send()
         first = self.rows(self.h)[0]
         self.assertEqual(db.MailMessage.get_by_id(first.id).status, "cancelled")
-        for _ in range(5):  # owed again once, then covered
+        for _ in range(5):  # the new link's mail reminded the member: no second mail in the occasion
             self.job(SLOT1 + timedelta(hours=1))
-        (_, again) = self.rows(self.h)
+        self.assertEqual(len(self.rows(self.h)), 1)
+        self.assertEqual(self.job(SLOT2), 2)  # the next occasion goes, with the new link
+        again = self.rows(self.h)[-1]
         self.assertEqual(again.params["code_id"], self.code(self.h).id)
         self.assertNotEqual(again.params["code_id"], old.id)
         self.assertNotEqual(again.dedupe_key, first.dedupe_key)
+
+    def test_a_late_invitation_is_not_followed_by_a_reminder(self):
+        late = self.herd_with_member("G9005")
+        self.now = SLOT1 + timedelta(minutes=5)
+        self.assertEqual(invite.send_due_invitations(self.now), 1)  # its first usable address came today
         self.send()
-        self.assertEqual(db.MailMessage.get_by_id(again.id).status, "sent")
-        invite.new_link(self.h, self.round_, self.manager, now=self.now)  # a new link after a delivered reminder
-        self.assertEqual(self.job(SLOT1 + timedelta(days=1)), 0)
+        self.assertEqual(self.job(SLOT1 + timedelta(hours=1)), 2)  # G9001 and G9002, not G9005
+        self.assertEqual(self.rows(late), [])
+        self.assertEqual(self.job(SLOT2), 3)
+
+    def test_follow_ups_never_make_the_link_the_invitation_needs(self):  # review 1: the invitation is not suppressed
+        herd = self.herd_with_member("G9005")
+        self.now = SLOT1 - timedelta(days=1)
+        with self.assertRaises(ArsrapportError) as refused:
+            self.button(herd)
+        self.assertEqual(refused.exception.detail, remind.NO_LINK)
+        self.assertEqual(self.job(SLOT1), 2)
+        self.assertFalse(db.ReportAccessCode.select().where(db.ReportAccessCode.herd == herd.id).exists())
+        self.assertEqual(invite.send_due_invitations(SLOT1), 1)  # the invitation still goes, with its extract
+        (invitation,) = [m for m in db.MailMessage.select() if m.kind == "arsrapport.inbjudan" and m.herd_id == herd.id]
+        self.assertIsNotNone(self.build(invitation))
+
+    def test_an_address_the_queue_cannot_send_to_is_never_queued(self):  # review 1: no new cancelled row every hour
+        herd = self.herd_with_member("G9005")
+        db.Member.update(email="o'neil@example.invalid").where(db.Member.membership == herd.membership).execute()
+        self.assertEqual(invite.send_due_invitations(self.now), 1)  # the invitation job makes a link all the same
+        for hour in range(3):
+            self.job(SLOT1 + timedelta(hours=hour))
+        self.assertEqual(self.rows(herd), [])
+        with self.assertRaises(ArsrapportError):
+            self.button(herd)
+
+    def test_a_button_reminder_sent_in_the_next_occasion_covers_it(self):  # review 1: delivered slot
+        self.button(self.h, datetime(2026, 1, 29, 6, 58, tzinfo=STOCKHOLM))  # queued in occasion 1
+        self.now = datetime(2026, 1, 29, 7, 3, tzinfo=STOCKHOLM)  # sent in occasion 2
+        self.send()
+        (row,) = self.rows(self.h)
+        self.assertEqual((row.params["slot"], db.MailMessage.get_by_id(row.id).last_error), (1, "tillfälle 2"))
+        self.assertEqual(self.job(datetime(2026, 1, 30, 9, 0, tzinfo=STOCKHOLM)), 1)  # G9002 only
+        self.assertEqual(len(self.rows(self.h)), 1)
+
+    def test_no_member_mail_at_night(self):
+        self.assertEqual(self.job(datetime(2026, 1, 20, 21, 0, tzinfo=STOCKHOLM)), 0)
+        self.assertEqual(self.job(datetime(2026, 1, 21, 6, 59, tzinfo=STOCKHOLM)), 0)
+        self.assertEqual(self.job(datetime(2026, 1, 21, 7, 0, tzinfo=STOCKHOLM)), 2)
 
     def test_a_stopped_or_failed_reminder_is_not_replaced(self):
         self.job(SLOT1)
@@ -291,7 +337,7 @@ class TestQueue(ReminderTest):
         self.job(SLOT1)
         db.MailMessage.update(next_attempt_at=SLOT2 + timedelta(hours=6)).execute()  # on the retry ladder
         self.assertEqual(self.job(SLOT2), 2)
-        self.now = SLOT2 + timedelta(hours=7)
+        self.now = SLOT2 + timedelta(hours=7)  # 14:00, by day
         self.send()
         self.assertEqual(
             sorted(self.state()),

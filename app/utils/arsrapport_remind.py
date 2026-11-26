@@ -6,12 +6,18 @@ mail is still wanted.
 
 Dates follow the round's deadline (Jonas 2026-11-26, question 2): the first reminder is due on deadline−11 at 07:00
 in Stockholm, the second on deadline−2 at 07:00. A reminder delivered for one of the two occasions never goes again,
-also if the deadline moves; a queued one is judged again when it is sent.
+also if the deadline moves; a queued one is judged again when it is sent. The jobs mail members only by day.
+
+The follow-ups never make a link: only the invitation and "Ny länk" do (report_code.issue_code), so a link still
+means the member was invited, and the invitation job never skips a herd because a reminder came first.
 """
 
 import json
 import logging
+import re
 from datetime import datetime, time, timedelta
+
+from peewee import fn
 
 import utils.arsrapport as arsrapport
 import utils.inbox as inbox
@@ -33,7 +39,7 @@ from utils.database import (
     YearlyReportRoundGenebank,
     YearlyReportSubmission,
 )
-from utils.mail import STOPPED, enqueue_mail, mail_kind
+from utils.mail import STOPPED, Later, enqueue_mail, is_address, mail_kind
 
 logger = logging.getLogger(__name__)
 
@@ -44,12 +50,15 @@ MISSING = "arsrapport.fraga_saknade"
 # make it a column on the activation (sent_at) if a list should be resent or tracked.
 UNANSWERED_DAYS = 14
 SLOTS = {1: 11, 2: 2}  # each scheduled reminder and its days before the deadline
-SEND_HOUR = 7
+# shortcut: Å22 is caught up for a week after the paper form was entered, so the first deploy asks only about recent
+# forms; the status view's "ej angivna" stays the manager's list for older ones.
+MISSING_DAYS = 7
+SEND_HOUR, LAST_HOUR = 7, 20  # the jobs mail members from 07:00 to 20:59 in Stockholm
 OUTSTANDING = ("queued", "sending")
-NO_RECIPIENT = "Ingen e-postadress kan just nu användas för att logga in som besättningens huvudmedlem."
-STALE_RECIPIENT = "Huvudmedlemmen har just ändrats. Försök igen."
+INVITED = ("arsrapport.inbjudan", "arsrapport.ny_lank")
+NO_LINK = "Besättningen har ingen giltig länk till sin huvudmedlem. Skicka en ny länk."
 REFUSED = {  # why no reminder goes, as the manager's button says it
-    "lank": NO_RECIPIENT,
+    "lank": NO_LINK,
     "rundan_stangd": "Rundan är inte öppen för besättningens genbank.",
     "inskickad": "Årsrapporten är redan inskickad.",
     "tillfallet_passerat": "Påminnelsen gäller inte längre.",
@@ -63,11 +72,20 @@ def reminder_slot(round_, now):
     """
     if round_.deadline is None or now.astimezone(STOCKHOLM).date() > round_.deadline:
         return None
-    starts = {
-        slot: datetime.combine(round_.deadline - timedelta(days=days), time(SEND_HOUR), STOCKHOLM)
-        for slot, days in SLOTS.items()
-    }
-    return max((slot for slot, start in starts.items() if now >= start), default=None)
+    return max((slot for slot in SLOTS if now >= slot_start(round_, slot)), default=None)
+
+
+def slot_start(round_, slot):
+    return datetime.combine(round_.deadline - timedelta(days=SLOTS[slot]), time(SEND_HOUR), STOCKHOLM)
+
+
+def daytime(now):
+    return SEND_HOUR <= now.astimezone(STOCKHOLM).hour <= LAST_HOUR
+
+
+def _sendable(code, herd, today):
+    """The link is valid and the queue can send to its member's login address (else it cancels every hour)."""
+    return report_code.refusal(code, herd, today=today) is None and is_address(_link_address({"code_id": code.id}))
 
 
 def _refusal(herd, round_, code, scheduled, slot, now):
@@ -78,7 +96,7 @@ def _refusal(herd, round_, code, scheduled, slot, now):
     today = now.astimezone(STOCKHOLM).date()
     if round_.deadline is None:  # a legacy round: never open for the report's mails
         return "rundan_stangd"
-    if code is not None and report_code.refusal(code, herd, today=today) is not None:
+    if code is None or not _sendable(code, herd, today):
         return "lank"
     if not arsrapport.round_open(round_, herd.genebank_id, today):
         return "rundan_stangd"
@@ -104,6 +122,27 @@ def counts(row):
     return row.status != "cancelled" or row.last_error == STOPPED
 
 
+def _slots(row):
+    """The occasions a reminder covers: the one it was queued in and, by the button, the one it was sent in."""
+    sent_in = re.search(r"tillfälle (\d)", row.last_error or "") if row.status == "sent" else None
+    return {row.params.get("slot")} | ({int(sent_in.group(1))} if sent_in else set())
+
+
+def _invited_in(round_, herd, slot):
+    """
+    An invitation or a new link went, or waits, since the occasion began: it reminds as well, so a late invitation is
+    not followed by a reminder within the hour.
+    """
+    codes = ReportAccessCode.select(ReportAccessCode.id).where(
+        ReportAccessCode.herd == herd.id, ReportAccessCode.round == round_.id
+    )
+    rows = MailMessage.select().where(
+        MailMessage.kind.in_(INVITED), MailMessage.ref_type == "access_code", MailMessage.ref_id.in_(codes)
+    )
+    start = slot_start(round_, slot)
+    return any(counts(row) and (row.sent_at or row.next_attempt_at) >= start for row in rows)
+
+
 def _covered(rows, scheduled, slot, now):
     """
     A reminder now would be one too many: another waits in the queue (a scheduled one only for the current occasion
@@ -117,48 +156,35 @@ def _covered(rows, scheduled, slot, now):
         went = row.sent_at or (row.created_at if row.status == "logged" else None)  # logged: the log mode's "sent"
         if went is not None and went.astimezone(STOCKHOLM).date() == today:
             return True
-        if scheduled and row.params.get("slot") == slot:
+        if scheduled and slot in _slots(row):
             return True
     return False
 
 
-def _issue(herd, round_, now):
-    """
-    D8's first phase: the herd's code for its main member now, issued and committed in a transaction of its own, so
-    the herd's code lock is never taken under the report's. A 409 without an address or when the member changed.
-    """
-    member = report_code.invitation_recipient(herd, now=now)
-    if member is None:
-        raise ArsrapportError(409, NO_RECIPIENT)
-    try:
-        with DB_PROXY.atomic():
-            round_ = arsrapport._lock_round(round_)  # pylint: disable=protected-access  # before the codes, as new_link
-            return report_code.issue_code(herd, round_, member, now=now)
-    except report_code.StaleRecipient as exc:
-        raise ArsrapportError(409, STALE_RECIPIENT) from exc
+def _code(herd, round_):
+    """The herd's active link for the round, read FOR SHARE under the report's lock (as Skicka reads it), or None."""
+    query = ReportAccessCode.select().where(
+        ReportAccessCode.herd == herd.id, ReportAccessCode.round == round_.id, ReportAccessCode.revoked_at.is_null()
+    )
+    return query.for_update("FOR SHARE").first()
 
 
 def _remind(herd, round_, now, *, scheduled, user=None):
     """
-    D8: the herd's code is issued and committed first (issue_code takes the herd's code lock, which is never taken
-    under the report's), then everything is read again under the report's lock and the reminder queued. Returns the
-    mail id, None when a reminder would be one too many, or raises ArsrapportError when none is wanted.
+    Under the report's lock, as Skicka: the herd's link, the reasons and the earlier reminders are read, and the
+    reminder queued. Returns the mail id, None when it would be one too many, or raises ArsrapportError when none is
+    wanted. A link is never made here (see the module docstring).
     """
     slot = reminder_slot(round_, now)  # a reminder by the button counts for the occasion it falls in
-    if (reason := _refusal(herd, round_, None, scheduled, slot, now)) is not None:
-        raise ArsrapportError(409, REFUSED[reason])
-    if _covered(reminders(round_, [herd.id]), scheduled, slot, now):
-        return None
-    code = _issue(herd, round_, now)
     with DB_PROXY.atomic():
         round_ = arsrapport._lock_round(round_)  # pylint: disable=protected-access  # the order of Skicka
         arsrapport.lock_report(round_, herd)
-        code = ReportAccessCode.select().where(ReportAccessCode.id == code.id).for_update("FOR SHARE").get()
         herd = Herd.get_by_id(herd.id)
+        code = _code(herd, round_)
         if (reason := _refusal(herd, round_, code, scheduled, slot, now)) is not None:
             raise ArsrapportError(409, REFUSED[reason])
         rows = reminders(round_, [herd.id])
-        if _covered(rows, scheduled, slot, now):
+        if _covered(rows, scheduled, slot, now) or (scheduled and _invited_in(round_, herd, slot)):
             return None
         return enqueue_mail(
             REMINDER,
@@ -188,12 +214,12 @@ def send_reminder(herd, round_, user, *, now: datetime) -> int | None:
 def send_due_reminders(now: datetime) -> int:
     """
     The hourly job's reminders: for each genebank whose invitations went, the current occasion's reminder to each
-    active herd without a report. Nothing before 07:00 in Stockholm, so a catch-up never mails at night.
+    active herd without a report. Only by day in Stockholm, so a catch-up never mails at night.
     """
     if settings.service.demo_instance:
         logger.info("Årsrapportens påminnelser hoppas över i demomiljön")
         return 0
-    if now.astimezone(STOCKHOLM).hour < SEND_HOUR:
+    if not daytime(now):
         return 0
     activations = (
         YearlyReportRoundGenebank.select(YearlyReportRoundGenebank, YearlyReportRound)
@@ -209,7 +235,7 @@ def send_due_reminders(now: datetime) -> int:
             try:
                 total += _remind(herd, activation.round, now, scheduled=True) is not None
             except ArsrapportError:
-                continue  # reported, or no address: the status view shows it
+                continue  # reported, or no link the queue can send: the status view shows it
             except Exception:  # pylint: disable=broad-except  # one herd's failure stops no other
                 logger.exception("Queueing the reminder of herd %s failed", herd.id)
     return total
@@ -224,11 +250,14 @@ def _paminnelse(params):
     if _refusal(herd, round_, code, params["scheduled"], params["slot"], now) is not None:
         return None
     draft = YearlyReportDraft.select().where(YearlyReportDraft.herd == herd.id, YearlyReportDraft.round == round_.id)
+    slot = reminder_slot(round_, now)
     return {
         **_common(herd, round_),
         "link": report_code.code_url(code),
         "draft": draft.exists(),  # the state when it is sent
         "late": now.astimezone(STOCKHOLM).date() > round_.deadline,
+        # the button's reminder covers the occasion it is sent in too, also if the deadline moves later (_slots)
+        "sent_note": f"tillfälle {slot}" if slot is not None and not params["scheduled"] else None,
     }
 
 
@@ -238,11 +267,15 @@ PAPER_STATES = {"blankett_vantar": "blankett väntar på svar", "blankett_inkomm
 OTHER_STATES = {"paborjad": "påbörjad", "ingen_epost": "ingen e-post", "ej_rapporterad": "ej rapporterad"}
 
 
+def unanswered_start(round_):
+    return datetime.combine(round_.deadline + timedelta(days=1), time(SEND_HOUR), STOCKHOLM)
+
+
 def unanswered_due(round_, now):
     """Å5 is due from deadline+1 at 07:00 in Stockholm, also if the round has closed since, for UNANSWERED_DAYS."""
     if round_.deadline is None:
         return False
-    start = datetime.combine(round_.deadline + timedelta(days=1), time(SEND_HOUR), STOCKHOLM)
+    start = unanswered_start(round_)
     return start <= now < start + timedelta(days=UNANSWERED_DAYS)
 
 
@@ -311,6 +344,11 @@ def _ej_svarat(params):
         return None
     if genebank.id not in (user.is_manager or []):
         return None
+    now = arsrapport.now()
+    if round_.deadline is not None and now < unanswered_start(round_):  # the deadline moved later meanwhile
+        raise Later(unanswered_start(round_), "sista dagen för stödet har flyttats")
+    if not unanswered_due(round_, now):
+        return None
     rows = unanswered(round_, genebank.id)
     if not rows:
         return None
@@ -328,26 +366,28 @@ def _ej_svarat(params):
 # Å22: the rabbits a paper form left out (ej angivna), asked about once per report (D7, spec 5.5)
 
 
-def _missing_refusal(herd, round_, report_id, code, now):
+def _missing_refusal(herd, round_, report, code, now):
     """
-    Why Å22 about the report is not wanted now, or None: the one test of the scan, the recheck and the builder. The
-    report must still be the herd's current one, from paper, not an ending, and leave rabbits unstated.
+    Why Å22 about `report` (one read of it, also for the list) is not wanted now, or None: the one test of the scan,
+    the recheck and the builder. It must still be submitted (not withdrawn), from paper, not an ending, and leave
+    rabbits unstated.
     """
     today = now.astimezone(STOCKHOLM).date()
-    if code is not None and report_code.refusal(code, herd, today=today) is not None:
+    if code is None or not _sendable(code, herd, today):
         return "lank"
     if not arsrapport.round_open(round_, herd.genebank_id, today):
         return "rundan_stangd"
-    report = arsrapport.current_report(herd, round_)
-    if report is None or report.id != report_id:
+    if report is None or report.status != "submitted":
         return "ny_rapport"
-    data = json.loads(report.data)
-    if data.get("ending_genbank") or not data.get("not_stated"):
-        return "besvarad"
-    paper = YearlyReportSubmission.select().where(
+    return None if arsrapport.completable(report) else "besvarad"
+
+
+def _paper_since(report):
+    """When the report's latest paper submission was entered: Å22 is caught up for MISSING_DAYS after it."""
+    query = YearlyReportSubmission.select(fn.MAX(YearlyReportSubmission.created_at)).where(
         YearlyReportSubmission.report == report.id, YearlyReportSubmission.source == "paper"
     )
-    return None if paper.exists() else "inte_blankett"
+    return query.scalar()
 
 
 def _questions(report_ids):
@@ -360,17 +400,14 @@ def _questions(report_ids):
 
 
 def _ask(report, now):
-    """Å22 for one report, in D8's two phases; the mail id, or None when it is not wanted or already went."""
+    """Å22 for one report under its lock, as Skicka; the mail id, or None when it is not wanted or already went."""
     herd, round_ = report.herd, report.round
-    if _missing_refusal(herd, round_, report.id, None, now) is not None:
-        return None
-    code = _issue(herd, round_, now)
     with DB_PROXY.atomic():
         round_ = arsrapport._lock_round(round_)  # pylint: disable=protected-access  # the order of Skicka
         arsrapport.lock_report(round_, herd)
-        code = ReportAccessCode.select().where(ReportAccessCode.id == code.id).for_update("FOR SHARE").get()
-        herd = Herd.get_by_id(herd.id)
-        if _missing_refusal(herd, round_, report.id, code, now) is not None:
+        herd, report = Herd.get_by_id(herd.id), YearlyHerdReport.get_by_id(report.id)
+        code = _code(herd, round_)
+        if _missing_refusal(herd, round_, report, code, now) is not None:
             return None
         rows = _questions([report.id])
         if any(map(counts, rows)):  # P4: once per report; only one cancelled as obsolete is asked again
@@ -395,6 +432,8 @@ def send_missing_questions(now: datetime) -> int:
     if settings.service.demo_instance:
         logger.info("Årsrapportens frågor om saknade kaniner hoppas över i demomiljön")
         return 0
+    if not daytime(now):
+        return 0
     today = now.astimezone(STOCKHOLM).date()
     paper = YearlyReportSubmission.select(YearlyReportSubmission.report).where(YearlyReportSubmission.source == "paper")
     reports = list(
@@ -413,10 +452,10 @@ def send_missing_questions(now: datetime) -> int:
     for report in reports:
         if report.id in asked or not json.loads(report.data).get("not_stated"):
             continue
+        if _paper_since(report) < now - timedelta(days=MISSING_DAYS):
+            continue
         try:
             total += _ask(report, now) is not None
-        except ArsrapportError:
-            continue  # no address: the status view's "ej angivna" is the manager's
         except Exception:  # pylint: disable=broad-except  # one report's failure stops no other
             logger.exception("Queueing the question about report %s failed", report.id)
     return total
@@ -429,9 +468,12 @@ def _fraga_saknade(params):
     if code is None:
         return None
     herd, round_ = Herd.get_by_id(code.herd_id), code.round
-    if _missing_refusal(herd, round_, params["report_id"], code, arsrapport.now()) is not None:
+    report = YearlyHerdReport.get_or_none(YearlyHerdReport.id == params["report_id"])
+    if report is None or report.herd_id != herd.id:
         return None
-    missing = json.loads(arsrapport.current_report(herd, round_).data)["not_stated"]
+    if _missing_refusal(herd, round_, report, code, arsrapport.now()) is not None:
+        return None
+    missing = json.loads(report.data)["not_stated"]  # the same read as the check: never an empty list
     rabbits = Individual.select(Individual.number, Individual.name).where(Individual.id.in_(missing))
     return {
         **_common(herd, round_),

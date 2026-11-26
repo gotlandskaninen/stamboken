@@ -201,14 +201,17 @@ meddelanden och köparuppgifter är inte med. Köp och försäljningar från ett
 
 ## Påminnelser
 
-Jobbet `arsrapport_followups` körs i schemaläggarens ledare varje timme och en gång vid start
-(`app/utils/arsrapport_remind.py`). Det lägger påminnelsen `arsrapport.paminnelse` i mejlkön till
+Jobbet `arsrapport_followups` körs i schemaläggarens ledare varje hel timme i svensk tid och en gång
+vid start (`app/utils/arsrapport_remind.py`). Det lägger påminnelsen `arsrapport.paminnelse` i mejlkön till
 varje aktiv besättning utan inskickad rapport, i genbanker vars inbjudningar har gått
 (`sent_at`). Tillfällena följer rundans `deadline`:
 
 - påminnelse 1 från deadline−11 kl. 07.00 tills påminnelse 2 börjar, och påminnelse 2 från
   deadline−2 kl. 07.00 till och med sista dagen, allt i svensk tid;
-- före kl. 07.00 köar jobbet inget, och efter ett längre avbrott bara den senaste påminnelsen;
+- jobbet mejlar medlemmar bara mellan kl. 07.00 och 20.59, och efter ett längre avbrott bara den
+  senaste påminnelsen;
+- en inbjudan eller en ny länk som har gått eller väntar sedan tillfället började räknas som dess
+  påminnelse, så en sen inbjudan följs inte av en påminnelse samma timme;
 - en påminnelse som har gått för ett tillfälle går aldrig igen, också om `deadline` flyttas. En
   köad påminnelse prövas när den skickas: är rapporten inskickad, länken ogiltig, rundan stängd
   eller tillfället passerat avbryts den (`cancelled`), och jobbet köar en ny om den fortfarande
@@ -217,17 +220,22 @@ varje aktiv besättning utan inskickad rapport, i genbanker vars inbjudningar ha
 
 Knappen "Skicka påminnelse" (`POST …/paminnelse`, svar `{"queued": true | false}`) köar en
 påminnelse med prioritet 1. `false` betyder att en redan väntar i kön eller har gått i dag. En
-påminnelse från knappen räknas för det tillfälle den hamnar i.
+påminnelse från knappen räknas för det tillfälle den köades i och det den skickades i.
+
+Påminnelserna och Å22 skapar aldrig någon länk. Bara inbjudan och "Ny länk" gör det, så en länk
+betyder fortfarande att medlemmen har bjudits in. Har besättningen ingen giltig länk, eller en adress
+som mejlkön inte kan skicka till, köas inget och knappen svarar 409.
 
 Dagen efter `deadline` kl. 07.00 går listan `arsrapport.ej_svarat` (Å5) till varje aktiv
 genbanksansvarig i genbanken, en gång per runda, också om rundan har stängt, och i högst 14 dagar.
 Den har besättningsnummer och läge, uppdelat på blankett som inte är inmatad och inget inskick, och
 en länk till statusvyn med filtret "Ej svarat". Inga namn eller kontaktuppgifter. Listan läses när
-mejlet skickas; har alla svarat eller är mottagaren inte längre genbanksansvarig går inget.
+mejlet skickas; har alla svarat eller är mottagaren inte längre genbanksansvarig går inget. Har
+`deadline` flyttats framåt väntar listan i kön till den nya dagen.
 
 Lämnar en rapport från blankett kaniner som "Ej angiven på blanketten" frågar Stamboken
 huvudmedlemmen om just dem (`arsrapport.fraga_saknade`, Å22), en gång per rapport medan rundan är
-öppen. Mejlet listar de kaniner som fortfarande saknas när det skickas och har rapportlänken. Har
+öppen, dagtid och inom en vecka efter att blanketten matades in. Mejlet listar de kaniner som fortfarande saknas när det skickas och har rapportlänken. Har
 alla besvarats, dragits tillbaka eller blivit ett avslut går inget. Ett svar på mejlet blir en
 vanlig post i kön; inget i det skrivs i rapporten.
 
@@ -244,8 +252,8 @@ Då öppnar rapportsidan, via länken och inloggad, med bara de kaninerna och kn
 "Visa hela rapporten" går till den vanliga sidan.
 
 Mejlet har bara id:n och flaggor (`round_id`, `code_id`, `slot`, `scheduled`); länken byggs när
-det skickas. Saknar besättningen en giltig kod skapas den först (`issue_code`) och sparas, och
-sedan läggs påminnelsen i kön under rapportens lås. I demon köar jobbet inget.
+det skickas. Påminnelsen läggs i kön under rapportens lås. I demon köar jobbet inget, och knappen
+svarar 409.
 
 ## Den tomma blanketten
 

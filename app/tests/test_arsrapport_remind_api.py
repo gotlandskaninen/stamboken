@@ -8,6 +8,7 @@ isort:skip_file
 
 from datetime import date, datetime, timedelta
 
+import utils.arsrapport_invite as invite
 import utils.arsrapport_remind as remind
 import utils.database as db
 import utils.mail as mail
@@ -75,8 +76,9 @@ class TestButton(ReminderTest):
             return counter["n"]
 
         few = queries()
-        for n in range(10):
-            herd = self.herd_with_member(f"G91{n:02d}")
+        herds = [self.herd_with_member(f"G91{n:02d}") for n in range(10)]
+        invite.send_due_invitations(self.now)  # their links
+        for herd in herds:
             self.button(herd)
         self.assertEqual(queries(), few)
 
@@ -104,6 +106,7 @@ class TestUnanswered(ReminderTest):
         self.assertEqual(
             (row.recipient_kind, row.recipient_id, row.priority, row.category), ("user", self.manager.id, 1, "T")
         )
+        self.now = DUE
         self.assertEqual(
             row.params, {"round_id": self.round_.id, "genebank_id": self.gotland.id, "user_id": self.manager.id}
         )
@@ -126,10 +129,24 @@ class TestUnanswered(ReminderTest):
         self.assertEqual(remind.send_due_unanswered(DUE + timedelta(hours=3)), 1)
         self.assertEqual(remind.send_due_unanswered(DUE + timedelta(days=1)), 0)
         (row,) = self.lists()
+        self.now = DUE + timedelta(hours=3)
         for herd in (self.h, self.h3, self.h5):  # every herd reports late, before the list goes
             self.reported(herd, ending_genbank=True)
         self.assertIsNone(self.build(row))
         self.assertEqual(remind.send_due_unanswered(DUE + timedelta(days=remind.UNANSWERED_DAYS)), 0)
+
+    def test_a_list_waits_for_a_moved_deadline(self):  # review 1: rechecked when it goes
+        self.assertEqual(remind.send_due_unanswered(DUE), 1)
+        (row,) = self.lists()
+        db.YearlyReportRound.update(deadline=date(2026, 2, 5)).execute()
+        self.now = DUE
+        with self.assertRaises(mail.Later) as later:
+            self.build(row)
+        self.assertEqual(later.exception.until, datetime(2026, 2, 6, 7, 0, tzinfo=STOCKHOLM))
+        self.now = datetime(2026, 2, 6, 7, 0, tzinfo=STOCKHOLM)
+        self.assertIn("Sista dag för stödet var 2026-02-05.", mail.render(row.kind, self.build(row))[1])
+        self.now = datetime(2026, 2, 6, 7, 0, tzinfo=STOCKHOLM) + timedelta(days=remind.UNANSWERED_DAYS)
+        self.assertIsNone(self.build(row))  # too late: not sent at all
 
     def test_no_list_when_everyone_has_answered_or_long_after(self):
         for herd in (self.h, self.h3, self.h5):

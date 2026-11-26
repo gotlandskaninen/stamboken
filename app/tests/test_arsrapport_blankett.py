@@ -361,6 +361,9 @@ class BlankettTest(ArsrapportTest):
         report = db.YearlyHerdReport.get_by_id(first["report_id"])
         self.client.get("/api/logout")
         with mock.patch.multiple(settings.mail, link_secret="test-link-secret", link_hosts=[]), APP.app_context():
+            import utils.arsrapport_invite as invite  # pylint: disable=import-outside-toplevel
+
+            invite.send_due_invitations(NOW)  # the link comes with the invitation, never with Å22
             self.assertEqual(remind.send_missing_questions(NOW), 1)
             (question,) = db.MailMessage.select().where(db.MailMessage.kind == remind.MISSING)
             token = mail.link_token("rapport", question.params["code_id"])

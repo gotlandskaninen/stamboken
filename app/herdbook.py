@@ -3202,14 +3202,17 @@ def initialize_app():
             misfire_grace_time=None,
         )
 
-        # The yearly report's reminders and lists after the invitation (step 6); each is due by its own date.
+        # The yearly report's reminders and lists after the invitation (step 6); each is due by its own date, from
+        # 07:00 in Stockholm, so the scan runs on the hour there.
         scheduler.add_job(
             _send_arsrapport_followups,
-            trigger="interval",
-            hours=1,
+            "cron",
+            minute=0,
+            timezone=ZoneInfo("Europe/Stockholm"),
             id="arsrapport_followups",
             max_instances=1,
             coalesce=True,
+            misfire_grace_time=3600,
         )
 
         scheduler.add_job(

@@ -115,6 +115,8 @@ class TestMissingQuestion(MissingTest):
         self.assertIsNone(self.build(row))
         self.send()
         self.assertEqual(db.MailMessage.get_by_id(row.id).status, "cancelled")
+        self.assertEqual(self.ask(ENTERED + timedelta(minutes=30)), 0)  # no link for the new member yet
+        invite.send_due_invitations(self.now)  # the invitation job makes it, as for every new main member
         self.assertEqual(self.ask(ENTERED + timedelta(hours=1)), 1)  # P4: still owed, to the new member's link
         (_, again) = self.questions()
         self.assertEqual(again.recipient_id, member.id)
@@ -159,12 +161,24 @@ class TestMissingQuestion(MissingTest):
             self.assertTrue(entered.wait(timeout=10))
             ask = in_thread(results, "ask", lambda: remind.send_missing_questions(self.now))
             ask.start()
-            self.assertTrue(until(lock_waiter))  # Å22's first phase waits for the herd's code lock
+            self.assertTrue(until(lock_waiter))  # Å22 waits for the code row, holding the report's lock
             release.set()
             link.join(timeout=30)
             ask.join(timeout=30)
         self.assertFalse(link.is_alive() or ask.is_alive())
         self.assertIsInstance(results["link"], int, results)
         self.assertIsInstance(results["ask"], int, results)
+        self.ask(self.now + timedelta(hours=1))  # the revoked link was not used; the next run takes the new one
         (row,) = self.questions()
         self.assertEqual(row.params["code_id"], results["link"])
+
+    def test_no_question_at_night_or_for_an_old_form(self):  # review 1: no mass Å22 at the first deploy
+        self.assertEqual(self.ask(datetime(2026, 1, 12, 21, 0, tzinfo=STOCKHOLM)), 0)
+        self.assertEqual(self.ask(datetime(2026, 1, 13, 6, 59, tzinfo=STOCKHOLM)), 0)
+        self.assertEqual(self.ask(ENTERED + timedelta(days=remind.MISSING_DAYS, minutes=1)), 0)
+        herd = self.herd_with_member("G9004")
+        invite.send_due_invitations(self.now)
+        rabbits = self.rabbits(herd, 2)
+        self.paper(herd, rabbits, rabbits[:1])  # entered today
+        self.assertEqual(self.ask(), 1)
+        self.assertEqual([row.herd_id for row in self.questions()], [herd.id])
