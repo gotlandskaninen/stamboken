@@ -138,6 +138,35 @@ def test_cycle_break_does_not_depend_on_row_order():
         np.testing.assert_allclose(other.mk[other.index[number]], one.mk[one.index[number]], rtol=0, atol=1e-12)
 
 
+def test_fingerprint_follows_the_inputs_only():
+    """Equal across row order and unrelated members; any input the arrays read changes it."""
+    rows = [
+        {"number": "A", "sex": "male", "father_number": None, "mother_number": None},
+        {"number": "B", "sex": "female", "father_number": None, "mother_number": None},
+        {"number": "C", "sex": "female", "father_number": "A", "mother_number": "B"},
+    ]
+    base = ps.build_snapshot(1, rows, {"A", "C"}, key=("k",), seq=1, recovery_eligible={"B"})
+    same = ps.build_snapshot(1, rows[::-1], {"C", "A", "OTHER-GENEBANK"}, key=("k2",), seq=2, recovery_eligible={"B"})
+    assert (same.fingerprint, same.eligible_fingerprint) == (base.fingerprint, base.eligible_fingerprint)
+    assert len(base.fingerprint) == 64
+
+    def changed(index, **fields):
+        return [{**row, **fields} if i == index else row for i, row in enumerate(rows)]
+
+    for other_rows, members in [
+        (changed(2, father_number=None), {"A", "C"}),  # a parent
+        (changed(0, sex="female"), {"A", "C"}),  # a sex
+        (rows + [{"number": "D", "sex": None, "father_number": None, "mother_number": None}], {"A", "C"}),
+        (rows, {"A"}),  # membership
+    ]:
+        other = ps.build_snapshot(1, other_rows, members, key=("k",), seq=1, recovery_eligible={"B"})
+        assert other.fingerprint != base.fingerprint
+        assert other.eligible_fingerprint == base.eligible_fingerprint
+    aged_out = ps.build_snapshot(1, rows, {"A", "C"}, key=("k",), seq=1, recovery_eligible=set())
+    assert (aged_out.fingerprint, aged_out.eligible_fingerprint) != (base.fingerprint, base.eligible_fingerprint)
+    assert aged_out.fingerprint == base.fingerprint
+
+
 def test_empty_and_small_reference():
     rows = [{"number": f"N{i}", "sex": None, "father_number": None, "mother_number": None} for i in range(5)]
     empty = ps.build_snapshot(1, rows, set(), key=("k",), seq=1)

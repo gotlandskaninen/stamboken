@@ -18,23 +18,50 @@ import {
 import {
   useFetchPopulationMetricsQuery,
   useFetchFounderStatisticsQuery,
+  useFetchFoundersAtRiskQuery,
+  useFetchGeneticsTrendsQuery,
+  type TrendDataPoint,
 } from "@/redux/api/apiSlice";
-import KpiCard, { ThresholdLevel } from "./KpiCard";
-import GeneticsInfoPanel from "./GeneticsInfoPanel";
-import HelpTooltip from "./HelpTooltip";
+import { decimal, percent } from "@/lib/genetics";
+import KpiCard from "./KpiCard";
+import GeneticsInfoPanel, {
+  FOUNDERDJUR,
+  IN_CALCULATION,
+  MK_TEXT,
+} from "./GeneticsInfoPanel";
+import GeneticsError from "./GeneticsError";
 import TrendChart from "./TrendChart";
 import FoundersAtRiskPanel from "./FoundersAtRiskPanel";
+import { useQueryView, StaleNote } from "./queryView";
+import { useMode } from "@/lib/mode-context";
 import type { Theme } from "@mui/material/styles";
 
 const Chart = dynamic(() => import("react-apexcharts"), {
   ssr: false,
 });
 
-function getMkLevel(mk: number): ThresholdLevel {
-  if (mk < 0.05) return "good";
-  if (mk <= 0.1) return "warning";
-  return "danger";
+// No literature gives an absolute MK threshold (FAO 2023: kinship rises with pedigree
+// knowledge), so no level is coloured. The comparison is the two latest closed years, both on
+// the history rule: today's set is another population and does not compare with them.
+function closedYearsMk(trend: TrendDataPoint[]): string {
+  const years = trend.slice(-2);
+  if (years.length === 0) return "stängda år: –";
+  const shown = years.map(
+    (d) =>
+      `${d.year}: ${d.mean_kinship == null ? "–" : percent(d.mean_kinship)}`,
+  );
+  return `${shown.join(" · ")} (${years.length === 1 ? "stängt år" : "stängda år"})`;
 }
+
+const swedishDate = (iso: string) =>
+  new Date(iso).toLocaleDateString("sv-SE", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+
+const pctLabel = (val: number) => `${decimal(val, 1)}\u00a0%`;
 
 interface OverviewTabProps {
   genebankId: number;
@@ -58,19 +85,19 @@ const FounderChart = ({
     },
     dataLabels: {
       enabled: true,
-      formatter: (val: number) => `${val}%`,
+      formatter: pctLabel,
     },
     xaxis: {
       categories,
-      labels: { formatter: (val: string) => `${val}%` },
+      labels: { formatter: (val: string) => pctLabel(Number(val)) },
     },
     colors: [theme.palette.skog.main],
     tooltip: {
-      y: { formatter: (val: number) => `${val}%` },
+      y: { formatter: pctLabel },
     },
   };
 
-  const series = [{ name: "Bidrag", data }];
+  const series = [{ name: "Andel av generna", data }];
 
   return (
     <Box sx={{ height: 350, width: "100%" }}>
@@ -82,19 +109,40 @@ const FounderChart = ({
 const ThemedFounderChart = withTheme(FounderChart);
 
 const OverviewTab = ({ genebankId }: OverviewTabProps) => {
-  const {
-    data: metrics,
-    isLoading: metricsLoading,
-    error: metricsError,
-  } = useFetchPopulationMetricsQuery(genebankId);
+  const mode = useMode();
+  // Both views belong to the selected genebank: its KPIs never mix with another's.
+  const metricsQuery = useFetchPopulationMetricsQuery(
+    { genebankId, mode },
+    { refetchOnMountOrArgChange: true },
+  );
+  const foundersQuery = useFetchFounderStatisticsQuery(
+    { genebankId, mode },
+    { refetchOnMountOrArgChange: true },
+  );
+  const metricsView = useQueryView(metricsQuery);
+  const foundersView = useQueryView(foundersQuery);
+  const metrics = metricsView.data;
+  const founders = foundersView.data;
+  const refetchMetrics = metricsQuery.refetch;
+  const refetchFounders = foundersQuery.refetch;
 
-  const {
-    data: founders,
-    isLoading: foundersLoading,
-    error: foundersError,
-  } = useFetchFounderStatisticsQuery(genebankId);
+  // The founderdjur table's rows (the same request as the table below), so the
+  // card and the table count the same animals. Until it arrives the count is left out.
+  const founderRows = useQueryView(
+    useFetchFoundersAtRiskQuery(
+      { genebankId, mode },
+      { refetchOnMountOrArgChange: true },
+    ),
+  ).data;
+  // The trend below shares this request; its last row is the last closed year.
+  const trend = useQueryView(
+    useFetchGeneticsTrendsQuery(
+      { genebankId, mode },
+      { refetchOnMountOrArgChange: true },
+    ),
+  ).data;
 
-  if (metricsLoading || foundersLoading) {
+  if (metricsView.loading || foundersView.loading) {
     return (
       <React.Fragment>
         <Alert severity="info" sx={{ mb: 6 }}>
@@ -112,28 +160,54 @@ const OverviewTab = ({ genebankId }: OverviewTabProps) => {
     );
   }
 
-  const isAuthError = (err: unknown) =>
-    err != null &&
-    typeof err === "object" &&
-    "status" in err &&
-    (err as { status: unknown }).status === 401;
-
-  if (
-    (metricsError && !isAuthError(metricsError)) ||
-    (foundersError && !isAuthError(foundersError))
-  ) {
+  if (metricsView.failed || foundersView.failed) {
+    // A denial seen by another genetics panel hides these too; it reads as no access.
+    const error = metricsQuery.error ?? foundersQuery.error ?? { status: 403 };
     return (
-      <Alert severity="error">
-        Kunde inte hämta genetikdata. Kontrollera att du har behörighet.
-      </Alert>
+      <GeneticsError
+        error={error}
+        onRetry={() => {
+          refetchMetrics();
+          refetchFounders();
+        }}
+      />
     );
   }
 
   if (!metrics || !founders) return null;
 
+  // An explicit null means no snapshot (a failed build): the zeros are not an empty genebank.
+  // A snapshot with no members still has its date; an older API (demo) sends no field at all.
+  if (metrics.reference_start === null) {
+    return (
+      <GeneticsError
+        error={undefined}
+        onRetry={() => {
+          refetchMetrics();
+          refetchFounders();
+        }}
+      />
+    );
+  }
+
+  // An empty genebank gets "–", never zeros that read as healthy (the API answers 0 there).
+  const empty = metrics.n_active === 0;
+  const ne = metrics.effective_population_size;
+  const nWithCarriers = founderRows?.filter(
+    (f) => f.risk_level !== "lost",
+  ).length;
+
   return (
     <React.Fragment>
+      {(metricsView.stale || foundersView.stale) && <StaleNote />}
       <GeneticsInfoPanel tab="overview" />
+      {empty && (
+        <Alert severity="info" sx={{ mb: 6 }}>
+          Det finns inga kaniner i beräkningen för den här genbanken, så
+          nyckeltalen kan inte räknas. Vilka kaniner som räknas står under
+          Förklaringar.
+        </Alert>
+      )}
       <Grid
         container
         spacing={6}
@@ -143,40 +217,49 @@ const OverviewTab = ({ genebankId }: OverviewTabProps) => {
       >
         <Grid size={{ xs: 12, sm: 6, md: 3 }}>
           <KpiCard
-            title="Aktiva individer"
-            value={String(metrics.n_active)}
-            subtitle="i genbanken"
+            title="Kaniner i beräkningen"
+            value={decimal(metrics.n_active)}
+            subtitle={
+              metrics.reference_start
+                ? `levande, med intyg, i en aktiv besättning, rapporterade sedan ${swedishDate(metrics.reference_start)}`
+                : "levande, med intyg, i en aktiv besättning"
+            }
+            tooltip={IN_CALCULATION}
           />
         </Grid>
         <Grid size={{ xs: 12, sm: 6, md: 3 }}>
           <KpiCard
-            title="Effektiv pop.storlek (Ne)"
+            title="Effektiv populationsstorlek (Ne)"
             value={
-              metrics.effective_population_size == null
+              ne == null || empty
                 ? "–"
                 : metrics.ne_se != null
-                  ? `${metrics.effective_population_size.toFixed(0)} ± ${metrics.ne_se.toFixed(0)}`
-                  : metrics.effective_population_size.toFixed(0)
+                  ? `${decimal(ne)} ± ${decimal(metrics.ne_se)}`
+                  : decimal(ne)
             }
-            subtitle="Realiserat sedan grundandet"
-            tooltip="Effektiv populationsstorlek skattad från varje djurs inavelsökning per generation (Gutiérrez m.fl. 2008), över referenspopulationen. Beskriver takten sedan stamboken började, inte bara i dag. Riktmärken: FAO anger minst 50 på kort sikt; Frankham m.fl. 2014 minst 100."
+            subtitle="mål minst 50 (FAO), helst 100 (Frankham m.fl. 2014)"
+            tooltip="Hur stor en idealisk population skulle vara för att förlora genetisk variation lika långsamt som genbanken. Räknat från hur mycket inaveln har ökat per generation hos varje kanin i beräkningen, sedan stamboken började (Gutiérrez m.fl. 2008). Talet efter ± är osäkerheten."
           />
         </Grid>
         <Grid size={{ xs: 12, sm: 6, md: 3 }}>
           <KpiCard
-            title="Founder-ekvivalenter (FE)"
-            value={founders.founder_equivalents.toFixed(1)}
-            subtitle={`av ${founders.n_founders} founders`}
-            tooltip="Founder-ekvivalenter — antal founders som skulle ge samma genetiska diversitet om de bidrog lika (Lacy 1989). Högt = jämnare fördelning."
+            title="Effektivt antal founderdjur (FE)"
+            value={empty ? "–" : decimal(founders.founder_equivalents, 1)}
+            subtitle={
+              empty || nWithCarriers === undefined
+                ? undefined
+                : // FE also counts unknown parents, so the count is its basis, not its ceiling.
+                  `räknat på ${nWithCarriers} founderdjur med bärare i beräkningen och på okända föräldrar`
+            }
+            tooltip={`${FOUNDERDJUR} FE är så många founderdjur som, om alla hade lämnat lika stor andel av generna, skulle ge samma spridning av generna som i dag (Lacy 1989). En okänd förälder till en kanin med bara en känd förälder räknas här som ett eget founderdjur, så FE kan bli större än antalet founderdjur med bärare.`}
           />
         </Grid>
         <Grid size={{ xs: 12, sm: 6, md: 3 }}>
           <KpiCard
-            title="Genomsnittlig MK"
-            value={metrics.mean_kinship.toFixed(4)}
-            subtitle={metrics.mean_kinship < 0.05 ? "Låg nivå" : "Förhöjd nivå"}
-            level={getMkLevel(metrics.mean_kinship)}
-            tooltip="Genomsnittlig medelkinship — medelvärde av parvisa kinship-koefficienter. Lågt = mer genetisk diversitet."
+            title="Medelsläktskap (MK)"
+            value={empty ? "–" : percent(metrics.mean_kinship)}
+            subtitle={trend ? closedYearsMk(trend) : undefined}
+            tooltip={`${MK_TEXT} Det stora talet gäller i dag. Åren under är räknade på varje års kaniner, så de är inte samma population som i dag: jämför åren med varandra, inte med dagens tal.`}
           />
         </Grid>
       </Grid>
@@ -186,13 +269,13 @@ const OverviewTab = ({ genebankId }: OverviewTabProps) => {
           <Card sx={{ mb: 6 }}>
             <CardContent>
               <Typography variant="h6" gutterBottom>
-                Founder-bidrag (topp 10)
+                Founderdjur med störst andel av generna
               </Typography>
               {founders.top_founders && founders.top_founders.length > 0 ? (
                 <ThemedFounderChart founders={founders.top_founders} />
               ) : (
                 <Typography variant="body2" color="textSecondary">
-                  Ingen founder-data tillgänglig.
+                  Inga founderdjur att visa.
                 </Typography>
               )}
             </CardContent>
@@ -202,42 +285,22 @@ const OverviewTab = ({ genebankId }: OverviewTabProps) => {
           <Card sx={{ mb: 6 }}>
             <CardContent>
               <Typography variant="h6" gutterBottom>
-                Populationssammanfattning
+                Inavel
               </Typography>
               <List dense>
                 <ListItem>
                   <ListItemText
-                    primary="Antal founders"
-                    secondary={founders.n_founders}
+                    primary="Genomsnittlig inavel (F)"
+                    secondary={empty ? "–" : percent(metrics.mean_inbreeding)}
                   />
                 </ListItem>
                 <ListItem>
                   <ListItemText
-                    primary="Founder-ekvivalenter (FE)"
-                    secondary={founders.founder_equivalents.toFixed(1)}
-                  />
-                </ListItem>
-                <ListItem>
-                  <ListItemText
-                    primary={
-                      <HelpTooltip tooltip="Andel av grundarnas genetiska variation som gått förlorad (= medelsläktskap i referenspopulationen).">
-                        Diversitetsförlust
-                      </HelpTooltip>
-                    }
-                    secondary={`${(founders.proportional_loss * 100).toFixed(1)}%`}
-                  />
-                </ListItem>
-                <ListItem>
-                  <ListItemText
-                    primary="Medelinavel (F)"
-                    secondary={metrics.mean_inbreeding.toFixed(4)}
-                  />
-                </ListItem>
-                <ListItem>
-                  <ListItemText
-                    primary="Inavelsökningstakt (ΔF)"
+                    primary="Inavelsökning per generation (ΔF)"
                     secondary={
-                      metrics.delta_f == null ? "–" : metrics.delta_f.toFixed(5)
+                      metrics.delta_f == null || empty
+                        ? "–"
+                        : `${percent(metrics.delta_f, 2)} · mål under 1\u00a0% (FAO)`
                     }
                   />
                 </ListItem>

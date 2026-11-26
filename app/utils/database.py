@@ -74,8 +74,8 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # the herd's contact from the member register, herd.contact_member and herd.contact_pending (50) +
 # the yearly report v2 (51) + organization name and number on membership (52) +
 # notice.individual and buyer_contact.erased_email_hash (53) +
-# acceptance of the account rules (54).
-CURRENT_SCHEMA_VERSION = 54
+# acceptance of the account rules (54) + each history year's realised Ne (55).
+CURRENT_SCHEMA_VERSION = 55
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -2021,9 +2021,9 @@ class SchemaHistory(BaseModel):
 class GeneticMetricsHistory(BaseModel):
     """One row per closed report year, fully derived; replaced on reconcile.
 
-    Ne (effective population size) is NOT stored — it is computed on-the-fly
-    in get_genetics_trends() using a rolling ln(1-F̄) regression over the
-    stored mean_inbreeding values.
+    ``effective_population_size`` is the realised Ne over the year's members, the
+    estimator the dashboard card uses for today (genetics.calculate_realised_ne),
+    with its standard error ``ne_se`` and the animals behind it ``ne_n``.
     """
 
     id = AutoField(primary_key=True)
@@ -2039,6 +2039,9 @@ class GeneticMetricsHistory(BaseModel):
     mean_kinship = FloatField(null=True)
     founder_equivalents = FloatField(null=True)
     fge = FloatField(null=True)
+    effective_population_size = FloatField(null=True)
+    ne_se = FloatField(null=True)
+    ne_n = IntegerField(null=True)
     data_quality = CharField(max_length=10)  # "high", "medium", "low"
     created_at = DateTimeField(default=datetime.now)
 
@@ -4157,8 +4160,9 @@ def rotate_genetics_epoch() -> str:
     """Give the database a new genetics epoch and return it (``flask genetics rotate-epoch``).
 
     Run after the database was replaced (restore, demo sync): the copy brings back a
-    version counter that can repeat numbers already memoized for other pedigree data,
-    and the epoch is what keeps those memos from being served. The SQL
+    version counter that can repeat a number a worker's snapshot is keyed on, and the
+    epoch is what makes that snapshot rebuild. The memoized results need no epoch:
+    they are keyed on the snapshot's content. The SQL
     function is the one the dump restore (stamboken-drift) and sync-demo-db.sh call through psql.
     """
     with DATABASE.atomic():
@@ -4184,7 +4188,7 @@ def _create_genetics_version_guards():
         " changed_at timestamptz NOT NULL DEFAULT now())"
     )
     sql("INSERT INTO genetics_version (id, version) VALUES (1, 0) ON CONFLICT DO NOTHING")
-    # Part of the genetics memo key: a restored or copied database gets a new one.
+    # Part of the snapshot key: a restored or copied database gets a new one.
     sql("ALTER TABLE genetics_version ADD COLUMN IF NOT EXISTS epoch text NOT NULL DEFAULT gen_random_uuid()::text")
     sql(
         """CREATE OR REPLACE FUNCTION rotate_genetics_epoch() RETURNS text
@@ -4935,6 +4939,27 @@ def migrate_53_to_54():
         ).execute()
 
 
+def migrate_54_to_55():
+    """History rows store each year's realised Ne, its standard error and the animals behind it.
+
+    The trend drew a rolling ln(1 - F) regression instead.
+    """
+    with DATABASE.atomic():
+        table = GeneticMetricsHistory._meta.table_name
+        existing = {c.name for c in DATABASE.get_columns(table)}
+        # A replay from below 16 creates the table from the current model, columns included.
+        for name, fld in (
+            ("effective_population_size", FloatField(null=True)),
+            ("ne_se", FloatField(null=True)),
+            ("ne_n", IntegerField(null=True)),
+        ):
+            if name not in existing:
+                migrate(DATABASE_MIGRATOR.add_column(table, name, fld))
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=55, comment="history: realised Ne per report year", applied=datetime.now()
+        ).execute()
+
+
 def migrate_21_to_22():
     """Add litter_number to Breeding table and backfill from minted numbers."""
     with DATABASE.atomic():
@@ -5426,6 +5451,7 @@ MIGRATIONS = {
     (51, 52): migrate_51_to_52,  # legal entity on membership
     (52, 53): migrate_52_to_53,  # notice.individual, buyer_contact.erased_email_hash
     (53, 54): migrate_53_to_54,  # account rules acceptance
+    (54, 55): migrate_54_to_55,  # realised Ne per history year
 }
 
 
@@ -5514,7 +5540,8 @@ def _run_migrations():
         # A bootstrap has no migration comment. Every buyer 50 (even before erased_email_hash) added
         # notice.individual_id; running 51–53 afterwards still never adds main's missing herd contact columns.
         if (
-            current_version is not None and current_version >= 50
+            current_version is not None
+            and current_version >= 50
             and not {"contact_member_id", "contact_pending"} <= {c.name for c in DATABASE.get_columns("herd")}
             and "individual_id" in {c.name for c in DATABASE.get_columns("notice")}
         ):

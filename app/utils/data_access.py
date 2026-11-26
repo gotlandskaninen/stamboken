@@ -1141,7 +1141,7 @@ def set_account_active(u_id, active, actor_user_id=None):
                 if target is None:
                     raise ValueError("user-not-found")
                 if active and target.email == f"raderad-{target.id}":  # not_erased(), on the locked row
-                    raise ValidationError("erased", "Kontot tömdes när personen anonymiserades och kan inte aktiveras.")
+                    raise ValidationError("erased", "Kontots uppgifter är raderade, så kontot kan inte aktiveras.")
                 if not active and _count_current_admins(locked, exclude_user_id=u_id) == 0:
                     raise ValidationError(
                         "last-admin",
@@ -1300,7 +1300,8 @@ def update_role(operation, user_uuid=None, skip_role_check=False):
                 # FIRST statement: ordered lock of target + all admins.
                 locked = _lock_role_rows(target_id)
                 target_user = next((u for u in locked if u.id == target_id), None)
-                if target_user is None:
+                # not_erased(), on the locked row: an emptied account (#190, #250) takes no role
+                if target_user is None or target_user.email == f"raderad-{target_user.id}":
                     return {"status": "error", "message": "unknown user"}
 
                 if operation["action"] == "remove" and operation["role"] == "admin":

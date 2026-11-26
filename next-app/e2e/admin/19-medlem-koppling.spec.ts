@@ -74,7 +74,9 @@ test.describe("kontokoppling on matrikel-detaljen", () => {
       "Kontot får ägaråtkomst till G9919 — E2E koppling.",
     );
     await dialog.getByRole("button", { name: "Koppla konto" }).click();
-    await expect(page.getByText("Konto kopplat")).toBeVisible();
+    await expect(
+      page.getByText("Konto kopplat", { exact: true }),
+    ).toBeVisible();
     await expect(mainRow.getByText(VICTIM_ROLE.username)).toBeVisible();
     await expect(page.getByText("Kopplade konton")).toBeVisible();
     await expect(page.getByText("1 av 2 personer")).toBeVisible();
@@ -87,7 +89,9 @@ test.describe("kontokoppling on matrikel-detaljen", () => {
       .getByRole("dialog")
       .getByRole("button", { name: "Bekräfta" })
       .click();
-    await expect(page.getByText("Konto bortkopplat")).toBeVisible();
+    await expect(
+      page.getByText("Konto bortkopplat", { exact: true }),
+    ).toBeVisible();
     await expect(
       mainRow.getByRole("button", { name: "Koppla konto…" }),
     ).toBeVisible();
@@ -104,7 +108,9 @@ test.describe("kontokoppling on matrikel-detaljen", () => {
       .getByRole("option", { name: new RegExp(VICTIM_ROLE.username) })
       .click();
     await dialog.getByRole("button", { name: "Koppla konto" }).click(); // familjemedlem without grants: no warning
-    await expect(page.getByText("Konto kopplat")).toBeVisible();
+    await expect(
+      page.getByText("Konto kopplat", { exact: true }),
+    ).toBeVisible();
 
     await familyRow.getByRole("button", { name: /Fler åtgärder/ }).click();
     await page.getByRole("menuitem", { name: "Ta bort" }).click();
@@ -112,7 +118,9 @@ test.describe("kontokoppling on matrikel-detaljen", () => {
       .getByRole("dialog")
       .getByRole("button", { name: "Bekräfta" })
       .click();
-    await expect(page.getByText("Person borttagen")).toBeVisible();
+    await expect(
+      page.getByText("Person borttagen", { exact: true }),
+    ).toBeVisible();
     await expect(
       familyRow.getByRole("button", { name: "Koppla bort" }),
     ).toBeVisible();
@@ -125,7 +133,9 @@ test.describe("kontokoppling on matrikel-detaljen", () => {
       .getByRole("dialog")
       .getByRole("button", { name: "Bekräfta" })
       .click();
-    await expect(page.getByText("Konto bortkopplat")).toBeVisible();
+    await expect(
+      page.getByText("Konto bortkopplat", { exact: true }),
+    ).toBeVisible();
 
     const mainRow = page.getByRole("row", { name: /E2E Huvud/ });
     await mainRow.getByRole("button", { name: "Koppla konto…" }).click();
@@ -148,7 +158,9 @@ test.describe("kontokoppling on matrikel-detaljen", () => {
       .getByRole("dialog")
       .getByRole("button", { name: "Koppla konto" })
       .click(); // confirm the warning
-    await expect(page.getByText("Konto kopplat")).toBeVisible();
+    await expect(
+      page.getByText("Konto kopplat", { exact: true }),
+    ).toBeVisible();
     await mainRow.getByRole("button", { name: "Koppla bort" }).click();
     await page
       .getByRole("dialog")

@@ -69,3 +69,37 @@ describe("UsersGridClient", () => {
     expect(screen.getAllByText("Namn saknas")).toHaveLength(1);
   });
 });
+
+describe("UsersGridClient account links (#249)", () => {
+  it("carries the list's search and filters to the account", () => {
+    render(
+      <UsersGridClient
+        rows={[{ ...base, username: "konto174" }]}
+        total={1}
+        query="search=konto&active=false"
+        sortField="last_active"
+        sortDir="desc"
+      />,
+    );
+    expect(screen.getByRole("link", { name: "konto174" })).toHaveAttribute(
+      "href",
+      "/stamboken/admin/anvandare/174?search=konto&active=false",
+    );
+  });
+
+  it("adds no query when the list has none", () => {
+    render(
+      <UsersGridClient
+        rows={[{ ...base, username: "konto174" }]}
+        total={1}
+        query=""
+        sortField="last_active"
+        sortDir="desc"
+      />,
+    );
+    expect(screen.getByRole("link", { name: "konto174" })).toHaveAttribute(
+      "href",
+      "/stamboken/admin/anvandare/174",
+    );
+  });
+});

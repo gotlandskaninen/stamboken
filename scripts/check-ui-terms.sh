@@ -24,6 +24,8 @@
 #   Okänt kön                      Okänt (kön är ett t-ord); Okänd bara om ett en-ord (okänd mor, okänd kanin)
 #   Registrerad kanin              inskriven i stamboken med intyg (papper eller digitalt) och därmed individnummer
 #   Avgiften för medlemskapet      Medlemsavgift — inte "Årsavgift"
+#   Rasens ursprungsdjur           founderdjur — inte "Founder", "founder-bidrag" eller "founder-linje"
+#   Avelsprioritet                 Högsta, Hög, Övriga — aldrig "Kritisk", inte heller om founderdjurens läge
 #
 # Söker i next-app/messages/sv.json och next-app/src/**/*.{ts,tsx} (utom tester). Ord inne i
 # kodidentifierare (camelCase, snake_case) räknas inte. FORBIDDEN skiljer inte på versal och
@@ -38,9 +40,12 @@ FORBIDDEN+='|kullar & parningar|besättningshistoria|rapportera som död|dödsno
 FORBIDDEN+='|försäljningsdatum|köpdatum|lista över individer|årsavgift'
 FORBIDDEN+='|förslag|torrkörning|kodinnehavare'
 FORBIDDEN+='|(min|din|utan) genbank\b|aktiva genbanker|granskare'
+FORBIDDEN+='|founder-[[:alpha:]]|\bkritiska?\b'
 # Versal mitt i menyvalet, och Moder/Fader som hel etikett: i en sträng eller JSX-text
 # ("Moder", >Moder<) eller ensam på raden, så att moderId och "Moder Jord" inte träffas.
 CASED="Min Besättning|Alla Kaniner|(^[[:space:]]*|[\"'>])(Moder|Fader)([\"'<]|[[:space:]]*$)"
+# Founder som eget ord, inte Founderdjur; FounderAtRisk och liknande typnamn tas bort före kontrollen.
+CASED+='|\bFounder\b'
 # Ett gement ord följt av rasnamnet med versal, t.ex. "för Gotlandskanin".
 BREED='(^|[^[:alpha:]])[[:lower:]]+ (Gotlands|Melleruds)kanin'
 IDENT='[[:alnum:]_]*([[:lower:]][[:upper:]]|_)[[:alnum:]_]*'
