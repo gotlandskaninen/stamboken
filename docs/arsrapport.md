@@ -69,6 +69,17 @@ Fältet `on_time` måste finnas. Valet skrivs under samma lås som Skicka och l�
 orört, så det gäller också efter en senare ändring. Den som satte det sparas i `on_time_set_by`.
 Utan en inskickad rapport blir svaret 404.
 
+## Försäljning direkt
+
+`POST …/besattning/<besättning>/<år>/forsaljning` med `{"individual_id": …, "sald": {till, ar, manad, dag,
+kopare}}` registrerar en kanins försäljning direkt, som Sälj på kaninens sida (Jonas 2026-11-26). Servern
+kontrollerar den med samma regler som Skicka: kontrollen körs på ett inskick med bara den kaninen. På
+pappersvägen låses posten och kontrolleras igen. Svaret är `{"operation_id": …}`, eller 422 med `refusals`.
+Endast före första Skicka och för en roll som får sälja. Med en inskickad rapport blir svaret 409, och
+försäljningen går med Skicka. Försäljningen hör till registret: en försäljning till och med 31 december tar
+kaninen från listan och visas i `sales`, en senare försäljning ger raden läget `via_flytt`. `sales[].undo`
+och `rabbits[].undo` är försäljningens rad när den som tittar får ångra den som på kaninens sida.
+
 ## Försäljningsförslag
 
 `GET …/besattning/<besättning>/<år>/forslag` svarar `{"forslag": [{id, individual_id, number, name,
