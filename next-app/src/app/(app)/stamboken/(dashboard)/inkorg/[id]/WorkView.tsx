@@ -202,7 +202,10 @@ export function WorkView({
     (doc.status === "sparad" || (redo && doc.status === "klar"));
   // The handler of an open item, and a manager or admin at any time once a copy exists.
   const mayMask =
-    editable || (!noRole && !!doc?.has_copy && manages(user, item.genebank_id));
+    editable ||
+    (!noRole &&
+      !!doc?.has_copy &&
+      manages(user, doc.individual_genebank_id ?? item.genebank_id));
   const [noPersonalData, setNoPersonalData] = useState(false);
   // "Stämmer med registret": the handler's own tick, every time; the reading only proposes it.
   const [matches, setMatches] = useState(false);

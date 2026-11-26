@@ -74,6 +74,8 @@ export interface InboxDocument {
   has_copy: boolean;
   /** The copy was checked against the registry (the rabbit's badge), or null. */
   verified_at?: string | null;
+  /** The genebank of the rabbit the document is saved on: where its copy is redone or removed. */
+  individual_genebank_id?: number | null;
 }
 
 // The image reading (docs/inkorg.md, "Tolkning"): its status on a document and
@@ -116,7 +118,9 @@ export const checksPass = (doc: InboxDocument): boolean => {
   const same = [individual, paper_number].some(
     (f) => f?.source === "läst" && f.value === doc.individual,
   );
-  return same && !proposal.checks.some((c) => c.ok === false);
+  // The certificate number too: a rabbit read with a digital certificate has none compared.
+  const certificate = proposal.fields.paper_certificate?.source === "läst";
+  return same && certificate && !proposal.checks.some((c) => c.ok === false);
 };
 
 export interface InboxEvent {

@@ -301,6 +301,39 @@ class TestSaveEndpoint(GrantTest):
         )
         self.assertEqual(after.saved_certificate, "12")
 
+    def test_a_helper_masks_a_rabbit_she_sold_to_gx1_through_the_item(self):
+        outside = db.Herd.create(genebank=self.genebanks[0], herd="GX1", herd_name="Utanför genbanken", is_active=True)
+        item, document = self.taken(self.helper)
+        self.login("hjalp")
+        body = {"action": "pappersintyg", "individual": "G1-2111", "paper_certificate": "12", "paper_number": "G1-2111"}
+        self.assertEqual(self.save(item, document, **body).status_code, 200)
+        sold = self.transfer(item, document, individual="G1-2111", herd="GX1", date=date.today().isoformat())
+        self.assertEqual(sold.status_code, 200, sold.get_json())
+        self.assertEqual(self.rabbit("G1-2111").current_herd.id, outside.id)
+        with mock.patch("utils.inbox.make_copy"):  # the queue's test item has no file; the right is what is tested
+            resp = self.post(
+                f"/{item.id}/dokument/{document.id}/maskning",
+                rotation=0,
+                mask_rects=[{"x": 0, "y": 0.5, "w": 1, "h": 0.5}],
+            )
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+
+    def test_the_paper_shows_the_breeder_as_seller_and_the_holder_now_as_buyer(self):
+        rabbit = self.rabbit("G1-2111")
+        ht_row("TRANSFER", herd=self.herds[1], individual=rabbit, herd_tracking_date=date.today() - timedelta(days=3))
+        item, document = self.taken(self.manager)
+        self.login("man")
+        body = {"action": "pappersintyg", "individual": "G1-2111", "paper_certificate": "12", "paper_number": "G1-2111"}
+        self.assertEqual(self.save(item, document, **body).status_code, 200)
+        saved = db.InboxDocument.get_by_id(document.id)
+        self.assertEqual(
+            (saved.seller_member_id, saved.buyer_member_id),
+            (
+                getattr(inbox.herd_holder(self.herds[0].id), "id", None),
+                getattr(inbox.herd_holder(self.herds[1].id), "id", None),
+            ),
+        )
+
     def test_a_litter_changed_under_the_link_is_a_conflict(self):
         item, document = self.taken(self.helper)
         self.login("hjalp")

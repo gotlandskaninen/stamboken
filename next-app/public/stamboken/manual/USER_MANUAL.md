@@ -817,8 +817,9 @@ Allt om en kanin. Adressen är /stamboken/individ/ följt av individnumret.
 - **Pappersintyg** – en kopia av pappersintyget som lästs in, med säljarens och
   köparens uppgifter överstrukna. Klicka bilden för full storlek. Blocket visas bara
   om kaninen har en kopia och du får se den. Märkningen **Intyget kontrollerat** vid
-  kaninens nummer ser alla: pappersintyget finns i Stamboken och stämde med registret när
-  det lästes in. Håll muspekaren över den för att se datumet.
+  kaninens nummer ser alla: pappersintyget finns i Stamboken, och den som lade in det jämförde
+  det med registret och kryssade i att de stämmer. Håll muspekaren över märkningen för att se
+  datumet.
 - **Anteckningar** – fritext och eventuell dödsorsak.
 - **Ändringshistorik** – visas bara för genbanksansvarig och administratör.
 

@@ -903,7 +903,11 @@ def confirm_mask(item, document, user, rotation, rects, no_personal_data=None, m
         raise InboxError(400, 'En tom mask_rects kräver "no_personal_data": true: intyget visar ingen säljare.')
     if matches_registry is not None and not isinstance(matches_registry, bool):
         raise InboxError(400, "matches_registry är true eller false.")
-    if matches_registry and (not rabbit.certificate or rabbit.certificate != document.saved_certificate):
+    if matches_registry and document.saved_certificate is None:
+        raise InboxError(
+            409, "Fotot sparades innan Stamboken sparade intygsnumret, så det kan inte markeras kontrollerat."
+        )
+    if matches_registry and rabbit.certificate != document.saved_certificate:
         # The check is of the certificate the photo was saved as: a number changed since is not the one compared.
         raise InboxError(
             409, f"{rabbit.number} har inte längre intyget {document.saved_certificate}. Kontrollera kaninen igen."
@@ -941,14 +945,14 @@ def remove_copy(item, document, user):
 def may_publish(user, individual, grant=None):
     """
     May `user` put a copy on `individual`, by linking a photo to it or by making its copy: a manager of its genebank
-    or an admin, or a helper of its genebank while it is in an ordinary herd, never GX1/MX1. Linking through a save
-    also needs the helper to hold the item (`grant`); confirm_mask has checked the handler already.
+    or an admin, or a helper of its genebank. Linking through a save is a write the helper makes as the item's
+    handler (`grant`), never in GX1/MX1; making the copy is not, so a rabbit she has just sold to GX1/MX1 through
+    the item still gets its copy (confirm_mask has checked the handler already).
     """
     herd = individual.current_herd
     if manages(user, herd.genebank_id):
         return True
-    helper = herd.genebank_id in (user.is_helper or []) and herd.herd not in OUTSIDE_GENEBANK_HERDS
-    return helper and (grant is None or grant.allows(user, herd))
+    return herd.genebank_id in (user.is_helper or []) and (grant is None or grant.allows(user, herd))
 
 
 def checked_at(individual):
@@ -985,11 +989,12 @@ def _document_status(document, report=False):
 
 
 def documents_json(documents, report=False):
-    numbers = {}
+    rabbits = {}
     individual_ids = {d.individual_id for d in documents if d.individual_id}
     if individual_ids:
-        query = Individual.select(Individual.id, Individual.number).where(Individual.id.in_(individual_ids))
-        numbers = dict(query.tuples())
+        rabbits = {r.id: r for r in Individual.select().where(Individual.id.in_(individual_ids))}
+    # The genebank the copy is decided in (confirm_mask, remove_copy): the rabbit's now, not the item's.
+    genebanks = {i: r.current_herd.genebank_id for i, r in rabbits.items()}
     same = {}  # the same image (sha256) anywhere in the queue: a duplicate warning
     shas = {d.sha256 for d in documents}
     if shas:
@@ -1012,7 +1017,8 @@ def documents_json(documents, report=False):
             "waiting_for": d.waiting_for,
             "interpretation_status": d.interpretation_status,
             "proposal": d.proposal,
-            "individual": numbers.get(d.individual_id),
+            "individual": rabbits[d.individual_id].number if d.individual_id in rabbits else None,
+            "individual_genebank_id": genebanks.get(d.individual_id),
             "herd_tracking_id": d.herd_tracking_id,
             "has_original": d.original_path is not None,
             "has_copy": d.public_path is not None,
@@ -1344,13 +1350,18 @@ def herd_holder(herd_id):
 
 def saved(item, document, user, individual, action):
     """
-    The rabbit a certificate document registered or certified, with the certificate number it was saved as; its
-    seller is the holder of the rabbit's herd, unless a sale through the document recorded seller and buyer first.
+    The rabbit a certificate document registered or certified, with the certificate number it was saved as. The
+    paper is the breeder's: its seller is the holder of the rabbit's herd of origin, and its buyer the holder of the
+    herd it is in now when that is another of the association's, so an erasure of either finds the photo. A sale
+    through the document records the sale's own seller and buyer instead, and they stay.
     """
     document.individual = individual
     document.saved_certificate = individual.certificate
     if document.herd_tracking_id is None:
-        document.seller_member = herd_holder(individual.current_herd.id) or document.seller_member
+        document.seller_member = herd_holder(individual.origin_herd_id) or document.seller_member
+        now_in = individual.current_herd
+        if now_in.id != individual.origin_herd_id and now_in.herd not in OUTSIDE_GENEBANK_HERDS:
+            document.buyer_member = herd_holder(now_in.id) or document.buyer_member
     document.save()
     log_event(item, user, "sparad", document=document.id, action=action, individual=individual.number)
 

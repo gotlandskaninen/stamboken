@@ -1733,8 +1733,8 @@ class TestDatabaseMigration(DatabaseTest):
         self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
         self.assertEqual(shape(), fresh)
         self.assertIn(("verified_by_id", "hbuser", "user_id"), fresh[2])
-        # A certificate saved before 56 has the number its rabbit has.
-        self.assertEqual(db.InboxDocument.get_by_id(saved.id).saved_certificate, self.individuals[0].certificate)
+        # A certificate saved before 56: the number it was saved as is unknown, so it is never marked checked.
+        self.assertIsNone(db.InboxDocument.get_by_id(saved.id).saved_certificate)
 
     def _drop_rex_column(self):
         """The schema before 45 -> 46: no rex column, the audit trigger on, and the version row gone."""

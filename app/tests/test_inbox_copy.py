@@ -136,6 +136,14 @@ class TestCopy(CopyTest):
         self.assertIsNone(db.InboxDocument.get_by_id(document.id).verified_at)
         self.assertEqual(self.mask(item, document, mask_rects=rects).status_code, 200)  # unchecked, it goes on
 
+    def test_a_photo_saved_before_the_number_was_kept_is_never_checked(self):
+        item, document = self.saved_document()
+        db.InboxDocument.update(saved_certificate=None).where(db.InboxDocument.id == document.id).execute()
+        rects = [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+        resp = self.mask(item, document, mask_rects=rects, matches_registry=True)
+        self.assertEqual(resp.status_code, 409, resp.get_json())
+        self.assertNotIn("None", resp.get_json()["detail"])
+
     def test_a_manager_of_another_genebank_who_helps_here_cannot_redo_a_closed_copy(self):
         item, document = self.saved_document()
         rects = [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]

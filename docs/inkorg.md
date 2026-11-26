@@ -279,6 +279,7 @@ för en post med `ref_type` `sale_proposal`, vars statusvy avgör förslaget, oc
   "interpretation_status": "av",
   "proposal": null,
   "individual": null,
+  "individual_genebank_id": null,
   "herd_tracking_id": null,
   "has_original": true,
   "has_copy": false,
@@ -342,7 +343,10 @@ för en post med `ref_type` `sale_proposal`, vars statusvy avgör förslaget, oc
 - `verified_at`: när handläggaren bekräftade kopian med "stämmer med registret"
   (`matches_registry` i [Maskning](#maskning-och-kopian-på-kaninen)), annars `null`. Dokumentet
   sparar också intygsnumret det sparades med (`saved_certificate`, inte i svaret); märkningen gäller
-  bara så länge kaninen har kvar det.
+  bara så länge kaninen har kvar det. Ett intyg som sparades före version 56 har inget sådant nummer
+  och kan inte märkas.
+- `individual_genebank_id`: genbanken för kaninen dokumentet är sparat på, där kopian görs om och tas
+  bort (se [Maskning](#maskning-och-kopian-på-kaninen)); `null` när dokumentet inte är sparat.
 
 ### Händelser
 
@@ -924,7 +928,8 @@ det inte loggas det, svaret är ändå 200, och nattjobbet tar filen.
 genbanksansvarig för kaninens genbank och admin göra om den, i alla lägen och också när posten är
 stängd eller någon annan har den, så att en felaktig kopia kan rättas. Dokumentet måste vara ett
 sparat intyg (`individual` satt). Den som gör kopian måste dessutom ha en roll i kaninens genbank:
-genbanksansvarig, admin, eller hjälpare när kaninen inte står i GX1/MX1 (403 annars). Det spelar
+genbanksansvarig, admin eller hjälpare i den genbanken (403 annars), också när hjälparen just har
+sålt kaninen till GX1/MX1 genom posten. Det spelar
 roll för ett mejl utan genbank, som vem som helst i kön kan ta. En hjälpare som inte har en roll i
 kaninens genbank lämnar posten till genbanksansvarig.
 
@@ -1293,9 +1298,11 @@ standard 12.
 ### En person raderas
 
 När en person anonymiseras i matrikeln (`anonymize_person`) raderas originalen till de dokument där
-personen är sparad som säljare eller köpare, och texten i deras poster. Säljaren är innehavaren av
-kaninens besättning när ett intyg sparas, och av säljarens besättning vid en försäljning; köparen är
-innehavaren av köparens besättning vid en försäljning till en medlem. Innehavaren är medlemskapets
+personen är sparad som säljare eller köpare, och texten i deras poster. När ett intyg sparas är
+säljaren innehavaren av kaninens ursprungsbesättning (intyget är uppfödarens) och köparen innehavaren
+av besättningen kaninen står i nu, om det är en annan av föreningens. Vid en försäljning är säljaren
+innehavaren av säljarens besättning och köparen innehavaren av köparens besättning vid en försäljning
+till en medlem; de står kvar om intyget sparas efter försäljningen genom samma dokument. Innehavaren är medlemskapets
 huvudmedlem i matrikeln. Finns en kopia är den det enda som blir kvar, med säljar- och köparblocket
 täckt.
 

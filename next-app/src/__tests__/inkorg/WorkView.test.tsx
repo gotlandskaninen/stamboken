@@ -337,6 +337,7 @@ describe("WorkView: masking", () => {
       });
     const own = {
       individual: { value: "G9001-2512", source: "läst" as const },
+      paper_certificate: { value: "SYN-1", source: "läst" as const },
     };
     const { unmount } = render(view(item({ documents: [read(own)] })));
     expect(box()).not.toBeChecked();
@@ -356,6 +357,8 @@ describe("WorkView: masking", () => {
     for (const other of [
       read({ individual: { value: "G9001-2511", source: "läst" } }),
       read({ individual: { value: "G9001-2512", source: "härlett" } }),
+      // Read as a rabbit with a digital certificate: no certificate number was compared.
+      read({ individual: { value: "G9001-2512", source: "läst" } }),
       read({}, [{ ok: true, text: "Intygsnumret är ledigt." }]),
       read(own, [
         { ok: true, text: "Föräldrarna på intyget stämmer med registret." },

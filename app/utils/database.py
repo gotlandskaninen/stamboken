@@ -4984,12 +4984,9 @@ def migrate_55_to_56():
             "ALTER TABLE inbox_document ADD COLUMN IF NOT EXISTS verified_by_id INTEGER "
             'REFERENCES "hbuser" ("user_id") ON DELETE SET NULL'
         )
+        # NULL for a certificate saved before: the number it was saved as is not recorded, and its rabbit's may
+        # have changed since, so such a copy is never marked checked.
         DATABASE.execute_sql("ALTER TABLE inbox_document ADD COLUMN IF NOT EXISTS saved_certificate TEXT")
-        # A certificate saved before: the number its rabbit has, which the save gave it or found on it.
-        DATABASE.execute_sql(
-            "UPDATE inbox_document d SET saved_certificate = i.certificate FROM individual i "
-            "WHERE d.individual_id = i.individual_id AND d.doc_type = 'intyg' AND d.saved_certificate IS NULL"
-        )
         _create_field_indexes(InboxDocument, "verified_by")
         SchemaHistory.insert(  # pylint: disable=E1120
             version=56, comment="inbox_document: copy checked against the registry", applied=datetime.now()
