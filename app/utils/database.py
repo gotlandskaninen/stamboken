@@ -583,6 +583,31 @@ def account_parts(text):
     return re.sub(r"\D", "", text), letters, len(re.sub(r"\D", "", head)) if dash else None
 
 
+GIRO_MARKERS = {
+    "bg": "bankgiro",
+    "bankgiro": "bankgiro",
+    "pg": "plusgiro",
+    "plusgiro": "plusgiro",
+    "postgiro": "plusgiro",
+}
+
+
+def same_destination(stored, stored_type, new, new_type=None):
+    """
+    Whether a writer's account `new` (of `new_type`, when it says) is the stored one written otherwise: the same
+    digits, at most one kind named (the stored type, the new type, BG or PG in either text) and the dash at the same
+    place when both texts have one. A text without a dash or a kind may be either.
+
+    >>> same_destination("8327-4471 5512", None, "8327-44715512", "bankkonto")
+    True
+    >>> same_destination("BG 123-4566", None, "123456-6", "plusgiro")
+    False
+    """
+    (digits, letters, dash), (new_digits, new_letters, new_dash) = account_parts(stored), account_parts(new)
+    kinds = {stored_type, new_type, GIRO_MARKERS.get(letters), GIRO_MARKERS.get(new_letters)} - {None}
+    return digits == new_digits and len(kinds) <= 1 and (dash == new_dash or None in (dash, new_dash))
+
+
 def remove_fields_by_privacy(data, access_level):
     """
     Removes fields according to a given access level (private, authenticated

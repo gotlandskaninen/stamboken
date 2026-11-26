@@ -370,10 +370,12 @@ class TestLegacyWriters(SupportAccountTest):
 
     def test_new_account_goes_to_the_membership_and_is_logged_by_name(self):
         self.assertEqual(self.save(self.main, bank_account_number="1234-567 890"), {"status": "updated"})
-        self.assertEqual(self.stored(), (None, "1234-567 890", "Banken"))  # the legacy form has no type
+        # the legacy form has no type, and the old bank goes with the old account
+        self.assertEqual(self.stored(), (None, "1234-567 890", None))
         herd = self.herd()
         self.assertEqual((herd.bank_account_number, herd.bank_name), (None, None))
-        payload = {"fields": ["bank_account_number", "bank_account_type"], "source": "herd", "herd_id": herd.id}
+        fields = ["bank_account_type", "bank_account_number", "bank_name"]
+        payload = {"fields": fields, "source": "herd", "herd_id": herd.id}
         self.assertEqual(self.audits(), [("kontakt_andrad", payload)])
         # the other herd of the membership reads the same account
         self.assertEqual(self.herd(1).filtered_dict(db.User.get_by_id(self.admin.id))["bank_account_number"], "••90")
@@ -385,6 +387,15 @@ class TestLegacyWriters(SupportAccountTest):
                          {"status": "updated"})  # fmt: skip
         self.assertEqual(self.stored(), ("bankkonto", ACCOUNT, "Banken"))
         self.assertEqual(self.audits(), [])
+
+    def test_another_destination_with_the_same_digits_replaces_the_whole_account(self):
+        db.Membership.update(bank_account_type="bankgiro", bank_account_number="BG 123-4566").where(
+            db.Membership.id == self.ms.id
+        ).execute()
+        self.assertEqual(self.save(self.main, bank_account_number="PG 123456-6"), {"status": "updated"})
+        self.assertEqual(self.stored(), (None, "PG 123456-6", None))  # the bank went with the old account
+        self.assertEqual(self.save(self.main, bank_account_number="pg 1234566", bank_name="Nya"), {"status": "updated"})
+        self.assertEqual(self.stored(), (None, "PG 123456-6", "Nya"))  # the same account written otherwise: the bank
 
     def test_no_one_blanks_it_on_the_herd_page(self):
         """Everyone reads the mask there, so a blank is never what was shown: it could be a stale form's."""

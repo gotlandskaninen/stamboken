@@ -267,6 +267,17 @@ class KontaktTest(PaperTest):
                 self.assertEqual(receipt["matrikel"], ["konto"])
                 self.assertEqual(self.account()[:2], (typ, number))  # the number stays as it was written
 
+    def test_a_ticked_box_for_another_destination_replaces_the_whole_account(self):
+        """Same digits, but BG and a plusgiro's dash: another destination, so type, number and bank go together."""
+        db.Membership.update(bank_account_type=None, bank_account_number="BG 123-4566", bank_name="Gamla").where(
+            db.Membership.id == self.member.membership_id
+        ).execute()
+        item = self.form(self.manager)
+        self.login("man")
+        konto = {"typ": "plusgiro", "konto": "123456-6"}
+        self.assertEqual(self.ok(item, self.paper(item, matrikel(konto=konto)))["matrikel"], ["konto"])
+        self.assertEqual(self.account(), ("plusgiro", "123456-6", None))
+
     def test_same_digits_as_another_type_is_a_new_account(self):
         """A stored type keeps a bankgiro and a plusgiro of the same digits apart; a stored NULL type does not."""
         db.Membership.update(bank_account_type="plusgiro", bank_account_number="1234567-8").where(
