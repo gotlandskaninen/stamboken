@@ -246,9 +246,11 @@ Subject: Vi har fått dina bilder
 """
 
 
-def report(message_id, part="message/rfc822", action="failed"):
+def report(message_id, part="message/rfc822", action="failed", status="5.1.1"):
+    """A delivery report on `message_id`; `action` or `status` None leaves that field out."""
     body = "Hej!\n" if part == "message/rfc822" else ""
-    text = REPORT.replace("Action: failed", f"Action: {action}")
+    text = REPORT.replace("Action: failed\n", f"Action: {action}\n" if action else "")
+    text = text.replace("Status: 5.1.1\n", f"Status: {status}\n" if status else "")
     return text.format(part=part, message_id=message_id, body=body).replace("\n", "\r\n").encode()
 
 
@@ -278,6 +280,20 @@ class TestSorting(GmailTest):
         self.assertEqual(self.row(row_id).status, "sent")
         self.assertEqual(self.items(), [])
         self.assertEqual(db.GmailProcessed.get_by_id(gmail_id).kind, "ignored")
+
+    def test_a_report_without_an_action_bounces_only_on_a_permanent_status(self):  # #273: a bounce deletes a buyer
+        for status, kind, state in (
+            ("4.2.0", "ignored", "sent"),
+            ("5.1.1", "bounce", "bounced"),
+            (None, "item", "sent"),
+        ):
+            with self.subTest(status=status):
+                row_id = self.queue()
+                db.MailMessage.update(status="sent").where(db.MailMessage.id == row_id).execute()
+                gmail_id = self.fake.deliver(report(mail.message_id(row_id), action=None, status=status))
+                self.read()
+                self.assertEqual(self.row(row_id).status, state)
+                self.assertEqual(db.GmailProcessed.get_by_id(gmail_id).kind, kind)
 
     def test_a_bounce_of_another_environments_mail_touches_nothing(self):
         row_id = self.queue()

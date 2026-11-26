@@ -491,6 +491,8 @@ def record_herd_tracking(
     reject_contact_details(notes)
     if buyer_removed and (buyer is not None or holder_contact is not None):
         raise HerdTrackingConflict(BUYER_REMOVED)
+    if buyer == NOT_RECORDED and holder_contact is not None:  # såld utanför genbanken keeps no buyer (#273)
+        raise HerdTrackingInvalid("En försäljning utan köpare kan inte behålla en sparad köpare.")
     if (buyer is not None or holder_contact is not None or buyer_removed) and (
         kind != "TRANSFER" or target.herd not in OUTSIDE_GENEBANK_HERDS
     ):

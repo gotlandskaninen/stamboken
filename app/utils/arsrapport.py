@@ -2973,7 +2973,8 @@ def apply_diff(
         if c.kind in ROW_KINDS:
             op = uuid.uuid4()
             keep_until = keep_buyer_until
-            if c.kind == "transfer" and transfer and transfer.buyer and c.value == (transfer.herd,):
+            kept_buyer = transfer and transfer.buyer and transfer.buyer != NOT_RECORDED  # såld utanför: none (#273)
+            if c.kind == "transfer" and kept_buyer and c.value == (transfer.herd,):
                 contact = HerdTracking.get_by_id(c.ref).holder_contact
                 if contact:
                     # The sale writer compares the typed fields under lock and reuses an unchanged recipient.

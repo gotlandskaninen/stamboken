@@ -82,6 +82,32 @@ class TestReportReview(ArsrapportTest):
         self.assertNotEqual(new.id, old.id)
         self.assertEqual((new.herd_id, new.holder_contact_id, new.buyer_removed), (self.gx1.id, None, False))
 
+    def test_changing_a_sent_sale_to_not_recorded_drops_its_buyer(self):  # Ändra, not only Dra tillbaka
+        self.login("owner")
+        self.ok(self.submit(self.sale_body(NOTICE)))
+        (old,) = rows(self.rabbit, "TRANSFER")
+        contact_id = old.holder_contact_id
+        self.ok(self.submit(self.sale_body(NOT_RECORDED, revision=1)))
+        (new,) = rows(self.rabbit, "TRANSFER")
+        self.assertEqual((new.herd_id, new.holder_contact_id), (self.gx1.id, None))
+        self.assertIsNone(db.BuyerContact.get_or_none(db.BuyerContact.id == contact_id))
+
+    def test_the_month_runs_from_the_proposal_through_the_address_check(self):
+        known = self.rabbits(self.herd, 1)[0]
+        record_herd_tracking(known, self.gx1, DAY, "TRANSFER", self.manager, buyer={**NOTICE, "name": "Annan Köpare"})
+        proposal = self.propose(NOTICE)
+        self.ok(self.api("POST", f"/forslag/{proposal.id}/godkann"))
+        (sale,) = rows(self.rabbit, "TRANSFER")
+        contact = sale.holder_contact
+        self.assertTrue(contact.email_review_pending)  # the address waits for the manager's check
+        contact.created_at = proposal.created_at + timedelta(days=29)  # approved late: the contact is young
+        contact.save(only=[db.BuyerContact.created_at])
+
+        buyer_contact.purge_uninformed(proposal.created_at + timedelta(days=31))
+
+        self.assertIsNone(db.BuyerContact.get_or_none(db.BuyerContact.id == contact.id))
+        self.assertTrue(db.HerdTracking.get_by_id(sale.id).buyer_removed)
+
     @mock.patch.object(settings.mail, "link_secret", "synthetic-review-test")
     def test_erase_link_before_purge_keeps_the_other_sale_and_matching_proposal(self):
         proposal = self.propose(NOTICE)

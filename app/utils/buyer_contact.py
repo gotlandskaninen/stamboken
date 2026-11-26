@@ -446,8 +446,16 @@ def purge_uninformed(now):
         sale_proposal.clear_buyer(proposal, "ej_informerad", still=waiting, to=dict(NOT_RECORDED)) for proposal in found
     )
 
+    # the month runs from when the association got the address: a proposal's submission, else the sale's entry
+    proposed = (
+        SaleProposal.select(fn.MIN(SaleProposal.created_at))
+        .join(HerdTracking, on=(HerdTracking.id == SaleProposal.herd_tracking_id))
+        .where(HerdTracking.holder_contact == BuyerContact.id)
+    )
+
     def unchecked():
-        return BuyerContact.email_notice_only & BuyerContact.email_review_pending & (BuyerContact.created_at < late)
+        got = fn.COALESCE(proposed, BuyerContact.created_at)
+        return BuyerContact.email_notice_only & BuyerContact.email_review_pending & (got < late)
 
     with DB_PROXY.atomic():
         deleted, paths = _delete_under_locks(
