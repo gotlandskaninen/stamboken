@@ -37,5 +37,11 @@ export const BAND_REASON_TEXT: Record<
   small_reference: "För få djur i avelsstammen för band",
 };
 
+export const decimal = (x: number, digits = 0) =>
+  x.toLocaleString("sv-SE", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+
 export const percent = (x: number, digits = 1) =>
-  `${(x * 100).toLocaleString("sv-SE", { minimumFractionDigits: digits, maximumFractionDigits: digits })}\u00a0%`;
+  `${decimal(x * 100, digits)}\u00a0%`;

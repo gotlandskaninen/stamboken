@@ -31,12 +31,12 @@ export default defineConfig({
     },
     {
       name: "owner-tests",
-      // demo-banner/promoted-toggle need the local-production stack (api-test +
+      // demo-banner/promoted-toggle/fargatlas.demo need the local-production stack (api-test +
       // demo DB) — run via playwright.demo.config.ts, never in this CI config.
       // e2e/admin/* likewise runs only via playwright.admin.config.ts (repeats
       // the global testIgnore because a project-level testIgnore overrides it).
       testIgnore: [
-        /[\\/](?:(?:admin|manager|mutation|public)-[^\\/]*|demo-banner|promoted-toggle)\.spec\.ts$/,
+        /[\\/](?:(?:admin|manager|mutation|public)-[^\\/]*|demo-banner|promoted-toggle|fargatlas\.demo)\.spec\.ts$/,
         /arsrapport-lank\.spec\.ts$/,
         /e2e\/admin\//,
         /e2e\/manual\/[^\\/]*screenshots\.spec\.ts$/,

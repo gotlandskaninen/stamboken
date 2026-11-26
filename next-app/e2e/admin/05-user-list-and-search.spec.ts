@@ -1,9 +1,16 @@
 // Spec §7.3 user-list-and-search: list users, filter by role=admin, assert
 // the correct set. Extended with §3.1 search and the edit-profile flow
-// (fullname; §2.5 post-mutation redirect to the list).
+// (fullname; the save stays on the account and the back link keeps the
+// list's filter, #249).
 import { test, expect } from "@playwright/test";
 import { loginAs, ADMIN, VICTIM_PROFILE } from "./helpers/auth";
-import { FULLNAME_FIELD, SAVE_BUTTON, SEARCH_FIELD } from "./helpers/copy";
+import {
+  BACK_TO_USERS,
+  FULLNAME_FIELD,
+  SAVED_NOTICE,
+  SAVE_BUTTON,
+  SEARCH_FIELD,
+} from "./helpers/copy";
 
 test.describe("user list, search, filter, edit profile", () => {
   test.beforeEach(async ({ page, context }) => {
@@ -47,40 +54,45 @@ test.describe("user list, search, filter, edit profile", () => {
     ).toHaveCount(0);
   });
 
-  test("edit profile saves and redirects to the list (§2.5)", async ({
+  test("edit profile saves, stays on the account, and the back link keeps the filter (#249)", async ({
     page,
   }) => {
-    await page.goto("/stamboken/admin/anvandare");
-    await page
-      .getByRole("textbox", { name: SEARCH_FIELD })
-      .fill(VICTIM_PROFILE.username);
+    const listUrl = `/stamboken/admin/anvandare?search=${VICTIM_PROFILE.username}&active=true`;
+    await page.goto(listUrl);
     await page
       .getByRole("link", { name: VICTIM_PROFILE.username, exact: true })
       .click();
-    await expect(page).toHaveURL(/\/stamboken\/admin\/anvandare\/\d+/);
+    await expect(page).toHaveURL(
+      /\/stamboken\/admin\/anvandare\/\d+\?search=test-mk-manager&active=true$/,
+    );
+    const detailUrl = page.url();
 
-    await page
-      .getByRole("textbox", { name: FULLNAME_FIELD })
-      .fill("Test MK Manager (E2E)");
+    const fullname = page.getByRole("textbox", { name: FULLNAME_FIELD });
+    await fullname.fill("Test MK Manager (E2E)");
     await page.getByRole("button", { name: SAVE_BUTTON }).click();
 
-    // Post-mutation navigation: redirect to the parent list, never stay.
-    await page.waitForURL(/\/stamboken\/admin\/anvandare(\?.*)?$/);
-    await page
-      .getByRole("textbox", { name: SEARCH_FIELD })
-      .fill(VICTIM_PROFILE.username);
+    // The save stays on the account page and says so; the heading line
+    // re-renders with the new name.
+    await expect(page.getByText(SAVED_NOTICE)).toBeVisible();
+    expect(page.url()).toBe(detailUrl);
+    await expect(page.getByText("Test MK Manager (E2E)")).toBeVisible();
+
+    // Back to the list: the search and the filter are still there.
+    await page.getByRole("link", { name: BACK_TO_USERS }).click();
+    await page.waitForURL(
+      /\/stamboken\/admin\/anvandare\?search=test-mk-manager&active=true$/,
+    );
+    await expect(page.getByRole("textbox", { name: SEARCH_FIELD })).toHaveValue(
+      VICTIM_PROFILE.username,
+    );
     await expect(
       page.getByRole("gridcell", { name: "Test MK Manager (E2E)" }),
     ).toBeVisible();
 
     // Restore.
-    await page
-      .getByRole("link", { name: VICTIM_PROFILE.username, exact: true })
-      .click();
-    await page
-      .getByRole("textbox", { name: FULLNAME_FIELD })
-      .fill("Test MK Manager");
+    await page.goto(detailUrl);
+    await fullname.fill("Test MK Manager");
     await page.getByRole("button", { name: SAVE_BUTTON }).click();
-    await page.waitForURL(/\/stamboken\/admin\/anvandare(\?.*)?$/);
+    await expect(page.getByText(SAVED_NOTICE)).toBeVisible();
   });
 });

@@ -4,6 +4,7 @@ Flask CLI for member registry operations.
 Usage:
     flask members import <csv_path> [--dry-run | --counts-only]
     flask members billing-proposals --out <file> | --apply <file> --actor-user-id <id>
+    flask members workspace-proposals <csv> --out <file> | --apply <file> --actor-user-id <id>
     flask members link-by-herd [--apply --actor-user-id <id> --plan <value>]
     flask members link-same-number [--apply --actor-user-id <id> --plan <value>]
     flask members link-household --workspace <csv> [--apply --actor-user-id <id> --plan <value>]
@@ -74,6 +75,7 @@ import logging
 import re
 import unicodedata
 from collections import Counter
+from dataclasses import dataclass, field
 
 import click
 from flask.cli import AppGroup
@@ -88,6 +90,7 @@ from utils.matrikel import (
     ConfirmRequired,
     LinkError,
     add_person,
+    is_anonymized,
     legacy_owner_index,
     link_access_delta,
     link_member_user,
@@ -980,7 +983,7 @@ def _billing_source(ms: Membership) -> dict:
     }
 
 
-def _billing_proof(source: dict, exported: dict) -> str:
+def _proposal_proof(source: dict, exported: dict) -> str:
     return hashlib.sha256(json.dumps([source, exported], sort_keys=True).encode()).hexdigest()
 
 
@@ -1016,7 +1019,7 @@ def _export_billing_proposals(path: str) -> None:
                 **source,
                 **{f"proposed_{k}": v for k, v in exported.items()},
                 **{f"exporterat_{k}": v for k, v in exported.items()},
-                "underlag": _billing_proof(source, {k: proposal_cell(v) for k, v in exported.items()}),
+                "underlag": _proposal_proof(source, {k: proposal_cell(v) for k, v in exported.items()}),
             }
         )
 
@@ -1044,7 +1047,7 @@ def _apply_billing_row(row: dict, actor: User) -> str:
         source = _billing_source(ms)
         exported = {key: row[f"exporterat_{key}"] for key in BILLING_FIELDS}
         if (
-            _billing_proof(source, exported) != row["underlag"]
+            _proposal_proof(source, exported) != row["underlag"]
             or any(row[k] != proposal_cell(v) for k, v in source.items())
             or not _memberships_with_current_persons().where(Member.membership == ms).exists()
         ):
@@ -1518,6 +1521,376 @@ def link_same_number_cmd(apply_links: bool, actor_user_id: int | None, plan_valu
     click.echo(f"Kopplade: {len(candidates) - len(skipped)}, Överhoppade: {len(skipped)}")
     for line in skipped:
         click.echo(line)
+
+
+_WORKSPACE_COLUMNS = {
+    "first name": "ws_fornamn",
+    "last name": "ws_efternamn",
+    "email address": "workspace_email",
+    "status": "ws_status",
+    "last sign in": "ws_senast_inloggad",
+    "org unit path": "ws_org_enhet",
+    "recovery email": "recovery_email",
+}
+WORKSPACE_PROPOSAL_HEADER = (
+    "workspace_email",
+    "ws_fornamn",
+    "ws_efternamn",
+    "ws_status",
+    "ws_senast_inloggad",
+    "ws_org_enhet",
+    "utfall",
+    "skal",
+    "kandidater",
+    "proposed_member_number",
+    "proposed_person_id",
+    "person_namn",
+    "person_workspace_email",
+    "beslut",
+    "exporterat_member_number",
+    "exporterat_person_id",
+    "underlag",
+)
+_WS_STALE = "underlaget har ändrats"
+_WS_ADDRESS_ELSEWHERE = "adressen är satt på en annan person"
+
+
+def _read_workspace_csv(path):
+    try:
+        with open(path, encoding="utf-8-sig", newline="") as source:
+            reader = csv.reader(source, strict=True)
+            header = [re.sub(r"\s*\[[^\[\]]*\]$", "", h.strip()).strip().casefold() for h in next(reader, [])]
+            for required in ("first name", "last name", "email address"):
+                if required not in header:
+                    raise click.ClickException(f"Workspace-filen saknar kolumnen {required}")
+            if any(header.count(name) > 1 for name in _WORKSPACE_COLUMNS):
+                raise click.ClickException("Tvetydig rubrikrad i Workspace-filen")
+            columns = {key: header.index(name) for name, key in _WORKSPACE_COLUMNS.items() if name in header}
+            rows = []
+            for cells in reader:
+                if not any(cell.strip() for cell in cells):
+                    continue  # blank line, as a spreadsheet export may leave at the end
+                if len(cells) != len(header):
+                    raise click.ClickException("Workspace-filen kunde inte läsas")
+                rows.append({key: cells[index] for key, index in columns.items()})
+            return rows
+    except (OSError, csv.Error, UnicodeError):
+        raise click.ClickException("Workspace-filen kunde inte läsas") from None
+
+
+def _workspace_person_reasons(person, name, email, recovery):
+    reasons = []
+    if email and (person.workspace_email or "").lower() == email:
+        reasons.append("redan satt")
+    if name and name == _norm_name(f"{person.first_name} {person.last_name}"):
+        reasons.append("namn lika")
+    contact = _norm_email(person.email)
+    if recovery and recovery == contact:
+        reasons.append("återställningsadressen är matrikelns e-post")
+    local = email.partition("@")[0]
+    if email and email == contact:
+        reasons.append("e-post lika")
+    elif len(local) >= 5 and local not in _GENERIC_LOCAL_PARTS and local == contact.partition("@")[0]:
+        reasons.append("lokaldel lika")
+    return reasons
+
+
+@dataclass
+class _WorkspaceMatch:
+    ws: dict
+    address_holder_id: int | None = None
+    people: dict = field(default_factory=dict)  # person -> signals
+    historical: dict = field(default_factory=dict)
+    problems: list = field(default_factory=list)
+
+
+def _workspace_people():
+    people = list(
+        Member.select(
+            Member.id,
+            Member.first_name,
+            Member.last_name,
+            Member.email,
+            Member.workspace_email,
+            Member.role,
+            Member.end_date,
+            Member.membership,
+            Membership.id,
+            Membership.member_number,
+            Membership.membership_status,
+        )
+        .join(Membership)
+        .order_by(Member.id)
+    )
+    mains = {p.membership_id for p in people if p.role == "huvudmedlem" and p.end_date is None and not is_anonymized(p)}
+    return people, mains
+
+
+def _workspace_match(ws, people, mains):
+    email = _norm_email(ws["workspace_email"])
+    recovery = _norm_email(ws.get("recovery_email"))
+    name = _norm_name(f"{ws['ws_fornamn']} {ws['ws_efternamn']}")
+    match = _WorkspaceMatch(ws)
+    if not email.endswith(WORKSPACE_DOMAIN) or "\0" in email:
+        match.problems.append("inte föreningens domän")
+    elif len(email) > 255:
+        match.problems.append("ogiltig Workspace-adress")
+    for p in people:
+        if email and (p.workspace_email or "").lower() == email:
+            match.address_holder_id = p.id
+        if is_anonymized(p):
+            continue
+        reasons = _workspace_person_reasons(p, name, email, recovery)
+        if reasons:
+            if p.end_date is None and p.membership_id in mains:
+                match.people[p] = reasons
+            else:
+                match.historical.setdefault(p.membership.member_number, []).extend(reasons)
+    if match.people:
+        if any(p.workspace_email and p.workspace_email.lower() != email for p in match.people):
+            match.problems.append("personen har redan en annan workspace_email")
+        if match.address_holder_id and all(p.id != match.address_holder_id for p in match.people):
+            match.problems.append(_WS_ADDRESS_ELSEWHERE)
+    return match
+
+
+def _workspace_proof(row, person, membership, address_holder_id):
+    # Hash private source state and the exact spreadsheet-escaped cells the reviewer sees.
+    mutable = {"beslut", "proposed_member_number", "proposed_person_id", "underlag"}
+    snapshot = {key: row.get(key, "") for key in WORKSPACE_PROPOSAL_HEADER if key not in mutable}
+    source = {
+        "person": None
+        if person is None
+        else [
+            person.id,
+            person.membership_id,
+            person.membership.member_number,
+            person.first_name,
+            person.last_name,
+            person.role,
+            person.end_date.isoformat() if person.end_date else None,
+            person.email,
+            person.workspace_email,
+            person.membership.membership_status,
+        ],
+        # This also makes a redirected person stale on replay, without needing a separate run log.
+        "adressinnehavare": address_holder_id,
+        # A reviewed membership number can change hands even on a row without a proposed person.
+        "medlemskap": membership.id if membership and membership.member_number else None,
+    }
+    return _proposal_proof(source, snapshot)
+
+
+def _workspace_proposal(match, address_counts, person_counts):
+    ws = match.ws
+    email = _norm_email(ws["workspace_email"])
+    people = match.people
+    person = next(iter(people)) if len(people) == 1 else None
+    memberships = {p.membership for p in people}
+    ms = next(iter(memberships)) if len(memberships) == 1 else None
+    problems = list(match.problems)
+    if address_counts[ws["workspace_email"].strip().lower()] > 1:
+        problems.append("adressen förekommer flera gånger i CSV-filen")
+    if any(person_counts[p] > 1 for p in people):
+        problems.append("flera Workspace-rader pekar på samma person")
+    if len(people) > 1:
+        problems.append("flera personer matchar")
+    for membership in memberships:
+        if membership.membership_status != Status.ACTIVE:
+            problems.append(f"medlemskapet har status {membership.membership_status}")
+    already_set = person and email and (person.workspace_email or "").lower() == email
+    if problems:
+        outcome = "granska"
+    elif person:
+        outcome = "redan klar" if already_set else "förslag"
+    else:
+        outcome = "ingen träff"
+
+    reasons, candidates = [], []
+    for p, signals in people.items():
+        reasons.extend(signals)
+        candidates.append(
+            f"person {p.id} i nr {p.membership.member_number or '–'} {_q(f'{p.first_name} {p.last_name}')} "
+            f"({', '.join(signals)})"
+        )
+    if not memberships:
+        for number in sorted(match.historical, key=lambda nr: nr or 0):
+            reasons.extend(match.historical[number])
+            reasons.append(f"bara i avslutat medlemskap nr {number or '–'}")
+
+    row = {
+        **{k: v for k, v in ws.items() if k != "recovery_email"},
+        "utfall": outcome,
+        "skal": " | ".join(dict.fromkeys(reasons + problems)),
+        "kandidater": " | ".join(candidates) if outcome == "granska" else "",
+        "proposed_member_number": ms.member_number if ms else None,
+        "proposed_person_id": person.id if person else None,
+        "person_namn": f"{person.first_name} {person.last_name}".strip() if person else "",
+        "person_workspace_email": person.workspace_email if person else "",
+    }
+    row["exporterat_member_number"] = row["proposed_member_number"]
+    row["exporterat_person_id"] = row["proposed_person_id"]
+    row["underlag"] = _workspace_proof(
+        {k: proposal_cell(v) for k, v in row.items()}, person, ms, match.address_holder_id
+    )
+    return row
+
+
+def _export_workspace_proposals(csv_path, out):
+    accounts = _read_workspace_csv(csv_path)
+    people, mains = _workspace_people()
+    matches = [_workspace_match(ws, people, mains) for ws in accounts]
+    address_counts = Counter(ws["workspace_email"].strip().lower() for ws in accounts)
+    person_counts = Counter(p for match in matches for p in match.people)
+    rows = [_workspace_proposal(match, address_counts, person_counts) for match in matches]
+    try:
+        write_proposals(out, WORKSPACE_PROPOSAL_HEADER, rows)
+    except FileExistsError:
+        raise click.ClickException("Förslagsfilen finns redan") from None
+    except OSError:
+        raise click.ClickException("Förslagsfilen kunde inte skapas") from None
+    counts = Counter(row["utfall"] for row in rows)
+    click.echo(
+        ", ".join(f"{outcome}: {counts[outcome]}" for outcome in ("förslag", "redan klar", "granska", "ingen träff"))
+    )
+
+
+def _workspace_id(value):
+    # These columns address PostgreSQL integer keys. Never send free text from the sheet to the DB.
+    if value.isascii() and value.isdecimal() and len(value) <= 10 and 0 < int(value) <= 2**31 - 1:
+        return int(value)
+    return None
+
+
+def _lock_workspace_targets(original_id, target_id, numbers):
+    ids = {pid for pid in (original_id, target_id) if pid is not None}
+    # An edit can move the target to a different household. Lock BOTH roots, in id order,
+    # before the person rows, including for the original source proof.
+    roots = Membership.id.in_(Member.select(Member.membership).where(Member.id.in_(ids)))
+    roots |= Membership.member_number.in_([nr for nr in numbers if nr is not None])
+    memberships = {ms.id: ms for ms in Membership.select().where(roots).order_by(Membership.id).for_update()}
+    people = {p.id: p for p in Member.select().where(Member.id.in_(ids)).order_by(Member.id).for_update()}
+    return memberships, people
+
+
+def _write_workspace_row(row, actor, address_counts):
+    approved = row["beslut"] == "godkänn"
+    email = _norm_email(row["workspace_email"].removeprefix(" "))
+    if address_counts[email] > 1:
+        return "adressen förekommer flera gånger i filen"
+    original_id = _workspace_id(row["exporterat_person_id"])
+    target_id = _workspace_id(row["proposed_person_id"])
+    original_number = _workspace_id(row["exporterat_member_number"])
+    number = _workspace_id(row["proposed_member_number"])
+    memberships, people = _lock_workspace_targets(original_id, target_id, (original_number, number))
+    numbered = {ms.member_number: ms for ms in memberships.values() if ms.member_number}
+    address_holder_id = (
+        Member.select(Member.id).where(fn.LOWER(Member.workspace_email) == email).scalar()
+        if email and "\0" not in email
+        else None
+    )
+    proof = _workspace_proof(row, people.get(original_id), numbered.get(original_number), address_holder_id)
+    if proof != row["underlag"]:
+        return _WS_STALE
+    if approved:
+        if any(row[f"proposed_{key}"] != row[f"exporterat_{key}"] for key in ("member_number", "person_id")):
+            return "ändrad rad utan beslutet ändra"
+        if row["utfall"] not in ("förslag", "redan klar"):
+            return "kräver beslutet ändra"
+
+    if not email.endswith(WORKSPACE_DOMAIN) or "\0" in email or len(email) > 255:
+        return "ogiltig Workspace-adress"
+    person = people.get(target_id)
+    membership = memberships.get(person.membership_id) if person else None
+    if (
+        not membership
+        or (row["proposed_member_number"] and number is None)
+        or membership.member_number != number
+        or membership.membership_status != Status.ACTIVE
+        or not any(not is_anonymized(main) for main in _active_main_members().where(Member.membership == membership))
+        or person.end_date is not None
+        or is_anonymized(person)
+    ):
+        return _WS_STALE if approved else "ogiltigt mål"
+    if person.workspace_email and person.workspace_email.lower() != email:
+        return _WS_STALE if approved else "personen har redan en annan workspace_email"
+    if address_holder_id is not None and address_holder_id != target_id:
+        return _WS_STALE if approved else _WS_ADDRESS_ELSEWHERE
+    if approved:
+        # The proof does not cover a namesake added since the export: match again and require the same single person.
+        all_people, mains = _workspace_people()
+        ws = {key: row[key].removeprefix(" ") for key in ("workspace_email", "ws_fornamn", "ws_efternamn")}
+        found = {p.id for p in _workspace_match(ws, all_people, mains).people}
+        if found - {target_id}:
+            return _WS_STALE
+
+    before = person.workspace_email
+    if (before or "").lower() == email:
+        return "redan klar"
+    person.workspace_email = email
+    person.save(only=[Member.workspace_email, Member.updated_at])
+    write_matrikel_audit(
+        actor,
+        "person_updated",
+        membership,
+        {"person_id": person.id, "before": {"workspace_email": before}, "after": {"workspace_email": email}},
+    )
+    return "Skrivna"
+
+
+def _apply_workspace_row(row, actor, address_counts):
+    if row["beslut"] == "hoppa över":
+        return "hoppa över (beslut)"
+    try:
+        with DB_PROXY.atomic():
+            return _write_workspace_row(row, actor, address_counts)
+    except IntegrityError as err:
+        diag = getattr(getattr(err, "orig", None), "diag", None)
+        if getattr(diag, "constraint_name", None) == "idx_member_workspace_email_unique":
+            return _WS_ADDRESS_ELSEWHERE
+        raise
+
+
+@members_cli.command("workspace-proposals")
+@click.argument("csv_path", required=False, metavar="[CSV]")
+@click.option("--out", metavar="FIL", help="Skapa en ny förslagsfil från Google-exporten.")
+@click.option("--apply", "apply_file", metavar="FIL", help="Verkställ besluten i den granskade förslagsfilen.")
+@click.option("--actor-user-id", metavar="ID", help="Aktiv admin eller matrikel_admin (krävs med --apply).")
+def workspace_proposals_cmd(csv_path, out, apply_file, actor_user_id):
+    """Föreslå Workspace-adresser för personer i matrikeln eller verkställ en granskad fil.
+
+    Bara Member.workspace_email skrivs. Konton och familjemedlemmar hanteras för
+    hand i matrikeln. Lämna beslut tomt för att hoppa över raden. Välj ändra
+    för att ange ett annat medlemsnummer och person-id.
+    """
+    if (out is None) == (apply_file is None) or (out is None) != (csv_path is None):
+        raise click.UsageError("Ange CSV --out FIL eller --apply FIL --actor-user-id ID")
+    counts = Counter({"Skrivna": 0})
+    # Even DEBUG SQL logs from peewee contain bound addresses and audit payloads. Other loggers stay on.
+    peewee_log = logging.getLogger("peewee")
+    previous_disabled = peewee_log.disabled
+    peewee_log.disabled = True
+    try:
+        if out is not None:
+            _export_workspace_proposals(csv_path, out)
+            return
+        actor = _require_matrikel_actor(actor_user_id)
+        try:
+            rows = read_decisions(apply_file, WORKSPACE_PROPOSAL_HEADER, raw_cells=True)
+        except (OSError, UnicodeError, csv.Error):
+            raise click.ClickException("Förslagsfilen kunde inte läsas") from None
+        except ValueError as err:
+            raise click.ClickException(str(err)) from None
+        address_counts = Counter(_norm_email(row["workspace_email"].removeprefix(" ")) for row in rows)
+        for row in rows:
+            counts[_apply_workspace_row(row, actor, address_counts)] += 1
+    except DatabaseError:
+        if apply_file is not None:
+            click.echo(", ".join(f"{outcome}: {count}" for outcome, count in counts.items()), err=True)
+        raise click.ClickException("Databasfel vid hantering av Workspace-förslag") from None
+    finally:
+        peewee_log.disabled = previous_disabled
+    click.echo(", ".join(f"{outcome}: {count}" for outcome, count in counts.items()))
 
 
 _WORKSPACE_EMAIL = "Email Address [Required]"

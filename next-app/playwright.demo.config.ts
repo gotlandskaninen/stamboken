@@ -19,10 +19,10 @@ import { defineConfig } from "@playwright/test";
  */
 export default defineConfig({
   testDir: "./e2e",
-  testMatch: /(demo-banner|promoted-toggle)\.spec\.ts/,
+  testMatch: /(demo-banner|promoted-toggle|fargatlas\.demo)\.spec\.ts/,
   timeout: 60000,
   expect: { timeout: 15000 },
-  // Serial: both specs drive the same shared local-production stack and each
+  // Serial: the specs drive the same shared local-production stack and each
   // logs in as a different user in its own context; running them one at a time
   // keeps session/cookie state unambiguous.
   workers: 1,

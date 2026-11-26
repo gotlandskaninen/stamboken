@@ -16,6 +16,7 @@ import {
   Cake as CakeIcon,
   VerifiedUser as DigitalCertIcon,
   Description as PaperCertIcon,
+  TaskAlt as CheckedIcon,
 } from "@mui/icons-material";
 import { Individual } from "@/redux/api/apiSlice";
 
@@ -429,6 +430,24 @@ export function IndividualCard({
               />
             </Tooltip>
           ) : null}
+
+          {/* The paper certificate's photo is in Stamboken, checked against the registry by the queue's handler. */}
+          {individual.paper_certificate_checked && (
+            <Tooltip
+              title={`Pappersintyget finns i Stamboken och stämde med registret ${new Date(
+                individual.paper_certificate_checked,
+              ).toLocaleDateString("sv-SE", { timeZone: "Europe/Stockholm" })}`}
+              arrow
+            >
+              <Chip
+                size="small"
+                icon={<CheckedIcon />}
+                label="Intyget kontrollerat"
+                color="success"
+                variant="outlined"
+              />
+            </Tooltip>
+          )}
 
           {individual.castration_date && (
             <Tooltip title={`Kastrerad: ${individual.castration_date}`} arrow>

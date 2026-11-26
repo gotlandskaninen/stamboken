@@ -248,8 +248,9 @@ export function AuditLogClient({
   return (
     <>
       <p className={ds["ad-hint"]}>
-        Loggen visar alla ändringar i databasen — vad som ändrades, av vem och
-        när. Öppna en rad för att se varje fält före och efter ändringen.
+        Loggen visar ändringarna i Stamboken — vad som ändrades, av vem och när.
+        Matrikelns ändringar finns under Matrikeln. Öppna en rad för att se
+        varje fält före och efter ändringen.
       </p>
       <div className={`sb-card ${ds["ad-grid"]}`}>
         {/* Native GET — MUI:s TextField/TextField-select måste behålla sina
@@ -313,6 +314,7 @@ export function AuditLogClient({
             <MenuItem value="DELETE">Borttagen</MenuItem>
             <MenuItem value="SYSTEM">Systemhändelse</MenuItem>
             <MenuItem value="REDACT">Gallring</MenuItem>
+            <MenuItem value="READ">Uttag</MenuItem>
           </TextField>
           <button type="submit" className="sb-btn sb-btn-secondary sb-btn-sm">
             Filtrera

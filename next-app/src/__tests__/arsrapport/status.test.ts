@@ -2,10 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   callFrom,
   countByState,
+  currentRoundYear,
+  defaultRoundDates,
+  phoneNumbers,
+  regularRoundYear,
   filterRows,
   parseFilter,
   toCall,
   ROW_STATES,
+  type Round,
   type RowState,
   type StatusRow,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/lib";
@@ -192,5 +197,84 @@ describe("toCall and a failed invitation", () => {
         today,
       ),
     ).toBe(false);
+  });
+});
+
+describe("phoneNumbers", () => {
+  it("splits a field with two numbers so each can be dialled", () => {
+    expect(phoneNumbers("08 - 510 122 07 0709 - 55 72 08")).toEqual([
+      "08 - 510 122 07",
+      "0709 - 55 72 08",
+    ]);
+  });
+  it("keeps one number whole, with or without a dash", () => {
+    expect(phoneNumbers("0761 13 39 05")).toEqual(["0761 13 39 05"]);
+    expect(phoneNumbers("070-000 00 01")).toEqual(["070-000 00 01"]);
+    expect(phoneNumbers("0730601951")).toEqual(["0730601951"]);
+  });
+  it("keeps a mobile number whole after a first number", () => {
+    expect(phoneNumbers("08 - 510 122 07 070-123 04-56")).toEqual([
+      "08 - 510 122 07",
+      "070-123 04-56",
+    ]);
+  });
+  it("keeps a piece too short to be a number with the next one", () => {
+    for (const one of [
+      "+46 70-123 45 67",
+      "070 123 45-67",
+      "0498 12-34-56",
+      "Mobil 070-1234567",
+      "+46 70 123 45-67",
+      "+46 70 123 04-56",
+    ])
+      expect(phoneNumbers(one)).toEqual([one]);
+  });
+});
+
+describe("currentRoundYear", () => {
+  const round = (
+    year: number,
+    end_date: string | null,
+    start_date: string | null = `${year}-12-31`,
+  ): Round => ({
+    year,
+    start_date,
+    deadline: null,
+    end_date,
+    is_active: false,
+    genebanks: [],
+  });
+  it("is last year's round until it closes", () => {
+    expect(currentRoundYear([round(2026, "2027-03-30")], "2027-02-01")).toBe(
+      2026,
+    );
+  });
+  it("is this year's once last year's has closed, even before it exists", () => {
+    expect(currentRoundYear([round(2025, "2026-03-30")], "2026-11-25")).toBe(
+      2026,
+    );
+    expect(currentRoundYear([], "2026-11-25")).toBe(2026);
+  });
+  it("is an older round that is still open, whatever the year", () => {
+    expect(currentRoundYear([round(2025, "2027-01-24")], "2027-01-01")).toBe(
+      2025,
+    );
+  });
+  it("is not a round prepared for later, and the switch keeps the regular year", () => {
+    const later = [round(2027, "2028-03-30")];
+    expect(currentRoundYear(later, "2027-01-15")).toBe(2026);
+    expect(regularRoundYear(later, "2027-01-15")).toBe(2026);
+  });
+  it("is last year's until its default close when it does not exist yet", () => {
+    expect(currentRoundYear([round(2025, "2026-03-30")], "2027-01-15")).toBe(
+      2026,
+    );
+  });
+  it("gives the server's default dates for a new round", () => {
+    expect(defaultRoundDates(2026)).toEqual({
+      start_date: "2026-12-31",
+      deadline: "2027-01-31",
+      end_date: "2027-03-30",
+    });
   });
 });

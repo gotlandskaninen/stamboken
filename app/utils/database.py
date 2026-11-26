@@ -74,8 +74,10 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # the herd's contact from the member register, herd.contact_member and herd.contact_pending (50) +
 # the yearly report v2 (51) + organization name and number on membership (52) +
 # notice.individual and buyer_contact.erased_email_hash (53) +
-# acceptance of the account rules (54).
-CURRENT_SCHEMA_VERSION = 54
+# acceptance of the account rules (54) + each history year's realised Ne (55) +
+# a paper certificate's copy checked against the registry, inbox_document.saved_certificate and saved_number,
+# verified_at and verified_by (56).
+CURRENT_SCHEMA_VERSION = 56
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -2021,9 +2023,9 @@ class SchemaHistory(BaseModel):
 class GeneticMetricsHistory(BaseModel):
     """One row per closed report year, fully derived; replaced on reconcile.
 
-    Ne (effective population size) is NOT stored — it is computed on-the-fly
-    in get_genetics_trends() using a rolling ln(1-F̄) regression over the
-    stored mean_inbreeding values.
+    ``effective_population_size`` is the realised Ne over the year's members, the
+    estimator the dashboard card uses for today (genetics.calculate_realised_ne),
+    with its standard error ``ne_se`` and the animals behind it ``ne_n``.
     """
 
     id = AutoField(primary_key=True)
@@ -2039,6 +2041,9 @@ class GeneticMetricsHistory(BaseModel):
     mean_kinship = FloatField(null=True)
     founder_equivalents = FloatField(null=True)
     fge = FloatField(null=True)
+    effective_population_size = FloatField(null=True)
+    ne_se = FloatField(null=True)
+    ne_n = IntegerField(null=True)
     data_quality = CharField(max_length=10)  # "high", "medium", "low"
     created_at = DateTimeField(default=datetime.now)
 
@@ -2474,6 +2479,12 @@ class InboxDocument(BaseModel):
     # The members the photo shows, recorded when it is saved through the queue, so an erasure finds it.
     seller_member = ForeignKeyField(Member, null=True, on_delete="SET NULL", backref="+")
     buyer_member = ForeignKeyField(Member, null=True, on_delete="SET NULL", backref="+")
+    # The paper certificate number the document was saved as, and whether its handler found the certificate and the
+    # registry in agreement when the copy was made (the rabbit's badge, only while the rabbit keeps that number).
+    saved_certificate = TextField(null=True)
+    saved_number = TextField(null=True)
+    verified_at = TimestampTZField(null=True)
+    verified_by = ForeignKeyField(User, null=True, on_delete="SET NULL", backref="+")
 
     class Meta:
         table_name = "inbox_document"
@@ -4157,8 +4168,9 @@ def rotate_genetics_epoch() -> str:
     """Give the database a new genetics epoch and return it (``flask genetics rotate-epoch``).
 
     Run after the database was replaced (restore, demo sync): the copy brings back a
-    version counter that can repeat numbers already memoized for other pedigree data,
-    and the epoch is what keeps those memos from being served. The SQL
+    version counter that can repeat a number a worker's snapshot is keyed on, and the
+    epoch is what makes that snapshot rebuild. The memoized results need no epoch:
+    they are keyed on the snapshot's content. The SQL
     function is the one the dump restore (stamboken-drift) and sync-demo-db.sh call through psql.
     """
     with DATABASE.atomic():
@@ -4184,7 +4196,7 @@ def _create_genetics_version_guards():
         " changed_at timestamptz NOT NULL DEFAULT now())"
     )
     sql("INSERT INTO genetics_version (id, version) VALUES (1, 0) ON CONFLICT DO NOTHING")
-    # Part of the genetics memo key: a restored or copied database gets a new one.
+    # Part of the snapshot key: a restored or copied database gets a new one.
     sql("ALTER TABLE genetics_version ADD COLUMN IF NOT EXISTS epoch text NOT NULL DEFAULT gen_random_uuid()::text")
     sql(
         """CREATE OR REPLACE FUNCTION rotate_genetics_epoch() RETURNS text
@@ -4437,7 +4449,7 @@ def migrate_42_to_43():
                 f"ALTER TABLE inbox_document ADD COLUMN IF NOT EXISTS {column} INTEGER "
                 "REFERENCES member (member_id) ON DELETE SET NULL"
             )
-        InboxDocument._schema.create_indexes(safe=True)  # same names as a fresh bootstrap
+        _create_field_indexes(InboxDocument, "seller_member", "buyer_member")
         SchemaHistory.insert(  # pylint: disable=E1120
             version=43,
             comment="inbox_document: original_path nullable, seller and buyer members; "
@@ -4935,6 +4947,55 @@ def migrate_53_to_54():
         ).execute()
 
 
+def migrate_54_to_55():
+    """History rows store each year's realised Ne, its standard error and the animals behind it.
+
+    The trend drew a rolling ln(1 - F) regression instead.
+    """
+    with DATABASE.atomic():
+        table = GeneticMetricsHistory._meta.table_name
+        existing = {c.name for c in DATABASE.get_columns(table)}
+        # A replay from below 16 creates the table from the current model, columns included.
+        for name, fld in (
+            ("effective_population_size", FloatField(null=True)),
+            ("ne_se", FloatField(null=True)),
+            ("ne_n", IntegerField(null=True)),
+        ):
+            if name not in existing:
+                migrate(DATABASE_MIGRATOR.add_column(table, name, fld))
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=55, comment="history: realised Ne per report year", applied=datetime.now()
+        ).execute()
+
+
+def _create_field_indexes(model, *names):
+    """
+    The model's indexes on these fields only, named as a fresh bootstrap names them. All of the model's indexes
+    would include ones on columns a later migration adds, which do not exist yet on an older database.
+    """
+    for index in model._meta.fields_to_index():
+        if {getattr(field, "name", None) for field in index._expressions} <= set(names):
+            DATABASE.execute(model._schema._create_index(index, safe=True))
+
+
+def migrate_55_to_56():
+    """A paper certificate's copy records whether its handler found it in agreement with the registry."""
+    with DATABASE.atomic():
+        DATABASE.execute_sql("ALTER TABLE inbox_document ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ")
+        DATABASE.execute_sql(
+            "ALTER TABLE inbox_document ADD COLUMN IF NOT EXISTS verified_by_id INTEGER "
+            'REFERENCES "hbuser" ("user_id") ON DELETE SET NULL'
+        )
+        # NULL for a certificate saved before: the number it was saved as is not recorded, and its rabbit's may
+        # have changed since, so such a copy is never marked checked.
+        DATABASE.execute_sql("ALTER TABLE inbox_document ADD COLUMN IF NOT EXISTS saved_certificate TEXT")
+        DATABASE.execute_sql("ALTER TABLE inbox_document ADD COLUMN IF NOT EXISTS saved_number TEXT")
+        _create_field_indexes(InboxDocument, "verified_by")
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=56, comment="inbox_document: copy checked against the registry", applied=datetime.now()
+        ).execute()
+
+
 def migrate_21_to_22():
     """Add litter_number to Breeding table and backfill from minted numbers."""
     with DATABASE.atomic():
@@ -5426,6 +5487,8 @@ MIGRATIONS = {
     (51, 52): migrate_51_to_52,  # legal entity on membership
     (52, 53): migrate_52_to_53,  # notice.individual, buyer_contact.erased_email_hash
     (53, 54): migrate_53_to_54,  # account rules acceptance
+    (54, 55): migrate_54_to_55,  # realised Ne per history year
+    (55, 56): migrate_55_to_56,  # inbox_document.verified_at, verified_by, saved_certificate
 }
 
 
@@ -5514,7 +5577,8 @@ def _run_migrations():
         # A bootstrap has no migration comment. Every buyer 50 (even before erased_email_hash) added
         # notice.individual_id; running 51–53 afterwards still never adds main's missing herd contact columns.
         if (
-            current_version is not None and current_version >= 50
+            current_version is not None
+            and current_version >= 50
             and not {"contact_member_id", "contact_pending"} <= {c.name for c in DATABASE.get_columns("herd")}
             and "individual_id" in {c.name for c in DATABASE.get_columns("notice")}
         ):

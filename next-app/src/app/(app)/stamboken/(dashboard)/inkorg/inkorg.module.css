@@ -164,10 +164,14 @@
   }
 }
 @media (min-width: 1200px) {
+  /* Photo and form side by side need the room: wider than the queue list, and the form as wide as the photo. */
+  .container:has(> .work[data-documents="true"]) {
+    max-width: 1920px;
+  }
   .work[data-documents="true"] {
-    grid-template-columns: minmax(20rem, 1fr) minmax(0, 1.6fr) minmax(
-        22rem,
-        1.2fr
+    grid-template-columns: minmax(18rem, 0.8fr) minmax(0, 1.4fr) minmax(
+        26rem,
+        1.4fr
       );
   }
   .registration {

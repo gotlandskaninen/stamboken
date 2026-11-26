@@ -26,6 +26,7 @@ vi.mock("@/app/(app)/medlem/matrikel/actions", () => ({
   revokeGrant: vi.fn(),
   setMainMember: vi.fn(),
   unlinkPersonUser: vi.fn(),
+  reactivatePerson: vi.fn(),
   updatePerson: vi.fn(),
 }));
 vi.mock("@/components/SnackbarProvider", () => ({
@@ -36,7 +37,10 @@ vi.mock("@/contexts/NotificationContext", () => ({
 }));
 
 import { PersonsCard } from "@/app/(app)/medlem/matrikel/[id]/PersonsCard";
-import { updatePerson } from "@/app/(app)/medlem/matrikel/actions";
+import {
+  reactivatePerson,
+  updatePerson,
+} from "@/app/(app)/medlem/matrikel/actions";
 import type {
   MembershipDetail,
   Person,
@@ -146,10 +150,7 @@ describe("PersonsCard — organisationens kontaktperson", () => {
     fireEvent.click(dialog.getByRole("button", { name: "Spara" }));
     await waitFor(() =>
       expect(updatePerson).toHaveBeenCalledWith(1, 11, {
-        first_name: "",
-        last_name: "",
         email: "kontakt@example.com",
-        phone: null,
       }),
     );
   });
@@ -214,11 +215,9 @@ describe("PersonsCard — importerad rad utan förnamn", () => {
     expect(save).toBeEnabled();
     fireEvent.click(save);
     await waitFor(() =>
-      expect(updatePerson).toHaveBeenCalledWith(
-        1,
-        21,
-        expect.objectContaining({ phone: "070-1234567" }),
-      ),
+      expect(updatePerson).toHaveBeenCalledWith(1, 21, {
+        phone: "070-1234567",
+      }),
     );
   });
 });
@@ -275,5 +274,131 @@ describe("PersonsCard — Konto column", () => {
     expect(
       screen.queryByRole("button", { name: "Koppla konto…" }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("PersonsCard — rollval vid redigering", () => {
+  it("lets a familjemedlem become skötare and sends the role", async () => {
+    vi.mocked(updatePerson).mockResolvedValue({ ok: true });
+    render(<PersonsCard membership={MEMBERSHIP} canEdit />);
+    fireEvent.click(
+      within(row(/Bo Olinkad/)).getByRole("button", { name: "Redigera" }),
+    );
+    const dialog = within(screen.getByRole("dialog"));
+    fireEvent.mouseDown(dialog.getByLabelText("Roll"));
+    fireEvent.click(screen.getByRole("option", { name: "Skötare" }));
+    fireEvent.click(dialog.getByRole("button", { name: "Spara" }));
+    await waitFor(() =>
+      expect(updatePerson).toHaveBeenCalledWith(1, 12, { role: "skotare" }),
+    );
+  });
+
+  it("sends only the phone, not the unchanged email or role, when only the phone is changed", async () => {
+    vi.mocked(updatePerson).mockResolvedValue({ ok: true });
+    render(<PersonsCard membership={MEMBERSHIP} canEdit />);
+    fireEvent.click(
+      within(row(/Bo Olinkad/)).getByRole("button", { name: "Redigera" }),
+    );
+    const dialog = within(screen.getByRole("dialog"));
+    fireEvent.change(dialog.getByLabelText("Telefon"), {
+      target: { value: "070-1234567" },
+    });
+    fireEvent.click(dialog.getByRole("button", { name: "Spara" }));
+    await waitFor(() =>
+      expect(updatePerson).toHaveBeenLastCalledWith(1, 12, {
+        phone: "070-1234567",
+      }),
+    );
+  });
+
+  it("explains what the chosen role changes", () => {
+    render(<PersonsCard membership={MEMBERSHIP} canEdit />);
+    fireEvent.click(
+      within(row(/Bo Olinkad/)).getByRole("button", { name: "Redigera" }),
+    );
+    const dialog = within(screen.getByRole("dialog"));
+    expect(
+      dialog.getByText(/alla hushållets besättningar/),
+    ).toBeInTheDocument();
+    fireEvent.mouseDown(dialog.getByLabelText("Roll"));
+    fireEvent.click(screen.getByRole("option", { name: "Skötare" }));
+    expect(
+      dialog.getByText(/bara åtkomst till de besättningar/),
+    ).toBeInTheDocument();
+  });
+
+  it("shows no role select for the huvudmedlem", () => {
+    render(<PersonsCard membership={MEMBERSHIP} canEdit />);
+    fireEvent.click(
+      within(row(/Anna Linkad/)).getByRole("button", { name: "Redigera" }),
+    );
+    expect(
+      within(screen.getByRole("dialog")).queryByLabelText("Roll"),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("PersonsCard — Avsluta och Återaktivera", () => {
+  const openMenu = (name: RegExp) =>
+    fireEvent.click(
+      within(row(name)).getByRole("button", { name: /Fler åtgärder/ }),
+    );
+
+  it("calls the action Avsluta, not Ta bort", () => {
+    render(<PersonsCard membership={MEMBERSHIP} canEdit />);
+    openMenu(/Bo Olinkad/);
+    expect(
+      screen.getByRole("menuitem", { name: "Avsluta" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Ta bort" })).toBeNull();
+  });
+
+  it("reactivates an ended person after confirming", async () => {
+    vi.mocked(reactivatePerson).mockResolvedValue({ ok: true });
+    render(<PersonsCard membership={MEMBERSHIP} canEdit />);
+    openMenu(/David Avslutad/);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Återaktivera" }));
+    fireEvent.click(screen.getByRole("button", { name: "Bekräfta" }));
+    await waitFor(() => expect(reactivatePerson).toHaveBeenCalledWith(1, 14));
+  });
+
+  it("offers no Återaktivera for an active person", () => {
+    render(<PersonsCard membership={MEMBERSHIP} canEdit />);
+    openMenu(/Bo Olinkad/);
+    expect(screen.queryByRole("menuitem", { name: "Återaktivera" })).toBeNull();
+  });
+});
+
+describe("PersonsCard — Återaktivera döljs", () => {
+  const ended = (over: Partial<Person>) =>
+    ({
+      ...MEMBERSHIP,
+      persons: [
+        person({ id: 11, role: "huvudmedlem" }),
+        person({ id: 15, end_date: "2026-01-01", ...over }),
+      ],
+    }) as MembershipDetail;
+  const menuFor = (membership: MembershipDetail) => {
+    render(<PersonsCard membership={membership} canEdit />);
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /Fler åtgärder/ })[1],
+    );
+  };
+
+  it("hides it for an anonymised person", () => {
+    menuFor(ended({ first_name: "Borttagen", last_name: "person" }));
+    expect(screen.queryByRole("menuitem", { name: "Återaktivera" })).toBeNull();
+  });
+
+  it("hides it when the membership is inactive", () => {
+    menuFor({ ...ended({}), membership_status: "inactive" });
+    expect(screen.queryByRole("menuitem", { name: "Återaktivera" })).toBeNull();
+  });
+
+  it("shows it for an ended, named person in an active membership", () => {
+    menuFor(ended({}));
+    expect(
+      screen.getByRole("menuitem", { name: "Återaktivera" }),
+    ).toBeInTheDocument();
   });
 });

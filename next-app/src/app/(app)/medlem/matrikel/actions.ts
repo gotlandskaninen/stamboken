@@ -124,7 +124,7 @@ export async function addPerson(
 export async function updatePerson(
   membershipId: number,
   personId: number,
-  patch: PersonInput,
+  patch: Partial<PersonInput>,
 ): Promise<ActionResult> {
   try {
     await fetchApi(`/v2/persons/${personId}`, {
@@ -145,6 +145,19 @@ export async function removePerson(
 ): Promise<ActionResult> {
   try {
     await fetchApi(`/v2/persons/${personId}`, { method: "DELETE" });
+    revalidateMatrikel(membershipId);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+export async function reactivatePerson(
+  membershipId: number,
+  personId: number,
+): Promise<ActionResult> {
+  try {
+    await fetchApi(`/v2/persons/${personId}/reactivate`, { method: "POST" });
     revalidateMatrikel(membershipId);
     return { ok: true };
   } catch (err) {

@@ -1140,7 +1140,7 @@ def set_account_active(u_id, active, actor_user_id=None):
                 if target is None:
                     raise ValueError("user-not-found")
                 if active and target.email == f"raderad-{target.id}":  # not_erased(), on the locked row
-                    raise ValidationError("erased", "Kontot tömdes när personen anonymiserades och kan inte aktiveras.")
+                    raise ValidationError("erased", "Kontots uppgifter är raderade, så kontot kan inte aktiveras.")
                 if not active and _count_current_admins(locked, exclude_user_id=u_id) == 0:
                     raise ValidationError(
                         "last-admin",
@@ -1299,7 +1299,8 @@ def update_role(operation, user_uuid=None, skip_role_check=False):
                 # FIRST statement: ordered lock of target + all admins.
                 locked = _lock_role_rows(target_id)
                 target_user = next((u for u in locked if u.id == target_id), None)
-                if target_user is None:
+                # not_erased(), on the locked row: an emptied account (#190, #250) takes no role
+                if target_user is None or target_user.email == f"raderad-{target_user.id}":
                     return {"status": "error", "message": "unknown user"}
 
                 if operation["action"] == "remove" and operation["role"] == "admin":
@@ -2808,6 +2809,38 @@ def get_paginated_individuals(
         return {"items": [], "total_count": 0, "page": page, "per_page": per_page, "total_pages": 0}
 
 
+def work_list_details(numbers, genebanks):
+    """Name, sex, birth date and current herd per individual number, in the explorer's form.
+
+    For the genetics work list. Read per request, never memoized with the priorities: a sale moves
+    the rabbit without changing the pedigree. Left out: a number the database no longer has, and a
+    rabbit whose current herd is outside `genebanks`, the user's accessible genebanks, by the rule of
+    the individual's own page (get_individual), which a move to the other genebank closes.
+    """
+    if not numbers:
+        return {}
+    wanted = Individual.select(Individual.id).where(Individual.number.in_(numbers))
+    holder = latest_ht_per_individual().where(HerdTracking.individual.in_(wanted)).alias("holder")
+    rows = (
+        Individual.select(Individual.number, Individual.name, Individual.sex, Breeding.birth_date, Herd.herd)
+        .join(Breeding, JOIN.LEFT_OUTER, on=(Individual.breeding == Breeding.id))
+        .switch(Individual)
+        .join(holder, JOIN.LEFT_OUTER, on=((holder.c.i_id == Individual.id) & (holder.c.rank == 1)))
+        .join(Herd, on=(Herd.id == fn.COALESCE(holder.c.herd, Individual.origin_herd_id)))
+        .where(Individual.number.in_(numbers), not_voided(), Herd.genebank.in_(list(genebanks)))
+        .dicts()
+    )
+    return {
+        r["number"]: {
+            "name": r["name"].strip() if r["name"] else None,
+            "sex": r["sex"],
+            "birth_date": r["birth_date"].strftime("%Y-%m-%d") if r["birth_date"] else None,
+            "herd": r["herd"],
+        }
+        for r in rows
+    }
+
+
 def get_all_genebanks():
     """
     Returns a list of all genebanks.
@@ -3955,7 +3988,7 @@ def get_audit_genebank_id(table_name, record_id):
         return None
     try:
         return lookup(record_id)
-    except (DoesNotExist, AttributeError):
+    except (DoesNotExist, AttributeError, ValueError):  # ValueError: a marker row such as an export's
         return None
 
 

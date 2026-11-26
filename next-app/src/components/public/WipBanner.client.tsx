@@ -37,7 +37,7 @@ export function WipBanner() {
       <Alert
         severity="info"
         onClose={dismiss}
-        sx={{ borderRadius: 0, justifyContent: "center" }}
+        sx={{ borderRadius: 0, justifyContent: "center", displayPrint: "none" }}
       >
         Detta är nya Stamboken (beta). <TyckTillLink /> Den gamla versionen
         finns kvar på{" "}
