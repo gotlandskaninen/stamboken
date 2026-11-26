@@ -184,8 +184,33 @@ export interface Matrikel {
   telefon?: string;
   epost?: string;
   konto?: { typ?: KontoTyp; clearing?: string; konto?: string; bank?: string };
-  publicering?: { ja: boolean; utom: Utom[] };
+  // A digital answer names the text it answers (CONSENT_TEXT_VERSION), as the profile's does.
+  publicering?: { ja: boolean; utom: Utom[]; text_version?: string };
 }
+
+// ReportView.member_details (5.11, D1): the main member's own details logged in, the link's changes without any
+// stored value, nothing for paper (its PaperChanges) or for anyone else.
+export interface DetailsChange {
+  falt: "adress" | "telefon" | "epost" | "konto" | "publicering";
+  state: "vantar" | "forfallen";
+  expires_at: string;
+}
+export type MemberDetailsView =
+  | {
+      mode: "main";
+      contact: {
+        address: string;
+        postal_code: string;
+        city: string;
+        phone: string;
+        email: string;
+      };
+      publicering: { ja: boolean; utom: Utom[] } | null;
+      konto: string | null; // "••••4567"
+    }
+  | { mode: "link"; changes: DetailsChange[] }
+  | { mode: "paper" }
+  | { mode: "none" };
 
 export interface Submission extends DraftData {
   submission_key: string;
@@ -263,6 +288,7 @@ export interface ReportView {
     state: string;
     account_end: string | null;
   };
+  member_details?: MemberDetailsView;
 }
 
 export interface MyReport {
@@ -995,6 +1021,60 @@ export function matrikelBody(f: PaperFields): Submission["matrikel"] | null {
   return Object.keys(body).length ? body : null;
 }
 
+// "Dina uppgifter" starts from the matrikel for the logged-in main member, empty for the link and for paper.
+export function detailsFields(d?: MemberDetailsView): PaperFields {
+  const f = emptyPaperFields();
+  if (d?.mode !== "main") return f;
+  const { address, postal_code, city, phone } = d.contact;
+  const p = d.publicering;
+  return {
+    ...f,
+    adress: { address, postal_code, city },
+    telefon: phone,
+    consent: p ? (p.ja ? "ja" : "nej") : "",
+    utom: p?.utom ?? [],
+  };
+}
+
+// What Skicka sends of "Dina uppgifter" (5.11, D3), or null: the link's filled fields, as on paper, and the main
+// member's changed ones, a cleared one as "" (the profile's rule). A Koharen answer carries its text version.
+export function detailsBody(
+  d: MemberDetailsView | undefined,
+  f: PaperFields,
+): Matrikel | null {
+  if (d?.mode !== "main" && d?.mode !== "link") return null;
+  let body: Matrikel = {};
+  if (d.mode === "link") body = matrikelBody(f) ?? {};
+  else {
+    const start = detailsFields(d);
+    const adress = Object.fromEntries(
+      (["address", "postal_code", "city"] as const)
+        .filter((k) => f.adress[k].trim() !== start.adress[k].trim())
+        .map((k) => [k, f.adress[k].trim()]),
+    );
+    if (Object.keys(adress).length) body.adress = adress;
+    if (f.telefon.trim() !== start.telefon.trim())
+      body.telefon = f.telefon.trim();
+    const konto = matrikelBody({ ...emptyPaperFields(), konto: f.konto });
+    if (konto?.konto) body.konto = konto.konto;
+    const utom = (u: Utom[]) => [...u].sort().join();
+    if (
+      f.consent &&
+      (f.consent !== start.consent || utom(f.utom) !== utom(start.utom))
+    )
+      body.publicering = {
+        ja: f.consent === "ja",
+        utom: f.consent === "ja" ? f.utom : [],
+      };
+  }
+  if (body.publicering)
+    body.publicering = {
+      ...body.publicering,
+      text_version: CONSENT_TEXT_VERSION,
+    };
+  return Object.keys(body).length ? body : null;
+}
+
 // The arsblankett pages of a queue item that are not done (no done_at: a
 // document is "klar" or "avfardad" exactly when done_at is set). Archiving
 // dismisses these and leaves the item's other documents alone.
@@ -1136,6 +1216,12 @@ export interface StatusRow {
     forsaljning_avvisad_paverkar: boolean;
     kopt_efter_inskick: number; // sales into the herd approved after its report (FB4)
     kop_anmalt: number; // the herd's open purchase notices that no pending sale matches (4a Task 5)
+    // 5.11, 5.14: the link's changes, without any value
+    andring_vantar?: number;
+    kontobyte_vantar?: boolean;
+    kontobyte_forfoll?: boolean;
+    inte_jag?: boolean;
+    nytt_konto?: number | null; // the self-made account link's id, for "Koppla bort" (5.1)
   };
   villkor: Villkor;
   statistik: {

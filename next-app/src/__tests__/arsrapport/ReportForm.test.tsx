@@ -362,15 +362,142 @@ describe("ReportForm", () => {
     expect(a.saveDraft).toHaveBeenCalled();
   });
 
-  it("asks no consent question and links Dina uppgifter to the profile", () => {
-    render(<ReportForm env="demo" view={view()} actions={actions()} />);
-    expect(screen.queryByText(/Koharen\? Listan/)).toBeNull();
-    expect(screen.getByText("Dina uppgifter")).toBeTruthy();
+  it("lets the main member change Dina uppgifter and sends only what changed (5.11)", async () => {
+    const a = actions();
+    const details = {
+      mode: "main" as const,
+      contact: {
+        address: "Gamla vägen 1",
+        postal_code: "621 41",
+        city: "Slite",
+        phone: "0709-111 222",
+        email: "g9001@example.invalid",
+      },
+      publicering: { ja: false, utom: [] },
+      konto: "••••5512",
+    };
+    render(
+      <ReportForm
+        env="demo"
+        view={view({ member_details: details })}
+        actions={a}
+      />,
+    );
     expect(
-      screen
-        .getByRole("link", { name: "Gå till profilen" })
-        .getAttribute("href"),
-    ).toBe("/stamboken/profil");
+      (screen.getByLabelText("Gatuadress") as HTMLInputElement).value,
+    ).toBe("Gamla vägen 1");
+    expect(screen.getByText("Konto för stödet: ••••5512")).toBeTruthy();
+    expect(screen.getByText("E-post: g9001@example.invalid")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Telefon"), {
+      target: { value: "0709-777 888" },
+    });
+    fireEvent.click(screen.getByRole("radio", { name: "Ja" }));
+    fillAll();
+    send();
+    await waitFor(() => expect(a.submitReport).toHaveBeenCalled());
+    const body = a.submitReport.mock.calls[0][2] as Submission;
+    expect(body.matrikel).toEqual({
+      telefon: "0709-777 888",
+      publicering: {
+        ja: true,
+        utom: ["phone", "email", "address"],
+        text_version: "2026-11-20",
+      },
+    });
+    // never in the draft or the browser
+    expect(JSON.stringify(a.saveDraft.mock.calls)).not.toContain("0709-777");
+    expect(JSON.stringify({ ...window.localStorage })).not.toContain(
+      "0709-777",
+    );
+  });
+
+  it("sends nothing of Dina uppgifter when the main member changed nothing", async () => {
+    const a = actions();
+    const details = {
+      mode: "main" as const,
+      contact: {
+        address: "",
+        postal_code: "",
+        city: "",
+        phone: "",
+        email: "",
+      },
+      publicering: null,
+      konto: null,
+    };
+    render(
+      <ReportForm
+        env="demo"
+        view={view({ member_details: details })}
+        actions={a}
+      />,
+    );
+    expect(screen.getByText("Inget konto för stödet i matrikeln")).toBeTruthy();
+    fillAll();
+    send();
+    await waitFor(() => expect(a.submitReport).toHaveBeenCalled());
+    expect((a.submitReport.mock.calls[0][2] as Submission).matrikel).toBe(
+      undefined,
+    );
+  });
+
+  it("the link's receipt lists changes to confirm and expired ones, and offers an account last", () => {
+    render(
+      <ReportForm
+        link
+        env="prod"
+        accountOffer
+        view={view({
+          access: "code",
+          source: "link",
+          report: submittedReport(),
+          member_details: {
+            mode: "link",
+            changes: [
+              {
+                falt: "telefon",
+                state: "vantar",
+                expires_at: "2027-01-17T13:32:00+00:00",
+              },
+              {
+                falt: "konto",
+                state: "forfallen",
+                expires_at: "2027-01-01T10:00:00+00:00",
+              },
+            ],
+          },
+        })}
+        actions={actions()}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "Du har ändringar att bekräfta i mejlet (telefon). Bekräfta senast 17 januari 2027.",
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/Ändringen av konto gällde till 1 januari 2027/),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("link", { name: "Skapa konto" }).getAttribute("href"),
+    ).toBe("/auth/sign-in");
+  });
+
+  it("tells an owner who is not the main member who changes the details", () => {
+    render(
+      <ReportForm
+        env="demo"
+        view={view({ member_details: { mode: "none" } })}
+        actions={actions()}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "Huvudmedlemmen ändrar kontaktuppgifterna, kontot för stödet och svaret om Koharen.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByLabelText("Telefon")).toBeNull();
+    expect(screen.queryByRole("link", { name: "Gå till profilen" })).toBeNull();
   });
 
   it("counts done rabbits and keeps a row that became done under 'Inte klara'", () => {

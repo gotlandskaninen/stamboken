@@ -12,6 +12,90 @@ const KONTO_TYP: [KontoTyp, string][] = [
   ["plusgiro", "Plusgiro"],
 ];
 
+// A labelled text field of "Dina uppgifter", on paper and in the report.
+export const textField = (
+  label: string,
+  value: string,
+  apply: (v: string) => void,
+  extra: React.InputHTMLAttributes<HTMLInputElement> = {},
+) => (
+  <label className={styles.label}>
+    {label}
+    <input
+      className={styles.field}
+      style={{ width: "100%", boxSizing: "border-box" }}
+      autoComplete="off"
+      value={value}
+      onChange={(e) => apply(e.target.value)}
+      {...extra}
+    />
+  </label>
+);
+
+type Konto = PaperFields["konto"];
+
+// A new support account: its type (drift #53), the clearing number for a bankkonto only, the number and the bank.
+// With `accountEnd` it says when the typed number ends as the stored one does.
+export function AccountFields({
+  konto,
+  onChange,
+  accountEnd,
+}: {
+  konto: Konto;
+  onChange: (k: Konto) => void;
+  accountEnd?: string | null;
+}) {
+  const set = (patch: Partial<Konto>) => onChange({ ...konto, ...patch });
+  const digits = konto.konto.replace(/\D/g, "");
+  const sameEnd =
+    !!accountEnd && digits.length >= 2 && digits.endsWith(accountEnd);
+  return (
+    <>
+      <div role="radiogroup" aria-label="Typ av konto">
+        <div className={styles.choices}>
+          {KONTO_TYP.map(([v, label]) => (
+            <label key={v} className={styles.choice}>
+              <input
+                type="radio"
+                name="kontotyp"
+                checked={konto.typ === v}
+                onChange={() =>
+                  // only a bankkonto has a clearing number
+                  set({
+                    typ: v,
+                    clearing: v === "bankkonto" ? konto.clearing : "",
+                  })
+                }
+              />
+              <span>{label}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+      {(konto.typ === "" || konto.typ === "bankkonto") &&
+        textField(
+          "Clearingnummer",
+          konto.clearing,
+          (v) => set({ clearing: v }),
+          { inputMode: "numeric", maxLength: 12 },
+        )}
+      {textField("Kontonummer", konto.konto, (v) => set({ konto: v }), {
+        inputMode: "numeric",
+        maxLength: 20,
+      })}
+      {sameEnd && (
+        <p className={styles.note} role="status">
+          Samma slutsiffror som nuvarande konto. Är det samma konto? Lämna då
+          fälten tomma.
+        </p>
+      )}
+      {textField("Bank", konto.bank, (v) => set({ bank: v }), {
+        maxLength: 100,
+      })}
+    </>
+  );
+}
+
 // The form's contact part. The page never reads the stored values: it shows
 // only the last two digits of the account (`accountEnd`), and what is typed
 // here goes to the matrikel when the form is sent. Its state is the caller's,
@@ -29,27 +113,6 @@ export function PaperChanges({
 }) {
   const set = (patch: Partial<PaperFields>) =>
     onChange({ ...fields, ...patch });
-  const text = (
-    label: string,
-    value: string,
-    apply: (v: string) => void,
-    extra: React.InputHTMLAttributes<HTMLInputElement> = {},
-  ) => (
-    <label className={styles.label}>
-      {label}
-      <input
-        className={styles.field}
-        style={{ width: "100%", boxSizing: "border-box" }}
-        autoComplete="off"
-        value={value}
-        onChange={(e) => apply(e.target.value)}
-        {...extra}
-      />
-    </label>
-  );
-  const digits = fields.konto.konto.replace(/\D/g, "");
-  const sameEnd =
-    !!accountEnd && digits.length >= 2 && digits.endsWith(accountEnd);
 
   return (
     <MbCard title="Uppgifter på blanketten">
@@ -75,7 +138,7 @@ export function PaperChanges({
           Stamboken Online eller hos genbanksansvarig.
         </p>
 
-        {text("E-post", fields.epost, (v) => set({ epost: v }), {
+        {textField("E-post", fields.epost, (v) => set({ epost: v }), {
           id: "paper-email",
           type: "email",
           inputMode: "email",
@@ -88,7 +151,7 @@ export function PaperChanges({
             {emailError}
           </p>
         )}
-        {text("Telefon", fields.telefon, (v) => set({ telefon: v }), {
+        {textField("Telefon", fields.telefon, (v) => set({ telefon: v }), {
           type: "tel",
           maxLength: 50,
         })}
@@ -98,70 +161,25 @@ export function PaperChanges({
             ? `Nuvarande konto slutar på ••${accountEnd}`
             : "Inget konto i matrikeln"}
         </p>
-        <div role="radiogroup" aria-label="Typ av konto">
-          <div className={styles.choices}>
-            {KONTO_TYP.map(([v, label]) => (
-              <label key={v} className={styles.choice}>
-                <input
-                  type="radio"
-                  name="kontotyp"
-                  checked={fields.konto.typ === v}
-                  onChange={() =>
-                    set({
-                      konto: {
-                        ...fields.konto,
-                        typ: v,
-                        // only a bankkonto has a clearing number
-                        clearing:
-                          v === "bankkonto" ? fields.konto.clearing : "",
-                      },
-                    })
-                  }
-                />
-                <span>{label}</span>
-              </label>
-            ))}
-          </div>
-        </div>
-        {(fields.konto.typ === "" || fields.konto.typ === "bankkonto") &&
-          text(
-            "Clearingnummer",
-            fields.konto.clearing,
-            (v) => set({ konto: { ...fields.konto, clearing: v } }),
-            { inputMode: "numeric", maxLength: 12 },
-          )}
-        {text(
-          "Kontonummer",
-          fields.konto.konto,
-          (v) => set({ konto: { ...fields.konto, konto: v } }),
-          { inputMode: "numeric", maxLength: 20 },
-        )}
-        {sameEnd && (
-          <p className={styles.note} role="status">
-            Samma slutsiffror som nuvarande konto. Är det samma konto? Lämna då
-            fälten tomma.
-          </p>
-        )}
-        {text(
-          "Bank",
-          fields.konto.bank,
-          (v) => set({ konto: { ...fields.konto, bank: v } }),
-          { maxLength: 100 },
-        )}
+        <AccountFields
+          konto={fields.konto}
+          onChange={(konto) => set({ konto })}
+          accountEnd={accountEnd}
+        />
 
-        {text(
+        {textField(
           "Gatuadress",
           fields.adress.address,
           (v) => set({ adress: { ...fields.adress, address: v } }),
           { maxLength: 200 },
         )}
-        {text(
+        {textField(
           "Postnummer",
           fields.adress.postal_code,
           (v) => set({ adress: { ...fields.adress, postal_code: v } }),
           { inputMode: "numeric", maxLength: 10 },
         )}
-        {text(
+        {textField(
           "Ort",
           fields.adress.city,
           (v) => set({ adress: { ...fields.adress, city: v } }),
