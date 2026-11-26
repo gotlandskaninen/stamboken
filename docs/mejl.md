@@ -320,9 +320,15 @@ mejlhistorikens gallring och finns kvar om köparen raderas först. Är köparen
   dataskyddsadressen. Nattgallringen (`purge_notice_email`) tar bort adressen
   när mejlet är `sent`, utan avtryck. Adressen ligger kvar medan mejlet
   väntar, kan försökas igen, väntar på adresskontroll eller på att en
-  återkallad rapport skickas igen. Blir mejlet `bounced`, eller `failed` och
-  äldre än 30 dagar, raderar `purge_undelivered_notice` köparen (åtgärden
-  `studs`), och försäljningen står kvar med `buyer_removed`.
+  återkallad rapport skickas igen. Blir mejlet `bounced`, `failed` och
+  äldre än 30 dagar eller `cancelled` av något annat skäl än en återkallad
+  rapport (till exempel Stoppa i statusvyn), raderar
+  `purge_undelivered_notice` köparen (åtgärden `studs`), och försäljningen
+  står kvar med `buyer_removed`. Kan köparen inte informeras inom en månad
+  (`purge_uninformed`, åtgärden `ej_informerad`) sparas köparen inte: ett
+  väntande försäljningsförslag blir "såld utanför genbanken", och en köpare
+  vars adress har väntat på adresskontroll så länge raderas. Raderingslänken
+  i mejlet tar bara bort det köpet, även innan adressen är gallrad.
 - **`kopare.medlemskap`** går när köparen har sagt ja till att föreningen
   hör av sig om medlemskap (`membership_optin_at`). Ja:et räknas från
   överlåtelsedagen. Har det gått tolv månader när mejlet ska skickas,
