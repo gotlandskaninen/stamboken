@@ -67,8 +67,7 @@ Där finns tre sätt att logga in:
 
 - **Med en kod i ett mejl.** Du skriver den e-postadress som står i föreningens
   matrikel och får en kod dit. Det fungerar för den som står med en egen
-  e-postadress i matrikeln: huvudmedlemmen och de familjemedlemmar och skötare
-  som huvudmedlemmen har lagt in.
+  e-postadress i matrikeln: huvudmedlemmen, familjemedlemmar och skötare.
 - **Med föreningskontot (Google)**, om du har en adress som slutar på
   @gotlandskaninen.se.
 - **Med användarnamn och lösenord**, samma uppgifter som i gamla Stamboken.
@@ -92,8 +91,9 @@ mejla då <admin@gotlandskaninen.se>.
 3. Skriv koden i fältet **Engångskod** och klicka **Logga in med kod**. Koden
    gäller i tio minuter och bara i webbläsaren där du bad om den.
 
-Saknar matrikeln din adress, eller har någon annan i matrikeln samma adress,
-kommer inget mejl. Mejla då <admin@gotlandskaninen.se>.
+Saknar matrikeln din adress, eller är du familjemedlem eller skötare och har
+någon annan i matrikeln samma adress, kommer inget mejl. Mejla då
+<admin@gotlandskaninen.se>.
 
 ![Fältet för engångskoden](logga-in-kod-desktop.png)
 

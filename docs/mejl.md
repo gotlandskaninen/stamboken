@@ -217,7 +217,12 @@ Koden finns i `app/utils/login_code.py` och `set_member_email` i
   ansökan får 409
   "Adressen används redan av en annan medlem"; medlemmen själv får aldrig det
   beskedet. Två personer med samma adress räknas i nattjobbet och visas i
-  statusvyn som `adresskrock`. En tom sträng är ingen adress.
+  statusvyn som `adresskrock`. En tom sträng är ingen adress. En familjemedlem
+  eller skötare utan konto får också kod och kan skapa sitt konto (#269), men
+  bara till en adress som ingen annan aktiv person har, som kontaktadress,
+  Workspace-adress eller tidigare adress som fortfarande gäller. Hon reserverar
+  ingen adress och tar aldrig en från en innehavare. Har hon tillstånd på en
+  besättning i ett annat medlemskap skapas inget konto med kod.
 - **Sju dagar.** All skrivning av en befintlig persons `Member.email` går
   genom `set_member_email`, utom anonymiseringen, som tömmer adressen själv och
   raderar personens tidigare adresser och kodrader. Byter medlemmen själv

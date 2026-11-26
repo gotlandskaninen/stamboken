@@ -92,20 +92,36 @@ def _existing_account(person, address):
         return True
 
     herd_ids = {str(h.id) for h in Herd.select(Herd.id).where(Herd.membership == person.membership_id)}
-    # A grant can be on a herd outside the membership, where an older owner account may be hers.
-    grants = HerdAccessGrant.select(HerdAccessGrant.herd).where(
-        (HerdAccessGrant.member == person.id) & HerdAccessGrant.revoked_at.is_null(True)
-    )
-    herd_ids |= {str(g.herd_id) for g in grants}
+    granted = {str(g.herd_id) for g in _grants(person)} - herd_ids
     owners = User.select(User._privileges).where(User._privileges.contains('"owner"'))
-    # For anyone but the main member, her linked account owns the herds: only an unlinked owner may be this person.
-    if person.role != "huvudmedlem":
-        owners = owners.where(User.id.not_in(linked_accounts))
+    unlinked = owners.where(User.id.not_in(linked_accounts))
+    # The main member's own herds: any owner may be her. Anyone else's, and a granted herd of another membership: the
+    # linked accounts there are other people's, so only an unlinked owner may be this person.
+    return _owns(herd_ids, owners if person.role == "huvudmedlem" else unlinked) or _owns(granted, unlinked)
+
+
+def _owns(herd_ids, accounts):
     # Older owner roles can have a herd id stored as a string.
     return bool(herd_ids) and any(
         isinstance(role, dict) and role.get("level") == "owner" and str(role.get("herd")).lstrip("0") in herd_ids
-        for account in owners
+        for account in accounts
         for role in account.privileges
+    )
+
+
+def _grants(person):
+    return HerdAccessGrant.select(HerdAccessGrant.herd).where(
+        (HerdAccessGrant.member == person.id) & HerdAccessGrant.revoked_at.is_null(True)
+    )
+
+
+def _granted_outside(person):
+    """A grant on another membership's herd: an address only the main member vouches for must not convey it."""
+    return (
+        _grants(person)
+        .join(Herd)
+        .where(Herd.membership.is_null(True) | (Herd.membership != person.membership_id))
+        .exists()
     )
 
 
@@ -147,6 +163,9 @@ def create_pending_account(_displayed_version, displayed_sha256):
         except data_access.AddressInUseError as exc:
             raise AccountConflict from exc
         if _existing_account(person, address):
+            raise AccountConflict
+        # shortcut: the page then says an account may already exist; the way out, matrikelansvarig, is the same.
+        if person.role != "huvudmedlem" and _granted_outside(person):
             raise AccountConflict
         accepted_at = datetime.now(timezone.utc)
         AccountRulesSnapshot.get_or_create(

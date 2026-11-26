@@ -1499,7 +1499,8 @@ def resolve_own_membership(user):
 # Kontokoppling — ONE lock-owning operation writes
 # member.user_id. Lock order everywhere: membership → user → person, all
 # FOR UPDATE. A link that grants herd access needs admin confirmation,
-# except when a main member creates her own account using a verified code.
+# except when a person creates her own account using a verified code
+# (anyone but the main member only with grants inside her membership, login_account).
 # --------------------------------------------------------------------------
 
 LINK_MODES = ("admin", "cli", "oauth", "matrikel_epost")
