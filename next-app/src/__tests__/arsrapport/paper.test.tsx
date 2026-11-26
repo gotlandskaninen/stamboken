@@ -17,6 +17,7 @@ import {
   ReportForm,
   type PaperProps,
   type ReportActions,
+  forgetTabWrites,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/ReportForm";
 import type {
   Receipt,
@@ -82,6 +83,7 @@ const paperView = (over: Partial<ReportView> = {}): ReportView =>
   });
 
 beforeEach(() => {
+  forgetTabWrites(); // module memory of the tab, as after a hard load
   window.scrollTo = vi.fn(); // jsdom does not implement it
   window.localStorage.clear();
   refresh.mockReset();
@@ -681,6 +683,64 @@ describe("ReportForm on paper", () => {
     ).toBe(true);
     unmount();
     renderPaper(paperView({ draft: { ...draft, own: true } }));
+    expect(screen.queryByText(/Medlemmen har påbörjat/)).toBeNull();
+  });
+
+  it("hides the member-draft gate while Back reads the page again, and takes the new view without a draft", async () => {
+    vi.useFakeTimers();
+    const draft = {
+      data: { rabbits: { "1": { val: "kvar", vikt: 2.5 } } } as never,
+      updated_at: "2027-01-02T09:00:00+00:00",
+      submission_key: null,
+      own: false,
+    };
+    const gated = paperView({ draft });
+    const a = actions();
+    render(
+      <ReportForm
+        env="demo"
+        view={gated}
+        actions={a}
+        post={5}
+        paper={paperProps()}
+      />,
+    ).unmount();
+    // the same report saved from its ordinary page meanwhile
+    const other = render(
+      <ReportForm env="demo" view={paperView({ item: null })} actions={a} />,
+    );
+    fireEvent.click(within(row(1)).getByLabelText("Finns kvar"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    other.unmount();
+    const { rerender } = render(
+      <ReportForm
+        env="demo"
+        view={gated}
+        actions={a}
+        post={5}
+        paper={paperProps()}
+      />,
+    );
+    await act(async () => {}); // the reload asks for the page once the writes on their way have answered
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(
+      screen.queryByRole("button", { name: "Fortsätt på medlemmens utkast" }),
+    ).toBeNull();
+    expect(screen.getAllByText("Hämtar senaste versionen…")).not.toHaveLength(
+      0,
+    );
+    // the member sent the report meanwhile: no draft, and no crash on the old gate
+    rerender(
+      <ReportForm
+        env="demo"
+        view={paperView()}
+        actions={a}
+        post={5}
+        paper={paperProps()}
+      />,
+    );
     expect(screen.queryByText(/Medlemmen har påbörjat/)).toBeNull();
   });
 
