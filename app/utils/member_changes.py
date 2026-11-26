@@ -39,7 +39,6 @@ from utils.members import (
 
 CHANGE_DAYS = 14  # fråga 30
 CHANGED = "Uppgifterna har ändrats sedan sidan visades. Kontrollera ändringarna och bekräfta igen."
-EMAIL_REFUSED = "E-postadressen kan inte användas. Kontakta genbanksansvarig."
 
 
 def _field(row):
@@ -115,7 +114,7 @@ def report_changes(report):
     return [
         {"falt": _field(row), "state": state, "expires_at": row.expires_at.isoformat()}
         for row in rows
-        if (state := _state(row, now)) in ("vantar", "forfallen")
+        if (state := _state(row, now)) in ("vantar", "forfallen") and row.value  # a purged one says nothing
     ]
 
 
@@ -333,10 +332,12 @@ def confirm(token, *, account, version):
                     row.save(only=[MemberChangeRequest.revoked_at, MemberChangeRequest.revoked_reason])
                     continue
                 old = member.email
-                try:
+                try:  # its own savepoint: a refused address leaves the other changes to confirm
                     member.email = set_member_email(member, new, None, by="other").email
-                except AddressTaken as exc:
-                    raise ArsrapportError(409, EMAIL_REFUSED) from exc
+                except AddressTaken:
+                    row.revoked_at, row.revoked_reason = now, "andrad"  # the page says it no longer applies
+                    row.save(only=[MemberChangeRequest.revoked_at, MemberChangeRequest.revoked_reason])
+                    continue
                 payload |= {"before": {"email": old}, "after": {"email": member.email}}
                 arsrapport.save_contact(membership, member, {"epost": {"email": new}}, None, payload)
             elif row.kind == "publicering":

@@ -3757,7 +3757,10 @@ def _receipt_address(params):
 def _member_address(params):
     """The account notice's address: the member's login address, so a new one that waits is not told (U8)."""
     member = report_code.invitation_members(now()).where(Member.id == params["member_id"]).first()
-    return member.login_address if member is not None else Member.get_by_id(params["member_id"]).email
+    if member is not None:
+        return member.login_address
+    member = Member.get_or_none(Member.id == params["member_id"])  # erased: the mail is cancelled
+    return member.email if member is not None else None
 
 
 @mail_kind("arsrapport.andrad", priority=0, category="T", login_address=_receipt_address)

@@ -360,6 +360,24 @@ class TestLink(DetailsTest):
         later = self.mails("arsrapport.andrad")[-1]
         self.assertEqual(mail.MAIL_KINDS[later.kind].login_address(later.params), "g9001@example.invalid")
 
+    def test_a_taken_address_drops_only_the_email_change(self):
+        receipt = self.submit_changes({"epost": "g9002@example.invalid", "telefon": "0709-777 888"})
+        view = self.changes(receipt["submission_id"]).get_json()
+        response = self.changes(receipt["submission_id"], "/bekrafta", version=view["version"], konto=False)
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        states = {c["falt"]: c["state"] for c in response.get_json()["changes"]}
+        self.assertEqual(states, {"telefon": "bekraftad", "epost": "aterkallad"})
+        member = db.Member.get_by_id(self.member.id)
+        self.assertEqual((member.email, member.phone), ("g9001@example.invalid", "0709-777 888"))
+
+    def test_account_notice_goes_to_the_old_address_when_the_email_changes_too(self):  # U8
+        receipt = self.submit_changes({"epost": "ny@example.invalid", "konto": NEW_KONTO})
+        view = self.changes(receipt["submission_id"]).get_json()
+        self.changes(receipt["submission_id"], "/bekrafta", version=view["version"], konto=True)
+        self.assertEqual(db.Member.get_by_id(self.member.id).email, "ny@example.invalid")
+        (notice,) = self.mails(arsrapport.ACCOUNT_NOTICE)
+        self.assertEqual(mail.MAIL_KINDS[notice.kind].login_address(notice.params), "g9001@example.invalid")
+
     def test_withdraw_revokes_waiting_changes(self):
         self.submit_changes({"telefon": "0709-777 888"})
         report = db.YearlyHerdReport.get()
