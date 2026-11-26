@@ -43,10 +43,13 @@ export type SaleBuyer =
 /** bevis: the buyer got the försäljningsbevis; epost: no bevis, an e-mail; utan: såld utanför genbanken. */
 export type BuyerMode = "bevis" | "epost" | "utan";
 
-/** The choices a sale's year has (#273): the bevis from 2027, the transition until the end of 2027. */
-export function buyerModes(year: number): BuyerMode[] {
-  if (year < 2027) return ["epost", "utan"];
-  if (year === 2027) return ["bevis", "epost", "utan"];
+/**
+ * The choices a sale's year has (#273), by its date, not the day it is entered: the bevis from 2026 (the yearly
+ * report from 2027, Jonas 2026-11-26), the transition until the end of 2027.
+ */
+export function buyerModes(year: number, inReport = false): BuyerMode[] {
+  if (year < (inReport ? 2027 : 2026)) return ["epost", "utan"];
+  if (year <= 2027) return ["bevis", "epost", "utan"];
   return ["bevis"];
 }
 
@@ -79,8 +82,12 @@ export const saleYear = (date: string | null | undefined) =>
     : stockholmToday().getFullYear();
 
 /** The draft's choice if the year has it, the only one if there is one, else none yet. */
-export function buyerMode(d: BuyerDraft, year: number): BuyerMode | null {
-  const modes = buyerModes(year);
+export function buyerMode(
+  d: BuyerDraft,
+  year: number,
+  inReport = false,
+): BuyerMode | null {
+  const modes = buyerModes(year, inReport);
   if (modes.length === 1) return modes[0];
   return d.mode && modes.includes(d.mode) ? d.mode : null;
 }
@@ -98,8 +105,9 @@ export function buyerComplete(
   d: BuyerDraft,
   addressRequired: boolean,
   year: number,
+  inReport = false,
 ) {
-  const mode = buyerMode(d, year);
+  const mode = buyerMode(d, year, inReport);
   const named = !!d.name.trim() && !!d.town.trim();
   if (mode === "utan") return true;
   if (mode === "epost")
@@ -110,8 +118,12 @@ export function buyerComplete(
 }
 
 /** E-mail and phone only with a yes: a field hidden by an unticked box is never sent. */
-export function buyerPayload(d: BuyerDraft, year: number): SaleBuyer {
-  const mode = buyerMode(d, year);
+export function buyerPayload(
+  d: BuyerDraft,
+  year: number,
+  inReport = false,
+): SaleBuyer {
+  const mode = buyerMode(d, year, inReport);
   if (mode === "utan") return { not_recorded: true };
   if (mode === "epost")
     return {
@@ -144,6 +156,7 @@ export function BuyerFields({
   value,
   onChange,
   year,
+  inReport = false,
   size,
   addressRequired = false,
   errors,
@@ -153,6 +166,8 @@ export function BuyerFields({
   onChange: (value: BuyerDraft) => void;
   /** The sale's year, which decides the choice. */
   year: number;
+  /** The yearly report, which has no bevis for 2026 sales. */
+  inReport?: boolean;
   size?: "small" | "medium";
   addressRequired?: boolean;
   /** The yearly report's member: the report's larger fields, labels above (RegisterFromCertificate's too). */
@@ -167,9 +182,9 @@ export function BuyerFields({
 }) {
   const { t } = useTranslation();
   const legend = React.useId();
-  const modes = buyerModes(year);
-  const mode = buyerMode(value, year);
-  const before = year < 2027;
+  const modes = buyerModes(year, inReport);
+  const mode = buyerMode(value, year, inReport);
+  const bevis = modes.includes("bevis");
   const set = (changes: Partial<BuyerDraft>) =>
     onChange({ ...value, ...changes });
   const field = (
@@ -222,9 +237,9 @@ export function BuyerFields({
         <FormControl error={!!errors?.mode}>
           <FormLabel id={legend}>
             {t(
-              before
-                ? "individual.sell.buyerHasEmail"
-                : "individual.sell.buyerGotBevis",
+              bevis
+                ? "individual.sell.buyerGotBevis"
+                : "individual.sell.buyerHasEmail",
             )}
           </FormLabel>
           <RadioGroup
@@ -247,7 +262,7 @@ export function BuyerFields({
                   />
                 }
                 label={t(
-                  `individual.sell.buyerMode_${m}${before ? "" : "_2027"}`,
+                  `individual.sell.buyerMode_${m}${bevis ? "_bevis" : ""}`,
                 )}
               />
             ))}

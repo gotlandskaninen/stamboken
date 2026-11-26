@@ -26,9 +26,16 @@ const filled = (changes: Partial<BuyerDraft>): BuyerDraft => ({
 
 describe("buyerModes", () => {
   it("follows the sale's year (#273)", () => {
-    expect(buyerModes(2026)).toEqual(["epost", "utan"]);
+    expect(buyerModes(2025)).toEqual(["epost", "utan"]);
+    expect(buyerModes(2026)).toEqual(["bevis", "epost", "utan"]);
     expect(buyerModes(2027)).toEqual(["bevis", "epost", "utan"]);
     expect(buyerModes(2028)).toEqual(["bevis"]);
+  });
+
+  it("starts the bevis a year later in the yearly report", () => {
+    expect(buyerModes(2026, true)).toEqual(["epost", "utan"]);
+    expect(buyerModes(2027, true)).toEqual(["bevis", "epost", "utan"]);
+    expect(buyerModes(2028, true)).toEqual(["bevis"]);
   });
 });
 
@@ -95,20 +102,27 @@ describe("buyerComplete", () => {
 });
 
 describe("BuyerFields", () => {
-  const show = (year: number, variant?: "member") =>
+  const show = (year: number, variant?: "member", inReport?: boolean) =>
     render(
       <BuyerFields
         value={{ ...EMPTY_BUYER, mode: "bevis" }}
         onChange={() => {}}
         year={year}
         variant={variant}
+        inReport={inReport}
       />,
     );
   const CONSENT =
     "Köparen har kryssat ja: föreningen får spara e-post och telefon så länge köparen har kaninen";
 
-  it("asks 'Har köparen e-post?' in 2026, with no consent boxes", () => {
+  it("asks 'Fick köparen försäljningsbeviset?' in 2026 outside the report", () => {
     show(2026);
+    expect(screen.getByText("Fick köparen försäljningsbeviset?")).toBeTruthy();
+    expect(screen.getAllByRole("radio")).toHaveLength(3);
+  });
+
+  it("asks 'Har köparen e-post?' in 2026 in the report, with no consent boxes", () => {
+    show(2026, undefined, true);
     expect(screen.getByText("Har köparen e-post?")).toBeTruthy();
     expect(screen.getAllByRole("radio")).toHaveLength(2);
     expect(screen.queryByRole("checkbox", { name: CONSENT })).toBeNull();

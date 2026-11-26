@@ -61,9 +61,11 @@ const sale = {
 const found = (...sales: object[]) => ({ ok: true, data: { sales } });
 const registered = found(sale);
 
-// Before 2027 the buyer is asked "Har köparen e-post?"; from 2028 only the bevis (#273).
+// 2026 and 2027 ask "Fick köparen försäljningsbeviset?"; before 2026 "Har köparen e-post?"; from 2028 only the bevis (#273).
 const BEVIS_DATE = "2028-03-05";
-const QUESTION = "Har köparen e-post?";
+const QUESTION = "Fick köparen försäljningsbeviset?";
+const EPOST_QUESTION = "Har köparen e-post?";
+const EPOST_DATE = "2025-10-03";
 
 function panel(
   answer: object = found(),
@@ -88,7 +90,9 @@ function panel(
 const type = (label: RegExp, value: string) =>
   fireEvent.change(screen.getByLabelText(label), { target: { value } });
 const typeEpostBuyer = () => {
-  fireEvent.click(screen.getByRole("radio", { name: "Ja" }));
+  fireEvent.click(
+    screen.getByRole("radio", { name: "Nej, men köparen har e-post" }),
+  );
   type(/Köparens namn/, "Anna Köpare");
   type(/^Ort/, "Visby");
   type(/^Postadress/, "Väg 1");
@@ -122,12 +126,12 @@ describe("SalePanel with a buyer outside the association", () => {
     expect(screen.getByLabelText("E-post")).toBeInTheDocument();
   });
 
-  it("asks before 2027 whether the buyer has e-mail, and only then for the fields", () => {
-    panel();
+  it("asks before 2026 whether the buyer has e-mail, and only then for the fields", () => {
+    panel(found(), false, EPOST_DATE);
     fireEvent.click(
       screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
     );
-    expect(screen.getByText(QUESTION)).toBeInTheDocument();
+    expect(screen.getByText(EPOST_QUESTION)).toBeInTheDocument();
     expect(screen.queryByLabelText(/Köparens namn/)).toBeNull();
     fireEvent.click(screen.getByRole("radio", { name: "Ja" }));
     expect(screen.getByLabelText(/Köparens namn/)).toBeInTheDocument();
@@ -176,7 +180,7 @@ describe("SalePanel with a buyer outside the association", () => {
     });
   });
 
-  it("sends the e-mail buyer as notice_only before 2027", async () => {
+  it("sends the e-mail buyer as notice_only", async () => {
     registerSale.mockResolvedValue({ ok: true, data: { document: doc } });
     panel();
     fireEvent.click(

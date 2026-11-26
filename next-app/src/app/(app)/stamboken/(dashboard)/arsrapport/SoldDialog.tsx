@@ -214,8 +214,8 @@ function Body({
     rabbit?.registered_buyer_date &&
     (stored || date === rabbit.registered_buyer_date);
   const needsAddress = addressRequired && !correction;
-  const mode = buyerMode(buyer, ar); // without a försäljningsbevis before 2027 (#273)
-  const complete = buyerComplete(buyer, needsAddress, ar);
+  const mode = buyerMode(buyer, ar, true); // the report has no försäljningsbevis before 2027 (#273)
+  const complete = buyerComplete(buyer, needsAddress, ar, true);
   const buyerHalf = typed && !complete;
   const buyerMissing = outside && !kept && !stored && !complete;
   const buyerWanted = outside && !removed && (buyerMissing || buyerHalf);
@@ -269,7 +269,8 @@ function Body({
       ar,
       manad,
       dag: dag ? Number(dag) : null,
-      kopare: outside && !removed && complete ? buyerPayload(buyer, ar) : null,
+      kopare:
+        outside && !removed && complete ? buyerPayload(buyer, ar, true) : null,
       ...(outside && !removed && kept ? { kopare_id: existing.kopare_id } : {}),
     });
   };
@@ -345,6 +346,7 @@ function Body({
               variant="member"
               value={buyer}
               year={ar}
+              inReport
               addressRequired={needsAddress}
               onChange={setBuyer}
               errors={{
