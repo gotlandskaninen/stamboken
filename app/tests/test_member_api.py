@@ -38,6 +38,11 @@ def _answer(membership, value, text_version=CONSENT_TEXT_VERSION):
     db.PublicationConsentChange.create(membership=membership, value=value, text_version=text_version, source="profil")
 
 
+def _consent(body):
+    """A profile PATCH body: the answer and the version of the text the page showed."""
+    return {"text_version": CONSENT_TEXT_VERSION, **body}
+
+
 class MatrikelApiTest(DatabaseTest):
     def setUp(self):
         # nosemgrep: python.flask.security.audit.hardcoded-config.avoid_hardcoded_config_TESTING
@@ -309,7 +314,7 @@ class TestSelfService(MatrikelApiTest):
         self.login("linked")
         resp = self.client.patch(
             "/api/v2/members/me/consent",
-            data=json.dumps({"email": True}),
+            data=json.dumps(_consent({"email": True})),
             content_type="application/json",
         )
         self.assertEqual(resp.status_code, 200, resp.data)
@@ -323,7 +328,7 @@ class TestSelfService(MatrikelApiTest):
         self.login("linked")
         resp = self.client.patch(
             "/api/v2/members/me/consent",
-            data=json.dumps({"email": "false"}),
+            data=json.dumps(_consent({"email": "false"})),
             content_type="application/json",
         )
         self.assertEqual(resp.status_code, 400, resp.data)
@@ -336,7 +341,7 @@ class TestSelfService(MatrikelApiTest):
         self.login("linked")
         resp = self.client.patch(
             "/api/v2/members/me/consent",
-            data=json.dumps({"phone": True}),
+            data=json.dumps(_consent({"phone": True})),
             content_type="application/json",
         )
         self.assertEqual(resp.status_code, 200, resp.data)
@@ -357,7 +362,7 @@ class TestSelfService(MatrikelApiTest):
         for body in ({"phone": True}, {"email": False}):
             resp = self.client.patch(
                 "/api/v2/members/me/consent",
-                data=json.dumps(body),
+                data=json.dumps(_consent(body)),
                 content_type="application/json",
             )
             self.assertEqual(resp.status_code, 200, resp.data)
@@ -400,7 +405,7 @@ class TestSelfService(MatrikelApiTest):
         self.assertEqual(me["publication_consent"], {"name": True, "phone": False, "email": False, "address": False})
         self.assertTrue(me["consent_answered"])
         resp = self.client.patch(
-            "/api/v2/members/me/consent", data=json.dumps({"address": True}), content_type="application/json"
+            "/api/v2/members/me/consent", data=json.dumps(_consent({"address": True})), content_type="application/json"
         )
         self.assertEqual(resp.status_code, 200, resp.data)
         self.assertEqual(
@@ -415,11 +420,23 @@ class TestSelfService(MatrikelApiTest):
         self.login("linked")
         me = self.client.get("/api/v2/members/me").get_json()
         self.assertEqual((me["consent_answered"], me["publication_consent"]), (False, dict.fromkeys(EVERYTHING, False)))
-        resp = self.client.patch("/api/v2/members/me/consent", json=EVERYTHING)
+        resp = self.client.patch("/api/v2/members/me/consent", json=_consent(EVERYTHING))
         self.assertEqual(resp.status_code, 200, resp.data)
         self.assertTrue(resp.get_json()["consent_answered"])
         last = db.PublicationConsentChange.select().order_by(db.PublicationConsentChange.id.desc()).first()
         self.assertEqual((last.value, last.text_version, last.source), (EVERYTHING, CONSENT_TEXT_VERSION, "profil"))
+
+    def test_an_answer_to_another_text_version_is_refused(self):
+        """An old tab (the previous profile, or a page opened before the question changed) sends no or another
+        version: refused with a reload message, and nothing is written."""
+        self.login("linked")
+        for version in (None, "profil-2025", "2026-11-18"):
+            body = {"name": True} if version is None else {"name": True, "text_version": version}
+            with self.subTest(version=version):
+                resp = self.client.patch("/api/v2/members/me/consent", json=body)
+                self.assertEqual((resp.status_code, resp.get_json()["title"]), (409, "Ladda om sidan"), resp.data)
+        self.assertFalse(db.PublicationConsentChange.select().exists())
+        self.assertEqual(db.Membership.get_by_id(self.ms.id).publication_consent, {})
 
     def test_me_says_whether_the_koharen_question_applies(self):
         """The question is about a herd: only an active herd in a genebank makes the profile ask it."""
@@ -442,7 +459,7 @@ class TestSelfService(MatrikelApiTest):
         self.login("linked")
         resp = self.client.patch(
             "/api/v2/members/me/consent",
-            data=json.dumps({}),
+            data=json.dumps(_consent({})),
             content_type="application/json",
         )
         self.assertEqual(resp.status_code, 400, resp.data)
@@ -453,7 +470,7 @@ class TestSelfService(MatrikelApiTest):
         self.login("linked")
         resp = self.client.patch(
             "/api/v2/members/me/consent",
-            data=json.dumps({"herd": True}),
+            data=json.dumps(_consent({"herd": True})),
             content_type="application/json",
         )
         self.assertEqual(resp.status_code, 400, resp.data)
@@ -467,7 +484,7 @@ class TestSelfService(MatrikelApiTest):
         self.assertFalse(self.client.get("/api/v2/members/me").get_json()["consent_answered"])
         resp = self.client.patch(
             "/api/v2/members/me/consent",
-            data=json.dumps({"name": False}),
+            data=json.dumps(_consent({"name": False})),
             content_type="application/json",
         )
         self.assertEqual(resp.status_code, 200, resp.data)
@@ -519,7 +536,7 @@ class TestSelfService(MatrikelApiTest):
         self.assertEqual(resp.status_code, 403, resp.data)
         resp = self.client.patch(
             "/api/v2/members/me/consent",
-            data=json.dumps({"email": True}),
+            data=json.dumps(_consent({"email": True})),
             content_type="application/json",
         )
         self.assertEqual(resp.status_code, 403, resp.data)
@@ -649,7 +666,7 @@ class TestSelfService(MatrikelApiTest):
         with patch.object(db.Membership, "save", autospec=True, side_effect=db.Membership.save) as ms_spy:
             resp = self.client.patch(
                 "/api/v2/members/me/consent",
-                data=json.dumps({"email": True}),
+                data=json.dumps(_consent({"email": True})),
                 content_type="application/json",
             )
         self.assertEqual(resp.status_code, 200, resp.data)
@@ -677,7 +694,7 @@ class TestSelfService(MatrikelApiTest):
 
     SELF_SERVICE_WRITES = (
         ("/api/v2/members/me/contact", {"phone": "+46701234567", "address": "Box 1"}),
-        ("/api/v2/members/me/consent", {"email": True}),
+        ("/api/v2/members/me/consent", _consent({"email": True})),
     )
 
     def _assert_both_writes_refuse(self, stale, status, title, address="Gata 2"):

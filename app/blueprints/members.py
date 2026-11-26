@@ -690,9 +690,12 @@ def patch_me_consent():
     # PARTIAL update: the body carries only the switches this member
     # actually changed. Unknown keys are refused rather than ignored — a typo
     # would otherwise look to the member like a saved consent.
-    unknown = sorted(key for key in body if key not in CONSENT_KEYS)
+    unknown = sorted(key for key in body if key not in (*CONSENT_KEYS, "text_version"))
     if unknown:
         return problem(400, "Ogiltigt fält", f"Okända samtyckesnycklar: {', '.join(unknown)}")
+    # The version of the text the page showed: a tab opened before the question changed answered another one (5.11)
+    if body.get("text_version") != CONSENT_TEXT_VERSION:
+        return problem(409, "Ladda om sidan", "Frågan om Koharen har ändrats. Ladda om sidan och svara igen.")
 
     # Validate every supplied consent key is a real JSON boolean —
     # rejecting strings like "false" that would otherwise coerce to True.

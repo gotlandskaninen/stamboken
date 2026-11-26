@@ -211,12 +211,12 @@ describe("my-membership actions", () => {
       publication_consent: merged,
       consent_answered: true,
     });
-    const result = await updateConsent({ email: false });
+    const result = await updateConsent({ email: false, text_version: "v" });
     // The merged row comes back so the client can re-base its next diff.
     expect(result).toEqual({ ok: true, consent: merged, answered: true });
     expect(fetchApi).toHaveBeenCalledWith("/v2/members/me/consent", {
       method: "PATCH",
-      body: JSON.stringify({ email: false }),
+      body: JSON.stringify({ email: false, text_version: "v" }),
       headers: { "Content-Type": "application/json" },
     });
     expect(revalidatePath).toHaveBeenCalledWith("/stamboken/profil");

@@ -30,6 +30,13 @@ from tests.test_arsrapport_kontakt import (
 ALL, NONE = dict.fromkeys(CONSENT_KEYS, True), dict.fromkeys(CONSENT_KEYS, False)
 JA, NEJ = {"ja": True, "utom": []}, {"ja": False, "utom": []}
 JA_UTOM_TELEFON = {"ja": True, "utom": ["phone"]}
+
+
+def _consent(body):
+    """A profile PATCH body: the answer and the version of the text the page showed."""
+    return {"text_version": CONSENT_TEXT_VERSION, **body}
+
+
 KOHAREN = "listan över aktiva besättningar som trycks i Koharen."
 LINE = f"Du svarade Ja på blanketten: din besättning får stå med i {KOHAREN} Telefonnummer står inte med."
 LINE_NEJ = f"Du svarade Nej på blanketten: din besättning står inte med i {KOHAREN}"
@@ -46,7 +53,7 @@ class MatrikelTest(PaperTest):
         """The main member's own answer on the profile, dated noon `on`: the route stamps the real clock."""
         db.Member.update(user=self.owner.id).where(db.Member.id == self.member.id).execute()
         self.login("owner")
-        response = self.client.patch("/api/v2/members/me/consent", json=consent)
+        response = self.client.patch("/api/v2/members/me/consent", json=_consent(consent))
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
         row = self.changes()[-1]
         row.at = datetime.combine(on, clock(12), arsrapport.STOCKHOLM)
@@ -275,7 +282,7 @@ class MatrikelTest(PaperTest):
         db.Member.update(user=self.owner.id).where(db.Member.id == self.member.id).execute()
         self.login("owner")
         for consent in ({"phone": True}, {"phone": True}, {"name": True, "phone": False}):
-            response = self.client.patch("/api/v2/members/me/consent", json=consent)
+            response = self.client.patch("/api/v2/members/me/consent", json=_consent(consent))
             self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
         rows = [
             (change.membership_id, change.value, change.source, change.text_version, change.user_id)

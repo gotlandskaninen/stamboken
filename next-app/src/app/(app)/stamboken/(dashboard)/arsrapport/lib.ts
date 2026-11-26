@@ -335,8 +335,10 @@ export interface BodyEntry {
 
 export const SUBMIT_TIMEOUT_MS = 30_000;
 
-// The wording of the blankett's question about the listing in Koharen
-// (CONSENT_TEXT_VERSION "2026-11-20" on the server), shown by PublicationFields.
+// The wording of the blankett's question about the listing in Koharen, shown by
+// PublicationFields. The profile sends its version with every answer; the
+// server refuses another (CONSENT_TEXT_VERSION in app/utils/members.py).
+export const CONSENT_TEXT_VERSION = "2026-11-20";
 export const CONSENT_TEXT =
   "Får din besättning stå med i Koharens lista över aktiva besättningar? Koharen är föreningens tidning på papper och går bara till medlemmar. Listan gör det lättare för besättningarna att hitta varandra.";
 
