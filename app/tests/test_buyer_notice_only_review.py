@@ -108,7 +108,7 @@ class TestReportReview(ArsrapportTest):
         (sale,) = rows(self.rabbit, "TRANSFER")
         self.assertIsNone(sale.holder_contact_id)
 
-    def test_the_month_runs_from_the_proposal_through_the_address_check(self):
+    def test_a_registered_buyer_waiting_for_the_address_check_stays_past_the_month(self):  # review of #276
         known = self.rabbits(self.herd, 1)[0]
         record_herd_tracking(known, self.gx1, DAY, "TRANSFER", self.manager, buyer={**NOTICE, "name": "Annan Köpare"})
         proposal = self.propose(NOTICE)
@@ -121,8 +121,8 @@ class TestReportReview(ArsrapportTest):
 
         buyer_contact.purge_uninformed(proposal.created_at + timedelta(days=31))
 
-        self.assertIsNone(db.BuyerContact.get_or_none(db.BuyerContact.id == contact.id))
-        self.assertTrue(db.HerdTracking.get_by_id(sale.id).buyer_removed)
+        self.assertIsNotNone(db.BuyerContact.get_or_none(db.BuyerContact.id == contact.id))
+        self.assertFalse(db.HerdTracking.get_by_id(sale.id).buyer_removed)
 
     @mock.patch.object(settings.mail, "link_secret", "synthetic-review-test")
     def test_erase_link_before_purge_keeps_the_other_sale_and_matching_proposal(self):
@@ -185,7 +185,7 @@ class TestReportReview(ArsrapportTest):
         self.assertEqual((pending.state, pending.buyer), ("foreslagen", NOT_RECORDED))
         self.approve_without_buyer(pending)
 
-    def test_after_thirty_days_an_uninformed_proposal_and_an_unchecked_address_lose_the_buyer(self):
+    def test_after_thirty_days_an_uninformed_proposal_loses_the_buyer_and_a_registered_sale_keeps_it(self):
         proposal = self.propose(NOTICE)
         self.assertTrue(proposal.buyer["notice_only"])
         buyer_contact.run(proposal.created_at + timedelta(days=29))
@@ -212,12 +212,12 @@ class TestReportReview(ArsrapportTest):
         pending = db.SaleProposal.get_by_id(proposal.id)
         self.assertEqual((pending.state, pending.buyer), ("foreslagen", NOT_RECORDED))
         self.approve_without_buyer(pending)
-        self.assertIsNone(db.BuyerContact.get_or_none(db.BuyerContact.id == old.holder_contact_id))
-        erased = db.HerdTracking.get_by_id(old.id)
-        self.assertEqual((erased.holder_contact_id, erased.buyer_removed), (None, True))
-        kept = db.HerdTracking.get_by_id(recent.id).holder_contact
-        self.assertTrue(kept.email_review_pending)
-        self.assertEqual(kept.email, NOTICE["email"])
+        # a registered sale waiting for the manager's address check keeps its buyer (review of #276)
+        for sale in (old, recent):
+            kept = db.HerdTracking.get_by_id(sale.id)
+            self.assertEqual((kept.holder_contact_id, kept.buyer_removed), (sale.holder_contact_id, False))
+            self.assertTrue(kept.holder_contact.email_review_pending)
+            self.assertEqual(kept.holder_contact.email, NOTICE["email"])
 
 
 class TestSaleReview(NoticeOnlyTest):
@@ -242,22 +242,26 @@ class TestSaleReview(NoticeOnlyTest):
         self.assertIsNotNone(db.HerdTracking.get_by_id(sale.id).voided_at)
         self.assertEqual(replacement.holder_contact.name, BUYER["name"])
 
-    def test_a_notice_not_sent_within_a_month_takes_the_buyer_with_it(self):
+    def test_a_notice_not_sent_within_a_month_takes_only_an_unregistered_buyer(self):  # review of #276
         now = datetime.now(timezone.utc)
         stuck = self.sale()  # its mail still queued
         withdrawn = record_herd_tracking(self.individuals[1], self.gx1, DAY, "TRANSFER", self.manager, buyer=NOTICE)
+        # Dra tillbaka voids the sale and keeps the buyer for a new Skicka, which has not come
+        herd_tracking.void_herd_tracking(
+            withdrawn.id, db.User.get_by_id(self.admin.id), "Test", keep_buyer_until=now + timedelta(days=60)
+        )
         db.MailMessage.update(status="cancelled", last_error=SALE_WITHDRAWN).where(
             db.MailMessage.recipient_id == withdrawn.holder_contact_id
         ).execute()
         db.BuyerContact.update(created_at=now - timedelta(days=29)).execute()
         buyer_contact.purge_uninformed(now)
         self.assertIsNotNone(self.contact(stuck))
-        self.assertIsNotNone(self.contact(withdrawn))
+        self.assertIsNotNone(db.BuyerContact.get_or_none(db.BuyerContact.id == withdrawn.holder_contact_id))
         db.BuyerContact.update(created_at=now - timedelta(days=31)).execute()
         buyer_contact.purge_uninformed(now)
-        self.assertIsNone(self.contact(stuck))
-        self.assertIsNone(self.contact(withdrawn))
-        self.assertTrue(db.HerdTracking.get_by_id(stuck.id).buyer_removed)
+        self.assertIsNotNone(self.contact(stuck))  # registered: its queued notice still goes
+        self.assertIsNone(db.BuyerContact.get_or_none(db.BuyerContact.id == withdrawn.holder_contact_id))
+        self.assertFalse(db.HerdTracking.get_by_id(stuck.id).buyer_removed)
 
     def test_cancelled_notice_removes_the_buyer_only_when_the_sale_was_not_withdrawn(self):
         withdrawn = self.sale()
