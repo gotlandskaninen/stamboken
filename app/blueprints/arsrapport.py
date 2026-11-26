@@ -17,6 +17,7 @@ import utils.arsrapport as arsrapport
 import utils.arsrapport_invite as invite
 import utils.arsrapport_pdf as arsrapport_pdf
 import utils.inbox as inbox
+import utils.member_changes as member_changes
 import utils.purchase_notice as purchase_notice
 import utils.sale_proposal as sale_proposal
 from extensions import limiter
@@ -29,13 +30,12 @@ from utils.database import (
     OUTSIDE_GENEBANK_HERDS,
     Genebank,
     Herd,
-    MatrikelAudit,
     ReportAccessCode,
     SaleProposal,
     YearlyReportRound,
 )
 from utils.legacy_compat import report_link_only
-from utils.matrikel import LinkError, resolve_own_membership, unlink_member_user
+from utils.matrikel import LinkError, resolve_own_membership
 from utils.report_code import CodeActor, actor_key
 
 from .common import check_genebank_access, json_login_required, manager_required, problem
@@ -446,19 +446,19 @@ def status(year):
 
 
 # [Next.js] "Koppla bort" in the status view (5.1): the genebank's manager, or admin, undoes the account link a main
-# member made with a code to the matrikel's e-mail ("nytt konto"). Only that link: `link_id` is its audit row.
-@arsrapport_bp.route("/v2/arsrapport/kontokoppling/<int:link_id>/hav", methods=["POST"])
+# member made with a code to the matrikel's e-mail ("nytt konto"), from the herd's row in the round's status: only
+# the link that row offers (`link_id`, its audit row), for an active herd of the manager's genebank.
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/kontokoppling/<int:link_id>/hav", methods=["POST"])
 @json_login_required
 @manager_required
-def undo_account_link(link_id):
-    audit = MatrikelAudit.get_or_none(MatrikelAudit.id == link_id, MatrikelAudit.action == "person_user_linked")
-    if audit is None or (audit.payload or {}).get("source") != "matrikel_epost":
+def undo_account_link(herd, year, link_id):
+    target, round_ = Herd.get_or_none(Herd.herd == herd), arsrapport.get_round(year)
+    if target is None or not target.is_active or target.herd in OUTSIDE_GENEBANK_HERDS or round_ is None:
         return problem(404, "Hittades inte", "Kopplingen finns inte.")
-    genebanks = {herd.genebank_id for herd in Herd.select(Herd.genebank).where(Herd.membership == audit.membership_id)}
-    if not (current_user.is_admin or genebanks & set(current_user.is_manager or ())):
+    if not (current_user.is_admin or target.genebank_id in (current_user.is_manager or ())):
         return problem(403, "Åtkomst nekad", "Du saknar behörighet för denna genbank.")
     try:
-        unlink_member_user(audit.payload["person_id"], actor=current_user, mode="arsrapport", link_audit_id=link_id)
+        member_changes.undo_self_link(target, round_, link_id, actor=current_user)
     except LinkError as exc:
         return problem(exc.status, exc.title, exc.detail)
     return jsonify({"ok": True})

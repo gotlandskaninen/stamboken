@@ -21,6 +21,7 @@ import utils.report_code as report_code
 from utils.arsrapport import ArsrapportError
 from utils.database import (
     DB_PROXY,
+    Herd,
     MatrikelAudit,
     Member,
     MemberChangeRequest,
@@ -30,7 +31,7 @@ from utils.database import (
 )
 from utils.login_code import AddressTaken
 from utils.mail import address_hash, verify_link
-from utils.matrikel import set_member_email
+from utils.matrikel import _invalidate_genebanks, set_member_email, unlink_member_user
 from utils.members import (
     CONSENT_TEXT_VERSION,
     consent_from_answer,
@@ -246,6 +247,20 @@ def revoke_for_direct_write(membership_id, person_id, columns):
         MemberChangeRequest.update(revoked_at=now, revoked_reason="nyare").where(
             MemberChangeRequest.id.in_(ids)
         ).execute()
+
+
+def undo_self_link(herd, round_, link_id, *, actor):
+    """
+    Koppla bort (5.1): exactly the link the herd's status row offers, checked again under the membership's lock with
+    the same rule (self_made_links): the herd's active main member's own account, made with a code since the round's
+    start and still standing. The account and its other rights stay; only the link goes.
+    """
+    with DB_PROXY.atomic():
+        _, member = arsrapport._lock_matrikel(herd)
+        if member is None or self_made_links([Herd.get_by_id(herd.id)], round_.start_date).get(herd.id) != link_id:
+            raise ArsrapportError(404, "Kopplingen finns inte.")
+        _, lost = unlink_member_user(member.id, actor=actor, mode="arsrapport", link_audit_id=link_id, invalidate=False)
+    _invalidate_genebanks(lost)
 
 
 def revoke_withdrawn(report, now):

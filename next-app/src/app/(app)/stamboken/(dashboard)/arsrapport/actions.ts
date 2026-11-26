@@ -293,11 +293,16 @@ export async function newLink(herd: string, year: number, env: Mode) {
 }
 
 // "Koppla bort" (5.1): undo the account link a main member made with a code to the matrikel's e-mail.
-export async function undoAccountLink(linkId: number, env: Mode) {
+export async function undoAccountLink(
+  herd: string,
+  year: number,
+  linkId: number,
+  env: Mode,
+) {
   return call<{ ok: boolean }>(
     env,
     Number.isSafeInteger(linkId) && linkId > 0
-      ? `/v2/arsrapport/kontokoppling/${linkId}/hav`
+      ? path(herd, year, `/kontokoppling/${linkId}/hav`)
       : null,
     "POST",
     {},

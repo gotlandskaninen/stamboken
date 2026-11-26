@@ -274,7 +274,7 @@ describe("StatusTable", () => {
     expect(undoAccountLink).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Koppla bort" }));
     await waitFor(() =>
-      expect(undoAccountLink).toHaveBeenCalledWith(41, "demo"),
+      expect(undoAccountLink).toHaveBeenCalledWith("G9002", 2026, 41, "demo"),
     );
   });
   it("offers Ny länk only to a manager", () => {

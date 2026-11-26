@@ -90,7 +90,10 @@ export function StatusTable({
   const [busy, setBusy] = useState(false);
   const [ask, setAsk] = useState<string | null>(null); // the herd whose "Ny länk" awaits its confirmation
   const [sales, setSales] = useState<string | null>(null); // the herd whose "Försäljningar" is open
-  const [unlink, setUnlink] = useState<number | null>(null); // the account link whose "Koppla bort" awaits its yes
+  // the herd and account link whose "Koppla bort" awaits its yes
+  const [unlink, setUnlink] = useState<{ herd: string; id: number } | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
   const errorRef = useRef<HTMLParagraphElement>(null);
   useEffect(() => {
@@ -157,12 +160,12 @@ export function StatusTable({
     }
   }
 
-  async function undoLink(linkId: number) {
+  async function undoLink(link: { herd: string; id: number }) {
     if (busy) return;
     setBusy(true);
     setError(null);
     try {
-      const res = await undoAccountLink(linkId, env);
+      const res = await undoAccountLink(link.herd, year, link.id, env);
       if (!res.ok) setError(res.problem.detail || res.problem.title);
       else startTransition(() => router.refresh());
     } catch {
@@ -287,7 +290,7 @@ function Row({
   onTime: (herd: string, value: string) => void;
   onNewLink: (herd: string) => void;
   onSales: (herd: string) => void;
-  onUnlink: (linkId: number) => void;
+  onUnlink: (link: { herd: string; id: number }) => void;
 }) {
   const reported = row.received_at !== null;
   // The state already says "Ingen e-post" when nothing else is going on.
@@ -460,7 +463,9 @@ function Row({
               type="button"
               className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
               disabled={locked}
-              onClick={() => onUnlink(row.flags.nytt_konto!)}
+              onClick={() =>
+                onUnlink({ herd: row.herd, id: row.flags.nytt_konto! })
+              }
             >
               Koppla bort kontot
             </button>

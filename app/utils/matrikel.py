@@ -1717,12 +1717,14 @@ def _detach_user_locked(person: Member, *, actor: User | None, mode: str) -> int
     return user_id
 
 
-def unlink_member_user(person_id, *, actor, mode="admin", link_audit_id=None):
+def unlink_member_user(person_id, *, actor, mode="admin", link_audit_id=None, invalidate=True):
     """Detach the account — allowed on ended persons too (the release valve
     for the blocked-relink case). With `link_audit_id` (the status view's
     "nytt konto", spec 5.1) only the link that audit row recorded: refused
     under the locks once the person was linked or unlinked since, or holds
-    another account. Returns (person, lost_genebank_ids)."""
+    another account. A caller with an outer transaction passes
+    invalidate=False and invalidates the lost genebanks after its commit.
+    Returns (person, lost_genebank_ids)."""
     with DB_PROXY.atomic():
         person, user = _lock_for_detach(person_id)
         if user is None:
@@ -1742,7 +1744,8 @@ def unlink_member_user(person_id, *, actor, mode="admin", link_audit_id=None):
         lost_genebanks = (
             {h.genebank_id for h in Herd.select(Herd.genebank).where(Herd.id.in_(list(lost)))} if lost else set()
         )
-    _invalidate_genebanks(lost_genebanks)
+    if invalidate:
+        _invalidate_genebanks(lost_genebanks)
     return person, lost_genebanks
 
 
