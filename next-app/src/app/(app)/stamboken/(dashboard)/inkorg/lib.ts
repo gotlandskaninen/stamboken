@@ -721,20 +721,37 @@ export function queueHref(
 /** A round as /v2/arsrapport/rundor lists it (newest year first). */
 export type RoundRow = {
   year: number;
+  start_date?: string | null;
+  end_date?: string | null;
   genebanks: { genebank_id: number }[];
 };
 
 /**
- * The year of the form entry link: the latest round the item's genebank has
- * activated. It stays after end_date, when paper entry is still allowed (D11).
+ * The years of the form entry link, oldest first: the round the item's
+ * genebank has open `today` (#264 keeps it to one); else its latest activated
+ * round, and while that has not opened, also the latest that has, whose late
+ * paper forms are still entered (D11). The handler picks the year on the form.
  */
-export const reportYear = (
+export function reportYears(
   rounds: RoundRow[] | null,
   genebankId: number | null,
-): number | null =>
-  genebankId === null
-    ? null
-    : ([...(rounds ?? [])]
-        .sort((a, b) => b.year - a.year)
-        .find((r) => r.genebanks.some((g) => g.genebank_id === genebankId))
-        ?.year ?? null);
+  today: string,
+): number[] {
+  if (genebankId === null) return [];
+  // A round without both dates is never open (round_open), so it is no choice.
+  const mine = [...(rounds ?? [])]
+    .filter(
+      (r) =>
+        !!r.start_date &&
+        !!r.end_date &&
+        r.genebanks.some((g) => g.genebank_id === genebankId),
+    )
+    .sort((a, b) => b.year - a.year);
+  const opened = (r: RoundRow) => r.start_date! <= today;
+  const open = mine.find((r) => opened(r) && today <= r.end_date!);
+  if (open) return [open.year];
+  const [latest] = mine;
+  if (!latest) return [];
+  const before = opened(latest) ? undefined : mine.find(opened);
+  return before ? [before.year, latest.year] : [latest.year];
+}

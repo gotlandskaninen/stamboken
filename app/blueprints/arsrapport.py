@@ -96,7 +96,7 @@ def activate(year, genebank_id):
     if round_ is None or Genebank.get_or_none(Genebank.id == genebank_id) is None:
         return problem(404, "Hittades inte", f"Rundan för {year} eller genbanken finns inte.")
     arsrapport.activate(round_, genebank_id, current_user, **_dates("send_at"))
-    return jsonify(arsrapport.round_json(round_))
+    return jsonify(arsrapport.round_json(arsrapport.get_round(year)))
 
 
 def _codes_in_session(herd, round_):
