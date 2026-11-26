@@ -26,7 +26,11 @@ import {
 } from "@/redux/api/apiSlice";
 import HelpTooltip from "./HelpTooltip";
 import GeneticsInfoPanel from "./GeneticsInfoPanel";
+import { useQueryView } from "./queryView";
+import { useMode } from "@/lib/mode-context";
+import GeneticsError from "./GeneticsError";
 import { translateReasons } from "@/utils/translateReasons";
+import { decimal, percent } from "@/lib/genetics";
 
 function getMsiColor(msi: number): "success" | "warning" | "error" {
   if (msi <= 2) return "success";
@@ -41,8 +45,6 @@ interface BreedingSuggestionsTabProps {
 const BASE_MAX_INBREEDING = 0.0625;
 const MAX_INBREEDING_LIMIT = 0.25;
 
-const formatPercent = (value: number) => `${(value * 100).toFixed(1)} %`;
-
 const BreedingSuggestionsTab = ({
   genebankId,
 }: BreedingSuggestionsTabProps) => {
@@ -52,7 +54,17 @@ const BreedingSuggestionsTab = ({
   const [editedMaxInbreeding, setMaxInbreeding] = useState<number | null>(null);
   const [maxPerMale, setMaxPerMale] = useState(3);
 
-  const { data: metrics } = useFetchPopulationMetricsQuery(genebankId);
+  const mode = useMode();
+  const metricsQuery = useFetchPopulationMetricsQuery(
+    { genebankId, mode },
+    { refetchOnMountOrArgChange: true },
+  );
+  const metricsView = useQueryView(metricsQuery);
+  // Only a value this visit confirmed: after a failed or denied refresh the
+  // expected F is unknown, and the cap falls back to its base.
+  const metrics = metricsView.stale ? undefined : metricsView.data;
+  // An automatic cap waits for that value; a typed one does not.
+  const capPending = editedMaxInbreeding === null && metricsQuery.isFetching;
   const expectedOffspringF = metrics?.expected_offspring_f ?? null;
   // Explicit null from the API: no male or no female in the reference population
   const lacksSexes = metrics != null && metrics.expected_offspring_f === null;
@@ -67,16 +79,21 @@ const BreedingSuggestionsTab = ({
       MAX_INBREEDING_LIMIT,
     );
 
-  // Only fetch when user clicks "Beräkna"
-  const [queryParams, setQueryParams] =
+  // Only fetch when user clicks "Beräkna"; a mode switch drops the calculation
+  // made in the other mode, so its pairs are never shown in this one.
+  const [requestedParams, setQueryParams] =
     useState<BreedingSuggestionsParams | null>(null);
+  const queryParams = requestedParams?.mode === mode ? requestedParams : null;
 
-  const {
-    data: suggestions,
-    isLoading,
-    isFetching,
-    error,
-  } = useFetchBreedingSuggestionsQuery(queryParams ?? skipToken);
+  // Every "Beräkna" asks the server: a cached answer may be one a denial hides.
+  const suggestionsQuery = useFetchBreedingSuggestionsQuery(
+    queryParams ?? skipToken,
+    { refetchOnMountOrArgChange: true },
+  );
+  const { isLoading, isFetching, error } = suggestionsQuery;
+  const suggestionsView = useQueryView(suggestionsQuery);
+  // Only the answer for the submitted parameters (the view reads currentData), and nothing on an error.
+  const suggestions = error ? undefined : suggestionsView.data;
 
   const usedCap = queryParams?.maxInbreeding ?? maxInbreeding;
   const raiseHint =
@@ -86,16 +103,14 @@ const BreedingSuggestionsTab = ({
   const emptyMessage = lacksSexes
     ? "Referenspopulationen saknar hanar eller honor, så inga par kan föreslås."
     : expectedOffspringF != null
-      ? `Inga par klarar taket ${formatPercent(usedCap)}. Förväntad inavel vid slumpparning i rasen är ${formatPercent(expectedOffspringF)}.${raiseHint}`
-      : `Inga par hittades under taket ${formatPercent(usedCap)}.${raiseHint}`;
+      ? `Inga par klarar taket ${percent(usedCap)}. Förväntad inavel vid slumpparning i rasen är ${percent(expectedOffspringF)}.${raiseHint}`
+      : `Inga par hittades under taket ${percent(usedCap)}.${raiseHint}`;
 
   const handleCalculate = () => {
-    setQueryParams({
-      genebankId,
-      maxPairs,
-      maxInbreeding,
-      maxPerMale,
-    });
+    const params = { genebankId, mode, maxPairs, maxInbreeding, maxPerMale };
+    if (JSON.stringify(params) === JSON.stringify(queryParams))
+      suggestionsQuery.refetch(); // the same calculation again
+    else setQueryParams(params);
   };
 
   return (
@@ -151,7 +166,7 @@ const BreedingSuggestionsTab = ({
           <Button
             variant="contained"
             onClick={handleCalculate}
-            disabled={isFetching}
+            disabled={isFetching || capPending}
           >
             {isFetching ? "Beräknar..." : "Beräkna"}
           </Button>
@@ -167,17 +182,12 @@ const BreedingSuggestionsTab = ({
 
       {isLoading && <Skeleton variant="rounded" height={400} />}
 
-      {error &&
-        !(
-          typeof error === "object" &&
-          "status" in error &&
-          (error as { status: unknown }).status === 401
-        ) && (
-          <Alert severity="error">
-            Kunde inte beräkna parningsförslag. Kontrollera att genbanken har
-            tillräckligt med aktiva individer med könsdata.
-          </Alert>
-        )}
+      {(error || (suggestionsView.denied && !isFetching)) && (
+        <GeneticsError
+          error={error ?? { status: 403 }}
+          onRetry={() => suggestionsQuery.refetch()}
+        />
+      )}
 
       {suggestions && suggestions.length === 0 && (
         <Alert severity="info">{emptyMessage}</Alert>
@@ -223,13 +233,13 @@ const BreedingSuggestionsTab = ({
                       <TableCell>{s.sire_id}</TableCell>
                       <TableCell>{s.dam_id}</TableCell>
                       <TableCell align="right">
-                        {(s.expected_f * 100).toFixed(2)}%
+                        {percent(s.expected_f, 2)}
                       </TableCell>
                       <TableCell
                         align="right"
                         sx={{ color: s.delta_gd > 0 ? green[600] : "inherit" }}
                       >
-                        {s.delta_gd.toFixed(4)}
+                        {decimal(s.delta_gd, 4)}
                       </TableCell>
                       <TableCell align="center">
                         <Chip
@@ -240,7 +250,7 @@ const BreedingSuggestionsTab = ({
                       </TableCell>
                       <TableCell>
                         <Typography variant="body2" color="textSecondary">
-                          {translateReasons(s.reasons).join(", ")}
+                          {translateReasons(s.reasons).join("; ")}
                         </Typography>
                       </TableCell>
                     </TableRow>

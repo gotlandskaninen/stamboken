@@ -1,5 +1,8 @@
 name: Python tests
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main, 'release/**']
@@ -7,9 +10,86 @@ on:
     branches: [main, 'release/**']
 
 jobs:
-  test:
-    name: Run Python tests
+  # A PR that only touches Next.js, docs/ or Markdown outside app/ skips the
+  # suite. Pushes always run everything.
+  changes:
+    name: Python-relevant changes
     runs-on: ubuntu-latest
+    outputs:
+      python: ${{ steps.filter.outputs.python }}
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+
+      # Before the filter decides anything: a broken filter must not skip its own tests.
+      - name: Test the filter
+        run: bash scripts/tests/test-python-relevant.sh
+
+      # The checked-out PR merge commit against its first parent: what the
+      # merge would change, judged on this run's own commit. quotePath off so
+      # å, ä and ö stay readable; names with control characters stay quoted
+      # and run the suite. File names are never printed: the runner reads
+      # workflow commands from the log.
+      - name: Decide whether the Python suite runs
+        id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" != pull_request ]; then
+            python=true
+          else
+            files="$RUNNER_TEMP/changed-files"
+            git -c core.quotePath=false diff --name-only --no-renames HEAD^1 HEAD >"$files"
+            echo "$(wc -l <"$files") changed files"
+            python=$(scripts/python-relevant.sh <"$files")
+          fi
+          case "$python" in true | false) ;; *) echo "Filter gave '$python'"; exit 1 ;; esac
+          echo "python=$python" | tee -a "$GITHUB_OUTPUT"
+
+  checks:
+    name: Script and nginx checks
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      # Shell tests for scripts/ and the compose files (R071/R072/R097).
+      # They need `docker compose config`.
+      - name: Run script tests
+        run: |
+          status=0
+          for t in scripts/tests/test-*.sh; do
+            echo "::group::$t"
+            bash "$t" || status=1
+            echo "::endgroup::"
+          done
+          exit "$status"
+
+      - name: Check nginx access log format
+        run: scripts/check-nginx-log-format.sh
+
+      - name: Check nginx config with the real vhosts
+        run: |
+          scripts/check-nginx-prod-config.sh
+          # Everything production mounts, then what the old container sees
+          # if a deploy stops after copying the files: no new mounts.
+          scripts/check-nginx-prod-config.sh nginx/production/herdbook-production.conf nginx/production/stamboken-legacy.conf nginx/production/gotlandskaninen.conf nginx/production/gotlandskaninen-www.conf
+          scripts/check-nginx-prod-config.sh nginx/production/herdbook-production.conf nginx/production/stamboken-legacy.conf
+          scripts/check-nginx-prod-config.sh nginx/herdbook-local-production.conf
+
+  pytest:
+    name: Pytest ${{ matrix.group }}/${{ strategy.job-total }}
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [1, 2, 3, 4]
 
     services:
       postgres:
@@ -40,18 +120,6 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v6
 
-      # Shell tests for scripts/ and the compose files (R071/R072/R097).
-      # They need `docker compose config`.
-      - name: Run script tests
-        run: |
-          status=0
-          for t in scripts/tests/test-*.sh; do
-            echo "::group::$t"
-            bash "$t" || status=1
-            echo "::endgroup::"
-          done
-          exit "$status"
-
       - name: Build API test image
         run: |
           docker build \
@@ -60,18 +128,18 @@ jobs:
             -f .docker/api \
             .
 
-      - name: Check nginx access log format
-        run: scripts/check-nginx-log-format.sh
-
-      - name: Check nginx config with the real vhosts
+      # The test database is thrown away with the job: skip the disk flushes.
+      - name: Turn off fsync in the test database
         run: |
-          scripts/check-nginx-prod-config.sh
-          # Everything production mounts, then what the old container sees
-          # if a deploy stops after copying the files: no new mounts.
-          scripts/check-nginx-prod-config.sh nginx/production/herdbook-production.conf nginx/production/stamboken-legacy.conf nginx/production/gotlandskaninen.conf nginx/production/gotlandskaninen-www.conf
-          scripts/check-nginx-prod-config.sh nginx/production/herdbook-production.conf nginx/production/stamboken-legacy.conf
-          scripts/check-nginx-prod-config.sh nginx/herdbook-local-production.conf
+          docker exec ${{ job.services.postgres.id }} psql -U herdbook -d herdbook_test \
+            -c "ALTER SYSTEM SET fsync = off" \
+            -c "ALTER SYSTEM SET synchronous_commit = off" \
+            -c "ALTER SYSTEM SET full_page_writes = off" \
+            -c "SELECT pg_reload_conf()"
+          docker exec ${{ job.services.postgres.id }} psql -U herdbook -d herdbook_test -c "SHOW fsync"
 
+      # pytest-split shares the tests out by the durations in
+      # app/tests/.test_durations; tests missing there count as average.
       - name: Run tests in container
         run: |
           docker run \
@@ -90,4 +158,29 @@ jobs:
             -e CI=true \
             -v "$PWD/nginx:/nginx:ro" \
             herdbook-api-test:latest \
-            pytest /app/tests/ -v --tb=short -n auto
+            pytest /app/tests/ -v --tb=short -n auto \
+              --splits ${{ strategy.job-total }} --group ${{ matrix.group }} --splitting-algorithm least_duration \
+              --durations-path tests/.test_durations
+
+  # The ruleset requires this name. It passes when the suite was skipped on
+  # purpose, and fails when any part failed, was cancelled or did not start.
+  result:
+    name: Run Python tests
+    if: always()
+    needs: [changes, checks, pytest]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the results
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          PYTHON: ${{ needs.changes.outputs.python }}
+          CHECKS: ${{ needs.checks.result }}
+          PYTEST: ${{ needs.pytest.result }}
+        run: |
+          echo "changes=$CHANGES python=$PYTHON checks=$CHECKS pytest=$PYTEST"
+          [ "$CHANGES" = success ] || exit 1
+          case "$PYTHON" in
+            true) [ "$CHECKS" = success ] && [ "$PYTEST" = success ] ;;
+            false) echo "No Python-relevant changes: the suite was skipped." ;;
+            *) exit 1 ;;
+          esac

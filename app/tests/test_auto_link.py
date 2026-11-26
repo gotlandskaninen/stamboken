@@ -330,6 +330,38 @@ class TestOAuthAutoLinkRoutes(FlaskTest):
         self.assertEqual(resp.status_code, 302)
         self.assertEqual(self._linked_to(), anna.id)
 
+    def _first_login_with_herd(self, address, username):
+        """A first Google sign-in whose account details carry the herd attribute (herd G1)."""
+        details = {"email": address, "username": username, "herd": "1"}
+        resp = self._dance_login(None, address, account_details=details, sub=f"sub-{username}")
+        self.assertEqual(resp.status_code, 302)
+        return db.User.get(db.User.username == username)
+
+    def test_first_login_with_herd_attribute_makes_the_main_member_owner_and_links_her(self):
+        """The owner guard is for manual grants: the sign-in's own grant comes before the member link."""
+        membership = db.Membership.create(membership_status="active")
+        eva = db.Member.create(
+            membership=membership,
+            first_name="Eva",
+            last_name="E",
+            role="huvudmedlem",
+            workspace_email="eva@gotlandskaninen.se",
+        )
+        db.Herd.update(membership=membership).where(db.Herd.id == self.herds[0].id).execute()
+
+        user = self._first_login_with_herd("eva@gotlandskaninen.se", "eva")
+
+        self.assertTrue(user.has_role("owner", self.herds[0].id))
+        self.assertEqual(db.Member.get_by_id(eva.id).user_id, user.id)
+
+    def test_first_login_with_herd_attribute_makes_a_family_member_owner_and_links_him(self):
+        db.Herd.update(membership=self.anna_member.membership).where(db.Herd.id == self.herds[0].id).execute()
+
+        user = self._first_login_with_herd("anna@gotlandskaninen.se", "anna")
+
+        self.assertTrue(user.has_role("owner", self.herds[0].id))
+        self.assertEqual(self._linked_to(), user.id)
+
     def test_dance_login_links_no_member_without_the_domains_hd(self):
         """auth.ini may name no domain, so nothing upstream checks the token's hd: the member link does."""
         anna = da.register_user("anna.privat@example.se", "pass", username="anna")

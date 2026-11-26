@@ -32,7 +32,7 @@ check() {
 	echo "Täckning: $total routes kontrollerade mot ${doc#"$ROOT"/}"
 }
 
-mapfile -t manual_pages < <(find "$APP/stamboken" "$APP/(auth)/auth/sign-in" -name page.tsx | sort)
+mapfile -t manual_pages < <(find "$APP/stamboken" "$APP/(auth)/auth" -name page.tsx | sort)
 check "$MANUAL" "${manual_pages[@]}"
 # The guide page itself needs no section.
 mapfile -t guide_pages < <(find "$APP/medlem" -name page.tsx -not -path "*/medlem/guide/*" | sort)

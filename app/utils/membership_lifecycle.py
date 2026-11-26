@@ -94,7 +94,8 @@ TRIGGERS: tuple[tuple[Event, str, str], ...] = (
     (Event.ERASE_MAIN, "POST /api/v2/persons/{id}/anonymize", "admin, matrikel_admin"),
     (
         Event.ADD_MAIN,
-        "POST /api/v2/memberships/{id}/persons, POST /api/v2/memberships/{id}/main-member",
+        "POST /api/v2/memberships/{id}/persons, POST /api/v2/memberships/{id}/main-member, "
+        "POST /api/v2/persons/{id}/reactivate",
         "admin, matrikel_admin",
     ),
 )

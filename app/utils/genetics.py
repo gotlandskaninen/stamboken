@@ -1932,9 +1932,11 @@ def calculate_genetic_priorities(
     """
     Assign genetic conservation priorities to active individuals.
 
-    Priority rules (following PMx/Ballou & Lacy 1995):
-    - critical: Sole living carrier of a founder line, or MK < 5th percentile
-    - important: MK < 25th percentile, or GU > 75th percentile,
+    Priority rules: Stamboken's own percentile cut-offs, not a PMx rule (PMx ranks by MK
+    within sex and has no categories). Each animal is compared with the cut-offs; the level
+    sizes follow from the data (ties at a percentile and sole carriers can fill critical):
+    - critical: Sole living carrier of a founder line, or MK <= 5th percentile
+    - important: MK <= 25th percentile, or GU > 75th percentile,
                  or carries underrepresented founder
     - normal: All others
 
@@ -1982,8 +1984,9 @@ def calculate_genetic_priorities(
         if len(carriers) == 1:
             sole_carrier_of[carriers[0]] = founder_id
 
-    # Find underrepresented founders (avg contribution < 50% of equal share)
-    underrep_founders = set()
+    # Find underrepresented founders (avg contribution < 50% of equal share), in pedigree order:
+    # the reason below names the first one carried, the same in every process.
+    underrep_founders = []
     if founders and equal_share > 0:
         for founder_id in founders:
             total_contrib = 0.0
@@ -1993,7 +1996,7 @@ def calculate_genetic_priorities(
                     total_contrib += contrib[founder_id]
             avg_contrib = total_contrib / len(active) if active else 0.0
             if avg_contrib < equal_share * 0.5:
-                underrep_founders.add(founder_id)
+                underrep_founders.append(founder_id)
 
     # Compute results
     results = []

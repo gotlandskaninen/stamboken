@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Mode } from "@/lib/mode";
 import { activateGenebank, saveRound, sendTestMail } from "../../actions";
-import { fmtDate, type Round } from "../../lib";
+import { defaultRoundDates, fmtDate, type Round } from "../../lib";
 import styles from "../../arsrapport.module.css";
 import inkorg from "../../../inkorg/inkorg.module.css";
 
@@ -19,6 +19,7 @@ export function RoundPanel({
   genebankId,
   genebankName,
   round,
+  closed = false,
   canEdit,
   recipients,
   env,
@@ -27,16 +28,19 @@ export function RoundPanel({
   genebankId: number;
   genebankName: string;
   round: Round | null;
+  closed?: boolean;
   canEdit: boolean;
   recipients: { med_epost: number; utan_epost: number } | null;
   env: Mode;
 }) {
   const router = useRouter();
   const activation = round?.genebanks.find((g) => g.genebank_id === genebankId);
+  // A date the round lacks shows the default the server would give it.
+  const defaults = defaultRoundDates(year);
   const [dates, setDates] = useState({
-    start_date: round?.start_date ?? "",
-    deadline: round?.deadline ?? "",
-    end_date: round?.end_date ?? "",
+    start_date: round?.start_date ?? defaults.start_date,
+    deadline: round?.deadline ?? defaults.deadline,
+    end_date: round?.end_date ?? defaults.end_date,
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -47,9 +51,10 @@ export function RoundPanel({
   }, [error]);
 
   const changedKeys = DATES.filter(
-    ([key]) => dates[key] !== "" && dates[key] !== (round?.[key] ?? ""),
+    ([key]) =>
+      dates[key] !== "" && dates[key] !== (round?.[key] ?? defaults[key]),
   ).map(([key]) => key);
-  // Dates the server has not filled in yet get its defaults before activation.
+  // Dates the server has not filled in yet get its defaults on the next save, which the fields already show.
   const incomplete = round === null || DATES.some(([key]) => !round[key]);
 
   async function run(activate: boolean) {
@@ -61,7 +66,7 @@ export function RoundPanel({
       const body = Object.fromEntries(
         changedKeys.map((key) => [key, dates[key]]),
       );
-      if (changedKeys.length > 0 || (activate && incomplete)) {
+      if (changedKeys.length > 0 || incomplete) {
         const saved = await saveRound(year, body, env);
         if (!saved.ok) {
           setError(saved.problem.detail || saved.problem.title);
@@ -149,6 +154,18 @@ export function RoundPanel({
     </p>
   );
 
+  if (closed)
+    return (
+      <section className={`sb-card ${styles.roundCard}`}>
+        <h2>Rundan {year} är stängd</h2>
+        <p className={inkorg.muted} style={{ margin: 0 }}>
+          Den stängde {fmtDate(round?.end_date ?? defaults.end_date)} utan att
+          ha aktiverats för {genebankName}. Rapporter som skickades i gamla
+          Stamboken visas inte här.
+        </p>
+      </section>
+    );
+
   if (!activation)
     return (
       <section className={`sb-card ${styles.roundCard}`}>
@@ -207,7 +224,7 @@ export function RoundPanel({
             <button
               type="button"
               className={`sb-btn ${styles.btn}`}
-              disabled={busy || changedKeys.length === 0}
+              disabled={busy || (changedKeys.length === 0 && !incomplete)}
               onClick={() => run(false)}
             >
               {busy ? "Sparar …" : "Spara datum"}

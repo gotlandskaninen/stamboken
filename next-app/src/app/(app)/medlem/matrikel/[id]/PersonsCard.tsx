@@ -18,6 +18,7 @@ import {
   addPerson,
   anonymizePerson,
   createGrant,
+  reactivatePerson,
   removePerson,
   renewGrant,
   revokeGrant,
@@ -52,6 +53,10 @@ function contactContent(person: Person) {
   );
 }
 
+// As the API (is_anonymized): the pair GDPR erasure leaves on the row.
+const isAnonymized = (p: Person) =>
+  p.first_name === "Borttagen" && p.last_name === "person";
+
 function grantIsActive(grant: Grant, person: Person): boolean {
   if (person.end_date || grant.revoked_at) return false;
   if (grant.valid_until === null) return true;
@@ -68,6 +73,12 @@ type Mutation = {
   run: () => Promise<MutationResult>;
   errorTitle: string;
   success: string;
+};
+
+const ROLE_HELP: Record<string, string> = {
+  familjemedlem: "Familjemedlem har åtkomst till alla hushållets besättningar.",
+  skotare:
+    "Skötare har bara åtkomst till de besättningar personen får, ett år i taget.",
 };
 
 const EMPTY_PERSON_FORM = {
@@ -93,6 +104,9 @@ export function PersonsCard({
   const [personOpen, setPersonOpen] = useState(false);
   const [editPersonId, setEditPersonId] = useState<number | null>(null);
   const [personForm, setPersonForm] = useState(EMPTY_PERSON_FORM);
+  // The form as the dialog opened: only the fields the user changed are sent,
+  // so a save cannot overwrite what another admin changed meanwhile.
+  const [openedForm, setOpenedForm] = useState(EMPTY_PERSON_FORM);
   const editedPerson = membership.persons.find((p) => p.id === editPersonId);
   const editingContact =
     Boolean(membership.organization_name) &&
@@ -167,13 +181,15 @@ export function PersonsCard({
 
   const openEditPerson = (p: Person) => {
     setEditPersonId(p.id);
-    setPersonForm({
+    const form = {
       first_name: p.first_name,
       last_name: p.last_name,
       email: p.email ?? "",
       phone: p.phone ?? "",
       role: p.role,
-    });
+    };
+    setPersonForm(form);
+    setOpenedForm(form);
     setPersonOpen(true);
   };
 
@@ -192,8 +208,21 @@ export function PersonsCard({
         success: "Person tillagd",
       });
     } else {
+      // Empty fields are sent as null, as for a new person.
+      const now: Record<string, string | null> = {
+        ...payload,
+        role: personForm.role,
+      };
+      const opened: Record<string, string | null> = {
+        ...openedForm,
+        email: openedForm.email || null,
+        phone: openedForm.phone || null,
+      };
+      const changed = Object.fromEntries(
+        Object.entries(now).filter(([key, value]) => value !== opened[key]),
+      );
       run({
-        run: () => updatePerson(membership.id, editPersonId, payload),
+        run: () => updatePerson(membership.id, editPersonId, changed),
         errorTitle: "Kunde inte spara personen",
         success: "Person sparad",
       });
@@ -228,11 +257,19 @@ export function PersonsCard({
     });
   const confirmRemove = (p: Person) =>
     setConfirm({
-      title: "Ta bort person?",
-      text: "Personen avslutas (mjuk borttagning) och alla besättningsåtkomster återkallas i samma transaktion.",
+      title: "Avsluta person?",
+      text: "Personen avslutas i medlemskapet och alla besättningsåtkomster återkallas. Raden finns kvar i historiken och kan återaktiveras, men åtkomsterna kommer inte tillbaka. Ett kopplat konto måste kopplas bort innan personen kan återaktiveras.",
       run: () => removePerson(membership.id, p.id),
-      errorTitle: "Kunde inte ta bort personen",
-      success: "Person borttagen",
+      errorTitle: "Kunde inte avsluta personen",
+      success: "Person avslutad",
+    });
+  const confirmReactivate = (p: Person) =>
+    setConfirm({
+      title: "Återaktivera person?",
+      text: "Personen blir aktiv i medlemskapet igen med sin tidigare roll. Åtkomster kopplas inte tillbaka, och ett kopplat konto måste först kopplas bort.",
+      run: () => reactivatePerson(membership.id, p.id),
+      errorTitle: "Kunde inte återaktivera personen",
+      success: "Person återaktiverad",
     });
   const confirmAnonymize = (p: Person) =>
     setConfirm({
@@ -445,9 +482,22 @@ export function PersonsCard({
               confirmRemove(menuPerson);
             }}
           >
-            Ta bort
+            Avsluta
           </MenuItem>
         )}
+        {menuPerson &&
+          menuPerson.end_date !== null &&
+          !isAnonymized(menuPerson) &&
+          membership.membership_status !== "inactive" && (
+            <MenuItem
+              onClick={() => {
+                closeMenu();
+                confirmReactivate(menuPerson);
+              }}
+            >
+              Återaktivera
+            </MenuItem>
+          )}
         {menuPerson && (
           <MenuItem
             className={styles.menuDanger}
@@ -501,7 +551,10 @@ export function PersonsCard({
                 setPersonForm({ ...personForm, phone: e.target.value })
               }
             />
-            {editPersonId === null ? (
+            {!(
+              editedPerson?.role === "huvudmedlem" &&
+              editedPerson.end_date === null
+            ) ? (
               <TextField
                 select
                 label="Roll"
@@ -509,10 +562,15 @@ export function PersonsCard({
                 onChange={(e) =>
                   setPersonForm({ ...personForm, role: e.target.value })
                 }
-                helperText="Huvudmedlem byts via 'Gör till huvudmedlem'."
+                helperText={`${ROLE_HELP[personForm.role] ?? ""} Huvudmedlem byts via 'Gör till huvudmedlem'.`.trim()}
               >
                 <MenuItem value="familjemedlem">Familjemedlem</MenuItem>
                 <MenuItem value="skotare">Skötare</MenuItem>
+                {personForm.role === "huvudmedlem" ? (
+                  <MenuItem value="huvudmedlem" disabled>
+                    Huvudmedlem
+                  </MenuItem>
+                ) : null}
               </TextField>
             ) : null}
           </div>

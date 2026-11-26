@@ -144,6 +144,7 @@ textarea.field {
 .btn {
   min-height: 48px;
   font-size: 16px;
+  line-height: normal; /* a link button inherits the body's 1.55 and stood 3 px taller than a button */
 }
 /* Specific enough to beat the global .sb-btn-secondary border (1,95:1). */
 button.secondary,
@@ -720,11 +721,16 @@ button.confirmDanger:hover:not(:disabled) {
 
 /* Status view (Task 15): the table and filters are the queue's (inkorg.module.css). */
 .herdLink {
-  display: inline-flex;
-  align-items: center;
-  min-height: 44px;
   font-weight: 600;
   color: var(--sb-ink);
+}
+/* The touch target only where fingers tap: with a mouse the number sits on the row's top line. */
+@media (pointer: coarse) {
+  .herdLink {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
 }
 .callTone {
   border-color: var(--sb-warning);
@@ -782,6 +788,91 @@ button.confirmDanger:hover:not(:disabled) {
 /* The queue's table header is 10 px; the status table reads at the small label size. */
 table.statusTable th {
   font-size: var(--sb-fs-xs);
+}
+.condition {
+  margin-right: 8px;
+  white-space: nowrap;
+}
+.flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.phone {
+  color: var(--sb-ink);
+  text-underline-offset: 2px;
+  white-space: nowrap;
+}
+@media (pointer: coarse) {
+  .phone {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+}
+/* Narrower than the six columns: each herd is a block, the cells in two columns under their labels. */
+@media (max-width: 899px) {
+  table.statusTable thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  table.statusTable,
+  table.statusTable tbody {
+    display: block;
+  }
+  table.statusTable tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px 16px;
+    padding: 12px;
+    border-bottom: 1px solid var(--sb-line);
+  }
+  table.statusTable td {
+    padding: 0;
+    border: 0;
+    min-width: 0;
+  }
+  table.statusTable td:first-child,
+  table.statusTable td:last-child {
+    grid-column: 1 / -1;
+  }
+  table.statusTable td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 4px;
+    font-family: var(--sb-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--sb-ink-3);
+  }
+}
+
+/* The queue's 1440 px container under the shell's 1140 px masthead: the page's edges line up with the masthead. */
+div.statusContainer {
+  max-width: 1140px;
+}
+/* The masthead's genebank and round choice and the blank form, bottoms aligned. */
+.mastActions,
+.switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+}
+.switch label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--sb-ink-2);
+  font-weight: 500;
+}
+.blankMissing {
+  margin: 0;
+  max-width: 28ch;
 }
 
 /* A wide screen (issue 75): one row per rabbit, and the side column stacked as

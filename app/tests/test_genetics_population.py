@@ -435,6 +435,18 @@ class TestGeneDropSeeding(GeneticsPopulationTest):
         self.assertEqual(again, first)  # a seed still reproduces its run
         self.assertIs(default, snap.derived["gene_drop_1000_None"])
 
+    def test_founders_at_risk_do_not_depend_on_an_earlier_gene_drop(self):
+        """The shared memo is filled by whichever worker computes first; /gene-drop/ may have run there."""
+        after_drop, fresh = _snapshot_of(self.PEDIGREE), _snapshot_of(self.PEDIGREE)
+        with patch.object(gs, "snapshot", return_value=after_drop):
+            gs.get_gene_drop_statistics(4242)  # the endpoint's default run, memoized on this snapshot
+            first = gs.get_founders_at_risk(4242)
+        with patch.object(gs, "snapshot", return_value=fresh):
+            second = gs.get_founders_at_risk(4242)
+
+        self.assertTrue(first)  # precondition: founders to compare
+        self.assertEqual(first, second)
+
     def test_priorities_use_a_fixed_seed(self):
         """Every worker computes the same priorities."""
         snap = _snapshot_of(self.PEDIGREE)

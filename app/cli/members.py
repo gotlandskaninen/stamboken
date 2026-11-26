@@ -4,8 +4,10 @@ Flask CLI for member registry operations.
 Usage:
     flask members import <csv_path> [--dry-run | --counts-only]
     flask members billing-proposals --out <file> | --apply <file> --actor-user-id <id>
+    flask members workspace-proposals <csv> --out <file> | --apply <file> --actor-user-id <id>
     flask members link-by-herd [--apply --actor-user-id <id> --plan <value>]
     flask members link-same-number [--apply --actor-user-id <id> --plan <value>]
+    flask members link-household --workspace <csv> [--apply --actor-user-id <id> --plan <value>]
 
 `import` expects the MATR2026 paper-matrikel layout (headers matched
 case-insensitively after normalization):
@@ -58,6 +60,12 @@ Rules (Member Model v2 design spec):
 ownership: the sole owner of herd G<Nr>/M<Nr> can match membership Nr's
 main member by name, e-mail address or e-mail local part (mode "cli"). Other
 cases are listed for the register manager. Plan only unless --apply.
+
+`link-household` handles the herds `link-by-herd` lists because several
+accounts own them, when the herd is tied to an active membership (an untied
+herd is left out): the main member's account is linked, and every other owner
+account becomes a familjemedlem (name and secondary address from a Google
+Admin user export) linked to that account. Plan only unless --apply.
 """
 
 import csv
@@ -67,18 +75,22 @@ import logging
 import re
 import unicodedata
 from collections import Counter
+from dataclasses import dataclass, field
 
 import click
 from flask.cli import AppGroup
 from peewee import DatabaseError, IntegrityError, fn
+from utils.data_access import ROLE_LEVELS
 from utils.database import BILLING_FIELDS, DB_PROXY, Genebank, Herd, Member, Membership, User
 from utils.herd_contact import link_herd
-from utils.login_code import reserve_login_address
+from utils.login_code import AddressTaken, login_address_taken, reserve_login_address
 from utils.matrikel import (
     ANONYMIZED_FIRST_NAME,
     ANONYMIZED_LAST_NAME,
     ConfirmRequired,
     LinkError,
+    add_person,
+    is_anonymized,
     legacy_owner_index,
     link_access_delta,
     link_member_user,
@@ -971,7 +983,7 @@ def _billing_source(ms: Membership) -> dict:
     }
 
 
-def _billing_proof(source: dict, exported: dict) -> str:
+def _proposal_proof(source: dict, exported: dict) -> str:
     return hashlib.sha256(json.dumps([source, exported], sort_keys=True).encode()).hexdigest()
 
 
@@ -1007,7 +1019,7 @@ def _export_billing_proposals(path: str) -> None:
                 **source,
                 **{f"proposed_{k}": v for k, v in exported.items()},
                 **{f"exporterat_{k}": v for k, v in exported.items()},
-                "underlag": _billing_proof(source, {k: proposal_cell(v) for k, v in exported.items()}),
+                "underlag": _proposal_proof(source, {k: proposal_cell(v) for k, v in exported.items()}),
             }
         )
 
@@ -1035,7 +1047,7 @@ def _apply_billing_row(row: dict, actor: User) -> str:
         source = _billing_source(ms)
         exported = {key: row[f"exporterat_{key}"] for key in BILLING_FIELDS}
         if (
-            _billing_proof(source, exported) != row["underlag"]
+            _proposal_proof(source, exported) != row["underlag"]
             or any(row[k] != proposal_cell(v) for k, v in source.items())
             or not _memberships_with_current_persons().where(Member.membership == ms).exists()
         ):
@@ -1250,7 +1262,12 @@ def _pair_detail(main, user) -> str:
     when it was stored, at a Google sign-in."""
     return (
         f"medlem {main.id} -> konto {user.id} | "
-        f"medlem: {_q(f'{main.first_name} {main.last_name}'.strip())} {_q(main.email)} | "
+        f"medlem: {_q(f'{main.first_name} {main.last_name}'.strip())} {_q(main.email)} | {_account_detail(user)}"
+    )
+
+
+def _account_detail(user) -> str:
+    return (
         f"konto: namn {_q(user.fullname)}, användarnamn {_q(user.username)}, "
         f"e-post (overifierad) {_q(user.email)}, senast sparade Google-adress {_q(user.google_email)}"
     )
@@ -1504,3 +1521,701 @@ def link_same_number_cmd(apply_links: bool, actor_user_id: int | None, plan_valu
     click.echo(f"Kopplade: {len(candidates) - len(skipped)}, Överhoppade: {len(skipped)}")
     for line in skipped:
         click.echo(line)
+
+
+_WORKSPACE_COLUMNS = {
+    "first name": "ws_fornamn",
+    "last name": "ws_efternamn",
+    "email address": "workspace_email",
+    "status": "ws_status",
+    "last sign in": "ws_senast_inloggad",
+    "org unit path": "ws_org_enhet",
+    "recovery email": "recovery_email",
+}
+WORKSPACE_PROPOSAL_HEADER = (
+    "workspace_email",
+    "ws_fornamn",
+    "ws_efternamn",
+    "ws_status",
+    "ws_senast_inloggad",
+    "ws_org_enhet",
+    "utfall",
+    "skal",
+    "kandidater",
+    "proposed_member_number",
+    "proposed_person_id",
+    "person_namn",
+    "person_workspace_email",
+    "beslut",
+    "exporterat_member_number",
+    "exporterat_person_id",
+    "underlag",
+)
+_WS_STALE = "underlaget har ändrats"
+_WS_ADDRESS_ELSEWHERE = "adressen är satt på en annan person"
+
+
+def _read_workspace_csv(path):
+    try:
+        with open(path, encoding="utf-8-sig", newline="") as source:
+            reader = csv.reader(source, strict=True)
+            header = [re.sub(r"\s*\[[^\[\]]*\]$", "", h.strip()).strip().casefold() for h in next(reader, [])]
+            for required in ("first name", "last name", "email address"):
+                if required not in header:
+                    raise click.ClickException(f"Workspace-filen saknar kolumnen {required}")
+            if any(header.count(name) > 1 for name in _WORKSPACE_COLUMNS):
+                raise click.ClickException("Tvetydig rubrikrad i Workspace-filen")
+            columns = {key: header.index(name) for name, key in _WORKSPACE_COLUMNS.items() if name in header}
+            rows = []
+            for cells in reader:
+                if not any(cell.strip() for cell in cells):
+                    continue  # blank line, as a spreadsheet export may leave at the end
+                if len(cells) != len(header):
+                    raise click.ClickException("Workspace-filen kunde inte läsas")
+                rows.append({key: cells[index] for key, index in columns.items()})
+            return rows
+    except (OSError, csv.Error, UnicodeError):
+        raise click.ClickException("Workspace-filen kunde inte läsas") from None
+
+
+def _workspace_person_reasons(person, name, email, recovery):
+    reasons = []
+    if email and (person.workspace_email or "").lower() == email:
+        reasons.append("redan satt")
+    if name and name == _norm_name(f"{person.first_name} {person.last_name}"):
+        reasons.append("namn lika")
+    contact = _norm_email(person.email)
+    if recovery and recovery == contact:
+        reasons.append("återställningsadressen är matrikelns e-post")
+    local = email.partition("@")[0]
+    if email and email == contact:
+        reasons.append("e-post lika")
+    elif len(local) >= 5 and local not in _GENERIC_LOCAL_PARTS and local == contact.partition("@")[0]:
+        reasons.append("lokaldel lika")
+    return reasons
+
+
+@dataclass
+class _WorkspaceMatch:
+    ws: dict
+    address_holder_id: int | None = None
+    people: dict = field(default_factory=dict)  # person -> signals
+    historical: dict = field(default_factory=dict)
+    problems: list = field(default_factory=list)
+
+
+def _workspace_people():
+    people = list(
+        Member.select(
+            Member.id,
+            Member.first_name,
+            Member.last_name,
+            Member.email,
+            Member.workspace_email,
+            Member.role,
+            Member.end_date,
+            Member.membership,
+            Membership.id,
+            Membership.member_number,
+            Membership.membership_status,
+        )
+        .join(Membership)
+        .order_by(Member.id)
+    )
+    mains = {p.membership_id for p in people if p.role == "huvudmedlem" and p.end_date is None and not is_anonymized(p)}
+    return people, mains
+
+
+def _workspace_match(ws, people, mains):
+    email = _norm_email(ws["workspace_email"])
+    recovery = _norm_email(ws.get("recovery_email"))
+    name = _norm_name(f"{ws['ws_fornamn']} {ws['ws_efternamn']}")
+    match = _WorkspaceMatch(ws)
+    if not email.endswith(WORKSPACE_DOMAIN) or "\0" in email:
+        match.problems.append("inte föreningens domän")
+    elif len(email) > 255:
+        match.problems.append("ogiltig Workspace-adress")
+    for p in people:
+        if email and (p.workspace_email or "").lower() == email:
+            match.address_holder_id = p.id
+        if is_anonymized(p):
+            continue
+        reasons = _workspace_person_reasons(p, name, email, recovery)
+        if reasons:
+            if p.end_date is None and p.membership_id in mains:
+                match.people[p] = reasons
+            else:
+                match.historical.setdefault(p.membership.member_number, []).extend(reasons)
+    if match.people:
+        if any(p.workspace_email and p.workspace_email.lower() != email for p in match.people):
+            match.problems.append("personen har redan en annan workspace_email")
+        if match.address_holder_id and all(p.id != match.address_holder_id for p in match.people):
+            match.problems.append(_WS_ADDRESS_ELSEWHERE)
+    return match
+
+
+def _workspace_proof(row, person, membership, address_holder_id):
+    # Hash private source state and the exact spreadsheet-escaped cells the reviewer sees.
+    mutable = {"beslut", "proposed_member_number", "proposed_person_id", "underlag"}
+    snapshot = {key: row.get(key, "") for key in WORKSPACE_PROPOSAL_HEADER if key not in mutable}
+    source = {
+        "person": None
+        if person is None
+        else [
+            person.id,
+            person.membership_id,
+            person.membership.member_number,
+            person.first_name,
+            person.last_name,
+            person.role,
+            person.end_date.isoformat() if person.end_date else None,
+            person.email,
+            person.workspace_email,
+            person.membership.membership_status,
+        ],
+        # This also makes a redirected person stale on replay, without needing a separate run log.
+        "adressinnehavare": address_holder_id,
+        # A reviewed membership number can change hands even on a row without a proposed person.
+        "medlemskap": membership.id if membership and membership.member_number else None,
+    }
+    return _proposal_proof(source, snapshot)
+
+
+def _workspace_proposal(match, address_counts, person_counts):
+    ws = match.ws
+    email = _norm_email(ws["workspace_email"])
+    people = match.people
+    person = next(iter(people)) if len(people) == 1 else None
+    memberships = {p.membership for p in people}
+    ms = next(iter(memberships)) if len(memberships) == 1 else None
+    problems = list(match.problems)
+    if address_counts[ws["workspace_email"].strip().lower()] > 1:
+        problems.append("adressen förekommer flera gånger i CSV-filen")
+    if any(person_counts[p] > 1 for p in people):
+        problems.append("flera Workspace-rader pekar på samma person")
+    if len(people) > 1:
+        problems.append("flera personer matchar")
+    for membership in memberships:
+        if membership.membership_status != Status.ACTIVE:
+            problems.append(f"medlemskapet har status {membership.membership_status}")
+    already_set = person and email and (person.workspace_email or "").lower() == email
+    if problems:
+        outcome = "granska"
+    elif person:
+        outcome = "redan klar" if already_set else "förslag"
+    else:
+        outcome = "ingen träff"
+
+    reasons, candidates = [], []
+    for p, signals in people.items():
+        reasons.extend(signals)
+        candidates.append(
+            f"person {p.id} i nr {p.membership.member_number or '–'} {_q(f'{p.first_name} {p.last_name}')} "
+            f"({', '.join(signals)})"
+        )
+    if not memberships:
+        for number in sorted(match.historical, key=lambda nr: nr or 0):
+            reasons.extend(match.historical[number])
+            reasons.append(f"bara i avslutat medlemskap nr {number or '–'}")
+
+    row = {
+        **{k: v for k, v in ws.items() if k != "recovery_email"},
+        "utfall": outcome,
+        "skal": " | ".join(dict.fromkeys(reasons + problems)),
+        "kandidater": " | ".join(candidates) if outcome == "granska" else "",
+        "proposed_member_number": ms.member_number if ms else None,
+        "proposed_person_id": person.id if person else None,
+        "person_namn": f"{person.first_name} {person.last_name}".strip() if person else "",
+        "person_workspace_email": person.workspace_email if person else "",
+    }
+    row["exporterat_member_number"] = row["proposed_member_number"]
+    row["exporterat_person_id"] = row["proposed_person_id"]
+    row["underlag"] = _workspace_proof(
+        {k: proposal_cell(v) for k, v in row.items()}, person, ms, match.address_holder_id
+    )
+    return row
+
+
+def _export_workspace_proposals(csv_path, out):
+    accounts = _read_workspace_csv(csv_path)
+    people, mains = _workspace_people()
+    matches = [_workspace_match(ws, people, mains) for ws in accounts]
+    address_counts = Counter(ws["workspace_email"].strip().lower() for ws in accounts)
+    person_counts = Counter(p for match in matches for p in match.people)
+    rows = [_workspace_proposal(match, address_counts, person_counts) for match in matches]
+    try:
+        write_proposals(out, WORKSPACE_PROPOSAL_HEADER, rows)
+    except FileExistsError:
+        raise click.ClickException("Förslagsfilen finns redan") from None
+    except OSError:
+        raise click.ClickException("Förslagsfilen kunde inte skapas") from None
+    counts = Counter(row["utfall"] for row in rows)
+    click.echo(
+        ", ".join(f"{outcome}: {counts[outcome]}" for outcome in ("förslag", "redan klar", "granska", "ingen träff"))
+    )
+
+
+def _workspace_id(value):
+    # These columns address PostgreSQL integer keys. Never send free text from the sheet to the DB.
+    if value.isascii() and value.isdecimal() and len(value) <= 10 and 0 < int(value) <= 2**31 - 1:
+        return int(value)
+    return None
+
+
+def _lock_workspace_targets(original_id, target_id, numbers):
+    ids = {pid for pid in (original_id, target_id) if pid is not None}
+    # An edit can move the target to a different household. Lock BOTH roots, in id order,
+    # before the person rows, including for the original source proof.
+    roots = Membership.id.in_(Member.select(Member.membership).where(Member.id.in_(ids)))
+    roots |= Membership.member_number.in_([nr for nr in numbers if nr is not None])
+    memberships = {ms.id: ms for ms in Membership.select().where(roots).order_by(Membership.id).for_update()}
+    people = {p.id: p for p in Member.select().where(Member.id.in_(ids)).order_by(Member.id).for_update()}
+    return memberships, people
+
+
+def _write_workspace_row(row, actor, address_counts):
+    approved = row["beslut"] == "godkänn"
+    email = _norm_email(row["workspace_email"].removeprefix(" "))
+    if address_counts[email] > 1:
+        return "adressen förekommer flera gånger i filen"
+    original_id = _workspace_id(row["exporterat_person_id"])
+    target_id = _workspace_id(row["proposed_person_id"])
+    original_number = _workspace_id(row["exporterat_member_number"])
+    number = _workspace_id(row["proposed_member_number"])
+    memberships, people = _lock_workspace_targets(original_id, target_id, (original_number, number))
+    numbered = {ms.member_number: ms for ms in memberships.values() if ms.member_number}
+    address_holder_id = (
+        Member.select(Member.id).where(fn.LOWER(Member.workspace_email) == email).scalar()
+        if email and "\0" not in email
+        else None
+    )
+    proof = _workspace_proof(row, people.get(original_id), numbered.get(original_number), address_holder_id)
+    if proof != row["underlag"]:
+        return _WS_STALE
+    if approved:
+        if any(row[f"proposed_{key}"] != row[f"exporterat_{key}"] for key in ("member_number", "person_id")):
+            return "ändrad rad utan beslutet ändra"
+        if row["utfall"] not in ("förslag", "redan klar"):
+            return "kräver beslutet ändra"
+
+    if not email.endswith(WORKSPACE_DOMAIN) or "\0" in email or len(email) > 255:
+        return "ogiltig Workspace-adress"
+    person = people.get(target_id)
+    membership = memberships.get(person.membership_id) if person else None
+    if (
+        not membership
+        or (row["proposed_member_number"] and number is None)
+        or membership.member_number != number
+        or membership.membership_status != Status.ACTIVE
+        or not any(not is_anonymized(main) for main in _active_main_members().where(Member.membership == membership))
+        or person.end_date is not None
+        or is_anonymized(person)
+    ):
+        return _WS_STALE if approved else "ogiltigt mål"
+    if person.workspace_email and person.workspace_email.lower() != email:
+        return _WS_STALE if approved else "personen har redan en annan workspace_email"
+    if address_holder_id is not None and address_holder_id != target_id:
+        return _WS_STALE if approved else _WS_ADDRESS_ELSEWHERE
+    if approved:
+        # The proof does not cover a namesake added since the export: match again and require the same single person.
+        all_people, mains = _workspace_people()
+        ws = {key: row[key].removeprefix(" ") for key in ("workspace_email", "ws_fornamn", "ws_efternamn")}
+        found = {p.id for p in _workspace_match(ws, all_people, mains).people}
+        if found - {target_id}:
+            return _WS_STALE
+
+    before = person.workspace_email
+    if (before or "").lower() == email:
+        return "redan klar"
+    person.workspace_email = email
+    person.save(only=[Member.workspace_email, Member.updated_at])
+    write_matrikel_audit(
+        actor,
+        "person_updated",
+        membership,
+        {"person_id": person.id, "before": {"workspace_email": before}, "after": {"workspace_email": email}},
+    )
+    return "Skrivna"
+
+
+def _apply_workspace_row(row, actor, address_counts):
+    if row["beslut"] == "hoppa över":
+        return "hoppa över (beslut)"
+    try:
+        with DB_PROXY.atomic():
+            return _write_workspace_row(row, actor, address_counts)
+    except IntegrityError as err:
+        diag = getattr(getattr(err, "orig", None), "diag", None)
+        if getattr(diag, "constraint_name", None) == "idx_member_workspace_email_unique":
+            return _WS_ADDRESS_ELSEWHERE
+        raise
+
+
+@members_cli.command("workspace-proposals")
+@click.argument("csv_path", required=False, metavar="[CSV]")
+@click.option("--out", metavar="FIL", help="Skapa en ny förslagsfil från Google-exporten.")
+@click.option("--apply", "apply_file", metavar="FIL", help="Verkställ besluten i den granskade förslagsfilen.")
+@click.option("--actor-user-id", metavar="ID", help="Aktiv admin eller matrikel_admin (krävs med --apply).")
+def workspace_proposals_cmd(csv_path, out, apply_file, actor_user_id):
+    """Föreslå Workspace-adresser för personer i matrikeln eller verkställ en granskad fil.
+
+    Bara Member.workspace_email skrivs. Konton och familjemedlemmar hanteras för
+    hand i matrikeln. Lämna beslut tomt för att hoppa över raden. Välj ändra
+    för att ange ett annat medlemsnummer och person-id.
+    """
+    if (out is None) == (apply_file is None) or (out is None) != (csv_path is None):
+        raise click.UsageError("Ange CSV --out FIL eller --apply FIL --actor-user-id ID")
+    counts = Counter({"Skrivna": 0})
+    # Even DEBUG SQL logs from peewee contain bound addresses and audit payloads. Other loggers stay on.
+    peewee_log = logging.getLogger("peewee")
+    previous_disabled = peewee_log.disabled
+    peewee_log.disabled = True
+    try:
+        if out is not None:
+            _export_workspace_proposals(csv_path, out)
+            return
+        actor = _require_matrikel_actor(actor_user_id)
+        try:
+            rows = read_decisions(apply_file, WORKSPACE_PROPOSAL_HEADER, raw_cells=True)
+        except (OSError, UnicodeError, csv.Error):
+            raise click.ClickException("Förslagsfilen kunde inte läsas") from None
+        except ValueError as err:
+            raise click.ClickException(str(err)) from None
+        address_counts = Counter(_norm_email(row["workspace_email"].removeprefix(" ")) for row in rows)
+        for row in rows:
+            counts[_apply_workspace_row(row, actor, address_counts)] += 1
+    except DatabaseError:
+        if apply_file is not None:
+            click.echo(", ".join(f"{outcome}: {count}" for outcome, count in counts.items()), err=True)
+        raise click.ClickException("Databasfel vid hantering av Workspace-förslag") from None
+    finally:
+        peewee_log.disabled = previous_disabled
+    click.echo(", ".join(f"{outcome}: {count}" for outcome, count in counts.items()))
+
+
+_WORKSPACE_EMAIL = "Email Address [Required]"
+_WORKSPACE_NAME = ("First Name [Required]", "Last Name [Required]")
+_WORKSPACE_ADDRESSES = ("Home Secondary Email", "Recovery Email", "Work Secondary Email")
+_HOUSEHOLD_NOTE = "godkänt av huvudmedlemmen muntligt eller per mejl, inhämtat av matrikelansvarig före 2026-11"
+
+
+def _read_workspace(path: str) -> dict[str, dict]:
+    """Account address -> the row's name and secondary addresses. No other column is kept."""
+    wanted = (_WORKSPACE_EMAIL, *_WORKSPACE_NAME, *_WORKSPACE_ADDRESSES)
+    try:
+        with open(path, encoding="utf-8-sig", newline="") as f:
+            reader = csv.DictReader(f)
+            missing = [header for header in wanted if header not in (reader.fieldnames or ())]
+            if missing:
+                raise click.ClickException(f"Workspace-filen saknar kolumnerna: {', '.join(missing)}")
+            return {
+                _norm_email(row[_WORKSPACE_EMAIL]): {header: (row[header] or "").strip() for header in wanted}
+                for row in reader
+                if _norm_email(row[_WORKSPACE_EMAIL])
+            }
+    except (OSError, UnicodeError, csv.Error):
+        raise click.ClickException("Workspace-filen kunde inte läsas") from None
+
+
+def _account_problem(user, incomplete, memberships_of) -> str | None:
+    if user.id in incomplete:
+        return "kontots ägarroll är ofullständig"
+    if any(role["level"] in ROLE_LEVELS for role in user.privileges):
+        return "kontot har en roll (admin, matrikel_admin, manager eller helper)"
+    if len(memberships_of.get(user.id, ())) > 1:
+        return "kontot äger besättningar i flera medlemskap"
+    return None
+
+
+def _registry_holder(user, other_than=None):
+    """An active person anywhere in the register, other than `other_than`, whose Workspace or contact address is the
+    account's verified Google address: the Google sign-in would link that person, so the account is theirs to
+    review."""
+    address = _norm_email(user.google_email)
+    if not address:
+        return None
+    return (
+        Member.select()
+        .where(
+            Member.end_date.is_null(True),
+            Member.id != (other_than or 0),
+            (fn.LOWER(fn.TRIM(Member.workspace_email)) == address) | (fn.LOWER(fn.TRIM(Member.email)) == address),
+        )
+        .first()
+    )
+
+
+def _household_person(user, workspace, persons):
+    """The person to add for the account from its Workspace row, or the reason none can be added. Only the Google
+    address identifies the row: it was verified at a Google sign-in, the account's own e-mail was not."""
+    if not _norm_email(user.google_email):
+        return "kontot har ingen verifierad Google-adress"
+    row = workspace.get(_norm_email(user.google_email))
+    if row is None:
+        return "kontots Google-adress finns inte i Workspace-exporten"
+    if workspace.get(_norm_email(user.email), row) is not row:
+        return "kontots e-post och Google-adress hör till olika rader i Workspace-exporten"
+    first, last = row[_WORKSPACE_NAME[0]], row[_WORKSPACE_NAME[1]]
+    if not (first and last):
+        return "Workspace-raden saknar för- eller efternamn"
+    name = _norm_name(f"{first} {last}")
+    if any(_norm_name(f"{p.first_name} {p.last_name}") == name for p in persons):
+        return "medlemskapet har redan en person med samma namn"
+    from blueprints.common import EMAIL_RE  # Load blueprints after CLI registration.
+
+    refused = []
+    for column in _WORKSPACE_ADDRESSES:  # the first address that passes every check
+        address = row[column]
+        if not address:
+            continue
+        if not EMAIL_RE.match(address):
+            refused.append(f"{column}: ingen giltig e-postadress")
+        elif _norm_email(address).endswith(WORKSPACE_DOMAIN):  # the association's accounts sign in with Google
+            refused.append(f"{column}: föreningens egen adress")
+        elif login_address_taken(address, 0):
+            refused.append(f"{column}: en annan medlem loggar redan in med adressen (AddressTaken)")
+        elif any(_norm_email(p.email) == _norm_email(address) for p in persons):
+            refused.append(f"{column}: en person i medlemskapet har adressen")
+        else:
+            return {"first_name": first, "last_name": last, "email": address, "role": "familjemedlem"}, column
+    if not refused:
+        return "Workspace-raden saknar reservadress"
+    return f"ingen reservadress i Workspace-raden går att använda ({'; '.join(refused)})"
+
+
+def _family_choice(user, workspace, persons, review):
+    """The person to add for an owner account linked to no person, or the reason none is added. The plan asks, and
+    _add_household_person asks again under lock with what is stored then."""
+    if any(_match_reason(p, user) for p in persons):
+        return "kontot matchar en person i medlemskapet (koppla för hand)"
+    if review:
+        return f"medlemskapet har {review} (lägg till för hand)"
+    if holder := _registry_holder(user):
+        return f"Google-adressen hör till person {holder.id} (koppla för hand)"
+    return _household_person(user, workspace, persons)
+
+
+def _plan_household_links(workspace) -> tuple[list, list, int]:
+    """Memberships with a herd that several active accounts own: returns (actions [(codes, line, main, user,
+    person data or None for the main member's link, (main member's account id, herd ids the account owns) for a new
+    person)], listed [(codes, reason)], already). A household's main link comes before its new persons."""
+    owners, incomplete = legacy_owner_index()
+    herd_memberships = dict(Herd.select(Herd.id, Herd.membership).where(Herd.membership.is_null(False)).tuples())
+    memberships_of: dict[int, set[int]] = {}
+    for herd_id, users in owners.items():
+        for user_id in users:
+            if herd_id in herd_memberships:
+                memberships_of.setdefault(user_id, set()).add(herd_memberships[herd_id])
+    linked = {person.user_id: person for person in Member.select().where(Member.user.is_null(False))}
+
+    households: dict[int, tuple[list, list, dict]] = {}  # membership id -> (codes, herd ids, {user id: user})
+    herds = (
+        Herd.select(Herd, Membership)
+        .join(Membership)
+        .where(Herd.is_active.is_null(True) | Herd.is_active, Membership.membership_status == Status.ACTIVE)
+        .order_by(Herd.herd, Herd.id)
+    )
+    for herd in herds:
+        active = {uid: user for uid, user in owners.get(herd.id, {}).items() if user.is_active}
+        if len(active) > 1:
+            codes, herd_ids, users = households.setdefault(herd.membership_id, ([], [], {}))
+            codes.append(herd.herd)
+            herd_ids.append(herd.id)
+            users.update(active)
+
+    actions, listed, already = [], [], set()
+    for membership_id, (codes, herd_ids, users) in households.items():
+        persons = list(Member.select().where(Member.membership == membership_id, Member.end_date.is_null(True)))
+        # An ended or erased person cannot be told from one the export merely lists, as in the import.
+        review = _manual_review_reason(Membership.get_by_id(membership_id))
+        main = next((p for p in persons if p.role == "huvudmedlem"), None)
+        if main is None:
+            listed.append((codes, "medlemskapet har ingen aktiv huvudmedlem"))
+            continue
+        # Every person-account match in the household, as link-by-herd counts its counterparts.
+        possible = {(p.id, u.id) for p in persons for u in users.values() if _match_reason(p, u)}
+        matching = [user for user in users.values() if user.id == main.user_id or (main.id, user.id) in possible]
+        if len(matching) != 1:
+            listed.append((codes, f"{'flera konton' if matching else 'inget konto'} matchar huvudmedlemmen"))
+            continue
+        main_user = matching[0]
+        if main.user_id != main_user.id and any((p.id, main_user.id) in possible for p in persons if p is not main):
+            listed.append((codes, f"flera möjliga kopplingar: konto {main_user.id} matchar också en annan person"))
+            continue
+        if reason := _account_problem(main_user, incomplete, memberships_of):
+            listed.append((codes, f"huvudmedlemmens konto {main_user.id}: {reason}"))
+            continue
+        row = workspace.get(_norm_email(main_user.google_email)) or {}
+        row_name = _norm_name(f"{row.get(_WORKSPACE_NAME[0], '')} {row.get(_WORKSPACE_NAME[1], '')}")
+        if row_name and any(_norm_name(f"{p.first_name} {p.last_name}") == row_name for p in persons if p is not main):
+            listed.append(
+                (codes, f"huvudmedlemmens konto {main_user.id}: Workspace-raden har namnet på en annan person")
+            )
+            continue
+        if holder := _registry_holder(main_user, other_than=main.id):
+            listed.append((codes, f"huvudmedlemmens konto {main_user.id}: Google-adressen hör till person {holder.id}"))
+            continue
+        # The main member's account must be clear before anyone else in the household is added.
+        pairs, count = {}, len(listed)
+        _check_owner("/".join(codes), main, main_user, incomplete, listed, already, pairs)
+        if len(listed) > count:
+            continue
+        if pairs:
+            if link_access_delta(main, main_user):
+                listed.append((codes, "länken skulle ge kontot åtkomst till fler besättningar"))
+                continue
+            [(_, _, _, reason)] = pairs.values()
+            actions.append((codes, _pair_line(main, main_user, codes, reason), main, main_user, None, None))
+
+        for user in users.values():
+            if user is main_user:
+                continue
+            person = linked.get(user.id)
+            if person is not None:
+                if person.membership_id == membership_id and person.end_date is None:
+                    already.add((person.id, user.id))
+                else:
+                    listed.append((codes, f"konto {user.id}: kontot är redan kopplat till en annan medlem"))
+                continue
+            planned = _account_problem(user, incomplete, memberships_of) or _family_choice(
+                user, workspace, persons, review
+            )
+            if isinstance(planned, str):
+                listed.append((codes, f"konto {user.id}: {planned}"))
+                continue
+            data, column = planned
+            line = (
+                f"{'/'.join(codes)}: ny familjemedlem i medlemskap {membership_id}: "
+                f"{_q(data['first_name'] + ' ' + data['last_name'])} {_q(data['email'])} ({column}) "
+                f"-> konto {user.id} | {_account_detail(user)} | anteckning som skrivs: {_q(_HOUSEHOLD_NOTE)}"
+            )
+            owned = [herd_id for herd_id in herd_ids if user.id in owners.get(herd_id, {})]
+            actions.append((codes, line, main, user, data, (main_user.id, owned, column)))
+
+    # Two new persons with one name in a membership, or one login address anywhere: none of them is added.
+    family = [action for action in actions if action[4] is not None]
+    names = Counter(
+        (main.membership_id, _norm_name(f"{d['first_name']} {d['last_name']}")) for _, _, main, _, d, _ in family
+    )
+    addresses = Counter(_norm_email(d["email"]) for _, _, _, _, d, _ in family)
+    for action in family:
+        codes, _, main, user, data, _ = action
+        if names[(main.membership_id, _norm_name(f"{data['first_name']} {data['last_name']}"))] > 1:
+            listed.append((codes, f"konto {user.id}: flera konton i planen får samma namn i medlemskapet"))
+        elif addresses[_norm_email(data["email"])] > 1:
+            listed.append((codes, f"konto {user.id}: flera konton i planen får samma adress"))
+        else:
+            continue
+        actions.remove(action)
+    return actions, listed, len(already)
+
+
+def _add_household_person(main, user, data, planned, workspace, actor) -> None:
+    """The same add as a manual one (address check, audit, medlemskap.tillagd), and the link, in one transaction.
+    First, under the locks link_member_user takes and in its order (membership, then account), what the plan rested
+    on must still hold: an active membership, the main member linked to her account, and the account an owner of
+    one of the household's herds, and the person chosen again from the stored persons and the account's Google
+    address must be the planned one, with the planned address."""
+    main_user_id, herd_ids, column = planned
+    with DB_PROXY.atomic():
+        membership = Membership.select().where(Membership.id == main.membership_id).for_update().get()
+        account = User.select().where(User.id == user.id).for_update().get()
+        if membership.membership_status != Status.ACTIVE:
+            raise LinkError("Medlemskapet är inte aktivt", "Medlemskapet är inte längre aktivt")
+        if review := _manual_review_reason(membership):
+            raise LinkError("Medlemskapet ska granskas", f"Medlemskapet har nu {review}")
+        main_linked = Member.select().where(
+            Member.id == main.id,
+            Member.role == "huvudmedlem",
+            Member.end_date.is_null(True),
+            Member.user == main_user_id,
+        )
+        if not main_linked.exists():
+            raise LinkError("Huvudmedlemmen är inte kopplad", "Huvudmedlemmen är inte kopplad till sitt konto")
+        herds = Herd.select(Herd.id).where(Herd.id.in_(herd_ids), Herd.membership == membership.id)
+        roles = [r for r in account.privileges if isinstance(r, dict) and r.get("level") == "owner"]
+        if not {str(r.get("herd")).lstrip("0") for r in roles} & {str(herd.id) for herd in herds}:
+            raise LinkError("Kontot äger inte besättningen", "Kontot har inte längre rollen ägare på besättningen")
+        owners, incomplete = legacy_owner_index()  # the account's row is locked, so its entries are current
+        owned_memberships = Herd.select(Herd.membership).where(
+            Herd.id.in_([herd_id for herd_id, users in owners.items() if account.id in users]),
+            Herd.membership.is_null(False),
+        )
+        memberships_of = {account.id: {herd.membership_id for herd in owned_memberships}}
+        if reason := _account_problem(account, incomplete, memberships_of):
+            raise LinkError("Kontot ska granskas", f"Sedan planen: {reason}")
+        persons = list(Member.select().where(Member.membership == membership.id, Member.end_date.is_null(True)))
+        choice = _family_choice(account, workspace, persons, None)
+        if choice != (data, column):
+            detail = choice if isinstance(choice, str) else "en annan person eller adress än i planen"
+            raise LinkError("Personvalet har ändrats", f"Personvalet har ändrats sedan planen: {detail}")
+        person = add_person(membership, data, actor)
+        person.notes = _HOUSEHOLD_NOTE
+        person.save(only=[Member.notes])
+        link_member_user(person.id, user.id, actor=actor, mode="cli", invalidate=False)
+
+
+@members_cli.command("link-household")
+@click.option(
+    "--workspace",
+    "workspace_path",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="User export from Google Admin (CSV).",
+)
+@_apply_option
+@_actor_option
+@_plan_option
+def link_household_cmd(workspace_path: str, apply_links: bool, actor_user_id: int | None, plan_value: str | None):
+    """Link the accounts of a herd that several active accounts own.
+
+    For each active herd in an active membership with more than one active
+    owner account: the one account that matches the main member (as link-by-herd
+    matches, and matching no other person) is linked to her, and every other
+    owner account that is linked to no person becomes a new familjemedlem in the
+    membership, added as a manual add is, and is linked to that account.
+    Name and address come from the row of the account's verified Google address
+    in the Google Admin user export; the address is the first of Home Secondary
+    Email, Recovery Email and Work Secondary Email that is valid, that no other
+    member logs in with and that no person in the membership has.
+    Listed instead: an account without a Google address or whose own e-mail
+    names another row, an account with a role or with herds in several
+    memberships, an account that matches a person already in the membership,
+    and candidates sharing a name in a membership or an address in the plan.
+    A household whose main member no account (or more than one) matches is
+    listed whole. --apply goes household by household: if the main member's
+    link is refused, nobody is added to that household, and each add rechecks
+    under lock that the membership is active, the main member linked and the
+    account still an owner of the herd.
+    Plan, Kontrollvärde and --apply work as in link-by-herd.
+    """
+    actor = _link_actor(apply_links, actor_user_id, plan_value)
+    workspace = _read_workspace(workspace_path)
+    actions, listed, already = _plan_household_links(workspace)
+    value = _plan_checksum(action[1] for action in actions)
+    if apply_links and plan_value != value:
+        _echo_plan("Att koppla", [action[1] for action in actions], listed, already)
+        click.echo(f"Kontrollvärde: {value}")
+        raise click.ClickException(_PLAN_CHANGED)
+
+    done, refused_main = [], set()
+    for codes, line, main, user, data, planned in actions:
+        if apply_links and data is not None and main.membership_id in refused_main:
+            listed.append((codes, f"konto {user.id}: inte tillagt, huvudmedlemmens koppling avvisades"))
+            continue
+        try:
+            if apply_links and data is None:
+                link_member_user(main.id, user.id, actor=actor, mode="cli")
+            elif apply_links:
+                _add_household_person(main, user, data, planned, workspace, actor)
+        except (ConfirmRequired, LinkError, IntegrityError, AddressTaken, ValueError) as exc:
+            if data is None:
+                refused_main.add(main.membership_id)
+            listed.append((codes, f"avvisades ({type(exc).__name__}: {_q(exc)})"))
+        else:
+            done.append(line)
+
+    _echo_plan("Kopplade" if apply_links else "Att koppla", done, listed, already)
+    if not apply_links:
+        click.echo(f"Kontrollvärde: {value}")
+        click.echo("(endast plan — läs raderna ovan, inget skrevs; kör om med --apply --plan <kontrollvärde>)")

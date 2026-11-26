@@ -32,7 +32,8 @@ Det är grinden: ingen separat flagga slår funktionen på eller av.
 
 `POST /api/v2/tyck-till` (multipart, öppen utan inloggning, fel som RFC 9457):
 
-1. Hela anropet får vara högst 9 MB (nginx tar 10 MB), annars 413.
+1. Hela anropet får vara högst 9 MB (nginx tar 10 MB på sidorna där dialogen finns), annars 413.
+   Formuläret är öppet och kroppen läses före IP-gränsen, så gränsen hålls låg.
 2. Fälten kontrolleras: `typ` (`fel` eller `onskemal`), `text` (1 till 5000
    tecken), `inskick_id` (UUID från webbläsaren), `email` (krävs när man inte är
    inloggad, och används om den fylls i). Utloggad blir alltid privat.
@@ -47,7 +48,8 @@ Det är grinden: ingen separat flagga slår funktionen på eller av.
    som kommer förbi låset: högst 20 per timme och IP, så att avvisade bilder
    inte kan avkodas obegränsat.
 5. Ett inskick åt gången per gunicorn-process (annars 503). Bilderna (högst
-   fyra, JPEG, PNG, WebP eller HEIC) kodas om utan EXIF.
+   fyra, JPEG, PNG, WebP eller HEIC) kodas om utan EXIF och skalas till högst
+   2000 bildpunkter på längsta sidan, som i dialogen, eftersom mejlet bär alla bilder.
 6. Issuen skapas (efter ett uppslag i båda reposen, publikt först, på en issue
    vars sista rad är `Referens: tt-<8 hex>`, så att ett omförsök efter ett
    förlorat svar inte ger en dublett; hittas en issue gäller dess repo och
