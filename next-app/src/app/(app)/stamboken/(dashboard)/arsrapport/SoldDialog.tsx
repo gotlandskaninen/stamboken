@@ -15,8 +15,9 @@ import {
 import CloseIcon from "@mui/icons-material/Close";
 import {
   BuyerFields,
-  EMPTY_BUYER,
   buyerComplete,
+  buyerDraft,
+  buyerMode,
   buyerPayload,
   type BuyerDraft,
 } from "@/components/individual/BuyerFields";
@@ -188,10 +189,9 @@ function Body({
   const [dag, setDag] = React.useState(
     existing?.dag ? String(existing.dag) : "",
   );
-  const [buyer, setBuyer] = React.useState<BuyerDraft>({
-    ...EMPTY_BUYER,
-    ...existing?.kopare,
-  });
+  const [buyer, setBuyer] = React.useState<BuyerDraft>(() =>
+    buyerDraft(existing?.kopare),
+  );
   // K1: a buyer kept across Dra tillbaka, which the seller never reads back. A
   // proposal cannot take it (F1), so a role that may not sell types the buyer.
   const keptId = existing?.kopare_id != null && !existing.kopare;
@@ -214,7 +214,8 @@ function Body({
     rabbit?.registered_buyer_date &&
     (stored || date === rabbit.registered_buyer_date);
   const needsAddress = addressRequired && !correction;
-  const complete = buyerComplete(buyer, needsAddress);
+  const mode = buyerMode(buyer, ar); // without a försäljningsbevis before 2027 (#273)
+  const complete = buyerComplete(buyer, needsAddress, ar);
   const buyerHalf = typed && !complete;
   const buyerMissing = outside && !kept && !stored && !complete;
   const buyerWanted = outside && !removed && (buyerMissing || buyerHalf);
@@ -226,11 +227,25 @@ function Body({
       !outside && !code
         ? "Välj en besättning i genbanken, eller Utanför genbanken."
         : null,
-    name: buyerWanted && !buyer.name.trim() ? "Skriv köparens namn." : null,
-    town: buyerWanted && !buyer.town.trim() ? "Skriv köparens ort." : null,
+    mode:
+      buyerWanted && !mode
+        ? ar < 2027
+          ? "Välj om köparen har e-post."
+          : "Välj om köparen fick försäljningsbeviset."
+        : null,
+    name:
+      buyerWanted && mode && !buyer.name.trim() ? "Skriv köparens namn." : null,
+    town:
+      buyerWanted && mode && !buyer.town.trim() ? "Skriv köparens ort." : null,
     postal_address:
-      buyerWanted && needsAddress && !buyer.postal_address.trim()
+      buyerWanted &&
+      (needsAddress || mode === "epost") &&
+      !buyer.postal_address.trim()
         ? "Skriv köparens postadress."
+        : null,
+    email:
+      buyerWanted && mode === "epost" && !buyer.email.trim()
+        ? "Skriv köparens e-post."
         : null,
     month: manad === null ? "Välj månad." : null,
   };
@@ -254,7 +269,7 @@ function Body({
       ar,
       manad,
       dag: dag ? Number(dag) : null,
-      kopare: outside && !removed && complete ? buyerPayload(buyer) : null,
+      kopare: outside && !removed && complete ? buyerPayload(buyer, ar) : null,
       ...(outside && !removed && kept ? { kopare_id: existing.kopare_id } : {}),
     });
   };
@@ -329,12 +344,15 @@ function Body({
             <BuyerFields
               variant="member"
               value={buyer}
+              year={ar}
               addressRequired={needsAddress}
               onChange={setBuyer}
               errors={{
+                mode: shown(errors.mode) ?? undefined,
                 name: shown(errors.name) ?? undefined,
                 town: shown(errors.town) ?? undefined,
                 postal_address: shown(errors.postal_address) ?? undefined,
+                email: shown(errors.email) ?? undefined,
               }}
             />
             {!kept && (

@@ -61,7 +61,15 @@ const sale = {
 const found = (...sales: object[]) => ({ ok: true, data: { sales } });
 const registered = found(sale);
 
-function panel(answer: object = found(), addressRequired = false) {
+// Before 2027 the buyer is asked "Har köparen e-post?"; from 2028 only the bevis (#273).
+const BEVIS_DATE = "2028-03-05";
+const QUESTION = "Har köparen e-post?";
+
+function panel(
+  answer: object = found(),
+  addressRequired = false,
+  date = "2026-10-03",
+) {
   rabbitSales.mockResolvedValue(answer);
   render(
     <SalePanel
@@ -74,21 +82,29 @@ function panel(answer: object = found(), addressRequired = false) {
     />,
   );
   fireEvent.change(screen.getByLabelText(/Säljdatum/), {
-    target: { value: "2026-10-03" },
+    target: { value: date },
   });
 }
 const type = (label: RegExp, value: string) =>
   fireEvent.change(screen.getByLabelText(label), { target: { value } });
+const typeEpostBuyer = () => {
+  fireEvent.click(screen.getByRole("radio", { name: "Ja" }));
+  type(/Köparens namn/, "Anna Köpare");
+  type(/^Ort/, "Visby");
+  type(/^Postadress/, "Väg 1");
+  type(/^E-post/, "anna@example.org");
+};
 const save = () =>
   screen.getByRole("button", { name: "Spara och nästa" }) as HTMLButtonElement;
 
 describe("SalePanel with a buyer outside the association", () => {
-  it("shows the buyer fields and the proof note instead of 'not saved'", () => {
-    panel();
+  it("shows the buyer fields and the proof note instead of 'not saved' from 2028", () => {
+    panel(found(), false, BEVIS_DATE);
     expect(screen.queryByLabelText(/Köparens namn/)).toBeNull();
     fireEvent.click(
       screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
     );
+    expect(screen.queryByRole("radio")).toBeNull();
     expect(screen.getByLabelText(/Köparens namn/)).toBeInTheDocument();
     expect(screen.getByLabelText(/^Ort/)).toBeInTheDocument();
     expect(screen.getByTestId("sell-buyer").className).not.toContain(
@@ -106,8 +122,21 @@ describe("SalePanel with a buyer outside the association", () => {
     expect(screen.getByLabelText("E-post")).toBeInTheDocument();
   });
 
+  it("asks before 2027 whether the buyer has e-mail, and only then for the fields", () => {
+    panel();
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
+    );
+    expect(screen.getByText(QUESTION)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/Köparens namn/)).toBeNull();
+    fireEvent.click(screen.getByRole("radio", { name: "Ja" }));
+    expect(screen.getByLabelText(/Köparens namn/)).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: CONSENT })).toBeNull();
+    expect(screen.queryByText(/Ge köparen försäljningsbeviset/)).toBeNull();
+  });
+
   it("needs the address from a helper, as the API does (#111)", async () => {
-    panel(found(), true);
+    panel(found(), true, BEVIS_DATE);
     fireEvent.click(
       screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
     );
@@ -119,9 +148,9 @@ describe("SalePanel with a buyer outside the association", () => {
     await waitFor(() => expect(save().disabled).toBe(false));
   });
 
-  it("needs name and town, and sends the buyer with GX1", async () => {
+  it("needs name and town, and sends the buyer with GX1 (a bevis from 2028)", async () => {
     registerSale.mockResolvedValue({ ok: true, data: { document: doc } });
-    panel();
+    panel(found(), false, BEVIS_DATE);
     fireEvent.click(
       screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
     );
@@ -136,7 +165,7 @@ describe("SalePanel with a buyer outside the association", () => {
     expect(registerSale).toHaveBeenCalledWith(12, 31, {
       individual: "G9001-2511",
       herd: "GX1",
-      date: "2026-10-03",
+      date: BEVIS_DATE,
       buyer: {
         name: "Anna Köpare",
         town: "Visby",
@@ -147,15 +176,32 @@ describe("SalePanel with a buyer outside the association", () => {
     });
   });
 
+  it("sends the e-mail buyer as notice_only before 2027", async () => {
+    registerSale.mockResolvedValue({ ok: true, data: { document: doc } });
+    panel();
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
+    );
+    typeEpostBuyer();
+    await waitFor(() => expect(save().disabled).toBe(false));
+    fireEvent.click(save());
+    await waitFor(() => expect(registerSale).toHaveBeenCalledTimes(1));
+    expect(registerSale.mock.calls[0][2].buyer).toEqual({
+      name: "Anna Köpare",
+      town: "Visby",
+      postal_address: "Väg 1",
+      email: "anna@example.org",
+      notice_only: true,
+    });
+  });
+
   it("asks for no buyer on a proof of a sale already registered, wherever it was", async () => {
     registerSale.mockResolvedValue({ ok: true, data: { document: doc } });
     panel(registered);
     fireEvent.click(
       screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
     );
-    await waitFor(() =>
-      expect(screen.queryByLabelText(/Köparens namn/)).toBeNull(),
-    );
+    await waitFor(() => expect(screen.queryByText(QUESTION)).toBeNull());
     expect(rabbitSales).toHaveBeenCalledWith(12, "G9001-2511");
     expect(save().disabled).toBe(false);
     fireEvent.click(save());
@@ -174,14 +220,12 @@ describe("SalePanel with a buyer outside the association", () => {
     fireEvent.click(
       screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
     );
-    await waitFor(() =>
-      expect(screen.queryByLabelText(/Köparens namn/)).toBeNull(),
-    );
+    await waitFor(() => expect(screen.queryByText(QUESTION)).toBeNull());
     rabbitSales.mockClear();
     rabbitSales.mockResolvedValue(found());
     type(/Individnummer/, "G9001-251");
     type(/Individnummer/, "G9001-2512"); // another rabbit, typed quickly
-    expect(screen.getByLabelText(/Köparens namn/)).toBeInTheDocument(); // at once, before any answer
+    expect(screen.getByText(QUESTION)).toBeInTheDocument(); // at once, before any answer
     await waitFor(() => expect(rabbitSales).toHaveBeenCalledTimes(1));
     expect(rabbitSales).toHaveBeenCalledWith(12, "G9001-2512");
   });
@@ -192,7 +236,7 @@ describe("SalePanel with a buyer outside the association", () => {
       screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
     );
     await waitFor(() => expect(rabbitSales).toHaveBeenCalled());
-    expect(screen.getByLabelText(/Köparens namn/)).toBeInTheDocument();
+    expect(screen.getByText(QUESTION)).toBeInTheDocument();
   });
 
   it("asks for and sends the buyer of a registered sale that has none", async () => {
@@ -202,14 +246,14 @@ describe("SalePanel with a buyer outside the association", () => {
       screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
     );
     await waitFor(() => expect(rabbitSales).toHaveBeenCalled());
-    type(/Köparens namn/, "Anna Köpare");
-    type(/^Ort/, "Visby");
+    typeEpostBuyer();
     await waitFor(() => expect(save().disabled).toBe(false));
     fireEvent.click(save());
     await waitFor(() => expect(registerSale).toHaveBeenCalledTimes(1));
     expect(registerSale.mock.calls[0][2].buyer).toMatchObject({
       name: "Anna Köpare",
       town: "Visby",
+      notice_only: true,
     });
   });
 
@@ -219,9 +263,7 @@ describe("SalePanel with a buyer outside the association", () => {
     fireEvent.click(
       screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
     );
-    await waitFor(() =>
-      expect(screen.queryByLabelText(/Köparens namn/)).toBeNull(),
-    );
+    await waitFor(() => expect(screen.queryByText(QUESTION)).toBeNull());
     fireEvent.click(save());
     await waitFor(() => expect(registerSale).toHaveBeenCalledTimes(1));
     expect(registerSale.mock.calls[0][2]).not.toHaveProperty("buyer");
@@ -235,8 +277,7 @@ describe("SalePanel with a buyer outside the association", () => {
     expect(
       await screen.findByText(/Kunde inte läsa kaninens försäljningar/),
     ).toBeInTheDocument();
-    type(/Köparens namn/, "Anna Köpare");
-    type(/^Ort/, "Visby");
+    typeEpostBuyer();
     expect(save().disabled).toBe(true);
   });
 

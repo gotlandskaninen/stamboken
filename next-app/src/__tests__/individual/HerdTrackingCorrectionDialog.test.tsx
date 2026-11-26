@@ -23,12 +23,20 @@ beforeAll(async () => {
 });
 afterEach(cleanup);
 
+// before 2027 the buyer is recorded by e-mail: the notice the association sends
 const typeBuyer = () => {
+  fireEvent.click(screen.getByRole("radio", { name: "Ja" }));
   fireEvent.change(screen.getByLabelText(/Köparens namn/), {
     target: { value: "Anna Köpare" },
   });
   fireEvent.change(screen.getByLabelText(/^Ort/), {
     target: { value: "Visby" },
+  });
+  fireEvent.change(screen.getByLabelText(/^Postadress/), {
+    target: { value: "Väg 1" },
+  });
+  fireEvent.change(screen.getByLabelText(/^E-post/), {
+    target: { value: "anna@example.org" },
   });
 };
 
@@ -142,8 +150,9 @@ describe("HerdTrackingCorrectionDialog", () => {
           buyer: {
             name: "Anna Köpare",
             town: "Visby",
-            contact_consent: false,
-            membership_optin: false,
+            postal_address: "Väg 1",
+            email: "anna@example.org",
+            notice_only: true,
           },
         },
       ],
@@ -174,16 +183,16 @@ describe("HerdTrackingCorrectionDialog", () => {
     fireEvent.change(screen.getByLabelText("Besättning"), {
       target: { value: "GX1" },
     });
-    expect(screen.getByLabelText(/Köparens namn/)).toBeDefined();
+    expect(screen.getByText("Har köparen e-post?")).toBeDefined();
     fireEvent.change(screen.getByLabelText("Typ"), {
       target: { value: "CORRECTION" },
     });
-    expect(screen.queryByLabelText(/Köparens namn/)).toBeNull(); // the server points to Flytt
+    expect(screen.queryByText("Har köparen e-post?")).toBeNull(); // the server points to Flytt
     fireEvent.change(screen.getByLabelText("Typ"), {
       target: { value: "TRANSFER" },
     });
     fireEvent.click(screen.getByLabelText(/2025-09-30 · /)); // the sale it replaces carries its buyer
-    expect(screen.queryByLabelText(/Köparens namn/)).toBeNull();
+    expect(screen.queryByText("Har köparen e-post?")).toBeNull();
     fireEvent.change(screen.getByLabelText("Anledning"), {
       target: { value: "Fel datum" },
     });

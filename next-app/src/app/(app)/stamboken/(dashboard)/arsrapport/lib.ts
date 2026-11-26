@@ -1228,6 +1228,7 @@ export interface SaleProposalRow {
   name: string | null;
   to_herd: string | null;
   buyer: { name: string; town: string | null } | null;
+  buyer_not_recorded: boolean; // såld utanför genbanken: no buyer kept (#273)
   sale_date: string;
   day_known: boolean; // false: the report gave it without its day (5.3), so its month is shown
   buyer_notified_at: string | null; // the buyer's own notice (K7)

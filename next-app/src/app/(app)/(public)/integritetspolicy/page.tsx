@@ -358,11 +358,14 @@ export default function IntegritetspolicyPage() {
               ägarbytet är registrerat och berättar vad vi har sparat.
             </p>
             <p>
-              Registrerar vi en försäljning från ett äldre intyg där köparen
-              står ifylld för vi in namn och postadress, om försäljningen är
-              högst fem år gammal. E-postadress och telefonnummer för vi inte
-              in. Vi skriver till köparen inom en månad och berättar det, med
-              mejl om intyget har en e-postadress och annars med brev.
+              Till och med 2027 säljs en del kaniner utan försäljningsbevis,
+              till exempel på ett äldre intyg. Då sparar vi dig bara om säljaren
+              har din e-postadress. Vi mejlar dig inom en månad vad vi har
+              sparat och varför, och e-postadressen sparar vi inte efter det.
+              Namn och postadress sparar vi i fem år, som ovan. Kommer mejlet
+              inte fram tar vi bort dina uppgifter. Har säljaren ingen
+              e-postadress till dig sparar vi inget om dig, bara att kaninen är
+              såld utanför genbanken.
             </p>
             <p>
               Du kan när som helst ta tillbaka ditt ja, och du kan invända mot

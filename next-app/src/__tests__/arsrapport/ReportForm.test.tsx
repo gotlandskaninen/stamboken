@@ -437,6 +437,7 @@ describe("ReportForm", () => {
     );
     expect(within(row(1)).queryByText("✓ Klar")).toBeNull();
     fireEvent.click(within(row(1)).getByRole("button", { name: "Ändra" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Ja" })); // the buyer has e-mail (before 2027)
     fireEvent.change(screen.getByLabelText(/Köparens namn/), {
       target: { value: "Ola Köpare" },
     });
@@ -445,6 +446,9 @@ describe("ReportForm", () => {
     });
     fireEvent.change(screen.getByLabelText(/^Postadress/), {
       target: { value: "Testgatan 1" },
+    });
+    fireEvent.change(screen.getByLabelText(/^E-post/), {
+      target: { value: "ola@example.invalid" },
     });
     fireEvent.click(
       screen.getByRole("button", { name: "Spara försäljningen" }),
@@ -496,6 +500,7 @@ describe("ReportForm", () => {
     render(<ReportForm env="demo" view={view()} actions={a} />);
     choose(1, "Såld");
     fireEvent.click(screen.getByLabelText("Utanför genbanken"));
+    fireEvent.click(screen.getByRole("radio", { name: "Ja" })); // the buyer has e-mail (before 2027)
     fireEvent.change(screen.getByLabelText(/Köparens namn/), {
       target: { value: "Ola Köpare" },
     });
@@ -504,6 +509,9 @@ describe("ReportForm", () => {
     });
     fireEvent.change(screen.getByLabelText(/^Postadress/), {
       target: { value: "Testgatan 1" },
+    });
+    fireEvent.change(screen.getByLabelText(/^E-post/), {
+      target: { value: "ola@example.invalid" },
     });
     fireEvent.change(screen.getByLabelText("Månad"), {
       target: { value: "6" },
