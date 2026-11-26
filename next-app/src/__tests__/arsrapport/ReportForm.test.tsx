@@ -533,6 +533,114 @@ describe("ReportForm", () => {
     expect(local()).toBeNull(); // the server confirmed
   });
 
+  // Såld outside the genebank in June 2026, an e-mail buyer (before 2027), saved in the dialog.
+  const sellOutside = () => {
+    choose(1, "Såld");
+    fireEvent.click(screen.getByLabelText("Utanför genbanken"));
+    fireEvent.click(screen.getByRole("radio", { name: "Ja" }));
+    for (const [label, value] of [
+      [/Köparens namn/, "Ola Köpare"],
+      [/^Ort/, "Visby"],
+      [/^Postadress/, "Testgatan 1"],
+      [/^E-post/, "ola@example.invalid"],
+    ] as const)
+      fireEvent.change(screen.getByLabelText(label), { target: { value } });
+    fireEvent.change(screen.getByLabelText("Månad"), {
+      target: { value: "6" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Spara försäljningen" }),
+    );
+  };
+
+  it("has the server keep a typed buyer: sent beside the draft at once, then only its id, and klar after a reload", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    a.saveDraft.mockImplementationOnce(() =>
+      ok({
+        updated_at: "2026-12-31T10:00:00+00:00",
+        submission_key: null,
+        kopare: { "1": { kopare_id: 7, kept_buyer_date: "2026-06-30" } },
+        refusals: [],
+      }),
+    );
+    const { unmount } = render(
+      <ReportForm env="demo" view={view()} actions={a} />,
+    );
+    sellOutside();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10); // not after the usual 2 s
+    });
+    expect(a.saveDraft).toHaveBeenCalledTimes(1);
+    const first = a.saveDraft.mock.calls[0];
+    expect(first[8]).toEqual({
+      "1": {
+        name: "Ola Köpare",
+        town: "Visby",
+        postal_address: "Testgatan 1",
+        email: "ola@example.invalid",
+        notice_only: true,
+      },
+    });
+    expect(JSON.stringify(first[2])).not.toMatch(/Ola|Visby/);
+    expect(within(row(1)).getByText("✓ Klar")).toBeTruthy();
+    fireEvent.click(within(row(1)).getByRole("button", { name: "Ändra" }));
+    expect(screen.getByText(/Köparen finns sparad/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Avbryt" }));
+    choose(2, "Finns kvar"); // the next save carries the id, not the buyer
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    expect(a.saveDraft).toHaveBeenCalledTimes(2);
+    const [, , data, , , , , , sent] = a.saveDraft.mock.calls[1];
+    expect(sent).toEqual({});
+    expect(data.form.rabbits["1"].sald).toMatchObject({ kopare_id: 7 });
+    expect(local()).toBeNull();
+    unmount();
+    // a reload or another device: the server's draft names the buyer, the view gives its day
+    const draft = {
+      data,
+      updated_at: "2026-12-31T10:00:01+00:00",
+      submission_key: null,
+      own: true,
+    } as unknown as ReportView["draft"];
+    const rabbits = [rabbit(1, { kept_buyer_date: "2026-06-30" }), rabbit(2)];
+    render(
+      <ReportForm
+        env="demo"
+        view={view({ draft, rabbits })}
+        actions={actions()}
+      />,
+    );
+    expect(within(row(1)).getByText("✓ Klar")).toBeTruthy();
+  });
+
+  it("shows the server's refusal of a typed buyer on the row and in the dialog, and keeps the buyer typed", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    const message =
+      "Ange en e-postadress till köparen, bara adressen och bara en.";
+    a.saveDraft.mockImplementationOnce(() =>
+      ok({
+        updated_at: "2026-12-31T10:00:00+00:00",
+        submission_key: null,
+        kopare: {},
+        refusals: [{ individual_id: 1, code: "kopare", message }],
+      }),
+    );
+    render(<ReportForm env="demo" view={view()} actions={a} />);
+    sellOutside();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10);
+    });
+    expect(within(row(1)).getByText(message)).toBeTruthy();
+    fireEvent.click(within(row(1)).getByRole("button", { name: "Ändra" }));
+    expect(within(screen.getByRole("dialog")).getByText(message)).toBeTruthy();
+    expect(
+      (screen.getByLabelText(/Köparens namn/) as HTMLInputElement).value,
+    ).toBe("Ola Köpare");
+  });
+
   it("shows 'Markera resten' on a long list only once the last row has been seen", () => {
     let fire: (e: { isIntersecting: boolean }[]) => void = () => {};
     vi.stubGlobal(

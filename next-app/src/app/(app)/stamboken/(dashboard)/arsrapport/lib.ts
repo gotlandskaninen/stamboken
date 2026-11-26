@@ -273,8 +273,9 @@ export interface MyReport {
 }
 
 // The buyer outside the genebank lives in memory only: never in a draft, never
-// in localStorage (D10). The contact details only with the buyer's yes
-// (BuyerFields, ADR-0016).
+// in localStorage (D10). The autosave sends it beside the draft, the server
+// keeps it (typedBuyers), and the row then holds its id. The contact details
+// only with the buyer's yes (BuyerFields, ADR-0016).
 export type Buyer = SaleBuyer;
 export interface DodState {
   ar: number;
@@ -289,7 +290,8 @@ export interface SaldState {
   manad: number | null;
   dag: number | null;
   kopare: Buyer | null;
-  // A buyer kept across Dra tillbaka (K1): the server's id, carried untouched.
+  // A buyer the server keeps, across Dra tillbaka or from the sale dialog
+  // (K1): its id, carried untouched.
   kopare_id?: number;
 }
 export interface Entry {
@@ -504,6 +506,44 @@ export function withoutGoneBuyer(e: Entry): Entry {
   return { ...e, sald };
 }
 
+// The buyers the sale dialog typed that the autosave sends for the server to
+// keep (Jonas 2026-11-26), by rabbit id: a sale outside the genebank by a role
+// that may sell (F1). Såld utanför genbanken keeps nothing (#273), and a sale
+// the report already holds outside is corrected at Skicka, as before.
+export function typedBuyers(
+  state: FormState,
+  view: Pick<ReportView, "can_sell" | "report">,
+): Record<string, Buyer> {
+  const typed: Record<string, Buyer> = {};
+  if (!view.can_sell) return typed;
+  for (const [id, e] of Object.entries(state.rabbits)) {
+    const s = e.sald;
+    if (e.val !== "sald" || s?.till !== "utanfor" || s.manad === null) continue;
+    if (!s.kopare || "not_recorded" in s.kopare) continue;
+    if (view.report?.submitted?.rabbits?.[id]?.sald?.till === "utanfor")
+      continue;
+    typed[id] = s.kopare;
+  }
+  return typed;
+}
+
+// The answer's kept buyers: each row that still holds the very buyer `sent`
+// lets go of it for the server's id. A row edited meanwhile keeps its own.
+export function withKept(
+  state: FormState,
+  sent: Record<string, Buyer>,
+  kept: Record<string, { kopare_id: number }>,
+): FormState {
+  let rabbits = state.rabbits;
+  for (const [id, { kopare_id }] of Object.entries(kept)) {
+    const e = rabbits[Number(id)];
+    if (!e?.sald?.kopare || e.sald.kopare !== sent[id]) continue;
+    const sald = { ...e.sald, kopare: null, kopare_id };
+    rabbits = { ...rabbits, [id]: { ...e, sald } };
+  }
+  return rabbits === state.rabbits ? state : { ...state, rabbits };
+}
+
 // What a half-filled choice still lacks, for the row error (null when nothing
 // specific is missing).
 export function incompleteText(e: Entry | undefined): string | null {
@@ -566,6 +606,7 @@ export function editClears(
         ("val" in patch && patch.val !== before.val)
       );
     case "kopare_saknas":
+    case "kopare":
       return (
         ("sald" in patch &&
           (patch.sald?.till !== before.sald?.till ||
@@ -612,8 +653,8 @@ export function buyerRemoved(
 
 // A sale outside the genebank that Skicka would refuse for its buyer
 // (kopare_saknas): none typed, not the stored sale, and no kept buyer the role
-// may use (K1). The draft never holds a buyer, so a sale only in the draft
-// needs it again.
+// may use (K1). The draft never holds a buyer, only a kept one's id, so a sale
+// only in the draft whose buyer the server has not kept needs it again.
 export const lacksBuyer = (
   s: SaldState,
   submitted: BodyEntry["sald"] | null | undefined,
@@ -833,7 +874,7 @@ export function toDraft(state: FormState): DraftData {
   void submission_key;
   void revision;
   for (const e of Object.values(draft.rabbits))
-    if (e.sald) delete e.sald.kopare; // the buyer stays in memory
+    if (e.sald) delete e.sald.kopare; // the buyer goes beside it (typedBuyers)
   const form = pickForm(state);
   for (const e of Object.values(form.rabbits))
     if (e.sald) delete (e.sald as { kopare?: unknown }).kopare; // memory only

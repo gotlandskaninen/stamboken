@@ -34,6 +34,8 @@ import {
   stockholmDay,
   toBody,
   toDraft,
+  typedBuyers,
+  withKept,
   withoutGoneBuyer,
   todayStockholm,
   autosaveAnswerKept,
@@ -368,6 +370,8 @@ export function ReportForm({
   const [snapshot, setSnapshot] = React.useState<Set<number>>(new Set());
   const [search, setSearch] = React.useState("");
   const [soldFor, setSoldFor] = React.useState<number | null>(null);
+  // the day of each buyer the server kept since the page was read (typedBuyers), until the view brings it
+  const [keptDates, setKeptDates] = React.useState<Record<number, string>>({});
   // "Kullar under Y": a litter is written at once, so the list comes from the answer until the page is read again
   const [saved, setSaved] = React.useState<{
     base: Litter[];
@@ -420,6 +424,8 @@ export function ReportForm({
   const submitting = React.useRef(false);
   const submissions = React.useRef(0);
   const autosaveTimer = React.useRef<ReturnType<typeof setTimeout>>(undefined);
+  // a buyer just typed in the sale dialog is saved at once, so its refusal comes while the dialog is fresh
+  const soon = React.useRef(false);
   // Unsaved changes whose autosave Skicka cancelled: saved again if Skicka is refused.
   const autosavePending = React.useRef(false);
   const resumeAutosave = React.useRef(false);
@@ -529,6 +535,7 @@ export function ReportForm({
         const mine = versionRef.current;
         const sentAt = submissions.current;
         const slow = setTimeout(() => setSaveState("saving"), 1000);
+        const sent = typedBuyers(stateRef.current, viewRef.current);
         const res = await safe(
           actionsRef.current.saveDraft(
             herd.herd,
@@ -539,6 +546,7 @@ export function ReportForm({
             viewRef.current.report?.revision ?? null,
             env,
             post,
+            sent,
           ),
         );
         clearTimeout(slow);
@@ -551,6 +559,30 @@ export function ReportForm({
         if (res.ok) {
           setSavedAt(fmtTime(res.data.updated_at));
           setSaveState("saved");
+          if (Object.keys(sent).length) {
+            const kept = res.data.kopare ?? {};
+            // the next round of this loop may send before React renders: it must see the ids already
+            stateRef.current = withKept(stateRef.current, sent, kept);
+            setState((s) => withKept(s, sent, kept));
+            setKeptDates((d) => {
+              const next = { ...d };
+              for (const [id, k] of Object.entries(kept))
+                next[Number(id)] = k.kept_buyer_date;
+              return next;
+            });
+            // the typed buyers' refusals replace those rows' earlier ones
+            const ids = new Set(Object.keys(sent).map(Number));
+            setRefusals((rs) => {
+              const left = (rs ?? []).filter(
+                (r) =>
+                  r.code !== "kopare" ||
+                  r.individual_id === null ||
+                  !ids.has(r.individual_id),
+              );
+              const all = [...left, ...(res.data.refusals ?? [])];
+              return all.length ? all : null;
+            });
+          }
           if (versionRef.current === mine)
             writeLocal(store, herd.herd, year, null);
           // a newer edit waits: its copy now builds on the version just saved
@@ -601,12 +633,19 @@ export function ReportForm({
     autosavePending.current = true;
     autosaveTimer.current = setTimeout(
       () => void flushRef.current(),
-      AUTOSAVE_MS,
+      soon.current ? 0 : AUTOSAVE_MS,
     );
+    soon.current = false;
     return () => clearTimeout(autosaveTimer.current);
   }, [version, retry, mode, canEdit, env, store, herd.herd, year]);
 
-  const rabbits = view.rabbits;
+  const rabbits = React.useMemo(
+    () =>
+      view.rabbits.map((r) =>
+        keptDates[r.id] ? { ...r, kept_buyer_date: keptDates[r.id] } : r,
+      ),
+    [view.rabbits, keptDates],
+  );
   const lastId = rabbits.length ? rabbits[rabbits.length - 1].id : null;
   const lastVisible = React.useRef(false);
 
@@ -2260,12 +2299,19 @@ export function ReportForm({
             : null
         }
         canSell={view.can_sell}
+        keeps={view.can_sell && !late}
+        error={
+          refusals?.find(
+            (r) => r.individual_id === soldFor && r.code === "kopare",
+          )?.message
+        }
         rabbit={soldRabbit}
         addressRequired={
           !isPaper && view.access !== "manager" && view.access !== "admin"
         }
         onSave={(s: SaldState) => {
           if (syncing) return;
+          soon.current = !!s.kopare && !("not_recorded" in s.kopare);
           onRow(soldFor!, { val: "sald", sald: s });
           setSoldFor(null);
           if (isPaper) focusLater("paper-number"); // the next row

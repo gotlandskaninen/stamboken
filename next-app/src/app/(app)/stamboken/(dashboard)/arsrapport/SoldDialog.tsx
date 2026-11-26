@@ -54,6 +54,8 @@ interface Props {
   >;
   addressRequired: boolean;
   canSell: boolean; // a proposal takes no kept buyer (F1, K1)
+  keeps?: boolean; // the server keeps the buyer when the draft is saved (typedBuyers), not first at Skicka
+  error?: string; // the server's refusal of the buyer typed here
   onSave: (s: SaldState) => void;
   onClose: () => void;
 }
@@ -160,8 +162,8 @@ export function HerdPicker({
   );
 }
 
-// The buyer outside the genebank is held in memory by the caller and never
-// reaches the draft or localStorage.
+// The buyer outside the genebank is held in memory by the caller until the
+// server keeps it, and never reaches the draft or localStorage.
 function Body({
   number,
   year,
@@ -172,6 +174,8 @@ function Body({
   submitted,
   rabbit,
   canSell,
+  keeps,
+  error,
   addressRequired,
   onSave,
   onClose,
@@ -357,9 +361,16 @@ function Body({
                 email: shown(errors.email) ?? undefined,
               }}
             />
+            {error && (
+              <p className={styles.errorText} role="alert">
+                {error}
+              </p>
+            )}
             {!kept && (
               <p className={styles.meta}>
-                Köparens uppgifter sparas när du skickar rapporten, inte innan.
+                {keeps && submitted?.till !== "utanfor"
+                  ? "Köparens uppgifter sparas när du sparar försäljningen. Skickar du inte rapporten raderas de efter sista dagen."
+                  : "Köparens uppgifter sparas när du skickar rapporten, inte innan."}
               </p>
             )}
           </>

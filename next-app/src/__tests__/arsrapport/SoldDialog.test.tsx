@@ -18,6 +18,8 @@ const KEPT_TEXT =
   "Köparen finns sparad. Lämna fälten tomma om köparen är rätt, eller skriv en ny köpare.";
 const ON_SEND_TEXT =
   "Köparens uppgifter sparas när du skickar rapporten, inte innan.";
+const ON_SAVE_TEXT =
+  "Köparens uppgifter sparas när du sparar försäljningen. Skickar du inte rapporten raderas de efter sista dagen.";
 
 function dialog(
   existing: SaldState | null,
@@ -370,5 +372,41 @@ describe("SoldDialog", () => {
     save();
     expect(onSave).not.toHaveBeenCalled();
     expectBuyerAsked();
+  });
+
+  it("says the buyer is kept on Spara where the server keeps it, and on Skicka where it does not", () => {
+    const outside: SaldState = {
+      till: "utanfor",
+      ar: 2025,
+      manad: 6,
+      dag: null,
+      kopare: null,
+    };
+    const show = (keeps: boolean, submitted: BodyEntry["sald"] | null) => {
+      render(
+        <SoldDialog
+          open
+          number="M9007-2412"
+          year={2025}
+          genebankId={2}
+          ownHerd="M9007"
+          loadHerds={() => new Promise(() => {})}
+          existing={outside}
+          submitted={submitted}
+          canSell
+          keeps={keeps}
+          addressRequired
+          onSave={vi.fn()}
+          onClose={vi.fn()}
+        />,
+      );
+      const text = screen.queryByText(ON_SAVE_TEXT) ? "spara" : "skicka";
+      cleanup();
+      return text;
+    };
+    expect(show(true, null)).toBe("spara");
+    expect(show(false, null)).toBe("skicka"); // a proposal, or after the last day
+    const held = { till: "utanfor", ar: 2025, manad: 1, dag: null };
+    expect(show(true, held)).toBe("skicka"); // a sale the report holds is corrected at Skicka
   });
 });

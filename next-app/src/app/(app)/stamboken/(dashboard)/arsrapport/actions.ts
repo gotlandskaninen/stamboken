@@ -6,6 +6,7 @@ import { MODE_COOKIE, parseMode, type Mode } from "@/lib/mode";
 import type { ActionResult } from "../inkorg/actions";
 import {
   SUBMIT_TIMEOUT_MS,
+  type Buyer,
   type DraftData,
   type Father,
   type Litter,
@@ -90,13 +91,20 @@ export async function saveDraft(
   revision: number | null,
   env: Mode,
   post?: number,
+  kopare?: Record<string, Buyer>, // the sale dialog's typed buyers, kept by the server (typedBuyers)
 ) {
-  return call<{ updated_at: string; submission_key: string | null }>(
-    env,
-    path(herd, year, "/utkast", post),
-    "PUT",
-    { data, updated_at: updatedAt, submission_key: key, revision },
-  );
+  return call<{
+    updated_at: string;
+    submission_key: string | null;
+    kopare?: Record<string, { kopare_id: number; kept_buyer_date: string }>;
+    refusals?: Refusal[]; // the typed buyers the server did not keep, and why
+  }>(env, path(herd, year, "/utkast", post), "PUT", {
+    data,
+    updated_at: updatedAt,
+    submission_key: key,
+    revision,
+    kopare,
+  });
 }
 
 export async function dryRun(

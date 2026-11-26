@@ -11,8 +11,12 @@ import {
   parseWeight,
   toBody,
   toDraft,
+  typedBuyers,
+  withKept,
+  type Buyer,
   type Entry,
   type FormState,
+  type ReportView,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/lib";
 import { rabbit } from "./fixtures";
 
@@ -489,6 +493,60 @@ describe("a body-shaped draft with wrong types", () => {
     expect(s.diseases.rvhd.antal).toBe("");
     expect(s.diseases.annat).toEqual({ antal: "2", alder: "", namn: "" });
     expect(s.defects).toEqual([{ individual_id: 4, beskrivning: "" }]);
+  });
+});
+
+describe("a buyer typed in the sale dialog", () => {
+  const ola: Buyer = {
+    name: "Ola Köpare",
+    town: "Visby",
+    postal_address: "Testgatan 1",
+    email: "ola@example.invalid",
+    notice_only: true,
+  };
+  const sold = (kopare: Buyer | null, manad: number | null = 6) =>
+    e({
+      val: "sald",
+      sald: { till: "utanfor", ar: 2026, manad, dag: null, kopare },
+    });
+  const form = (rabbits: FormState["rabbits"]): FormState => ({
+    ...emptyState(),
+    rabbits,
+  });
+  const seller = { can_sell: true, report: null };
+
+  it("goes beside the draft for the server to keep, for a new sale by a role that sells", () => {
+    const state = form({ 1: sold(ola), 2: sold(null) });
+    expect(typedBuyers(state, seller)).toEqual({ "1": ola });
+    expect(JSON.stringify(toDraft(state))).not.toMatch(/Ola|Visby/);
+  });
+
+  it("stays in memory for a proposal, såld utanför genbanken, a half-filled sale and a sale the report holds", () => {
+    const state = form({
+      1: sold(ola),
+      2: sold({ not_recorded: true }),
+      3: sold(ola, null),
+    });
+    expect(typedBuyers(state, { ...seller, can_sell: false })).toEqual({});
+    expect(Object.keys(typedBuyers(state, seller))).toEqual(["1"]);
+    const report = {
+      submitted: {
+        rabbits: { "1": { val: "sald", sald: { till: "utanfor" } } },
+      },
+    } as unknown as ReportView["report"];
+    expect(typedBuyers(state, { ...seller, report })).toEqual({});
+  });
+
+  it("leaves memory for the kept id only where the row still holds the very buyer sent", () => {
+    const state = form({ 1: sold(ola), 2: sold({ ...ola }) });
+    const sent = { "1": ola, "2": ola };
+    const kept = withKept(state, sent, {
+      "1": { kopare_id: 7 },
+      "2": { kopare_id: 8 },
+    });
+    expect(kept.rabbits[1].sald).toMatchObject({ kopare: null, kopare_id: 7 });
+    expect(kept.rabbits[2]).toBe(state.rabbits[2]); // edited meanwhile: its own buyer stays
+    expect(withKept(state, sent, {})).toBe(state);
   });
 });
 
