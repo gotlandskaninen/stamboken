@@ -177,6 +177,10 @@ describe("reportYears", () => {
     expect(reportYears(both, 1, "2027-05-10")).toEqual([2026, 2027]);
     expect(reportYears(both, 1, "2027-12-31")).toEqual([2027]); // the new round is open
   });
+  it("leaves out a round without both dates, which never opens", () => {
+    const legacy = [round(2027, [1], "2027-01-01", null), round(2026, [1])];
+    expect(reportYears(legacy, 1, "2027-02-01")).toEqual([2026]);
+  });
   it("offers only the activated round before the first one opens", () => {
     expect(reportYears([round(2026, [1])], 1, "2026-12-20")).toEqual([2026]);
   });

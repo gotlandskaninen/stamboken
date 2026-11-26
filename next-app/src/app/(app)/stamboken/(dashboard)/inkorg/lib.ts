@@ -738,13 +738,17 @@ export function reportYears(
   today: string,
 ): number[] {
   if (genebankId === null) return [];
+  // A round without both dates is never open (round_open), so it is no choice.
   const mine = [...(rounds ?? [])]
-    .filter((r) => r.genebanks.some((g) => g.genebank_id === genebankId))
+    .filter(
+      (r) =>
+        !!r.start_date &&
+        !!r.end_date &&
+        r.genebanks.some((g) => g.genebank_id === genebankId),
+    )
     .sort((a, b) => b.year - a.year);
-  const opened = (r: RoundRow) => !!r.start_date && r.start_date <= today;
-  const open = mine.find(
-    (r) => opened(r) && !!r.end_date && today <= r.end_date,
-  );
+  const opened = (r: RoundRow) => r.start_date! <= today;
+  const open = mine.find((r) => opened(r) && today <= r.end_date!);
   if (open) return [open.year];
   const [latest] = mine;
   if (!latest) return [];

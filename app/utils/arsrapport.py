@@ -294,6 +294,7 @@ def activate(round_, genebank_id, user, send_at=None):
     """
     with DB_PROXY.atomic():
         _lock_rounds()
+        round_ = YearlyReportRound.get_by_id(round_.id)  # the dates a save_round before the lock may have moved
         done = YearlyReportRoundGenebank.get_or_none(
             (YearlyReportRoundGenebank.round == round_.id) & (YearlyReportRoundGenebank.genebank == genebank_id)
         )

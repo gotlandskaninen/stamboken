@@ -132,6 +132,13 @@ class RundorTest(ArsrapportTest):
         self.at(date(2027, 3, 31))
         self.assertEqual(self.api("POST", f"/rundor/2027/genbanker/{self.gotland.id}/aktivera").status_code, 200)
 
+    def test_activation_reads_the_dates_under_its_lock(self):
+        """A round object read before a save_round moved its start still schedules the invitations on the new day."""
+        stale = self.round(2026, activate=())
+        arsrapport.save_round(2026, self.admin, start_date=date(2027, 1, 5))
+        activation = arsrapport.activate(stale, self.gotland.id, self.admin)
+        self.assertEqual(activation.send_at, date(2027, 1, 5))
+
     def test_an_older_round_is_not_activated_after_a_newer_one(self):
         self.round(2026, activate=())
         self.round(2027, activate=("Mellerudskanin",))
