@@ -35,11 +35,14 @@ export function MemberDetails({
   fields,
   onChange,
   returnTo,
+  track = (call) => call,
 }: {
   details?: MemberDetailsView;
   fields: PaperFields;
   onChange: (f: PaperFields) => void;
   returnTo: string; // where the sign-in after an e-mail change leads
+  // ReportForm's write tracking (#275): a view shown before the write is read again
+  track?: <T>(call: Promise<T>) => Promise<T>;
 }) {
   const [open, setOpen] = React.useState<Set<Part>>(new Set());
   // the last day to confirm a change made now (fråga 30)
@@ -162,7 +165,11 @@ export function MemberDetails({
     <MbCard title="Dina uppgifter">
       <div className={styles.detail}>
         {adress}
-        <EmailChange email={details.contact.email} returnTo={returnTo} />
+        <EmailChange
+          email={details.contact.email}
+          returnTo={returnTo}
+          track={track}
+        />
         <p className={styles.label} style={{ margin: 0 }}>
           {details.konto
             ? `Konto för stödet: ${details.konto}`
@@ -180,7 +187,15 @@ export function MemberDetails({
 
 // The profile's e-mail change in place (5.11): a code to the new address, then
 // the change. It ends every session, so the member is asked to send first.
-function EmailChange({ email, returnTo }: { email: string; returnTo: string }) {
+function EmailChange({
+  email,
+  returnTo,
+  track,
+}: {
+  email: string;
+  returnTo: string;
+  track: <T>(call: Promise<T>) => Promise<T>;
+}) {
   const [step, setStep] = React.useState<"none" | "form" | "code" | "done">(
     "none",
   );
@@ -235,7 +250,9 @@ function EmailChange({ email, returnTo }: { email: string; returnTo: string }) {
               disabled={pending || !address.trim()}
               onClick={() =>
                 run(async () => {
-                  const result = await updateContact({ email: address.trim() });
+                  const result = await track(
+                    updateContact({ email: address.trim() }),
+                  );
                   if (!result.ok) return setError(result.error);
                   if (result.emailRefused) return setError(result.emailRefused);
                   if (!result.codeSent) return setStep("none"); // the same address
@@ -275,7 +292,7 @@ function EmailChange({ email, returnTo }: { email: string; returnTo: string }) {
               disabled={pending || !code.trim()}
               onClick={() =>
                 run(async () => {
-                  const result = await verifyEmailCode(code);
+                  const result = await track(verifyEmailCode(code));
                   if (result.ok) setStep("done");
                   else setError(result.error);
                 })
@@ -289,7 +306,7 @@ function EmailChange({ email, returnTo }: { email: string; returnTo: string }) {
               disabled={pending}
               onClick={() =>
                 run(async () => {
-                  const result = await cancelEmailCode();
+                  const result = await track(cancelEmailCode());
                   if (!result.ok) return setError(result.error);
                   setCode("");
                   setStep("none");

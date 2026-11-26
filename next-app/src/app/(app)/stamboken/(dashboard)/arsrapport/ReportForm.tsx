@@ -2306,6 +2306,7 @@ export function ReportForm({
                   details={view.member_details}
                   fields={fields}
                   onChange={setFields}
+                  track={(call) => track(key, call)}
                   returnTo={`/stamboken/arsrapport/${herd.herd}/${year}`}
                 />
               ))}
