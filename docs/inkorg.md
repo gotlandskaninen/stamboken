@@ -1308,7 +1308,8 @@ dokumentet inte hör till den; 409 när dokumentet inte har någon kopia.
 ## Gränser och sådant gränssnittet behöver veta
 
 - En fil får vara högst 25 MB och en begäran till uppladdningen högst 50 MB allt som allt, filer och
-  formulär tillsammans: lika mycket som nginx släpper igenom (`client_max_body_size 50M`). Next.js
+  formulär tillsammans: lika mycket som nginx släpper igenom på uppladdningssidorna
+  (`client_max_body_size 50M` i en egen location; resten av sajten har 10M). Next.js
   släpper igenom lika mycket till Server Actions och middleware (`bodySizeLimit` och
   `proxyClientMaxBodySize` i `next.config.js`). Ett större inskick nekas med 413 (problem+json när
   begäran når Flask, annars nginx egen sida), så gränssnittet räknar filernas storlek före
