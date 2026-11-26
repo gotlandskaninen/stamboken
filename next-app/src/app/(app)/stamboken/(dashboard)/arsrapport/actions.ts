@@ -17,6 +17,7 @@ import {
   type ReportView,
   type Refusal,
   type Round,
+  type SaldState,
   type SaleProposalRow,
   type Submission,
 } from "./lib";
@@ -141,6 +142,44 @@ export async function withdrawReport(
     "POST",
     { revision, reason: reason ?? null },
     { timeout: SUBMIT_TIMEOUT_MS },
+  );
+}
+
+// The sale dialog's Spara: one rabbit's sale registered at once (Jonas 2026-11-26); 422 carries the refusals.
+export async function sellNow(
+  herd: string,
+  year: number,
+  individualId: number,
+  sald: SaldState,
+  env: Mode,
+  post?: number,
+) {
+  if (!Number.isSafeInteger(individualId) || individualId <= 0)
+    return refused("Ogiltig kanin.");
+  return call<{ operation_id: string }>(
+    env,
+    path(herd, year, "/forsaljning", post),
+    "POST",
+    { individual_id: individualId, sald },
+  );
+}
+
+// Ångra a sale the view offers it for (`undo`), as the rabbit page's seller does.
+export async function undoSale(
+  herdTrackingId: number,
+  operationId: string,
+  env: Mode,
+) {
+  if (!Number.isSafeInteger(herdTrackingId) || herdTrackingId <= 0)
+    return refused("Ogiltig försäljning.");
+  return call<unknown>(
+    env,
+    `/v2/herd-tracking/${herdTrackingId}/void`,
+    "POST",
+    {
+      reason: "Ångrad av den som registrerade den",
+      operation_id: operationId,
+    },
   );
 }
 

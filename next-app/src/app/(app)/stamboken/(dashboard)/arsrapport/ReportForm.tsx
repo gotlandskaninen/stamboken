@@ -65,6 +65,7 @@ import {
 } from "./AddRabbit";
 import { uploadPhoto } from "./rabbitActions";
 import { reportError } from "./reportError";
+import { newOperationId } from "@/lib/herdTracking";
 import styles from "./arsrapport.module.css";
 
 export type ReportActions = Pick<
@@ -79,9 +80,14 @@ export type ReportActions = Pick<
     // the sale and purchase dialogs' herd picker
     Pick<
       typeof Actions,
-      "addLitter" | "changeLitter" | "getFathers" | "getMothers"
+      | "addLitter"
+      | "changeLitter"
+      | "getFathers"
+      | "getMothers"
+      | "sellNow"
+      | "undoSale"
     >
-  >; // "Kullar under Y"
+  >; // "Kullar under Y", and a sale registered at once with its Ångra (the link has neither)
 
 // "Från blankett": what the page around the form supplies (PaperEntry).
 export interface PaperProps {
@@ -928,6 +934,40 @@ export function ReportForm({
     [edit],
   );
   const onSell = React.useCallback((id: number) => setSoldFor(id), []);
+  // Jonas 2026-11-26: before the first Skicka a sale is registered at once, as Sälj does; then the row lets go
+  // of it, and the view (the rabbit off the list, or counted by its move) shows it.
+  const direct = !!actions.sellNow && view.can_sell && !view.report && canEdit;
+  const register = async (s: SaldState) => {
+    const id = soldFor!;
+    const res = await track(
+      key,
+      actions.sellNow!(herd.herd, year, id, s, env, post),
+    );
+    if (!res.ok) {
+      const refusals = res.problem.extensions?.refusals;
+      if (Array.isArray(refusals)) return refusalText(refusals[0] as Refusal);
+      return reportError("Försäljningen", "registreras", res.problem);
+    }
+    edit((st) => {
+      const rabbits = { ...st.rabbits };
+      delete rabbits[id];
+      return { ...st, rabbits };
+    });
+    setSoldFor(null);
+    refreshView();
+    return null;
+  };
+  const [undoError, setUndoError] = React.useState<React.ReactNode>(null);
+  const undoSale = async (htId: number) => {
+    setUndoError(null);
+    const res = await track(
+      key,
+      actions.undoSale!(htId, newOperationId(), env),
+    );
+    if (!res.ok)
+      setUndoError(reportError("Försäljningen", "ångras", res.problem));
+    refreshView();
+  };
   const canAddRabbit = canEdit && !isPaper;
   const addRabbit = canAddRabbit && (
     <AddRabbitPrompt
@@ -1901,6 +1941,9 @@ export function ReportForm({
                       error={rowErrors.get(r.id)}
                       onChange={onRow}
                       onSell={onSell}
+                      onUndo={
+                        actions.undoSale ? (id) => void undoSale(id) : undefined
+                      }
                       onNextWeight={onNextWeight}
                     />
                   ))}
@@ -2103,9 +2146,26 @@ export function ReportForm({
                         ? "utanför genbanken"
                         : s.to_herd}
                       , {fmtDayOrMonth(s.date, s.day_known)}
+                      {s.undo && actions.undoSale && (
+                        <>
+                          {" "}
+                          <button
+                            type="button"
+                            className="sb-btn sb-btn-secondary sb-btn-sm"
+                            onClick={() => void undoSale(s.undo!)}
+                          >
+                            Ångra
+                          </button>
+                        </>
+                      )}
                     </li>
                   ))}
                 </ul>
+              )}
+              {undoError && (
+                <p className={styles.errorText} role="alert">
+                  {undoError}
+                </p>
               )}
             </MbCard>
 
@@ -2437,6 +2497,8 @@ export function ReportForm({
         }
         canSell={view.can_sell}
         rabbit={soldRabbit}
+        onRegister={direct ? register : undefined}
+        undoable={view.access === "owner" && !isPaper}
         addressRequired={
           !isPaper && view.access !== "manager" && view.access !== "admin"
         }

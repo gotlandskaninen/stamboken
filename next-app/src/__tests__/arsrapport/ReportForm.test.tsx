@@ -496,6 +496,133 @@ describe("ReportForm", () => {
     expect(screen.queryByText(/Köparen finns sparad/)).toBeNull();
   });
 
+  // Jonas 2026-11-26: before the first Skicka the dialog registers the sale at once, after Sälj's tick box.
+  const ACK =
+    "Jag har tagit del av informationen och vill ta bort kaninen från min besättning.";
+  const sellingActions = () => ({
+    ...actions(),
+    sellNow: vi.fn(() => ok({ operation_id: "op" })),
+    undoSale: vi.fn(() => ok(null)),
+  });
+  const typeSaleOutside = () => {
+    choose(1, "Såld");
+    fireEvent.click(screen.getByLabelText("Utanför genbanken"));
+    fireEvent.click(screen.getByRole("radio", { name: "Ja" })); // e-mail, before 2027
+    for (const [label, value] of [
+      [/Köparens namn/, "Ola Köpare"],
+      [/^Ort/, "Visby"],
+      [/^Postadress/, "Testgatan 1"],
+      [/^E-post/, "ola@example.invalid"],
+    ] as const)
+      fireEvent.change(screen.getByLabelText(label), { target: { value } });
+    fireEvent.change(screen.getByLabelText("Månad"), {
+      target: { value: "6" },
+    });
+  };
+  const spara = () =>
+    fireEvent.click(
+      screen.getByRole("button", { name: "Spara försäljningen" }),
+    );
+
+  it("registers a sale at once once the box is ticked, then lets go of the row and reads the view again", async () => {
+    vi.useFakeTimers();
+    const a = sellingActions();
+    render(<ReportForm env="demo" view={view()} actions={a} />);
+    typeSaleOutside();
+    expect(
+      screen.getByText(
+        "Köparen får ett mejl om vad föreningen sparar. Du kan ångra försäljningen i 7 dagar.",
+      ),
+    ).toBeTruthy();
+    spara();
+    expect(
+      screen.getByText("Kryssa i rutan för att registrera försäljningen."),
+    ).toBeTruthy();
+    expect(a.sellNow).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByLabelText(ACK));
+    await act(async () => {
+      spara();
+      await vi.advanceTimersByTimeAsync(10);
+    });
+    expect(a.sellNow).toHaveBeenCalledTimes(1);
+    const [herdCode, year, id, sald] = a.sellNow.mock.calls[0] as unknown as [
+      string,
+      number,
+      number,
+      { till: string; manad: number; kopare: { name: string } },
+    ];
+    expect([
+      herdCode,
+      year,
+      id,
+      sald.till,
+      sald.manad,
+      sald.kopare.name,
+    ]).toEqual(["G9001", 2026, 1, "utanfor", 6, "Ola Köpare"]);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(refresh).toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    const data = a.saveDraft.mock.calls.at(-1)?.[2];
+    expect(data?.rabbits["1"]).toBeUndefined(); // the register holds the sale now, not the draft
+  });
+
+  it("keeps the dialog open with the server's refusal", async () => {
+    const a = sellingActions();
+    a.sellNow.mockImplementationOnce(() =>
+      fail(422, {
+        refusals: [
+          {
+            individual_id: 1,
+            code: "kopare",
+            message: "Ange köparens postadress.",
+          },
+        ],
+      }),
+    );
+    render(<ReportForm env="demo" view={view()} actions={a} />);
+    typeSaleOutside();
+    fireEvent.click(screen.getByLabelText(ACK));
+    await act(async () => spara());
+    expect(
+      within(screen.getByRole("dialog")).getByText("Ange köparens postadress."),
+    ).toBeTruthy();
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("offers Ångra on a sale of the year and on a rabbit counted by its move", async () => {
+    const a = sellingActions();
+    const sales = [
+      {
+        individual_id: 3,
+        number: "G9001-3",
+        to_herd: "GX1",
+        date: "2026-06-30",
+        day_known: true,
+        undo: 55,
+      },
+    ];
+    const moved = rabbit(2, {
+      state: "via_flytt",
+      later: { kind: "TRANSFER", date: "2027-01-05" },
+      undo: 56,
+    });
+    render(
+      <ReportForm
+        env="demo"
+        view={view({ sales, rabbits: [rabbit(1), moved] })}
+        actions={a}
+      />,
+    );
+    const buttons = screen.getAllByRole("button", { name: "Ångra" });
+    expect(buttons).toHaveLength(2);
+    await act(async () => fireEvent.click(buttons[0]));
+    await act(async () => fireEvent.click(buttons[1]));
+    expect(a.undoSale.mock.calls.map((c) => c[0]).sort()).toEqual([55, 56]);
+    expect(refresh).toHaveBeenCalled();
+  });
+
   it("holds a buyer outside the genebank in memory only: the draft and localStorage never get it", async () => {
     vi.useFakeTimers();
     const a = actions();

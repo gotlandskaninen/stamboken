@@ -31,6 +31,7 @@ export interface RabbitView {
   death_day_known: boolean; // false: the report gave it without its day, so its month is shown
   state: "att_valja" | "redan_rapporterad" | "via_flytt";
   later: { kind: string; date: string } | null;
+  undo?: number | null; // a sale after 31 December the viewer may Ångra (the `later` move)
   buyer_removed?: boolean;
   removed_buyer_dates?: string[];
   registered_buyer_date?: string;
@@ -223,6 +224,7 @@ export interface ReportView {
     to_herd: string;
     date: string;
     day_known: boolean; // false: the report gave it without its day (5.3), so its month is shown
+    undo?: number | null; // the sale's row, when the viewer may Ångra it as on the rabbit page
   }[];
   // The report's sale proposals not taken back (5.9), without the buyer.
   forslag: {
