@@ -251,13 +251,21 @@ def revoke_for_direct_write(membership_id, person_id, columns):
 
 def undo_self_link(herd, round_, link_id, *, actor):
     """
-    Koppla bort (5.1): exactly the link the herd's status row offers, checked again under the membership's lock with
-    the same rule (self_made_links): the herd's active main member's own account, made with a code since the round's
-    start and still standing. The account and its other rights stay; only the link goes.
+    Koppla bort (5.1): exactly the link the herd's status row offers, checked again under the membership's and the
+    herd's lock with the same rules as the route and the row: the actor's genebank, an active herd, and its active
+    main member's own account made with a code since the round's start and still standing. The account and its
+    other rights stay; only the link goes.
     """
     with DB_PROXY.atomic():
         _, member = arsrapport._lock_matrikel(herd)
-        if member is None or self_made_links([Herd.get_by_id(herd.id)], round_.start_date).get(herd.id) != link_id:
+        locked = Herd.get_by_id(herd.id)  # its row is locked now: no move to another genebank meanwhile
+        if not (actor.is_admin or locked.genebank_id in (actor.is_manager or ())):
+            raise ArsrapportError(403, "Du saknar behörighet för denna genbank.")
+        if (
+            member is None
+            or not locked.is_active
+            or self_made_links([locked], round_.start_date).get(herd.id) != link_id
+        ):
             raise ArsrapportError(404, "Kopplingen finns inte.")
         _, lost = unlink_member_user(member.id, actor=actor, mode="arsrapport", link_audit_id=link_id, invalidate=False)
     _invalidate_genebanks(lost)

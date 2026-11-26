@@ -1012,14 +1012,6 @@ def _own_details(member, access, user):
     return member.user_id is not None and member.user_id == getattr(user, "id", None)
 
 
-def details_mode(herd, access, user):
-    if access.item is not None:
-        return "paper"
-    if access.code is not None:
-        return "link"
-    return "main" if _own_details(_main_member(herd), access, user) else "none"
-
-
 def member_details(herd, report, access, user):
     """
     ReportView.member_details (5.11, D1): "main" with the main member's contact, Koharen answer (null when never
@@ -1028,15 +1020,17 @@ def member_details(herd, report, access, user):
     """
     import utils.member_changes as member_changes  # pylint: disable=import-outside-toplevel  # it imports this module
 
-    mode = details_mode(herd, access, user)
-    if mode == "link":
-        return {"mode": mode, "changes": member_changes.report_changes(report)}
-    if mode != "main":
-        return {"mode": mode}
-    membership, member = herd.membership, _main_member(herd)
+    if access.item is not None:
+        return {"mode": "paper"}
+    if access.code is not None:
+        return {"mode": "link", "changes": member_changes.report_changes(report)}
+    member = _main_member(herd)  # read once: the member authorized is the member shown, with her own membership
+    if not _own_details(member, access, user):
+        return {"mode": "none"}
+    membership = Membership.get_by_id(member.membership_id)
     consent = stored_consent(membership)
     return {
-        "mode": mode,
+        "mode": "main",
         "contact": {
             "address": membership.address or "",
             "postal_code": membership.postal_code or "",

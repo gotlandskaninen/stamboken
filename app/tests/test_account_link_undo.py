@@ -7,6 +7,8 @@ members and addresses only.
 isort:skip_file
 """
 
+from unittest import mock
+
 import utils.arsrapport as arsrapport
 import utils.database as db
 from utils.matrikel import link_member_user
@@ -78,4 +80,17 @@ class TestNewAccount(DetailsTest):
         self.assertEqual(self.undo(main.id, herd="G9002").status_code, 404)  # another herd's row
         db.Herd.update(is_active=False).where(db.Herd.id == self.h.id).execute()
         self.assertEqual(self.undo(main.id).status_code, 404)  # an inactive herd offers nothing
+        self.assertIsNotNone(db.Member.get_by_id(self.member.id).user_id)
+
+    def test_the_genebank_is_checked_again_on_the_locked_herd(self):  # review round 2
+        _, audit = self.make_link()
+        lock = arsrapport._lock_matrikel
+
+        def moved_meanwhile(herd):  # an admin moves the herd to another genebank while Koppla bort waits
+            db.Herd.update(genebank=self.mellerud).where(db.Herd.id == herd.id).execute()
+            return lock(herd)
+
+        self.login("man")  # Gotland's manager
+        with mock.patch.object(arsrapport, "_lock_matrikel", moved_meanwhile):
+            self.assertEqual(self.undo(audit.id).status_code, 403)
         self.assertIsNotNone(db.Member.get_by_id(self.member.id).user_id)

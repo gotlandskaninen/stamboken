@@ -697,3 +697,24 @@ class TestReviewRound1(DetailsTest):
         fresh = self.view()["member_details"]["publicering_version"]  # read again, the answer goes
         self.ok(matrikel={"publicering": {**old_tab, "utom": ["phone", "email"], "version": fresh}})
         self.assertEqual(self.membership().publication_consent, {**ALL, "phone": False, "email": False})
+
+    def test_the_details_are_the_authorized_members(self):  # review round 2
+        self.link_owner()
+        self.login("owner")
+        successor = db.Member.create(
+            first_name="Ny",
+            last_name="Huvudmedlem",
+            membership=self.membership(),
+            role="familjemedlem",
+            email="ny-hm@example.invalid",
+            phone="0709-999 999",
+        )
+        main_member, calls = arsrapport._main_member, []
+
+        def swapped_after_the_first_read(herd):  # the main member is swapped between two reads
+            calls.append(herd.id)
+            return main_member(herd) if len(calls) == 1 else db.Member.get_by_id(successor.id)
+
+        with mock.patch.object(arsrapport, "_main_member", swapped_after_the_first_read):
+            details = self.view()["member_details"]
+        self.assertEqual((details["mode"], details["contact"]["phone"]), ("main", "0709-111 222"))
