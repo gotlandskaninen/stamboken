@@ -22,6 +22,7 @@ vi.mock("@/lib/mode", async (importOriginal) => ({
 import {
   ReportForm,
   type ReportActions,
+  forgetTabWrites,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/ReportForm";
 import type { Receipt } from "@/app/(app)/stamboken/(dashboard)/arsrapport/lib";
 import { view } from "./fixtures";
@@ -79,6 +80,7 @@ const fillAll = () => {
 };
 
 beforeEach(() => {
+  forgetTabWrites(); // module memory of the tab, as after a hard load
   window.scrollTo = vi.fn();
   window.localStorage.clear();
   replace.mockReset();
