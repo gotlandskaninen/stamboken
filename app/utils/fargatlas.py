@@ -219,7 +219,8 @@ def fargatlas_data():
 
 
 def _finns(foto_id, storlek):
-    return os.path.isfile(inbox.private_path(FOTO_FIL[storlek].format(foto_id)))
+    path = inbox.private_path(FOTO_FIL[storlek].format(foto_id))
+    return os.path.isfile(path) and os.access(path, os.R_OK)
 
 
 def foto_sokvag(foto_id, storlek):

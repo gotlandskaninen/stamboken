@@ -199,8 +199,23 @@ class FargatlasTest(DatabaseTest):
                 response = self.client.get(f"/api/v2/fargatlas/foto/22-a{query}")
                 self.assertEqual((response.status_code, response.mimetype), (200, "image/jpeg"))
                 self.assertEqual(response.get_data(), content)
-                self.assertEqual(response.headers["Cache-Control"], "private, max-age=86400")
+                self.assertEqual(response.headers["Cache-Control"], "private, no-cache")
+                etag = response.headers["ETag"]
                 response.close()
+                # the browser asks again each time, and gets a 304 while the photo stays
+                again = self.client.get(f"/api/v2/fargatlas/foto/22-a{query}", headers={"If-None-Match": etag})
+                self.assertEqual((again.status_code, again.headers["Cache-Control"]), (304, "private, no-cache"))
+                again.close()
+
+    def test_foto_som_inte_kan_oppnas_404(self):
+        self.package()
+        self.login()
+        for fel in (PermissionError, FileNotFoundError):
+            with self.subTest(fel.__name__), mock.patch("blueprints.fargatlas_v2.send_file", side_effect=fel):
+                with self.assertLogs("blueprints.fargatlas_v2", "WARNING") as logs:
+                    response = self.client.get("/api/v2/fargatlas/foto/22-a")
+                self.assertEqual(response.status_code, 404)
+                self.assertIn(fel.__name__, logs.output[0])
 
     def test_foto_okant_404(self):
         self.package()

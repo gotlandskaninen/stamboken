@@ -62,7 +62,7 @@ test.describe("Färgatlas", () => {
     const url = "/api/v2/fargatlas/foto/22-a?storlek=480";
     const loggedIn = await page.request.get(url);
     expect(loggedIn.status()).toBe(200);
-    expect(loggedIn.headers()["cache-control"]).toBe("private, max-age=86400");
+    expect(loggedIn.headers()["cache-control"]).toBe("private, no-cache");
 
     const anonymous = await playwright.request.newContext({
       baseURL,
