@@ -111,9 +111,11 @@ class TestMailJobs(MailTest):
         with (
             mock.patch.object(herdbook, "send_due_reminders", side_effect=RuntimeError("database gone")),
             mock.patch.object(herdbook, "send_due_unanswered", return_value=0) as unanswered,
+            mock.patch.object(herdbook, "send_missing_questions", return_value=0) as missing,
             mock.patch.object(herdbook.genetics.ps, "_close_db_connection") as close,
             self.assertLogs(herdbook.APP.logger, "ERROR"),
         ):
             herdbook._send_arsrapport_followups()  # logged, never raised into the scheduler
         unanswered.assert_called_once()  # one follow-up failing stops no other
+        missing.assert_called_once()
         close.assert_called_once()

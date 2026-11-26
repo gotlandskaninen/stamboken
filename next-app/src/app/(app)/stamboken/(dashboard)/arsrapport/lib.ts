@@ -195,6 +195,12 @@ export interface Submission extends DraftData {
   matrikel?: Matrikel;
 }
 
+export interface Completion {
+  submission_key: string;
+  revision: number;
+  rabbits: Record<string, BodyEntry>;
+}
+
 export interface ReportView {
   herd: {
     id: number;
@@ -245,6 +251,8 @@ export interface ReportView {
     on_time: boolean;
     submitted: (Partial<DraftData> & { received_on?: string }) | null;
     can_change: boolean;
+    not_stated: number[];
+    can_complete_missing: boolean;
     can_withdraw: boolean;
     withdraw_until: string | null;
     villkor: Villkor;

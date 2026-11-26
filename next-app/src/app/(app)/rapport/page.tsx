@@ -4,6 +4,7 @@ import {
   addLitter,
   changeLitter,
   dryRun,
+  dryRunCompletion,
   getFathers,
   getGenebankHerds,
   getMothers,
@@ -13,6 +14,7 @@ import {
   saveDraft,
   sendPurchasePhotos,
   submitReport,
+  submitCompletion,
   withdrawReport,
 } from "./actions";
 import { ReportForm } from "../stamboken/(dashboard)/arsrapport/ReportForm";
@@ -23,7 +25,9 @@ export const dynamic = "force-dynamic";
 const actions = {
   saveDraft,
   dryRun,
+  dryRunCompletion,
   submitReport,
+  submitCompletion,
   withdrawReport,
   addLitter,
   changeLitter,

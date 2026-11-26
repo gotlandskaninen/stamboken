@@ -240,6 +240,8 @@ mejlet Å8 är som för Ändra. Utkastet tas inte bort (Jonas 2026-11-26): en ka
 fortfarande har som ej angiven får svaret, och medlemmens andra ändringar står kvar till ett
 vanligt Skicka. `ReportView.report` har `not_stated` och `can_complete_missing`, som är sann så
 länge rundan är öppen och en rapport från blankett, som inte är ett avslut, har ej angivna kaniner.
+Då öppnar rapportsidan, via länken och inloggad, med bara de kaninerna och knappen "Skicka svar";
+"Visa hela rapporten" går till den vanliga sidan.
 
 Mejlet har bara id:n och flaggor (`round_id`, `code_id`, `slot`, `scheduled`); länken byggs när
 det skickas. Saknar besättningen en giltig kod skapas den först (`issue_code`) och sparas, och

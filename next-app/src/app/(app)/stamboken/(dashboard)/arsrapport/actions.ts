@@ -6,6 +6,7 @@ import { MODE_COOKIE, parseMode, type Mode } from "@/lib/mode";
 import type { ActionResult } from "../inkorg/actions";
 import {
   SUBMIT_TIMEOUT_MS,
+  type Completion,
   type DraftData,
   type Father,
   type Litter,
@@ -123,6 +124,32 @@ export async function submitReport(
   post?: number,
 ) {
   return call<Receipt>(env, path(herd, year, "/skicka", post), "POST", body, {
+    timeout: SUBMIT_TIMEOUT_MS,
+  });
+}
+
+export async function dryRunCompletion(
+  herd: string,
+  year: number,
+  body: Completion,
+  env: Mode,
+) {
+  return call<{ ok: boolean; refusals: Refusal[]; warnings: Refusal[] }>(
+    env,
+    path(herd, year, "/komplettera/torrkorning"),
+    "POST",
+    body,
+    { timeout: SUBMIT_TIMEOUT_MS },
+  );
+}
+
+export async function submitCompletion(
+  herd: string,
+  year: number,
+  body: Completion,
+  env: Mode,
+) {
+  return call<Receipt>(env, path(herd, year, "/komplettera"), "POST", body, {
     timeout: SUBMIT_TIMEOUT_MS,
   });
 }

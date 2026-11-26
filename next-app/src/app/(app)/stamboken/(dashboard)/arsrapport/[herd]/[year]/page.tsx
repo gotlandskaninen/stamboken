@@ -6,12 +6,14 @@ import {
   addLitter,
   changeLitter,
   dryRun,
+  dryRunCompletion,
   getFathers,
   getMothers,
   reportPurchase,
   saveDraft,
   sendPurchasePhotos,
   submitReport,
+  submitCompletion,
   withdrawReport,
 } from "../../actions";
 import { getGenebankHerds } from "../../../individ/[number]/actions";
@@ -78,7 +80,9 @@ export default async function ReportPage({
       actions={{
         saveDraft,
         dryRun,
+        dryRunCompletion,
         submitReport,
+        submitCompletion,
         withdrawReport,
         reportPurchase,
         sendPurchasePhotos,
