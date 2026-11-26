@@ -195,6 +195,13 @@ class TestUpload(InboxTest):
                 self.login(username)
                 self.assertEqual(self.upload(herd=herd).status_code, status)
 
+    def test_a_photo_over_the_apps_11_mb_is_stored(self):
+        noise = Image.frombytes("RGB", (2000, 2000), os.urandom(2000 * 2000 * 3))
+        big = encoded(noise, "PNG")
+        self.assertGreater(len(big), 11 * 1024 * 1024)
+        self.login("owner")
+        self.assertEqual(self.upload(("a.png", big), accept_warnings="1").status_code, 201)
+
     def test_a_body_over_what_nginx_lets_through_is_refused_as_problem_json(self):
         # Refused by its length before any file is read, so the bytes need not be images.
         part = b"\xff\xd8\xff" + bytes(20 * 1024 * 1024)  # each file under 25 MB, together over 50

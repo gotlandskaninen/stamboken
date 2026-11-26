@@ -1313,7 +1313,7 @@ dokumentet inte hör till den; 409 när dokumentet inte har någon kopia.
   `proxyClientMaxBodySize` i `next.config.js`). Ett större inskick nekas med 413 (problem+json när
   begäran når Flask, annars nginx egen sida), så gränssnittet räknar filernas storlek före
   sändningen (högst 25 MB per fil och 48 MB allt som allt) och ber om ett nytt inskick för resten.
-  Kaninens foto och årsrapportens foto tar högst 26 MB (en fil och formuläret), Tyck till 25 MB och
+  Kaninens foto och årsrapportens foto tar högst 26 MB (en fil och formuläret), Tyck till 9 MB och
   resten av API:t 11 MB.
 - Telefonens filväljare: `<input type="file" accept="image/*,application/pdf" multiple>` ger både
   kamera och bildbibliotek.
