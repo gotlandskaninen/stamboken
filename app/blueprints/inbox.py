@@ -63,7 +63,7 @@ pillow_heif.register_heif_opener()
 inbox_bp = Blueprint("inbox", __name__, url_prefix="/api/v2")
 
 MAX_FILES = 10  # files per upload, and images once each PDF is split into pages
-MAX_REQUEST = 10 * 1024 * 1024  # a whole upload: what nginx lets through (client_max_body_size 10M)
+MAX_REQUEST = 50 * 1024 * 1024  # a whole upload: what nginx lets through (client_max_body_size 50M)
 MAX_MESSAGE = 2000
 PDF_DPI = 200
 PDF_MAX_SIDE = 3000  # pixels; bounds the memory a page takes, whatever size the PDF says it is
@@ -147,7 +147,7 @@ def _each_image(file, room, handle, too_many=None):
     size = file.tell()
     file.seek(0)
     if size > MAX_FILE_SIZE:
-        raise _Refused(problem(413, "Payload Too Large", "Filen är för stor. Max 10 MB."))
+        raise _Refused(problem(413, "Payload Too Large", "Filen är för stor. Max 25 MB."))
     kind = _kind(file)
     if kind is None:
         raise _Refused(problem(415, "Unsupported Media Type", "Otillåten filtyp. Bara JPEG, PNG, WebP, HEIC och PDF."))
@@ -184,7 +184,7 @@ def _each_image(file, room, handle, too_many=None):
 def too_large(_exc):
     """A body over MAX_REQUEST (werkzeug's 413 is HTML) as problem+json."""
     return problem(
-        413, "Payload Too Large", "Inskicket är för stort. Högst 10 MB allt som allt, skicka resten i ett nytt."
+        413, "Payload Too Large", "Inskicket är för stort. Högst 50 MB allt som allt, skicka resten i ett nytt."
     )
 
 

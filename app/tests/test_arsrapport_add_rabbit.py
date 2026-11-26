@@ -168,6 +168,14 @@ class TestPhoto(AddRabbitTest):
         self.assertEqual(self.client.post(f"/api/v2/arsrapport{REPORT}/foto").status_code, 400)  # no file
         self.assertFalse(db.InboxItem.select().exists())
 
+    def test_a_photo_may_be_larger_than_the_apps_limit_but_not_than_one_file(self):
+        self.open_link()
+        over_app_limit = b"\xff\xd8\xff" + bytes(12 * 1024 * 1024)  # a JPEG by its first bytes, not decodable
+        self.assertEqual(self.upload_photo(content=over_app_limit).status_code, 422)  # read, so past 11 MB
+        too_big = self.upload_photo(content=b"\xff\xd8\xff" + bytes(27 * 1024 * 1024))
+        self.assertEqual((too_big.status_code, too_big.mimetype), (413, "application/problem+json"))
+        self.assertFalse(db.InboxItem.select().exists())
+
     def test_no_photo_without_access(self):
         self.assertEqual(self.upload_photo().status_code, 401)
         self.open_link(self.code2)

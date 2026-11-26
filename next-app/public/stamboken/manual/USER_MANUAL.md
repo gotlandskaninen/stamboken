@@ -511,7 +511,7 @@ då genbanksansvarig, se [del 2](#numrera-om-kullar-med-registrerade-kaniner).
 
 1. Öppna kaninens sida (klicka kaninen under **Kaniner** eller i **Alla kaniner**).
 2. Klicka kameraknappen **Ladda upp foto** nere i bildens hörn. Välj en bild i JPEG,
-   PNG eller WebP, högst 10 MB.
+   PNG eller WebP, högst 25 MB.
 3. Beskär bilden i rutan **Beskär foto**: dra bilden och använd reglaget **Zoom**.
 4. Klicka **Använd**. Bekräftelsen "Foto uppladdat!" visas.
 
@@ -527,8 +527,8 @@ fotona. De som arbetar med inläsningen lägger in kaninerna åt dig.
 2. Välj **Besättning**. Har du bara en är den redan vald. Arbetar du med inläsningen
    är **Besättning** ett sökfält där du kan välja vilken besättning som helst.
 3. Klicka **Ta foto eller välj filer**. På telefonen kan du välja kameran eller
-   bildbiblioteket. Du kan också välja en PDF. Högst 10 bilder och 9 MB tillsammans per
-   inskick; en PDF räknas sida för sida.
+   bildbiblioteket. Du kan också välja en PDF. Högst 10 bilder, 25 MB per fil och 48 MB
+   tillsammans per inskick; en PDF räknas sida för sida.
 4. Skriv ett **Meddelande** om du vill (valfritt).
 5. Klicka **Skicka**.
 
@@ -1413,7 +1413,7 @@ spara finns inte. Har du inte ärendet står det vem som har det, med **Jag tar
 den** eller **Ta över**; du kan bara spara när ärendet är ditt och taget. Ett mejlat ärende visar
 avsändarens adress (med "Avsändaren är inte bekräftad" när den inte gick att bekräfta; inget
 mejl skickas då till adressen), **Gäller kanske** när det kan höra till ett annat ärende, och
-**Sparades inte** med namnen på bilagor som inte är foton eller PDF, är större än 10 MB
+**Sparades inte** med namnen på bilagor som inte är foton eller PDF, är större än 25 MB
 eller kom efter de tio första bilderna. På ett klart intyg finns **Gör om maskningen** för dem som
 får. **Fråga uppfödaren** finns när ärendet är ditt
 och taget, se [Arbeta i inkorgen](#arbeta-i-inkorgen).

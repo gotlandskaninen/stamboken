@@ -24,7 +24,8 @@ _PNG_MAGIC = b"\x89PNG"
 _WEBP_RIFF = b"RIFF"
 _WEBP_SIG = b"WEBP"
 
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+MAX_FILE_SIZE = 25 * 1024 * 1024  # a file: as large as Gmail lets a sender attach
+MAX_FILE_REQUEST = MAX_FILE_SIZE + 1024 * 1024  # a request with one file and its form fields
 MAX_PIXELS = 40_000_000  # decoded size, not bytes: a 20 KB PNG can decode to hundreds of MB
 
 
@@ -73,6 +74,7 @@ def upload_photo(individual_number):
     Validates ownership, magic bytes, and file size. Converts PNG/WebP to JPEG
     and generates a 200px thumbnail. Returns RFC 9457 errors on failure.
     """
+    request.max_content_length = MAX_FILE_REQUEST  # before the body is read: the app's limit is lower
     # Import here to avoid circular imports (database models import from herdbook)
     from utils.database import DB_PROXY, Individual, lock_individuals
 
@@ -93,7 +95,7 @@ def upload_photo(individual_number):
     size = file.tell()
     file.seek(0)
     if size > MAX_FILE_SIZE:
-        return problem(413, "Payload Too Large", "Filen är för stor. Max 10 MB.")
+        return problem(413, "Payload Too Large", "Filen är för stor. Max 25 MB.")
 
     # Validate magic bytes (NFR-S7)
     file_type = _validate_magic_bytes(file)
