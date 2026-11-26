@@ -869,9 +869,9 @@ def _keep_buyers(herd, round_, access, user, report, stored, buyers, claims):
     a cleared or moved one (FB6). Each buyer the sale dialog typed (`buyers`, rabbit id as text: the buyer object) is
     kept for its sale as Dra tillbaka keeps one, in place of the rabbit's claim (Jonas 2026-11-26): a BuyerContact
     until kept_until, checked now as Skicka checks a typed one, which only a role that sells uses (F1). Not kept: a
-    sale the report already holds outside the genebank, corrected at Skicka as before; såld utanför genbanken
-    (#273); and anything once kept_until has passed. Returns (stored, {rabbit: the new claim as the client gets
-    it}, the refusals of typed buyers not kept).
+    rabbit Skicka would not take; a sale the report already holds outside the genebank, corrected at Skicka as
+    before; såld utanför genbanken (#273); and anything once kept_until has passed. Returns (stored, {rabbit: the
+    new claim as the client gets it}, the refusals of typed buyers not kept).
     """
     until = kept_until(round_)
     if not access.can_sell or until is None or until <= now():
@@ -881,10 +881,14 @@ def _keep_buyers(herd, round_, access, user, report, stored, buyers, claims):
     latest = (_submissions(report)[-1].data.get("rabbits") or {}) if report is not None else {}
     ops = report_ops(report) if report is not None else set()
     removed, removed_dates = _removed_buyers(herd, round_, [int(key) for key in buyers], ops)
+    listed = report_list(herd, round_.report_year, report) if buyers else []
+    choosing = {str(row["id"]) for row in listed if row["state"] == "att_valja"}  # what Skicka takes (check)
     typed, refusals = {}, []
     for key, buyer in sorted(buyers.items()):
         entry = rabbits.get(key)
-        if not _sale_outside(entry) or buyer.get("not_recorded") or _sale_outside(latest.get(key)):
+        if key not in choosing or not _sale_outside(entry) or buyer.get("not_recorded"):
+            continue
+        if _sale_outside(latest.get(key)):
             continue
         try:
             sale = _month(_entered(entry["sald"]), "sald", ())

@@ -8,7 +8,7 @@ isort:skip_file
 """
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest import mock
 
 import utils.arsrapport as arsrapport
@@ -237,6 +237,64 @@ class DialogBuyerTest(KeptBuyerBase):
         self.assertEqual(list(contacts()), [contact_id])
         self.ok(self.sent(contact_id))
         self.assertEqual([sale.holder_contact_id for sale in sales(self.a, active=True)], [contact_id])
+
+    def test_skicka_without_the_sale_drops_it(self):  # FB6: the draft goes
+        self.kept()
+        self.ok(self.body(self.kvar(self.a, vikt=2.8), self.kvar(self.b, vikt=2.8)))
+        self.assertEqual(contacts(), {})
+
+    def test_skicka_with_another_typed_buyer_drops_it(self):  # "eller skriv en ny köpare"
+        _, contact = self.kept()
+        self.ok(self.sent(kopare=OTHER))
+        (sale,) = sales(self.a, active=True)
+        self.assertEqual(list(contacts()), [sale.holder_contact_id])
+        self.assertNotEqual(sale.holder_contact_id, contact.id)
+        self.assertEqual(sale.holder_contact.name, OTHER["name"])
+
+    def test_dra_tillbaka_drops_a_kept_buyer_whose_rabbit_it_no_longer_takes(self):  # FB1, FB6
+        self.ok(self.body(self.kvar(self.a, vikt=2.8), self.kvar(self.b, vikt=2.8)))
+        answer = self.save(self.sold(), {str(self.a.id): BUYER}, revision=1)
+        contact_id = answer["kopare"][str(self.a.id)]["kopare_id"]
+        # As if a's row had left the list meanwhile: the server's draft names a rabbit Skicka does not take.
+        (x,) = self.rabbits(self.g9002, 1)
+        data = self.draft()
+        for body in (data, data["form"]):
+            body["rabbits"][str(x.id)] = body["rabbits"].pop(str(self.a.id))
+        db.YearlyReportDraft.update(data=data).execute()
+        self.assertEqual(contacts(), {contact_id: KEPT_UNTIL})
+        self.withdrawn(1)
+        self.assertEqual(contacts(), {})
+        self.assertNotIn("kopare_id", json.dumps(self.draft()))
+
+    def test_a_rabbit_skicka_does_not_take_keeps_no_buyer(self):
+        (x,) = self.rabbits(self.g9002, 1)  # another herd's rabbit
+        answer = self.save(self.sold(x), {str(x.id): BUYER})
+        self.assertEqual((answer["kopare"], contacts()), ({}, {}))
+
+    def notice_kept(self):
+        """A buyer without a försäljningsbevis kept on DAY0, as the purge reads the day it came (created_at)."""
+        _, contact = self.kept({**OTHER, "email": "xena@example.invalid", "notice_only": True})
+        db.BuyerContact.update(created_at=arsrapport.now()).execute()
+        return contact
+
+    def test_a_buyer_without_bevis_is_told_at_skicka(self):  # #273: kopare.information when the sale is registered
+        contact = self.notice_kept()
+        self.ok(self.sent(contact.id))
+        self.assertEqual(self.buyer_mails(), [("kopare.information", contact.id)])
+        self.assertEqual(buyer_contact.purge_uninformed(arsrapport.now() + timedelta(days=29)), 0)
+
+    def test_a_buyer_without_bevis_never_sent_goes_after_a_month(self):  # #273, art. 14.3: not at kept_until
+        contact = self.notice_kept()
+        self.assertEqual(buyer_contact.purge_uninformed(arsrapport.now() + timedelta(days=29)), 0)
+        self.assertEqual(buyer_contact.purge_uninformed(arsrapport.now() + timedelta(days=31)), 1)
+        self.assertEqual(contacts(), {})
+        deleted = db.AuditLog.get(
+            db.AuditLog.table_name == "buyer_contact",
+            db.AuditLog.operation == "DELETE",
+            db.AuditLog.record_id == str(contact.id),
+        )
+        self.assertEqual(deleted.new_data, {"action": "ej_informerad"})
+        self.assertNotIn("kept_buyer_date", self.row())  # the row needs the buyer again
 
     def test_a_reason_may_not_name_the_kept_buyer(self):  # it lives in audit_log; no row holds the buyer yet
         self.login("man")
