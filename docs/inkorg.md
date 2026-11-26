@@ -979,7 +979,9 @@ pappersintyg som jämfördes; annars `null`. Alla som ser kaninen ser märkninge
 kontrollerat" (Jonas 2026-11-26); själva kopian bara de som får se intyget. Märkningen hör till
 kopian som visas: tas den bort (`…/kopia`, som också tar bort bekräftelsen) visas nästa kopia med sin
 egen bekräftelse eller ingen, och görs den om utan bekräftelsen försvinner märkningen. Får kaninen
-ett annat intyg, digitalt eller ett annat pappersnummer, försvinner märkningen också.
+ett annat intyg, digitalt eller ett annat pappersnummer, försvinner märkningen också. En kanin som
+har ett digitalt intyg bredvid ett gammalt pappersnummer visar det digitala, och får ingen märkning
+(409 vid `matches_registry`).
 
 ## Fråga uppfödaren
 

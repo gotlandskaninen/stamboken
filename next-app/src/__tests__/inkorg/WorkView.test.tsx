@@ -391,6 +391,25 @@ describe("WorkView: masking", () => {
     ).not.toBeChecked();
   });
 
+  it("offers the redo to a manager of the rabbit's genebank on another genebank's item", () => {
+    const done = doc({
+      status: "klar",
+      has_copy: true,
+      individual_genebank_id: 2,
+    });
+    const mellerud: QueueUser = { id: 4, is_admin: false, is_manager: [2] };
+    render(
+      view(
+        item({ state: "klar", assigned_to: other, documents: [done] }),
+        mellerud,
+        true,
+      ),
+    );
+    expect(
+      screen.getByRole("button", { name: "Gör om maskningen" }),
+    ).toBeInTheDocument();
+  });
+
   it("does not offer the redo to a helper once the item is closed", () => {
     const done = doc({ status: "klar", has_copy: true });
     render(

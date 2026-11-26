@@ -907,7 +907,7 @@ def confirm_mask(item, document, user, rotation, rects, no_personal_data=None, m
         raise InboxError(
             409, "Fotot sparades innan Stamboken sparade intygsnumret, så det kan inte markeras kontrollerat."
         )
-    if matches_registry and rabbit.certificate != document.saved_certificate:
+    if matches_registry and (rabbit.certificate != document.saved_certificate or rabbit.digital_certificate):
         # The check is of the certificate the photo was saved as: a number changed since is not the one compared.
         raise InboxError(
             409, f"{rabbit.number} har inte längre intyget {document.saved_certificate}. Kontrollera kaninen igen."
@@ -961,7 +961,8 @@ def checked_at(individual):
     certificate that was checked; None otherwise. The badge everyone who sees the rabbit sees.
     """
     copy = paper_certificate(individual)
-    if copy is None or copy.verified_at is None or not individual.certificate:
+    # A rabbit with a digital certificate shows that one, even beside an old paper number: not the one checked.
+    if copy is None or copy.verified_at is None or not individual.certificate or individual.digital_certificate:
         return None
     return copy.verified_at if copy.saved_certificate == individual.certificate else None
 

@@ -136,6 +136,21 @@ class TestCopy(CopyTest):
         self.assertIsNone(db.InboxDocument.get_by_id(document.id).verified_at)
         self.assertEqual(self.mask(item, document, mask_rects=rects).status_code, 200)  # unchecked, it goes on
 
+    def test_a_rabbit_with_a_digital_certificate_beside_the_paper_number_gets_no_badge(self):
+        item, document = self.saved_document()  # saved as P-1
+        db.Individual.update(digital_certificate=500000).where(db.Individual.number == "G1-2112").execute()
+        rects = [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+        self.assertEqual(self.mask(item, document, mask_rects=rects, matches_registry=True).status_code, 409)
+        db.InboxDocument.update(verified_at=datetime.datetime.now(datetime.timezone.utc)).where(
+            db.InboxDocument.id == document.id
+        ).execute()
+        self.assertEqual(self.mask(item, document, mask_rects=rects).status_code, 200)
+        db.InboxDocument.update(verified_at=datetime.datetime.now(datetime.timezone.utc)).where(
+            db.InboxDocument.id == document.id
+        ).execute()
+        self.login("spec")
+        self.assertIsNone(self.client.get("/api/v2/individual/G1-2112").get_json()["paper_certificate_checked"])
+
     def test_a_photo_saved_before_the_number_was_kept_is_never_checked(self):
         item, document = self.saved_document()
         db.InboxDocument.update(saved_certificate=None).where(db.InboxDocument.id == document.id).execute()

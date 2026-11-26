@@ -201,11 +201,13 @@ export function WorkView({
     doc?.doc_type === "intyg" &&
     (doc.status === "sparad" || (redo && doc.status === "klar"));
   // The handler of an open item, and a manager or admin at any time once a copy exists.
+  // The rabbit's genebank decides a copy's redo, as the API does, whatever the item's genebank.
   const mayMask =
     editable ||
-    (!noRole &&
-      !!doc?.has_copy &&
-      manages(user, doc.individual_genebank_id ?? item.genebank_id));
+    (!!doc?.has_copy &&
+      (doc.individual_genebank_id != null
+        ? manages(user, doc.individual_genebank_id)
+        : !noRole && manages(user, item.genebank_id)));
   const [noPersonalData, setNoPersonalData] = useState(false);
   // "Stämmer med registret": the handler's own tick, every time; the reading only proposes it.
   const [matches, setMatches] = useState(false);
