@@ -448,7 +448,8 @@ def _certificate(raw, struck, rabbit, fields, checks):
         fields["paper_certificate"] = _field(READ, number, read=text)
         checks.append(_check(True, "Intygsnumret är ledigt." if holder is None else "Intygsnumret är kaninens."))
     else:
-        fields["paper_certificate"] = _field(DEVIATES, read=text, registry=holder.number)
+        # No `registry`: the other rabbit's number is not the registry's value of this field; the check names it.
+        fields["paper_certificate"] = _field(DEVIATES, read=text)
         checks.append(_check(False, f"Intygsnumret {number} finns redan på {holder.number}."))
 
 

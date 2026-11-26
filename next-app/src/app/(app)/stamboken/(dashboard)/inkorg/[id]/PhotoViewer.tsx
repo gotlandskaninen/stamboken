@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useMode } from "@/lib/mode-context";
 import { enhancePencil, moveRect, resizeRect } from "../image";
@@ -12,6 +12,7 @@ import styles from "../inkorg.module.css";
 const MAX_SIDE = 2400;
 const ZOOMS = [1, 1.5, 2, 3, 4, 6];
 const STEP = 0.01;
+const WHEEL_STEP = 50; // px of wheel per zoom step: one notch of a mouse wheel, several flicks of a trackpad
 const KEYS: Record<string, [number, number]> = {
   ArrowLeft: [-STEP, 0],
   ArrowRight: [STEP, 0],
@@ -59,6 +60,15 @@ export function PhotoViewer({
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [failed, setFailed] = useState(false);
   const [zoom, setZoom] = useState(0);
+  // A wheel zoom's aim: the pointer on screen, and the photo's point under it as fractions of the photo.
+  const anchor = useRef<{
+    cx: number;
+    cy: number;
+    fx: number;
+    fy: number;
+  } | null>(null);
+  const shown = useRef(0); // the zoom last laid out, for the wheel's listener
+  const spun = useRef(0); // wheel travel not yet a whole step
   const [contrast, setContrast] = useState(100);
   const [pencil, setPencil] = useState(false);
 
@@ -94,6 +104,68 @@ export function PhotoViewer({
       ctx.putImageData(pixels, 0, 0);
     }
   }, [image, rotation, pencil]);
+
+  // The wheel zooms a step at a time. A wheel past the last step (down at 100 %, up at 600 %),
+  // a sideways swipe and a pinch (ctrlKey) are the page's. Our own listener: React's onWheel is passive.
+  const viewer = Boolean(onRotate);
+  useEffect(() => {
+    const vp = viewportRef.current;
+    if (!vp) return;
+    // Presses in the photo until each ends anywhere: a masking rectangle or the photo is being dragged, and its
+    // maths needs the photo still. Safari's wheel events say no button is down, and Delete can remove the rectangle.
+    const held = new Set<number>();
+    const press = (e: PointerEvent) => held.add(e.pointerId);
+    const release = (e: PointerEvent) => held.delete(e.pointerId);
+    const onWheel = (e: WheelEvent) => {
+      const mode = e.deltaMode; // first: Firefox turns lines into pixels once a delta is read
+      if (e.ctrlKey) return;
+      if (held.size || e.buttons) return e.preventDefault();
+      const stage = stageRef.current;
+      const sideways = Math.abs(e.deltaX) > Math.abs(e.deltaY);
+      const last = e.deltaY > 0 ? 0 : ZOOMS.length - 1;
+      if (sideways || !stage || shown.current === last) return;
+      e.preventDefault();
+      // A line or a page (deltaMode 1, 2) is a notch.
+      spun.current += mode ? Math.sign(e.deltaY) * WHEEL_STEP : e.deltaY;
+      if (Math.abs(spun.current) < WHEEL_STEP) return;
+      // One step per event: a mouse notch is one step whatever its size; a trackpad's flicks add up.
+      const step = spun.current < 0 ? 1 : -1;
+      spun.current %= WHEEL_STEP;
+      const photo = stage.getBoundingClientRect();
+      if (!photo.width || !photo.height) return;
+      anchor.current = {
+        cx: e.clientX,
+        cy: e.clientY,
+        fx: (e.clientX - photo.left) / photo.width,
+        fy: (e.clientY - photo.top) / photo.height,
+      };
+      setZoom((z) => Math.min(ZOOMS.length - 1, Math.max(0, z + step)));
+    };
+    vp.addEventListener("wheel", onWheel, { passive: false });
+    vp.addEventListener("pointerdown", press, true);
+    window.addEventListener("pointerup", release);
+    window.addEventListener("pointercancel", release);
+    return () => {
+      vp.removeEventListener("wheel", onWheel);
+      vp.removeEventListener("pointerdown", press, true);
+      window.removeEventListener("pointerup", release);
+      window.removeEventListener("pointercancel", release);
+    };
+  }, [viewer]);
+
+  // After the stage is laid out at the new size: the same point of the photo back under the pointer.
+  useLayoutEffect(() => {
+    shown.current = zoom;
+    const vp = viewportRef.current;
+    const stage = stageRef.current;
+    const at = anchor.current;
+    anchor.current = null;
+    if (!vp || !stage || !at) return;
+    // Measured now, so a scroll the browser already cut back at the edge counts.
+    const photo = stage.getBoundingClientRect();
+    vp.scrollLeft += photo.left + at.fx * photo.width - at.cx;
+    vp.scrollTop += photo.top + at.fy * photo.height - at.cy;
+  }, [zoom]);
 
   // Mouse drag pans; touch scrolls natively and the keyboard scrolls the focused viewport.
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {

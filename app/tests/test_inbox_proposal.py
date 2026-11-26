@@ -268,7 +268,8 @@ class TestOwnNumber(ProposalTest):
     def test_a_certificate_number_in_use_deviates(self):
         proposal = self.propose(reading(intygsnummer="C-G9003-2312"))
         self.assertEqual(self.source(proposal, "paper_certificate"), ("avviker", None))
-        self.assertEqual(proposal["fields"]["paper_certificate"]["registry"], "G9003-2312")
+        self.assertNotIn("registry", proposal["fields"]["paper_certificate"])
+        self.assertIn("Intygsnumret C-G9003-2312 finns redan på G9003-2312.", self.texts(proposal, False))
 
 
 class TestDeviations(ProposalTest):

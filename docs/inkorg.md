@@ -332,7 +332,9 @@ för en post med `ref_type` `sale_proposal`, vars statusvy avgör förslaget, oc
   (hämtat ur registret), `avviker` (intyget och registret säger olika) eller `osäker`. Bara `läst` och
   `härlett` har ett `value` att fylla i formuläret med; `avviker` och `osäker` har `value: null` och
   skrivs av från fotot. `read` är det tolkningen läste på intyget och `registry` registrets värde där
-  de skiljer sig. `checks` är kontrollerna i ord; `ok` är `true`, `false` eller `null` (upplysning).
+  de skiljer sig. Ett intygsnummer som redan finns på en annan kanin har inget `registry`: kontrollen
+  säger vilken kanin det finns på. `checks` är kontrollerna i ord; `ok` är `true`, `false` eller
+  `null` (upplysning).
   Förslaget sparas aldrig av sig självt: det är handläggarens `…/spara` som skriver.
 - `individual`: kaninens nummer när dokumentet är sparat, annars `null`.
 - `herd_tracking_id`: raden i besättningshistoriken för försäljningen som registrerats genom
