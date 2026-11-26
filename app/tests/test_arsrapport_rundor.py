@@ -132,14 +132,39 @@ class RundorTest(ArsrapportTest):
         self.at(date(2027, 3, 31))
         self.assertEqual(self.api("POST", f"/rundor/2027/genbanker/{self.gotland.id}/aktivera").status_code, 200)
 
-    def test_activation_ignores_a_round_without_dates(self):
-        legacy = db.YearlyReportRound.create(report_year=2025, created_by=self.admin)  # never open
-        arsrapport.activate(legacy, self.gotland.id, self.admin)
-        arsrapport.activate(self.round(2026, activate=()), self.gotland.id, self.admin)
-        self.assertEqual(db.YearlyReportRoundGenebank.select().count(), 2)
+    def test_an_older_round_is_not_activated_after_a_newer_one(self):
+        self.round(2026, activate=())
+        self.round(2027, activate=("Mellerudskanin",))
+        self.at(date(2027, 1, 15))
+        self.login("admin")
+        r = self.api("POST", f"/rundor/2026/genbanker/{self.mellerud.id}/aktivera")
+        self.assertEqual(r.status_code, 409, r.get_data(as_text=True))
+        self.assertIn("Rundan 2027 är redan aktiverad för genbanken, så en äldre runda kan inte", r.json["detail"])
+
+    def test_activation_ignores_a_round_without_both_dates(self):
+        self.at(date(2026, 11, 15))
+        for dates in ({}, {"end_date": date(2027, 3, 1)}, {"start_date": date(2026, 1, 1)}):  # never open
+            legacy = db.YearlyReportRound.create(report_year=2024, created_by=self.admin, **dates)
+            arsrapport.activate(legacy, self.gotland.id, self.admin)
+            arsrapport.activate(self.round(2026, activate=()), self.gotland.id, self.admin)
+            self.assertEqual(db.YearlyReportRoundGenebank.select().count(), 2, dates)
+            db.YearlyReportRoundGenebank.delete().execute()
+            db.YearlyReportRound.delete().execute()
+
+    def test_a_closed_round_is_not_reopened_after_the_next_is_activated(self):
+        self.round(2026)
+        self.at(date(2027, 4, 1))
+        self.round(2027)
+        self.login("man")
+        r = self.api("PUT", "/rundor/2026", end_date="2027-06-30")
+        self.assertEqual(r.status_code, 409, r.get_data(as_text=True))
+        self.assertIn("Rundan 2027 är aktiverad för genbanken, så rundan 2026 kan inte", r.json["detail"])
+        self.assertEqual(arsrapport.get_round(2026).end_date, date(2027, 3, 30))
+        # Its other dates still move, as long as it stays closed.
+        self.assertEqual(self.api("PUT", "/rundor/2026", deadline="2027-02-01").status_code, 200)
 
     def test_rounds_cannot_overlap(self):
-        """#264: the dates of a round and its neighbours never share a day."""
+        """#264: no two rounds share a day, neighbours or not."""
         db.YearlyReportRound.create(
             report_year=2025,
             start_date=date(2025, 12, 31),
@@ -150,13 +175,27 @@ class RundorTest(ArsrapportTest):
         self.login("man")
         r = self.api("PUT", "/rundor/2026")
         self.assertEqual(r.status_code, 400, r.get_data(as_text=True))
-        self.assertIn("rundan 2025, som är öppen 31 december 2025 till 10 januari 2027", r.json["detail"])
+        self.assertIn("överlappa rundan 2025 (31 december 2025 – 10 januari 2027)", r.json["detail"])
         self.assertIsNone(arsrapport.get_round(2026))
 
         self.assertEqual(self.api("PUT", "/rundor/2026", start_date="2027-01-11").status_code, 200)
         r = self.api("PUT", "/rundor/2025", end_date="2027-01-11")  # back into the round now after it
         self.assertEqual(r.status_code, 400, r.get_data(as_text=True))
         self.assertEqual(self.api("PUT", "/rundor/2025", end_date="2027-01-10").status_code, 200)
+
+    def test_rounds_two_years_apart_cannot_overlap(self):
+        db.YearlyReportRound.create(
+            report_year=2027,
+            start_date=date(2027, 1, 1),
+            deadline=date(2027, 1, 31),
+            end_date=date(2027, 3, 30),
+            created_by=self.admin,
+        )
+        self.round(2025, activate=())
+        self.login("man")
+        r = self.api("PUT", "/rundor/2025", end_date="2027-01-10")
+        self.assertEqual(r.status_code, 400, r.get_data(as_text=True))
+        self.assertIn("överlappa rundan 2027", r.json["detail"])
 
     def test_activate_send_at_and_unknown(self):
         self.round(2026, activate=())

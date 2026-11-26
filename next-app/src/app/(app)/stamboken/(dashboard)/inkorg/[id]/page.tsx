@@ -15,12 +15,13 @@ import type { GenebankHerd } from "@/utils/saleRules";
 import {
   colorNamesFor,
   lacksRole,
-  reportYear,
+  reportYears,
   STATE_LABEL,
   type InboxDetail,
   type QueueList,
   type RoundRow,
 } from "../lib";
+import { todayStockholm } from "../../arsrapport/lib";
 import { WorkView } from "./WorkView";
 
 export const dynamic = "force-dynamic";
@@ -104,7 +105,7 @@ export default async function InkorgItemPage({
         colors={colorNames}
         herds={herds}
         people={handlers}
-        reportYear={reportYear(rounds, item.genebank_id)}
+        reportYears={reportYears(rounds, item.genebank_id, todayStockholm())}
       />
     </>
   );

@@ -156,11 +156,11 @@ export function WorkView({
   herds,
   people,
   noRole = false,
-  reportYear = null,
+  reportYears = [],
 }: {
   noRole?: boolean;
-  /** The year of the form entry link; null leaves it out. */
-  reportYear?: number | null;
+  /** The years of the form entry link; none leaves it out. */
+  reportYears?: number[];
   item: InboxDetail;
   user: QueueUser;
   colors: string[];
@@ -983,17 +983,25 @@ export function WorkView({
           ) : doc.doc_type === "arsblankett" &&
             saving &&
             item.herd &&
-            reportYear ? (
+            reportYears.length > 0 ? (
             <div className={styles.card}>
               <p className={styles.muted}>
                 Årsblanketten matas in på en egen sida, med fotot bredvid.
+                {reportYears.length > 1 && " Välj året som står på blanketten."}
               </p>
-              <Link
-                className="sb-btn"
-                href={`/stamboken/arsrapport/${item.herd}/${reportYear}?post=${item.id}`}
-              >
-                Mata in årsrapporten
-              </Link>
+              <div className={styles.row}>
+                {reportYears.map((year) => (
+                  <Link
+                    key={year}
+                    className="sb-btn"
+                    href={`/stamboken/arsrapport/${item.herd}/${year}?post=${item.id}`}
+                  >
+                    {reportYears.length > 1
+                      ? `Mata in årsrapporten ${year}`
+                      : "Mata in årsrapporten"}
+                  </Link>
+                ))}
+              </div>
             </div>
           ) : (
             <div className={styles.card}>

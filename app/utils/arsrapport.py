@@ -24,8 +24,7 @@ import utils.inbox as inbox
 import utils.report_code as report_code
 from utils import settings
 from utils.arsrapport_statistik import SEXES, Kanin, innehav, statistik
-from utils.buyer_mail import _MONTHS as MONTHS
-from utils.buyer_mail import lock_buyer_addresses
+from utils.buyer_mail import lock_buyer_addresses, sv_date
 from utils.data_access import MAX_GESTATION_DAYS
 from utils.database import (
     DB_PROXY,
@@ -125,6 +124,7 @@ DRAFT_MAX_BYTES = 256 * 1024
 LINK_INVALID = "Länken gäller inte längre."
 WITHDRAW_DAYS = 7  # fråga 15: owners and caretakers withdraw until 7 days after the first submission
 _REPORT_LOCK = 0x48424152  # "HBAR": classid of the advisory lock on a herd's report in a round
+_ROUNDS_LOCK = 0x48425244  # "HBRD": classid of the advisory lock on the rounds' dates and activations
 
 
 class ArsrapportError(Exception):
@@ -162,10 +162,6 @@ def get_round(year):
     return YearlyReportRound.get_or_none(YearlyReportRound.report_year == year)
 
 
-def _sv_date(day):
-    return f"{day.day} {MONTHS[day.month - 1]} {day.year}"
-
-
 def save_round(year, user, **dates):
     """
     The year's round with `dates` applied: a new round, or a legacy round's missing dates, get the defaults first.
@@ -176,23 +172,37 @@ def save_round(year, user, **dates):
     if abs(year - today().year) > 1:
         raise ArsrapportError(400, f"Året ska vara {today().year - 1}, {today().year} eller {today().year + 1}.")
     with DB_PROXY.atomic():
+        _lock_rounds()
         round_ = get_round(year) or YearlyReportRound(report_year=year, created_by=user)
         wanted = {key: getattr(round_, key) or default for key, default in default_dates(year).items()} | dates
         if not wanted["start_date"] <= wanted["deadline"] <= wanted["end_date"]:
             raise ArsrapportError(400, "Rundan öppnar först, sedan kommer sista dagen för stödet och sist stängningen.")
-        # #264: two rounds are never open on the same day. A neighbour without both dates is never open.
-        for other in YearlyReportRound.select().where(YearlyReportRound.report_year.in_([year - 1, year + 1])):
-            if (
-                other.start_date
-                and other.end_date
-                and wanted["start_date"] <= other.end_date
-                and other.start_date <= wanted["end_date"]
-            ):
-                raise ArsrapportError(
-                    400,
-                    f"Rundan {year} skulle vara öppen samtidigt som rundan {other.report_year}, som är öppen "
-                    f"{_sv_date(other.start_date)} till {_sv_date(other.end_date)}.",
-                )
+        # #264: no two rounds share a day. One without both dates is never open.
+        other = (
+            YearlyReportRound.select()
+            .where(
+                YearlyReportRound.report_year != year,
+                YearlyReportRound.start_date <= wanted["end_date"],
+                YearlyReportRound.end_date >= wanted["start_date"],
+            )
+            .first()
+        )
+        if other is not None:
+            raise ArsrapportError(
+                400,
+                f"Rundan {year} skulle överlappa rundan {other.report_year} "
+                f"({sv_date(other.start_date)} – {sv_date(other.end_date)}).",
+            )
+        # ... and a round open again after its genebank activated the next one would split its paper entry.
+        if round_.id is not None and wanted["end_date"] >= today():
+            for activation in _activations(round_):
+                running = _running_round(activation.genebank_id, round_)
+                if running is not None:
+                    raise ArsrapportError(
+                        409,
+                        f"Rundan {running.report_year} är aktiverad för genbanken, så rundan {year} kan inte "
+                        "vara öppen längre än till i går.",
+                    )
         changed = [key for key in DATE_FIELDS if getattr(round_, key) != wanted[key]]
         for key in changed:
             setattr(round_, key, wanted[key])
@@ -280,37 +290,54 @@ def activate(round_, genebank_id, user, send_at=None):
     """
     The genebank's activation of the round; again, the first one, unchanged. `send_at` defaults to the round's
     first day. The round's is_active is never set: it would open legacy's form for the other genebank (D3).
-    #264: refused while another round the genebank activated has not closed, so the queue's paper entry
-    (inkorg reportYear) never has two rounds to choose between.
+    #264: refused while another round the genebank activated has not closed, so at most one of its rounds runs.
     """
-    done = YearlyReportRoundGenebank.get_or_none(
-        (YearlyReportRoundGenebank.round == round_.id) & (YearlyReportRoundGenebank.genebank == genebank_id)
-    )
-    if done is not None:
-        return done
-    running = (
+    with DB_PROXY.atomic():
+        _lock_rounds()
+        done = YearlyReportRoundGenebank.get_or_none(
+            (YearlyReportRoundGenebank.round == round_.id) & (YearlyReportRoundGenebank.genebank == genebank_id)
+        )
+        if done is not None:
+            return done
+        running = _running_round(genebank_id, round_)
+        if running is not None and running.report_year > round_.report_year:
+            raise ArsrapportError(
+                409,
+                f"Rundan {running.report_year} är redan aktiverad för genbanken, så en äldre runda kan inte aktiveras.",
+            )
+        if running is not None:
+            raise ArsrapportError(
+                409,
+                f"Rundan {running.report_year} är aktiverad för genbanken och stänger {sv_date(running.end_date)}. "
+                f"Aktivera rundan {round_.report_year} när den har stängt.",
+            )
+        send_at = send_at or round_.start_date or default_dates(round_.report_year)["start_date"]
+        YearlyReportRoundGenebank.insert(
+            round=round_.id, genebank=genebank_id, activated_by=user.id, activated_at=now(), send_at=send_at
+        ).on_conflict_ignore().execute()
+        return YearlyReportRoundGenebank.get(
+            (YearlyReportRoundGenebank.round == round_.id) & (YearlyReportRoundGenebank.genebank == genebank_id)
+        )
+
+
+def _lock_rounds():
+    """#264: one lock for every change that could leave a genebank with two running rounds (save_round, activate)."""
+    DB_PROXY.execute_sql("SELECT pg_advisory_xact_lock(%s, 0)", (_ROUNDS_LOCK,))
+
+
+def _running_round(genebank_id, but):
+    """Another round the genebank activated that has not closed: both dates set, and end_date today or later."""
+    return (
         YearlyReportRound.select()
         .join(YearlyReportRoundGenebank)
         .where(
             YearlyReportRoundGenebank.genebank == genebank_id,
-            YearlyReportRound.id != round_.id,
-            YearlyReportRound.end_date >= today(),  # a round without an end date is never open
+            YearlyReportRound.id != but.id,
+            YearlyReportRound.start_date.is_null(False),
+            YearlyReportRound.end_date >= today(),
         )
         .order_by(YearlyReportRound.report_year)
         .first()
-    )
-    if running is not None:
-        raise ArsrapportError(
-            409,
-            f"Rundan {running.report_year} är aktiverad för genbanken och stänger {_sv_date(running.end_date)}. "
-            f"Aktivera rundan {round_.report_year} när den har stängt.",
-        )
-    send_at = send_at or round_.start_date or default_dates(round_.report_year)["start_date"]
-    YearlyReportRoundGenebank.insert(
-        round=round_.id, genebank=genebank_id, activated_by=user.id, activated_at=now(), send_at=send_at
-    ).on_conflict_ignore().execute()
-    return YearlyReportRoundGenebank.get(
-        (YearlyReportRoundGenebank.round == round_.id) & (YearlyReportRoundGenebank.genebank == genebank_id)
     )
 
 

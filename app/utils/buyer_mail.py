@@ -116,9 +116,13 @@ def _rabbit_name(rabbit):
     return name
 
 
-def _last_kept_date(purge_at):
-    day = purge_at.astimezone(_STOCKHOLM).date() - timedelta(days=1)
+def sv_date(day):
+    """A date as Swedish text: "30 mars 2027"."""
     return f"{day.day} {_MONTHS[day.month - 1]} {day.year}"
+
+
+def _last_kept_date(purge_at):
+    return sv_date(purge_at.astimezone(_STOCKHOLM).date() - timedelta(days=1))
 
 
 def _membership_current(contact):

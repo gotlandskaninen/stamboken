@@ -116,7 +116,7 @@ const view = (
   i: InboxDetail,
   user: QueueUser = helper,
   noRole = false,
-  reportYear: number | null = null,
+  reportYears: number[] = [],
 ) => (
   <ModeProvider mode="prod">
     <QueueUndoProvider>
@@ -127,7 +127,7 @@ const view = (
         colors={[]}
         herds={[]}
         people={[]}
-        reportYear={reportYear}
+        reportYears={reportYears}
       />
     </QueueUndoProvider>
   </ModeProvider>
@@ -441,10 +441,21 @@ describe("WorkView: an annual form", () => {
   const form = doc({ doc_type: "arsblankett", status: "ny", individual: null });
 
   it("links to the form entry for the round's year, with the item", () => {
-    render(view(item({ documents: [form] }), helper, false, 2026));
+    render(view(item({ documents: [form] }), helper, false, [2026]));
     expect(
       screen.getByRole("link", { name: "Mata in årsrapporten" }),
     ).toHaveAttribute("href", "/stamboken/arsrapport/G9001/2026?post=12");
+  });
+
+  it("gives a link per year when the form may be for either (#264)", () => {
+    render(view(item({ documents: [form] }), helper, false, [2026, 2027]));
+    expect(screen.getByText(/Välj året som står på blanketten/)).toBeTruthy();
+    expect(
+      screen.getByRole("link", { name: "Mata in årsrapporten 2026" }),
+    ).toHaveAttribute("href", "/stamboken/arsrapport/G9001/2026?post=12");
+    expect(
+      screen.getByRole("link", { name: "Mata in årsrapporten 2027" }),
+    ).toHaveAttribute("href", "/stamboken/arsrapport/G9001/2027?post=12");
   });
 
   it("leaves the link out without a round, and for someone who cannot save", () => {
@@ -453,7 +464,7 @@ describe("WorkView: an annual form", () => {
       screen.queryByRole("link", { name: "Mata in årsrapporten" }),
     ).toBeNull();
     cleanup();
-    render(view(item({ documents: [form] }), helper, true, 2026));
+    render(view(item({ documents: [form] }), helper, true, [2026]));
     expect(
       screen.queryByRole("link", { name: "Mata in årsrapporten" }),
     ).toBeNull();
@@ -685,7 +696,7 @@ describe("WorkView: a sale proposal", () => {
   });
 
   it("links to its own round's status view, not the newest round's", () => {
-    render(view(proposal, boss, false, 2026)); // 2026 is the newest round the genebank activated
+    render(view(proposal, boss, false, [2026])); // 2026 is the newest round the genebank activated
     expect(screen.getByText(/Avgörs i årsrapportens statusvy/)).toBeTruthy();
     expect(
       screen.getByRole("link", { name: "Öppna statusvyn" }),
@@ -696,7 +707,7 @@ describe("WorkView: a sale proposal", () => {
   });
 
   it("keeps the text without a year", () => {
-    render(view({ ...proposal, report_year: null }, boss, false, 2026));
+    render(view({ ...proposal, report_year: null }, boss, false, [2026]));
     expect(screen.getByText(/Avgörs i årsrapportens statusvy/)).toBeTruthy();
     expect(screen.queryByRole("link", { name: "Öppna statusvyn" })).toBeNull();
   });
@@ -716,7 +727,7 @@ describe("WorkView: a bought rabbit's sent photos (S7)", () => {
         date: "2025-05-14",
       },
     });
-    render(view(sent, boss, false, 2026));
+    render(view(sent, boss, false, [2026]));
     expect(
       screen.getByText(/Köpt av G9001: G9002-2511 från G9002, 14 maj 2025/),
     ).toBeTruthy();
@@ -743,7 +754,7 @@ describe("WorkView: a purchase notice (4a Task 5)", () => {
   });
 
   it("shows its fields in the main column, and opens the rabbit's sale filled in", () => {
-    render(view(notice, boss, false, 2026));
+    render(view(notice, boss, false, [2026]));
     const main = screen.getByRole("region", { name: "Fotot" });
     const facts = within(main)
       .getAllByRole("term")
@@ -772,7 +783,7 @@ describe("WorkView: a purchase notice (4a Task 5)", () => {
       user: null,
       detail: { via: "länk G9001/2025" },
     };
-    render(view({ ...notice, events: [event] }, boss, false, 2026));
+    render(view({ ...notice, events: [event] }, boss, false, [2026]));
     expect(screen.getByText(/Inkommet via länk G9001\/2025/)).toBeTruthy();
     // and as its sender: a notice has no sender account
     const sender = screen.getByText("Inskickat av").nextElementSibling;
@@ -783,7 +794,7 @@ describe("WorkView: a purchase notice (4a Task 5)", () => {
       user: { id: 9, name: "Ägare Ett" },
       detail: {},
     };
-    render(view({ ...notice, events: [byAccount] }, boss, false, 2026));
+    render(view({ ...notice, events: [byAccount] }, boss, false, [2026]));
     expect(
       screen.getByText("Inskickat av").nextElementSibling?.textContent,
     ).toBe("Ägare Ett");
@@ -795,7 +806,7 @@ describe("WorkView: a purchase notice (4a Task 5)", () => {
         { ...notice, ref_type: "individual", herd: "M9202", sender: null },
         boss,
         false,
-        2026,
+        [2026],
       ),
     );
     expect(
@@ -809,7 +820,7 @@ describe("WorkView: a purchase notice (4a Task 5)", () => {
         { ...notice, documents: [doc({ doc_type: "bevis", status: "ny" })] },
         boss,
         false,
-        2026,
+        [2026],
       ),
     );
     expect(screen.getByRole("heading", { name: "Anmält köp" })).toBeTruthy();
@@ -825,7 +836,7 @@ describe("WorkView: a purchase notice (4a Task 5)", () => {
       interpretation_status: "klar",
     });
     const taken = { ...notice, state: "tagen" as const, assigned_to: me };
-    render(view({ ...taken, documents: [photo] }, helper, false, 2026));
+    render(view({ ...taken, documents: [photo] }, helper, false, [2026]));
     expect(screen.getByRole("button", { name: "Avfärda" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Vrid" })).toBeTruthy();
     expect(screen.queryByLabelText("Typ")).toBeNull();
@@ -838,7 +849,7 @@ describe("WorkView: a purchase notice (4a Task 5)", () => {
   });
 
   it("links to the status view when a pending sale matches it", () => {
-    render(view({ ...notice, report_year: 2025 }, boss, false, 2026));
+    render(view({ ...notice, report_year: 2025 }, boss, false, [2026]));
     expect(
       screen.getByRole("link", { name: "Öppna statusvyn" }),
     ).toHaveAttribute(
