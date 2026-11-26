@@ -336,7 +336,7 @@ export interface BodyEntry {
 export const SUBMIT_TIMEOUT_MS = 30_000;
 
 // The wording of the blankett's question about the listing in Koharen
-// (CONSENT_TEXT_VERSION "2026-11-20" on the server). Only the paper form shows it.
+// (CONSENT_TEXT_VERSION "2026-11-20" on the server), shown by PublicationFields.
 export const CONSENT_TEXT =
   "Får din besättning stå med i Koharens lista över aktiva besättningar? Koharen är föreningens tidning på papper och går bara till medlemmar. Listan gör det lättare för besättningarna att hitta varandra.";
 

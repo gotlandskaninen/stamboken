@@ -26,8 +26,7 @@ CONSENT_KEYS = ("name", "phone", "email", "address")
 # paper magazine for members only, so the answer covers a narrower scope than "2026-11" did. Bumped 2026-11-18: the
 # question says "besättning" where it said "genbank" (same scope), on the form v5 and in the report alike.
 # Bumped 2026-11-20: the Ja answer now asks per item that MAY appear (it asked which must not), same stored keys.
-CONSENT_TEXT_VERSION = "2026-11-20"
-PROFILE_CONSENT_TEXT_VERSION = "profil-2025"  # the profile's text ("Medlemsmatrikeln trycks i Koharen") for now
+CONSENT_TEXT_VERSION = "2026-11-20"  # the profile asks the same question since step 5 (it had "profil-2025")
 
 # Only Phase 9-provisioned Workspace addresses may auto-link. The
 # /api/auth/google flow enforces this domain, but the flask-dance

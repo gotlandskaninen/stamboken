@@ -14,7 +14,7 @@ from datetime import time as clock
 import utils.arsrapport as arsrapport
 import utils.database as db
 import utils.mail as mail
-from utils.members import CONSENT_KEYS, effective_consent, stored_consent
+from utils.members import CONSENT_KEYS, CONSENT_TEXT_VERSION, effective_consent, stored_consent
 
 from tests.test_arsrapport_kontakt import (
     A23,
@@ -257,7 +257,7 @@ class MatrikelTest(PaperTest):
         self.assertNotIn("matrikel", view.json["report"]["submitted"])
         self.assertEqual(db.YearlyReportDraft.select().count(), 0)
 
-    def test_profile_records_consent_changes(self):  # D9
+    def test_profile_records_consent_changes(self):  # D9; the profile asks the form's question (5.11)
         db.Member.update(user=self.owner.id).where(db.Member.id == self.member.id).execute()
         self.login("owner")
         for consent in ({"phone": True}, {"phone": True}, {"name": True, "phone": False}):
@@ -272,8 +272,8 @@ class MatrikelTest(PaperTest):
         self.assertEqual(
             rows,
             [  # the unchanged second answer adds none
-                (membership, {"phone": True}, "profil", "profil-2025", self.owner.id, None, None),
-                (membership, {"phone": False, "name": True}, "profil", "profil-2025", self.owner.id, None, None),
+                (membership, {"phone": True}, "profil", CONSENT_TEXT_VERSION, self.owner.id, None, None),
+                (membership, {"phone": False, "name": True}, "profil", CONSENT_TEXT_VERSION, self.owner.id, None, None),
             ],
         )
 

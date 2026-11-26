@@ -1,15 +1,10 @@
 "use client";
 
 import React from "react";
+import { PublicationFields } from "@/components/member/PublicationFields";
 import { MbCard } from "../min-besattning/min-besattning-ui";
-import { CONSENT_TEXT, UTOM_ALL, type PaperFields, type Utom } from "./lib";
+import type { PaperFields } from "./lib";
 import styles from "./arsrapport.module.css";
-
-const UTOM_LABEL: Record<Utom, string> = {
-  phone: "telefonnummer",
-  email: "e-postadress",
-  address: "postnummer och ort",
-};
 
 // The form's contact part. The page never reads the stored values: it shows
 // only the last two digits of the account (`accountEnd`), and what is typed
@@ -53,56 +48,21 @@ export function PaperChanges({
   return (
     <MbCard title="Uppgifter på blanketten">
       <div className={styles.detail}>
-        <div role="radiogroup" aria-label="Publicering i Koharen">
-          <p className={styles.label} style={{ margin: "0 0 8px" }}>
-            {CONSENT_TEXT}
-          </p>
-          <div className={styles.choices}>
-            {(
-              [
-                ["ja", "Ja"],
-                ["nej", "Nej"],
-                ["", "Inget svar på blanketten"],
-              ] as const
-            ).map(([v, label]) => (
-              <label key={v || "inget"} className={styles.choice}>
-                <input
-                  type="radio"
-                  name="consent"
-                  checked={fields.consent === v}
-                  onChange={() =>
-                    set({ consent: v, utom: v === "ja" ? UTOM_ALL : [] })
-                  }
-                />
-                <span>{label}</span>
-              </label>
-            ))}
-          </div>
-        </div>
-        {fields.consent === "ja" && (
-          <div role="group" aria-label="Får stå med">
-            <span className={styles.label}>
-              Om ja står ditt namn och besättningens nummer med. Kryssa också
-              det ur medlemsregistret som får stå med:
-            </span>
-            {(Object.keys(UTOM_LABEL) as Utom[]).map((k) => (
-              <label key={k} className={styles.line} style={{ minHeight: 48 }}>
-                <input
-                  type="checkbox"
-                  checked={!fields.utom.includes(k)}
-                  onChange={(e) =>
-                    set({
-                      utom: e.target.checked
-                        ? fields.utom.filter((x) => x !== k)
-                        : [...fields.utom, k],
-                    })
-                  }
-                />
-                {UTOM_LABEL[k]}
-              </label>
-            ))}
-          </div>
-        )}
+        <PublicationFields
+          value={
+            fields.consent
+              ? { ja: fields.consent === "ja", utom: fields.utom }
+              : null
+          }
+          onChange={(v) =>
+            set(
+              v
+                ? { consent: v.ja ? "ja" : "nej", utom: v.utom }
+                : { consent: "", utom: [] },
+            )
+          }
+          noAnswer="Inget svar på blanketten"
+        />
         <p className={styles.label} style={{ margin: 0 }}>
           Kryssar du varken ja eller nej gäller ditt senaste svar. Har du aldrig
           svarat publicerar vi ingenting. Du kan ändra ditt svar när som helst i

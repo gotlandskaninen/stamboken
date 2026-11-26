@@ -56,7 +56,7 @@ from utils.matrikel import (
 )
 from utils.members import (
     CONSENT_KEYS,
-    PROFILE_CONSENT_TEXT_VERSION,
+    CONSENT_TEXT_VERSION,
     consent_answered,
     effective_consent,
     set_consent,
@@ -726,7 +726,7 @@ def patch_me_consent():
         # (fail-closed).
         merged = {k: v is True for k, v in stored_consent(ms).items() if k in CONSENT_KEYS}
         merged.update(updates)
-        set_consent(ms, merged, source="profil", text_version=PROFILE_CONSENT_TEXT_VERSION, user=current_user.id)
+        set_consent(ms, merged, source="profil", text_version=CONSENT_TEXT_VERSION, user=current_user.id)
     return jsonify(_me_response(m))
 
 
