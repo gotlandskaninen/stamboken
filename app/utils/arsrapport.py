@@ -3558,6 +3558,9 @@ def withdraw(herd, round_, access, user, *, revision, reason=None, now=None) -> 
         round_ = _lock_round(round_)  # its end_date as kept_until reads it
         lock_report(round_, herd)
         _recheck_code(access, herd, on)
+        # The membership before the report row and the link's change rows, as Skicka; the confirmation page takes it
+        # before those rows too, so cancelling them below never deadlocks with a Bekräfta (review round 2).
+        _lock_matrikel(herd)
         report = (
             YearlyHerdReport.select()
             .where(

@@ -718,3 +718,44 @@ class TestReviewRound1(DetailsTest):
         with mock.patch.object(arsrapport, "_main_member", swapped_after_the_first_read):
             details = self.view()["member_details"]
         self.assertEqual((details["mode"], details["contact"]["phone"]), ("main", "0709-111 222"))
+
+    def test_withdraw_and_confirm_of_one_field_do_not_deadlock(self):  # review round 2
+        self.submit_changes({"telefon": "0709-000 001"})
+        newer = self.ok(matrikel={"telefon": "0709-000 002"})
+        token = self.token(newer["submission_id"])
+        view = self.client.post("/api/v2/rapport/andringar", json={"token": token}).get_json()
+        report = db.YearlyHerdReport.get(db.YearlyHerdReport.status == "submitted")
+        herd, round_, revision = db.Herd.get_by_id(self.h.id), self.round_, report.revision
+        revoke_older, paused, errors = member_changes._revoke_older, threading.Event(), []
+
+        def held(row, field, now):  # Bekräfta holds the newer row and waits before it revokes the older one
+            paused.set()
+            threading.Event().wait(1.5)  # Dra tillbaka runs meanwhile
+            return revoke_older(row, field, now)
+
+        def run(work):
+            try:
+                with APP.app_context():
+                    work()
+            except Exception as exc:  # pylint: disable=broad-except  # a deadlock is what this looks for
+                errors.append(exc)
+            finally:
+                db.DB_PROXY.close()
+
+        def confirm():
+            member_changes.confirm(token, account=False, version=view["version"])
+
+        def withdraw():
+            paused.wait(5)
+            access = arsrapport.report_access(db.User.get_by_id(self.owner.id), herd)
+            arsrapport.withdraw(herd, round_, access, db.User.get_by_id(self.owner.id), revision=revision)
+
+        with mock.patch.object(member_changes, "_revoke_older", held):
+            threads = [threading.Thread(target=run, args=(work,)) for work in (confirm, withdraw)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(20)
+        self.assertEqual(errors, [])
+        self.assertEqual(db.Member.get_by_id(self.member.id).phone, "0709-000 002")
+        self.assertEqual(db.YearlyHerdReport.get_by_id(report.id).status, "voided")
