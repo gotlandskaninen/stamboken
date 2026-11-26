@@ -28,6 +28,7 @@ import {
   canEditDocuments,
   canSave,
   CERT_FORMAT_LABEL,
+  checksPass,
   CLOSED_STATES,
   DOC_STATUS_LABEL,
   DOC_TYPE_LABEL,
@@ -200,9 +201,16 @@ export function WorkView({
     doc?.doc_type === "intyg" &&
     (doc.status === "sparad" || (redo && doc.status === "klar"));
   // The handler of an open item, and a manager or admin at any time once a copy exists.
+  // The rabbit's genebank decides a copy's redo, as the API does, whatever the item's genebank.
   const mayMask =
-    editable || (!noRole && !!doc?.has_copy && manages(user, item.genebank_id));
+    editable ||
+    (!!doc?.has_copy &&
+      (doc.individual_genebank_id != null
+        ? manages(user, doc.individual_genebank_id)
+        : !noRole && manages(user, item.genebank_id)));
   const [noPersonalData, setNoPersonalData] = useState(false);
+  // "Stämmer med registret": the handler's own tick, every time; the reading only proposes it.
+  const [matches, setMatches] = useState(false);
   // Nothing saved from it yet: its type can change and it can be dismissed.
   const fresh = doc?.status === "ny" || doc?.status === "vantar_foralder";
   // A purchase notice's photo is looked at and dismissed only: never read, so no type, format or Tolka igen.
@@ -228,6 +236,7 @@ export function WorkView({
     setCrop(null);
     setRedo(false);
     setNoPersonalData(false);
+    setMatches(false);
   }
 
   const run = <T,>(
@@ -355,7 +364,8 @@ export function WorkView({
           {notice} <Link href="/stamboken/inkorg">Till kön</Link>
         </p>
       )}
-      <div className={styles.work} data-documents={!!doc}>
+      {/* A purchase notice has no form: its photo takes the room of both. */}
+      <div className={styles.work} data-documents={!!doc && !purchase}>
         <MailThread item={item} />
         {/* Left: documents, the item and its actions */}
         <aside className={`sb-card ${styles.card}`} aria-label="Ärendet">
@@ -819,6 +829,7 @@ export function WorkView({
                       setRotation(doc.rotation);
                       setRects(initialRects(doc));
                       setSelectedRect(null);
+                      setMatches(false);
                       setRedo(true);
                     }}
                   >
@@ -879,6 +890,20 @@ export function WorkView({
                         Fotot visar inga säljar- eller köparuppgifter
                       </label>
                     )}
+                    <label className={styles.row}>
+                      <input
+                        type="checkbox"
+                        checked={matches}
+                        onChange={(e) => setMatches(e.target.checked)}
+                      />
+                      Jag har jämfört intyget med registret och de stämmer
+                    </label>
+                    {checksPass(doc) && (
+                      <p className={styles.muted}>
+                        Förslag: stämmer. Tolkningen hittade {doc.individual}{" "}
+                        och alla kontroller gick igenom.
+                      </p>
+                    )}
                     <div className={styles.row}>
                       <button
                         type="button"
@@ -895,6 +920,7 @@ export function WorkView({
                                 rotation,
                                 toApiRects(rects),
                                 noPersonalData,
+                                matches,
                               ),
                             (d) => {
                               setRedo(false);

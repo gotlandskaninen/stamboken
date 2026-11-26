@@ -12,19 +12,24 @@ import {
 const revokeRole = vi.hoisted(() => vi.fn());
 const logoutEverywhere = vi.hoisted(() => vi.fn());
 const removeGoogleLogin = vi.hoisted(() => vi.fn());
+const setAccountActive = vi.hoisted(() => vi.fn());
+const setV2ProdAccess = vi.hoisted(() => vi.fn());
+const eraseAccount = vi.hoisted(() => vi.fn());
+const updateUserProfile = vi.hoisted(() => vi.fn());
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
 }));
 vi.mock("@/app/(app)/stamboken/(dashboard)/admin/anvandare/actions", () => ({
+  eraseAccount,
   grantRole: vi.fn(),
   logoutEverywhere,
   removeGoogleLogin,
   resetPassword: vi.fn(),
   revokeRole,
-  setAccountActive: vi.fn(),
+  setAccountActive,
   setValidated: vi.fn(),
-  setV2ProdAccess: vi.fn(),
-  updateUserProfile: vi.fn(),
+  setV2ProdAccess,
+  updateUserProfile,
 }));
 
 import { resetPassword } from "@/app/(app)/stamboken/(dashboard)/admin/anvandare/actions";
@@ -187,5 +192,186 @@ describe("UserEditClient Google login", () => {
     const dialog = openGoogleDialog();
     fireEvent.click(within(dialog).getByRole("button", { name: "Ta bort" }));
     expect(removeGoogleLogin).toHaveBeenCalledWith(7);
+  });
+});
+
+describe("UserEditClient switches (#249)", () => {
+  const renderPage = () =>
+    render(
+      <UserEditClient
+        detail={detail}
+        actorId={1}
+        genebanks={[]}
+        herds={[]}
+        recentAudit={[]}
+        concurrentEditWarning={null}
+      />,
+    );
+
+  it("saves the real-stambok switch and confirms it on the page", async () => {
+    setV2ProdAccess.mockResolvedValue(undefined);
+    renderPage();
+    expect(screen.queryByText("Ändringen är sparad.")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("switch", { name: /riktiga stamboken/ }));
+    expect(setV2ProdAccess).toHaveBeenCalledWith(7, true);
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Ändringen är sparad.",
+    );
+  });
+
+  it("asks before deactivating, then confirms the change on the page", async () => {
+    setAccountActive.mockResolvedValue(undefined);
+    renderPage();
+    fireEvent.click(screen.getByRole("switch", { name: "Kontot är aktivt" }));
+    const dialog = screen.getByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Inaktivera" }));
+    expect(setAccountActive).toHaveBeenCalledWith(7, false);
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Ändringen är sparad.",
+    );
+  });
+
+  it("shows a refusal instead of the confirmation", async () => {
+    setAccountActive.mockResolvedValue({ error: "Nej." });
+    renderPage();
+    fireEvent.click(screen.getByRole("switch", { name: "Kontot är aktivt" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Inaktivera",
+      }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("Nej.");
+    expect(screen.queryByText("Ändringen är sparad.")).not.toBeInTheDocument();
+  });
+});
+
+describe("UserEditClient Radera kontots uppgifter (#250)", () => {
+  // An account without a role, not the admin's own.
+  const plain: AdminUserDetail = {
+    ...detail,
+    role_summary: "ingen roll",
+    _privileges: [],
+  };
+  const renderPage = (d: AdminUserDetail, actorId = 1) =>
+    render(
+      <UserEditClient
+        detail={d}
+        actorId={actorId}
+        genebanks={[]}
+        herds={[]}
+        recentAudit={[]}
+        concurrentEditWarning={null}
+      />,
+    );
+  const button = () =>
+    screen.getByRole("button", { name: "Radera kontots uppgifter" });
+
+  it("says it cannot be undone, and Avbryt erases nothing", () => {
+    eraseAccount.mockClear();
+    renderPage(plain);
+    fireEvent.click(button());
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveTextContent("Det går inte att ångra.");
+    expect(dialog).toHaveTextContent("raderad-7");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Avbryt" }));
+    expect(eraseAccount).not.toHaveBeenCalled();
+  });
+
+  it("erases the account once the admin confirms", async () => {
+    eraseAccount.mockClear();
+    eraseAccount.mockResolvedValue(undefined);
+    renderPage(plain);
+    fireEvent.click(button());
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Radera",
+      }),
+    );
+    expect(eraseAccount).toHaveBeenCalledWith(7);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("is on for an account with only Läsrätt", () => {
+    renderPage({
+      ...plain,
+      _privileges: [
+        { level: "viewer", genebank: 1 },
+        { level: "viewer", genebank: 2 },
+      ],
+    });
+    expect(button()).toBeEnabled();
+  });
+
+  it("is off for an account with a role and for the admin's own", () => {
+    renderPage(detail);
+    expect(button()).toBeDisabled();
+    cleanup();
+    renderPage(plain, 7);
+    expect(button()).toBeDisabled();
+  });
+
+  it("shows an erased account as erased, without the button", () => {
+    renderPage({
+      ...plain,
+      username: null,
+      fullname: null,
+      email: "raderad-7",
+      is_active: false,
+    });
+    expect(screen.getByText(/Kontots uppgifter är raderade/)).toHaveTextContent(
+      "Raden finns kvar som raderad-7",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Radera kontots uppgifter" }),
+    ).toBeNull();
+    // Nothing left to edit: no profile, roles, password or sessions.
+    expect(
+      screen.getByRole("heading", { name: "Status och åtkomst" }),
+    ).toBeInTheDocument();
+    for (const name of ["Profil", "Roller", "Lösenord", "Sessioner"]) {
+      expect(screen.queryByRole("heading", { name })).toBeNull();
+    }
+    expect(screen.queryByRole("button", { name: "Spara" })).toBeNull();
+  });
+});
+
+describe("UserEditClient profile form", () => {
+  const props = {
+    actorId: 1,
+    genebanks: [],
+    herds: [],
+    recentAudit: [],
+    concurrentEditWarning: null,
+  };
+
+  it("sends only what the admin changed, and keeps another admin's address after a refresh", async () => {
+    updateUserProfile.mockClear();
+    updateUserProfile.mockResolvedValue(undefined);
+    const { rerender } = render(<UserEditClient detail={detail} {...props} />);
+    expect(screen.getByRole("button", { name: "Spara" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Fullständigt namn"), {
+      target: { value: "Nytt Namn" },
+    });
+    // Another admin changed the address; the page re-rendered with it.
+    rerender(
+      <UserEditClient
+        detail={{ ...detail, email: "ny@example.org" }}
+        {...props}
+      />,
+    );
+    expect(screen.getByLabelText("E-post")).toHaveValue("ny@example.org");
+    expect(screen.getByLabelText("Fullständigt namn")).toHaveValue("Nytt Namn");
+    fireEvent.click(screen.getByRole("button", { name: "Spara" }));
+    expect(updateUserProfile).toHaveBeenCalledWith(7, {
+      fullname: "Nytt Namn",
+    });
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Ändringen är sparad.",
+    );
+    // A new edit clears the confirmation.
+    fireEvent.change(screen.getByLabelText("Fullständigt namn"), {
+      target: { value: "Ett namn till" },
+    });
+    expect(screen.queryByText("Ändringen är sparad.")).toBeNull();
   });
 });

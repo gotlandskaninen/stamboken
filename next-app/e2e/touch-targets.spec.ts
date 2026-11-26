@@ -18,6 +18,7 @@ const PAGES = [
   "/stamboken/profil",
   "/stamboken/individ/G1274-2112",
   "/stamboken/provparning",
+  "/stamboken/fargatlas",
   "/stamboken/alla-kaniner",
 ];
 

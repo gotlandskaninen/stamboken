@@ -3,6 +3,7 @@ import { FormControl, MenuItem, Select } from "@mui/material";
 import { fetchApi } from "@/lib/api";
 import { requireAdmin } from "../_lib/requireAdmin";
 import { roleSummaryLabel } from "../_lib/roleSummaryLabel";
+import { userListQuery } from "../_lib/userListQuery";
 import type { AdminUserListItem } from "../_lib/types";
 import { UsersGridClient, type UserRow } from "./UsersGridClient";
 import ds from "@/styles/ds-admin.module.css";
@@ -17,19 +18,6 @@ type UserListResponse = {
   page: number;
   per_page: number;
 };
-
-// Query params (+ `active`).
-const FILTER_KEYS = [
-  "search",
-  "role",
-  "validated",
-  "active",
-  "v2_prod_access",
-  "sort",
-  "dir",
-  "page",
-  "per_page",
-] as const;
 
 const PER_PAGE_OPTIONS = [25, 50, 100, 200];
 const DEFAULT_PER_PAGE = 50;
@@ -49,11 +37,9 @@ export default async function AdminUsersPage({
 }) {
   await requireAdmin(); // Page-level gate, layout renders concurrently
   const sp = await searchParams;
-  const qs = new URLSearchParams();
-  for (const key of FILTER_KEYS) {
-    const v = sp[key];
-    if (v) qs.set(key, v);
-  }
+  // Without the per_page set below: the default stays out of the account links.
+  const listQuery = userListQuery(sp);
+  const qs = new URLSearchParams(listQuery);
   // Sidstorlek: API-default är 25 (tak 200); besättningslistan visar 50, så
   // samma här. Ogiltiga/okända värden faller tillbaka till 50.
   const requestedPerPage = Number(sp.per_page);
@@ -198,7 +184,7 @@ export default async function AdminUsersPage({
         <UsersGridClient
           rows={rows}
           total={body.total}
-          query={qs.toString()}
+          query={listQuery}
           sortField={sortField}
           sortDir={sortDir}
         />

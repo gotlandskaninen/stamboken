@@ -7,8 +7,9 @@ import {
 } from "@reduxjs/toolkit/query/react";
 import { User } from "@/types/auth";
 import { sessionExpired } from "@/redux/slices/authSlice";
-import { readModeCookieClient } from "@/lib/mode";
+import { readModeCookieClient, type Mode } from "@/lib/mode";
 import type { TestbreedRequest, TestbreedResponse } from "@/lib/provparning";
+import { rememberAccessDenial } from "./geneticsAccess";
 
 // NEXT_PUBLIC_* is inlined into the client bundle at build time, so this is a
 // client-visible presence signal — the browser-side equivalent of lib/api.ts's
@@ -104,6 +105,8 @@ export interface Individual extends LimitedIndividual {
   genebank_id: number;
   certificate: string | null;
   digital_certificate?: string | null;
+  /** When the queue's handler found the paper certificate's photo and the registry in agreement (v2 GET only). */
+  paper_certificate_checked?: string | null;
   birth_date: string | null;
   mother: LimitedIndividual | null;
   father: LimitedIndividual | null;
@@ -229,6 +232,7 @@ export interface PopulationMetrics {
   mean_equiv_gen: number;
   mean_full_gen: number;
   mean_max_gen: number;
+  reference_start?: string | null; // ISO date life signs count from; null: no snapshot; absent: an older API
 }
 
 export interface FounderStatistics {
@@ -257,8 +261,16 @@ export interface BreedingSuggestion {
   reasons: string[];
 }
 
+// The cached genetics queries take the dataset's mode with the genebank: they
+// are kept an hour, and demo and production rows must never share an entry.
+export interface GeneticsArg {
+  genebankId: number;
+  mode: Mode;
+}
+
 export interface BreedingSuggestionsParams {
   genebankId: number;
+  mode: Mode;
   maxPairs?: number;
   maxInbreeding?: number;
   maxPerMale?: number;
@@ -281,7 +293,9 @@ export interface TrendDataPoint {
   active_count: number;
   mean_inbreeding: number;
   mean_kinship: number;
-  effective_population_size: number | null; // computed on-the-fly via rolling regression
+  effective_population_size: number | null; // realised Ne over the year's members, like the card
+  ne_se: number | null; // its standard error
+  ne_n: number | null; // rabbits behind it (more than one equivalent generation)
   founder_equivalents: number;
   data_quality: "high" | "medium" | "low";
 }
@@ -301,24 +315,33 @@ const demoBaseQuery = fetchBaseQuery({
   timeout: 10000,
 });
 
+// A query whose cache key carries the mode (the genetics queries) names its
+// dataset, and the request follows it: key and backend always agree, whatever
+// another browser tab did to the cookie since the page rendered.
+type DatasetArgs = FetchArgs & { dataset?: Mode };
+
 // Route each request to /api-test ONLY when mode=demo AND a client test URL is
 // configured; base dev (no test URL) and prod both stay on /api. Keys off the
 // same sb_mode signal as the server-side fetchApi() so both paths agree
-// (Pitfall 1). This is the official RTK dynamic-baseQuery pattern.
+// (Pitfall 1), unless the query names its dataset. This is the official RTK
+// dynamic-baseQuery pattern.
 export const modeAwareBaseQuery: BaseQueryFn<
-  string | FetchArgs,
+  string | DatasetArgs,
   unknown,
   FetchBaseQueryError
 > = async (args, api, extraOptions) => {
-  const bq =
-    readModeCookieClient() === "demo" && API_TEST_URL
-      ? demoBaseQuery
-      : prodBaseQuery;
+  let mode = readModeCookieClient();
+  if (typeof args === "object" && args.dataset !== undefined) {
+    const { dataset, ...fetchArgs } = args;
+    mode = dataset;
+    args = fetchArgs;
+  }
+  const bq = mode === "demo" && API_TEST_URL ? demoBaseQuery : prodBaseQuery;
   return bq(args, api, extraOptions);
 };
 
 const baseQueryWithErrorHandling: BaseQueryFn<
-  string | FetchArgs,
+  string | DatasetArgs,
   unknown,
   FetchBaseQueryError
 > = async (args, api, extraOptions) => {
@@ -438,47 +461,64 @@ export const apiSlice = createApi({
     // Genetics endpoints [Next.js]
     // population-metrics and founder-statistics return raw dicts (no wrapper)
     // genetic-priorities and breeding-suggestions wrap with {status, data}
-    fetchPopulationMetrics: builder.query<PopulationMetrics, number>({
-      query: (genebankId) => ({
+    // The dashboard's queries keep their data for an hour after the tab
+    // unmounts; the tabs refetch on mount, so a revisit shows it at once.
+    fetchPopulationMetrics: builder.query<PopulationMetrics, GeneticsArg>({
+      query: ({ genebankId, mode }) => ({
         url: `/${genebankId}/population-metrics/`,
+        dataset: mode,
         timeout: 120000,
       }),
+      keepUnusedDataFor: 3600,
+      onQueryStarted: rememberAccessDenial,
       providesTags: ["Genetics"],
     }),
-    fetchFounderStatistics: builder.query<FounderStatistics, number>({
-      query: (genebankId) => ({
+    fetchFounderStatistics: builder.query<FounderStatistics, GeneticsArg>({
+      query: ({ genebankId, mode }) => ({
         url: `/${genebankId}/founder-statistics/`,
+        dataset: mode,
         timeout: 120000,
       }),
+      keepUnusedDataFor: 3600,
+      onQueryStarted: rememberAccessDenial,
       providesTags: ["Genetics"],
     }),
-    fetchGeneticPriorities: builder.query<GeneticPriority[], number>({
-      query: (genebankId) => ({
+    fetchGeneticPriorities: builder.query<GeneticPriority[], GeneticsArg>({
+      query: ({ genebankId, mode }) => ({
         url: `/${genebankId}/genetic-priorities/`,
+        dataset: mode,
         timeout: 120000,
       }),
+      keepUnusedDataFor: 3600,
+      onQueryStarted: rememberAccessDenial,
       transformResponse: (response: {
         status: string;
         data: GeneticPriority[];
       }) => response.data,
       providesTags: ["Genetics"],
     }),
-    fetchFoundersAtRisk: builder.query<FounderAtRisk[], number>({
-      query: (genebankId) => ({
+    fetchFoundersAtRisk: builder.query<FounderAtRisk[], GeneticsArg>({
+      query: ({ genebankId, mode }) => ({
         url: `/${genebankId}/founders-at-risk/`,
+        dataset: mode,
         timeout: 120000,
       }),
+      keepUnusedDataFor: 3600,
+      onQueryStarted: rememberAccessDenial,
       transformResponse: (response: {
         status: string;
         data: FounderAtRisk[];
       }) => response.data,
       providesTags: ["Genetics"],
     }),
-    fetchGeneticsTrends: builder.query<TrendDataPoint[], number>({
-      query: (genebankId) => ({
+    fetchGeneticsTrends: builder.query<TrendDataPoint[], GeneticsArg>({
+      query: ({ genebankId, mode }) => ({
         url: `/${genebankId}/genetics-trends/`,
+        dataset: mode,
         timeout: 10000,
       }),
+      keepUnusedDataFor: 3600,
+      onQueryStarted: rememberAccessDenial,
       transformResponse: (response: {
         status: string;
         data: TrendDataPoint[];
@@ -491,13 +531,16 @@ export const apiSlice = createApi({
     >({
       query: ({
         genebankId,
+        mode,
         maxPairs = 20,
         maxInbreeding = 0.0625,
         maxPerMale = 3,
       }) => ({
         url: `/${genebankId}/breeding-suggestions/?max_pairs=${maxPairs}&max_inbreeding=${maxInbreeding}&max_per_male=${maxPerMale}`,
         timeout: 120000,
+        dataset: mode,
       }),
+      onQueryStarted: rememberAccessDenial,
       transformResponse: (response: {
         status: string;
         data: BreedingSuggestion[];

@@ -16,10 +16,8 @@ import {
 } from "@/lib/provparning";
 import { TestbreedTree } from "./TestbreedTree";
 import styles from "./provparning.module.css";
-
 // Avelsråd — the same document legacy's test mating links to.
-export const AVELSRAD_URL =
-  "https://drive.google.com/file/d/1GAC5Gjbq9KOQwxcDuAfGxHotfnpoaq-y/view?usp=share_link";
+import { AVELSRAD_URL } from "@/components/shell/nav-items";
 
 const VERDICT_STYLE: Record<Verdict, { cls: string; icon: SbIconName }> = {
   good: { cls: styles.verdictGood, icon: "check" },

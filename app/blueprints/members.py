@@ -11,7 +11,7 @@ import csv
 import io
 import re
 import secrets
-from datetime import date, datetime, timezone
+from datetime import date
 
 import utils.settings as settings
 from flask import Blueprint, Response, jsonify, request, session
@@ -22,7 +22,6 @@ from utils.data_access import session_holds
 from utils.database import (
     BILLING_FIELDS,
     DB_PROXY,
-    AuditLog,
     Genebank,
     Herd,
     HerdAccessGrant,
@@ -49,6 +48,7 @@ from utils.matrikel import (
     is_anonymized,
     membership_recipient,
     parse_postal_fields,
+    query_matrikel_audit,
     set_member_email,
     set_membership_status,
     write_matrikel_audit,
@@ -64,8 +64,10 @@ from utils.members import (
 from utils.membership_lifecycle import Status, TransitionRefused
 
 from blueprints.common import (
+    DEMO_EXPORT_REFUSED,
     EMAIL_RE,
     json_login_required,
+    log_export,
     matrikel_admin_required,
     matrikel_read_required,
     membership_organization_fields,
@@ -225,6 +227,48 @@ def list_members():
             "page": page,
             "per_page": per_page,
         }
+    )
+
+
+def _id_arg(name: str):
+    """An optional id or number, 1 to int4 max. Unlike _parse_int_arg nothing is clamped: 0 must not mean 1."""
+    raw = request.args.get(name)
+    if not raw:
+        return None
+    if not (raw.isascii() and raw.isdigit() and 1 <= int(raw) <= 2_147_483_647):
+        raise ValueError(f"{name} måste vara ett positivt heltal")
+    return int(raw)
+
+
+@members_bp.route("/v2/members/audit", methods=["GET"])
+@json_login_required
+@matrikel_read_required
+def get_matrikel_audit():
+    """The matrikel's change log (#244). Filters: membership_id (the member page's link), member_number (the number
+    the rows show), action, actor (username or e-mail, any case),
+    from and to (YYYY-MM-DD, both days included), page, per_page (at most 200)."""
+    try:
+        membership_id = _id_arg("membership_id")
+        member_number = _id_arg("member_number")
+        page = _parse_int_arg("page", 1, maximum=2_147_483_647)
+        per_page = _parse_int_arg("per_page", 50, maximum=200)
+        dates = {k: date.fromisoformat(request.args[k]) if request.args.get(k) else None for k in ("from", "to")}
+    except ValueError:
+        return problem(
+            400, "Ogiltig parameter", "Medlemsnummer, id och sidor är positiva heltal. Datum skrivs ÅÅÅÅ-MM-DD."
+        )
+    return jsonify(
+        query_matrikel_audit(
+            full_access=current_user.is_admin or current_user.is_matrikel_admin,
+            membership_id=membership_id,
+            member_number=member_number,
+            action=request.args.get("action") or None,
+            actor=request.args.get("actor") or None,
+            date_from=dates["from"],
+            date_to=dates["to"],
+            page=page,
+            per_page=per_page,
+        )
     )
 
 
@@ -827,7 +871,7 @@ def export_members():
             )
 
     filename = f"matrikel_export_{date.today().isoformat()}.csv"
-    log_member_export("matr")
+    log_export(Membership, "matr")
     return Response(
         buf.getvalue(),
         mimetype="text/csv; charset=utf-8",
@@ -883,21 +927,6 @@ def export_koharen():
         headers={"Content-Disposition": 'attachment; filename="koharen-matrikel.csv"'},
     )
 
-
-def log_member_export(action, **details):
-    """One audit_log row per download of the MATR export or the address list: who, when and which, never a value."""
-    AuditLog.create(
-        table_name=Membership._meta.table_name,
-        record_id=f"export-{action}-{datetime.now(timezone.utc).isoformat()}",
-        operation="READ",
-        new_data={"action": action, **details},
-        changed_by=current_user.username or current_user.email,
-    )
-
-
-# The demo is a nightly copy of production: an export there would carry real members
-# while its audit row is gone at the next sync.
-DEMO_EXPORT_REFUSED = "Exporten går bara att göra i den riktiga Stamboken, där varje uttag loggas."
 
 ADDRESS_LIST_HEADER = ["Nr", "Namn Efternamn", "Adress", "Postadress", "Betala nu"]
 
@@ -969,7 +998,7 @@ def export_address_list():
     writer = csv.writer(buf, quoting=csv.QUOTE_ALL)
     writer.writerow(ADDRESS_LIST_HEADER)
     writer.writerows(row for _, row in sorted(rows, key=lambda r: r[0]))
-    log_member_export("address-list", rows=len(rows), fee_reminder=fee_reminder)
+    log_export(Membership, "address-list", rows=len(rows), fee_reminder=fee_reminder)
     return Response(
         buf.getvalue(),
         mimetype="text/csv; charset=utf-8",

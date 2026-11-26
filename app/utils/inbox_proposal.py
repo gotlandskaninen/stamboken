@@ -180,6 +180,19 @@ def _littermate_doubt(rabbit, name):
     return f"{rabbit.number} har ett kullsyskon av samma kön, och namnet på intyget skiljer dem inte åt"
 
 
+def _genebank_of_letter(raw):
+    """
+    The genebank whose herds begin with the letter read before the rabbit's herd number, or None. Only for an item
+    without a genebank (a mail whose sender's genebank is not known from the member register), and only to search:
+    the item's own genebank, which decides who may take it, is never set from what the model read.
+    """
+    letter = _text(raw.get("genbanksnr"))[:1].upper()
+    if not letter.isalpha():
+        return None
+    found = {g for (g,) in Herd.select(Herd.genebank).where(Herd.herd.startswith(letter)).distinct().tuples()}
+    return found.pop() if len(found) == 1 else None
+
+
 class _Registry:
     """The genebank's registry, as the checks ask it."""
 
@@ -435,7 +448,8 @@ def _certificate(raw, struck, rabbit, fields, checks):
         fields["paper_certificate"] = _field(READ, number, read=text)
         checks.append(_check(True, "Intygsnumret är ledigt." if holder is None else "Intygsnumret är kaninens."))
     else:
-        fields["paper_certificate"] = _field(DEVIATES, read=text, registry=holder.number)
+        # No `registry`: the other rabbit's number is not the registry's value of this field; the check names it.
+        fields["paper_certificate"] = _field(DEVIATES, read=text)
         checks.append(_check(False, f"Intygsnumret {number} finns redan på {holder.number}."))
 
 
@@ -584,7 +598,7 @@ def build_proposal(raw, genebank_id, herd_id=None, registered=None):
     raw = raw if isinstance(raw, dict) else {}
     struck = raw.get("overstruket")
     struck = {key for key in struck if isinstance(key, str)} if isinstance(struck, list) else set()
-    registry = _Registry(genebank_id)
+    registry = _Registry(genebank_id if genebank_id is not None else _genebank_of_letter(raw))
     if registered is not None:
         return _registered(registry, raw, struck, registered)
     fields, checks = {}, []

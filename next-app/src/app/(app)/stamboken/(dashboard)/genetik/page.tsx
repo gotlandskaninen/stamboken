@@ -1,6 +1,6 @@
 "use client";
 
-import React, { Suspense, useState } from "react";
+import React, { Suspense, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 
 import {
@@ -20,7 +20,8 @@ import OverviewTab from "@/components/genetics/OverviewTab";
 import PrioritiesTab from "@/components/genetics/PrioritiesTab";
 import BreedingSuggestionsTab from "@/components/genetics/BreedingSuggestionsTab";
 
-type TabValue = "oversikt" | "prioriteringar" | "parningsforslag";
+const TABS = ["oversikt", "prioriteringar", "parningsforslag"] as const;
+type TabValue = (typeof TABS)[number];
 
 const genebankNames: Record<number, string> = {
   1: "Gotlandskanin",
@@ -53,48 +54,55 @@ function GenetikPage() {
   const { user } = useAuth();
   const searchParams = useSearchParams();
 
-  const initialTab = (searchParams.get("tab") as TabValue) || "oversikt";
-  const [activeTab, setActiveTab] = useState<TabValue>(initialTab);
-
-  const genebankParam = searchParams.get("genebank");
-  const [genebankId, setGenebankId] = useState<number | "">(
-    genebankParam ? Number(genebankParam) : user?.is_manager?.[0] || "",
-  );
-
-  // Sync genebankId when navigating via sidebar links or when user data loads
-  React.useEffect(() => {
-    if (genebankParam) {
-      setGenebankId(Number(genebankParam));
-    } else if (genebankId === "" && user?.is_manager?.[0]) {
-      setGenebankId(user.is_manager[0]);
-    }
-  }, [genebankParam, user?.is_manager, genebankId]);
-
   // Genebanks the user can access
   const availableGenebanks: number[] = user?.is_admin
     ? [1, 2]
     : user?.is_manager || [];
 
-  const handleTabChange = (_: React.SyntheticEvent, newValue: TabValue) => {
-    setActiveTab(newValue);
+  // The URL holds the tab and the genebank: Back and Forward switch them, and a
+  // link opens the same view. Next feeds pushState and popstate into useSearchParams.
+  const tabParam = searchParams.get("tab");
+  const activeTab: TabValue = TABS.find((t) => t === tabParam) ?? "oversikt";
+  const genebankParam = searchParams.get("genebank");
+  // A genebank in the URL that the user cannot open falls back to the first one they can.
+  const genebankId: number | "" = genebankParam
+    ? availableGenebanks.includes(Number(genebankParam))
+      ? Number(genebankParam)
+      : (availableGenebanks[0] ?? "")
+    : user?.is_manager?.[0] || "";
+
+  // The URL then says which genebank is shown, also when it was chosen by default (the menu's
+  // link has none), so tab changes, Back and a copied link keep it. Replaced: Back skips it.
+  useEffect(() => {
+    if (!user || (genebankParam ?? "") === String(genebankId)) return;
     const url = new URL(window.location.href);
-    url.searchParams.set("tab", newValue);
+    if (genebankId) url.searchParams.set("genebank", String(genebankId));
+    else url.searchParams.delete("genebank");
+    window.history.replaceState(null, "", url.toString());
+  }, [user, genebankParam, genebankId]);
+
+  const pushParam = (key: string, value: string) => {
+    const url = new URL(window.location.href);
+    url.searchParams.set(key, value);
     window.history.pushState(null, "", url.toString());
   };
+
+  const handleTabChange = (_: React.SyntheticEvent, newValue: TabValue) =>
+    pushParam("tab", newValue);
 
   return (
     <React.Fragment>
       <Masthead
         eyebrow="Stamboken"
         title="Genetik"
-        meta="Populationsgenetisk analys och avelsrekommendationer"
+        meta="Genbankens genetiska läge och vilka kaniner som är viktigast att avla på"
         actions={
           <FormControl size="small" sx={{ minWidth: 200 }}>
             <InputLabel>Genbank</InputLabel>
             <Select
               value={genebankId}
               label="Genbank"
-              onChange={(e) => setGenebankId(e.target.value as number)}
+              onChange={(e) => pushParam("genebank", String(e.target.value))}
             >
               {availableGenebanks.map((id) => (
                 <MenuItem key={id} value={id}>
@@ -107,21 +115,28 @@ function GenetikPage() {
       />
 
       {!genebankId ? (
-        <Alert severity="info">Välj en genbank för att visa genetikdata.</Alert>
+        // Until the user has loaded, the page cannot tell which genebanks are theirs.
+        user && (
+          <Alert severity="info">
+            Välj en genbank för att visa genetikdata.
+          </Alert>
+        )
       ) : (
         <>
           <Tabs value={activeTab} onChange={handleTabChange}>
             <Tab label="Översikt" value="oversikt" />
-            <Tab label="Prioriteringar" value="prioriteringar" />
+            <Tab label="Avelsprioritet" value="prioriteringar" />
             <Tab label="Parningsförslag" value="parningsforslag" />
           </Tabs>
 
           <TabPanel value={activeTab} index="oversikt">
-            <OverviewTab genebankId={genebankId} />
+            {/* keyed so no number from the previous genebank survives a switch */}
+            <OverviewTab key={genebankId} genebankId={genebankId} />
           </TabPanel>
 
           <TabPanel value={activeTab} index="prioriteringar">
-            <PrioritiesTab genebankId={genebankId} />
+            {/* keyed: the previous genebank's rabbits, filters and export message never carry over */}
+            <PrioritiesTab key={genebankId} genebankId={genebankId} />
           </TabPanel>
 
           <TabPanel value={activeTab} index="parningsforslag">

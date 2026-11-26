@@ -15,6 +15,7 @@ import {
   countByState,
   filterRows,
   fmtDate,
+  phoneNumbers,
   todayStockholm,
   type RowState,
   type StatusFilter,
@@ -45,12 +46,18 @@ const CONDITIONS = [
 const ON_TIME = { "": null, ja: true, nej: false } as const;
 
 // "Skriv ut tom blankett": the blank form is generic, so the page has one link.
-export function BlankFormLink() {
+export function BlankFormLink({ available }: { available: boolean }) {
   const mode = useMode();
   const apiBase =
     mode === "demo" && process.env.NEXT_PUBLIC_API_TEST_URL
       ? process.env.NEXT_PUBLIC_API_TEST_URL
       : "/api";
+  if (!available)
+    return (
+      <p className={`${inkorg.muted} ${styles.blankMissing}`}>
+        Den tomma blanketten finns inte på servern än.
+      </p>
+    );
   return (
     <a
       href={`${apiBase}/v2/arsrapport/blankett.pdf`}
@@ -276,14 +283,20 @@ function Row({
         >
           {row.herd}
         </Link>
-        {row.herd_name && <div className={inkorg.muted}>{row.herd_name}</div>}
-        {row.telefon && (
-          <div>
-            <a href={`tel:${row.telefon.replace(/[^\d+]/g, "")}`}>
-              {row.telefon}
-            </a>
-          </div>
+        {row.herd_name && row.herd_name !== "-" && (
+          <div className={inkorg.muted}>{row.herd_name}</div>
         )}
+        {row.telefon &&
+          phoneNumbers(row.telefon).map((phone, i) => (
+            <div key={i}>
+              <a
+                className={styles.phone}
+                href={`tel:${phone.replace(/[^\d+]/g, "")}`}
+              >
+                {phone}
+              </a>
+            </div>
+          ))}
       </td>
       <td data-label="Läge">
         <span className={`sb-badge ${BADGE[row.state] ?? ""}`}>
@@ -304,7 +317,7 @@ function Row({
       <td data-label="Villkor för stödet">
         {reported
           ? CONDITIONS.map(([key, label]) => (
-              <span key={key} style={{ marginRight: 8, whiteSpace: "nowrap" }}>
+              <span key={key} className={styles.condition}>
                 {label}{" "}
                 {row.villkor[key] ? (
                   <span className={styles.yes}>✓</span>
@@ -316,59 +329,55 @@ function Row({
           : "–"}
       </td>
       <td data-label="Flaggor">
-        {flagNoEmail && (
-          <span className="sb-badge" style={{ marginRight: 8 }}>
-            Ingen e-post
-          </span>
+        {flagged ? (
+          <div className={styles.flags}>
+            {flagNoEmail && <span className="sb-badge">Ingen e-post</span>}
+            {row.statistik.preliminart && (
+              <span className="sb-badge">Preliminärt antal</span>
+            )}
+            {f.ej_angivna > 0 && (
+              <span
+                className={`sb-badge ${f.ej_angivna_paverkar ? inkorg.badgeWarn : ""}`}
+              >
+                {f.ej_angivna} ej angivna
+                {f.ej_angivna_paverkar && " (påverkar stödet)"}
+              </span>
+            )}
+            {f.forsaljning_vantar > 0 && (
+              <span className="sb-badge">
+                {f.forsaljning_vantar === 1
+                  ? "Försäljning väntar"
+                  : `${f.forsaljning_vantar} försäljningar väntar`}
+              </span>
+            )}
+            {f.forsaljning_avvisad > 0 && (
+              <span
+                className={`sb-badge ${
+                  f.forsaljning_avvisad_paverkar ? inkorg.badgeWarn : ""
+                }`}
+              >
+                Försäljning avvisad, medlemmen väljer igen
+                {f.forsaljning_avvisad_paverkar && " (påverkar stödet)"}
+              </span>
+            )}
+            {f.kopt_efter_inskick > 0 && (
+              <span className="sb-badge">Köpt efter inskick</span>
+            )}
+            {f.kop_anmalt > 0 && (
+              // purchase notices with no pending sale: registered from the queue (4a Task 5)
+              <Link
+                href={`/stamboken/inkorg?herd=${row.herd}&kind=kontroll`}
+                className="sb-badge"
+              >
+                {f.kop_anmalt === 1
+                  ? "Köp anmält"
+                  : `${f.kop_anmalt} köp anmälda`}
+              </Link>
+            )}
+          </div>
+        ) : (
+          "–"
         )}
-        {row.statistik.preliminart && (
-          <span className="sb-badge" style={{ marginRight: 8 }}>
-            Preliminärt antal
-          </span>
-        )}
-        {f.ej_angivna > 0 && (
-          <span
-            className={`sb-badge ${f.ej_angivna_paverkar ? inkorg.badgeWarn : ""}`}
-            style={{ marginRight: 8 }}
-          >
-            {f.ej_angivna} ej angivna
-            {f.ej_angivna_paverkar && " (påverkar stödet)"}
-          </span>
-        )}
-        {f.forsaljning_vantar > 0 && (
-          <span className="sb-badge" style={{ marginRight: 8 }}>
-            {f.forsaljning_vantar === 1
-              ? "Försäljning väntar"
-              : `${f.forsaljning_vantar} försäljningar väntar`}
-          </span>
-        )}
-        {f.forsaljning_avvisad > 0 && (
-          <span
-            className={`sb-badge ${
-              f.forsaljning_avvisad_paverkar ? inkorg.badgeWarn : ""
-            }`}
-            style={{ marginRight: 8 }}
-          >
-            Försäljning avvisad, medlemmen väljer igen
-            {f.forsaljning_avvisad_paverkar && " (påverkar stödet)"}
-          </span>
-        )}
-        {f.kopt_efter_inskick > 0 && (
-          <span className="sb-badge" style={{ marginRight: 8 }}>
-            Köpt efter inskick
-          </span>
-        )}
-        {f.kop_anmalt > 0 && (
-          // purchase notices with no pending sale: registered from the queue (4a Task 5)
-          <Link
-            href={`/stamboken/inkorg?herd=${row.herd}&kind=kontroll`}
-            className="sb-badge"
-            style={{ marginRight: 8 }}
-          >
-            {f.kop_anmalt === 1 ? "Köp anmält" : `${f.kop_anmalt} köp anmälda`}
-          </Link>
-        )}
-        {!flagged && "–"}
       </td>
       <td data-label="Mottagen">
         {row.received_at ? fmtDate(row.received_at) : "–"}

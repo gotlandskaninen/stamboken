@@ -27,12 +27,14 @@ from utils.matrikel import (
     create_membership,
     grant_is_active,
     is_anonymized,
+    limit_open_grants,
     link_member_user,
     link_membership_herd,
     membership_herd_candidates,
     parse_billing_fields,
     parse_postal_fields,
     raise_counter_to,
+    reactivate_person,
     renew_grant,
     resolve_own_membership,
     retire_membership,
@@ -577,6 +579,8 @@ def patch_person(person_id: int):
 
             if not after:
                 return jsonify(_person_to_dict(person))
+            if after.get("role") == "skotare":
+                limit_open_grants(person)  # a keeper's access runs a year, like create_grant's default
 
             # UPDATE only what this body changed: a full-row save() would write
             # member.user_id back from the re-read copy too, and the audit rows
@@ -611,6 +615,26 @@ def delete_person(person_id: int):
         soft_delete_person(person, current_user)
     except ValueError as err:
         return problem(409, "Kan inte ta bort", str(err))
+    return jsonify(_person_to_dict(person))
+
+
+@memberships_bp.route("/v2/persons/<int:person_id>/reactivate", methods=["POST"])
+@json_login_required
+@matrikel_admin_required
+def reactivate_person_endpoint(person_id: int):
+    person = Member.get_or_none(Member.id == person_id)
+    if person is None:
+        return problem(404, "Hittades inte", f"Personen {person_id} finns inte")
+    try:
+        person = reactivate_person(person, current_user)
+    except LinkError as err:
+        return problem(err.status, err.title, err.detail, **err.extensions)
+    except ValueError as err:
+        return problem(409, "Kan inte återaktivera", str(err))
+    except IntegrityError:
+        return problem(409, "Huvudmedlem finns redan", "Medlemskapet har redan en aktiv huvudmedlem")
+    except AddressTaken:
+        return _address_taken()
     return jsonify(_person_to_dict(person))
 
 

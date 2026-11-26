@@ -1160,6 +1160,57 @@ export interface Round {
   genebanks: RoundGenebank[];
 }
 
+// Fråga 7: the server's defaults for a new round (arsrapport.default_dates).
+export const defaultRoundDates = (year: number) => ({
+  start_date: `${year}-12-31`,
+  deadline: `${year + 1}-01-31`,
+  end_date: `${year + 1}-03-30`,
+});
+
+// The year being reported now, whether or not its round exists: last year's until that round (or its default)
+// closes, then this year's.
+export function regularRoundYear(rounds: Round[], today: string): number {
+  const year = Number(today.slice(0, 4));
+  const last = rounds.find((r) => r.year === year - 1);
+  const lastEnd = last?.end_date ?? defaultRoundDates(year - 1).end_date;
+  return today <= lastEnd ? year - 1 : year;
+}
+
+// The round managers work on: the oldest one open today (a round prepared for later does not count), else the
+// regular year's.
+export function currentRoundYear(rounds: Round[], today: string): number {
+  const open = rounds
+    .filter(
+      (r) =>
+        r.start_date &&
+        r.end_date &&
+        r.start_date <= today &&
+        today <= r.end_date,
+    )
+    .map((r) => r.year);
+  return open.length > 0 ? Math.min(...open) : regularRoundYear(rounds, today);
+}
+
+// A phone field can hold two numbers, "08 - 510 122 07 0709 - 55 72 08": split before each piece that starts like
+// a number of its own ("0NN - ", "+NN - "). From the right, a piece with fewer than the seven digits of a whole
+// number joins the one before it ("070-123 04-56"), and a short first piece joins the next ("Mobil 070-…").
+const digits = (s: string) => s.replace(/\D/g, "").length;
+export function phoneNumbers(text: string): string[] {
+  const pieces = text
+    .trim()
+    .split(/\s+(?=(?:\+|0)\d*\s*-\s*\d)/)
+    .filter(Boolean);
+  const numbers: string[] = [];
+  for (const piece of pieces.reverse()) {
+    if (numbers.length > 0 && digits(numbers[0]) < 7)
+      numbers[0] = `${piece} ${numbers[0]}`;
+    else numbers.unshift(piece);
+  }
+  if (numbers.length > 1 && digits(numbers[0]) < 7)
+    numbers.splice(0, 2, `${numbers[0]} ${numbers[1]}`);
+  return numbers;
+}
+
 export interface StatusView {
   round: Round;
   genebank_id: number;

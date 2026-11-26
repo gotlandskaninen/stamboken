@@ -1,0 +1,9 @@
+/* Next.js dev tools button: not part of the app. */
+nextjs-portal {
+  display: none !important;
+}
+
+/* Hidden while clicking (hide-tyck-till.ts), shown in the picture. */
+button[aria-label="Tyck till om sidan"] {
+  visibility: visible !important;
+}

@@ -48,7 +48,7 @@ export function GenebankEditClient({
         return;
       }
       setNewManager(null);
-      router.refresh(); // no-op if grantRole already redirected
+      router.refresh(); // grantRole revalidates only the account pages (#249)
     });
 
   const removeManager = (m: UserOption) =>

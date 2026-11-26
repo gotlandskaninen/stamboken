@@ -203,10 +203,11 @@ if [ -n "$MAIL_SEQ" ]; then
 fi
 
 # The copy carries prod's genetics version counter, which can repeat a number
-# api-test already memoized in Redis for the previous demo data: a new epoch
-# retires those memos (audit R043). Same SQL function as `flask genetics
-# rotate-epoch`; a prod database from before the epoch has none, and the
-# migration that adds it on the api-test restart draws a random one.
+# an api-test snapshot is keyed on: a new epoch forces that snapshot to rebuild
+# (audit R043). The memoized results are keyed on the pedigree's content and
+# need no epoch. Same SQL function as `flask genetics rotate-epoch`; a prod
+# database from before the epoch has none, and the migration that adds it on
+# the api-test restart draws a random one.
 HAS_EPOCH=$(docker exec "$CONTAINER" psql -U "$DB_USER" -d "$STAGING_DB" -tAc \
 	"SELECT to_regprocedure('rotate_genetics_epoch()') IS NOT NULL;")
 if [ "$HAS_EPOCH" = "t" ]; then
