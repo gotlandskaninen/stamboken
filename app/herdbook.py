@@ -1032,61 +1032,13 @@ ACCOUNTS_GONE = "Konton och roller hanteras nu i nya Stamboken."
 @login_required
 def manage_user(u_id):
     """
-    Returns user information and a list of all roles for the requested `u_id`.
-    A member changes her own e-mail with PATCH and no id. Creating an account
-    and changing another one are closed (ADR-0020) and answer 410.
-
-    The return value from this function should be:
-        JSON: {
-            status: 'unchanged' | 'updated' | 'error',
-            message?: string,
-            data?: any
-        }
+    Returns user information and a list of all roles for the requested `u_id`
+    (the caller's own without an id). Every write is closed (ADR-0020) and
+    answers 410.
     """
-    if request.method != "GET" and (u_id or request.method == "POST"):
+    if request.method != "GET":
         return _gone(ACCOUNTS_GONE)
-
-    # Handle file upload for profile pictures
-    profile_picture_url = None
-    if "profile_picture" in request.files:
-        file = request.files["profile_picture"]
-        if file and file.filename and allowed_file(file.filename):
-            # Create unique filename
-            filename = secure_filename(file.filename)
-            unique_filename = f"{uuid.uuid4().hex}_{filename}"
-            file_path = os.path.join(APP.config["UPLOAD_FOLDER"], unique_filename)
-
-            try:
-                file.save(file_path)
-                profile_picture_url = unique_filename  # Only filename, not full URL
-                APP.logger.info("Profile picture uploaded")
-            except Exception as e:
-                APP.logger.error("Error uploading file: %s", type(e).__name__)  # e carries the path
-                return jsonify({"status": "error", "message": "Failed to upload image"})
-
-    # Get form data (could be JSON or form data depending on upload)
-    if request.content_type and "multipart/form-data" in request.content_type:
-        form = request.form.to_dict()
-    else:
-        form = request.json if request.method != "GET" else {}
-
-    # Add profile picture URL to form if uploaded
-    if profile_picture_url:
-        form["profile_picture"] = profile_picture_url
-
-    if not u_id:
-        # If not provided, default to current user.
-        u_id = current_user.id
-        if form:
-            form["id"] = u_id
-
-    if request.method == "GET":
-        retval = da.get_user(u_id, session.get("user_id", None))
-    if request.method in ("UPDATE", "PATCH"):
-        retval = da.update_user(form, session.get("user_id", None))
-        if retval.get("status") == "updated":
-            auth_log.info("user updated actor=%s target=%s", current_user.id, form.get("id", u_id))
-    return jsonify(retval)
+    return jsonify(da.get_user(u_id or current_user.id, session.get("user_id", None)))
 
 
 @APP.route("/api/manage/setpassword/", defaults={"u_id": False}, methods=["POST"])
@@ -1590,8 +1542,8 @@ def _link_member_if_any(user, verified_email) -> None:
     Auto-link a Member to this freshly-authenticated User by matching the
     address the identity provider just verified against
     Member.workspace_email (the provisioned login, NOT the contact email).
-    Never User.email: any user can rewrite that through
-    PATCH /api/manage/user/. No verified address, no link.
+    Never User.email: it is no verified address (the old app let any user
+    rewrite it). No verified address, no link.
     Case-insensitive — the unique index is on LOWER(workspace_email) and
     Google may deliver different casing.
 
