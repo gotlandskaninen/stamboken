@@ -74,7 +74,11 @@ class TestMigration58(IsolatedSchemaTest):
         The schema before migration 58, and `accounts` ({herd: (number, name)}) on the herds, written while the
         audit trigger runs as v57 had it. Without `drop_columns` the membership keeps its columns, as on a rerun.
         """
-        _sql("ALTER TABLE herd DROP CONSTRAINT ck_herd_no_bank_account")
+        _sql("DROP TRIGGER herd_bank_guard ON herd")
+        # v57's audit trigger, which copied the account into audit_log
+        contact = ",".join(db.HERD_CONTACT_COLUMNS)
+        _sql("CREATE OR REPLACE TRIGGER audit_trigger AFTER INSERT OR UPDATE OR DELETE ON herd FOR EACH ROW "
+             f"EXECUTE FUNCTION audit_trigger_func('{contact}', '', 'herd_id')")  # fmt: skip
         if drop_columns:
             _sql("ALTER TABLE membership DROP COLUMN bank_account_type, DROP COLUMN bank_account_number, "
                  "DROP COLUMN bank_name")  # fmt: skip
@@ -100,7 +104,7 @@ class TestMigration58(IsolatedSchemaTest):
         with db.DB_PROXY.atomic() as tx:
             self.to_v57({})
             db.migrate_57_to_58()
-            self.assertEqual(db.SchemaHistory.get_by_id(58).comment, db.SUPPORT_ACCOUNT_58)
+            self.assertEqual(db.SchemaHistory.get_by_id(58).comment, f"{db.SUPPORT_ACCOUNT_58}; 0 herds keep theirs")
             self.assertEqual(snapshot(), self.bootstrapped)
             tx.rollback()
 
@@ -136,13 +140,15 @@ class TestMigration58(IsolatedSchemaTest):
             self.assertEqual(self.herd_accounts(), [])
             tx.rollback()
         with db.DB_PROXY.atomic() as tx:
-            self.to_v57({g2: (OTHER, None)}, drop_columns=False)
-            with self.assertRaisesRegex(RuntimeError, rf"1 memberships .*\[{self.a.id}\]"):
-                db.migrate_57_to_58()
+            self.to_v57({g2: (OTHER, None)}, drop_columns=False)  # another account: it stays on the herd
+            db.migrate_57_to_58()
             self.assertEqual(self.account(self.a), ("bankkonto", ACCOUNT, None))
+            self.assertEqual(self.herd_accounts(), [(g2.id,)])
             tx.rollback()
 
-    def test_conflicts_stop_the_migration_without_loss(self):
+    def test_unclear_accounts_stay_on_their_herds(self):
+        """Jonas 2026-11-26: an account without a safe target is neither moved nor stopped on; it stays on its herd
+        until a data correction, and the log names only ids and counts. The other memberships get theirs."""
         g1, g2, m3 = self.herds
         cases = {
             "two accounts": {g1: (ACCOUNT, "Banken"), g2: (OTHER, "Banken")},
@@ -156,33 +162,28 @@ class TestMigration58(IsolatedSchemaTest):
             "giro formats": {g1: ("123-4566", None), g2: ("123456-6", None)},
             "clearing boundary": {g1: ("8327-4471 5512", None), g2: ("83274471-5512", None)},
             "a dash on one": {g1: ("1234566", None), g2: ("123-4566", None)},
-            "no membership": {m3: (ACCOUNT, None), self.orphan: (OTHER, None)},
+            "no membership": {self.orphan: (OTHER, " Banken ")},
         }
         for case, accounts in cases.items():
             with self.subTest(case), db.DB_PROXY.atomic() as tx:
-                self.to_v57(accounts)
+                self.to_v57({**accounts, m3: (ACCOUNT, "Banken")})  # M3's membership has a clear account
                 audit_rows = self.herd_audit_rows()
-                with self.assertRaises(RuntimeError) as stop:
+                with self.assertLogs("herdbook.db", "WARNING") as logged:
                     db.migrate_57_to_58()
-                message = str(stop.exception)
-                if case == "no membership":
-                    self.assertIn("0 memberships", message)
-                    self.assertIn(f"1 herds with an account but no membership (herd_id [{self.orphan.id}])", message)
-                else:
-                    self.assertIn(f"1 memberships whose herds hold different accounts (membership_id [{self.a.id}])",
-                                  message)  # fmt: skip
-                for secret in (*DIGITS, "9420", "4618", "Banken", "Andra"):
-                    self.assertNotIn(secret, message)
-                # all rolled back: the herds keep their values, the membership has no new columns, the trigger is on
                 held = _sql("SELECT herd_id, bank_account_number, bank_name FROM herd WHERE bank_account_number "
                             "IS NOT NULL OR bank_name IS NOT NULL")  # fmt: skip
                 self.assertEqual({row[0]: row[1:] for row in held.fetchall()}, {h.id: v for h, v in accounts.items()})
-                columns = {c.name for c in db.DATABASE.get_columns("membership")}
-                self.assertNotIn("bank_account_number", columns)
-                enabled = _sql("SELECT tgenabled FROM pg_trigger WHERE tgrelid = 'herd'::regclass "
-                               "AND tgname = 'audit_trigger'").fetchone()  # fmt: skip
-                self.assertEqual(enabled, ("O",))
+                self.assertEqual(self.account(self.a), (None, None, None))
+                self.assertEqual(self.account(self.b), (None, ACCOUNT, "Banken"))
+                kept = sorted(h.id for h in accounts)
+                message = " ".join(logged.output)
+                self.assertIn(f"{len(kept)} herds keep their support account on the herd (herd_id {kept})", message)
+                for secret in (*DIGITS, "9420", "4618", "Banken", "Andra", "123", "4566"):
+                    self.assertNotIn(secret, message)
+                comment = db.SchemaHistory.get_by_id(58).comment
+                self.assertEqual(comment, f"{db.SUPPORT_ACCOUNT_58}; {len(kept)} herds keep theirs")
                 self.assertEqual(self.herd_audit_rows(), audit_rows)
+                self.assertEqual(snapshot(), self.bootstrapped)  # the guard and the trigger as a fresh database
                 tx.rollback()
 
     def test_an_erased_household_gets_no_account(self):
@@ -203,15 +204,26 @@ class TestMigration58(IsolatedSchemaTest):
             tx.rollback()
 
     def test_the_herd_columns_and_the_type_are_guarded(self):
-        for write in (
-            lambda: db.Herd.update(bank_account_number="1234-5").where(db.Herd.id == self.herds[0].id).execute(),
-            lambda: db.Herd.update(bank_name="Banken").where(db.Herd.id == self.herds[0].id).execute(),
-            lambda: db.Membership.update(bank_account_type="swish").where(db.Membership.id == self.a.id).execute(),
-        ):
-            with self.assertRaises(IntegrityError), db.DB_PROXY.atomic():
-                write()
-        for kind in (*db.ACCOUNT_TYPES, None):
-            db.Membership.update(bank_account_type=kind).where(db.Membership.id == self.a.id).execute()
+        """No writer puts a new value in a herd's account columns; one kept by migration 58 may stay or be emptied."""
+        g1, g2, _ = self.herds
+        with db.DB_PROXY.atomic() as tx:
+            self.to_v57({g1: (ACCOUNT, "Banken"), g2: (OTHER, None)})  # kept: two accounts
+            db.migrate_57_to_58()
+            for write in (
+                lambda: db.Herd.update(bank_account_number="1234-5").where(db.Herd.id == self.orphan.id).execute(),
+                lambda: db.Herd.update(bank_name="Banken").where(db.Herd.id == self.orphan.id).execute(),
+                lambda: db.Herd.update(bank_account_number=OTHER).where(db.Herd.id == g1.id).execute(),
+                lambda: db.Herd.create(genebank=self.genebanks[0], herd="G55", bank_account_number="1234-5"),
+                lambda: db.Membership.update(bank_account_type="swish").where(db.Membership.id == self.a.id).execute(),
+            ):
+                with self.assertRaises(IntegrityError), db.DB_PROXY.atomic():
+                    write()
+            herd = db.Herd.get_by_id(g1.id)
+            herd.herd_name = "Ny"
+            herd.save()  # a whole row written back with the account it holds
+            for kind in (*db.ACCOUNT_TYPES, None):
+                db.Membership.update(bank_account_type=kind).where(db.Membership.id == self.a.id).execute()
+            tx.rollback()
 
 
 class SupportAccountTest(InboxTest):
@@ -359,6 +371,83 @@ RELOAD = {
     "status": "error",
     "message": "Kontot för stödet har ändrats sedan sidan lästes in. Ladda om sidan och försök igen.",
 }
+
+
+class TestKeptOnHerd(SupportAccountTest):
+    """Herds whose account migration 58 left on the herd (no safe target): G7 of a membership without an account,
+    G8 without a membership. Readers never show those values, writers never write there, a correction can move them."""
+
+    def setUp(self):
+        super().setUp()
+        self.unclear = db.Membership.create(member_number=43)
+        self.g7 = db.Herd.create(genebank=self.genebanks[0], herd="G7", membership=self.unclear)
+        self.g8 = db.Herd.create(genebank=self.genebanks[0], herd="G8")
+        for herd, number, name in ((self.g7, OTHER, "Gamla"), (self.g8, "5555-12345", None)):
+            _sql("ALTER TABLE herd DISABLE TRIGGER herd_bank_guard")  # as migration 58 left them
+            try:
+                query = "UPDATE herd SET bank_account_number = %s, bank_name = %s WHERE herd_id = %s"
+                _sql(query, (number, name, herd.id))
+            finally:
+                _sql("ALTER TABLE herd ENABLE TRIGGER herd_bank_guard")
+
+    def kept(self):
+        return dict(_sql("SELECT herd_id, bank_account_number FROM herd WHERE bank_account_number IS NOT NULL"))
+
+    def test_readers_show_no_kept_account(self):
+        secrets = ("9420", "4618", "0377", "5555", "12345", "Gamla")
+        for name in ("admin", "man"):
+            with self.subTest(name):
+                self.login(name)
+                for herd in (self.g7, self.g8):
+                    body = self.client.get(f"/api/herd/{herd.herd}")
+                    self.assertEqual(body.status_code, 200)
+                    self.assertEqual((body.json["bank_account_number"], body.json["bank_name"]), (None, None))
+                    for secret in secrets:
+                        self.assertNotIn(secret, body.get_data(as_text=True))
+        from utils.arsrapport import account_end  # pylint: disable=import-outside-toplevel
+
+        self.assertEqual((account_end(self.g7), account_end(self.g8)), (None, None))  # the paper page and Å23
+        rnd = db.YearlyReportRound.create(
+            report_year=2025, start_date=date(2025, 12, 31), end_date=date(2026, 3, 30), created_by=self.admin
+        )
+        db.YearlyHerdReport.create(
+            herd=self.g7, report_date=date(2026, 1, 1), generated_by=self.manager, name="2025", data="{}",
+            publish=False, publish_tel=False, publish_email=False, publish_address=False, round=rnd,
+        )  # fmt: skip
+        report = da.get_yearly_reports(rnd.id, self.genebanks[0].id, True)[0]
+        self.assertEqual((report["bank_account"], report["bank_name"]), (None, None))
+        self.login("kassor")
+        whole = self.client.get(f"/api/v2/memberships/{self.unclear.id}/support-account").json
+        self.assertEqual(whole, {"bank_account_type": None, "bank_account_number": None, "bank_name": None})
+
+    def test_writers_never_write_a_kept_herds_columns(self):
+        manager = db.User.get_by_id(self.manager.id)
+        for herd in (self.g7, self.g8):
+            form = {**da.get_herd(herd.herd, manager.uuid), "herd_name": "Ny"}
+            form.pop("individuals")
+            self.assertEqual(da.update_herd(form, manager.uuid, legacy=True), {"status": "updated"})
+        self.assertEqual(self.kept(), {self.g7.id: OTHER, self.g8.id: "5555-12345"})
+        # a new account goes to the membership, never to the herd; a herd without one has nowhere to put it
+        self.assertEqual(da.update_herd({"id": self.g7.id, "bank_account_number": "7777-12345"}, manager.uuid),
+                         {"status": "updated"})  # fmt: skip
+        self.assertEqual(db.Membership.get_by_id(self.unclear.id).bank_account_number, "7777-12345")
+        refused = da.update_herd({"id": self.g8.id, "bank_account_number": "7777-12345"}, manager.uuid)
+        self.assertEqual(refused["status"], "error")
+        self.assertEqual(self.kept(), {self.g7.id: OTHER, self.g8.id: "5555-12345"})
+
+    def test_a_data_correction_moves_a_kept_account(self):
+        """What stamboken-main's correction does: the membership's account written, the herd's columns emptied,
+        with no account value in audit_log."""
+        with db.DB_PROXY.atomic():
+            db.Membership.update(bank_account_number=OTHER, bank_name="Gamla").where(
+                db.Membership.id == self.unclear.id
+            ).execute()
+            db.Herd.update(bank_account_number=None, bank_name=None).where(db.Herd.id == self.g7.id).execute()
+        self.assertEqual(self.kept(), {self.g8.id: "5555-12345"})
+        copies = _sql("SELECT count(*) FROM audit_log WHERE (old_data::text || new_data::text) LIKE '%%9420%%'")
+        self.assertEqual(copies.fetchone(), (0,))
+        manager = db.User.get_by_id(self.manager.id)
+        self.assertEqual(db.Herd.get_by_id(self.g7.id).filtered_dict(manager)["bank_account_number"], "••77")
 
 
 class TestPayoutRead(SupportAccountTest):

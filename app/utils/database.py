@@ -3494,7 +3494,8 @@ AUDITED_TABLES = {
     "individual": ("individual_id", [], ["updated_at"]),
     "breeding": ("breeding_id", [], ["updated_at"]),
     "bunny": ("bunny_id", [], ["updated_at"]),  # from develop (22→23 roster)
-    "herd": ("herd_id", list(HERD_CONTACT_COLUMNS), []),
+    # the bank columns (migration 58): a herd that kept its account is emptied by a correction without a copy here
+    "herd": ("herd_id", [*HERD_CONTACT_COLUMNS, *HERD_BANK_FIELDS], []),
     "weight": ("weight_id", [], []),
     "bodyfat": ("bodyfat_id", [], []),
     "individualdisease": ("individual_disease_id", [], []),
@@ -5096,17 +5097,43 @@ def migrate_56_to_57():
 SUPPORT_ACCOUNT_58 = "membership support account"  # migration 58's schema_history comment
 
 
+# Migration 58's guard on the herd's old account columns: no writer puts a value there. A value migration 58 left there
+# (no safe target) may stay, also in a whole row saved back, or be emptied by a data correction.
+HERD_BANK_GUARD_SQL = """
+    CREATE OR REPLACE FUNCTION herd_bank_guard() RETURNS trigger AS $$
+    DECLARE
+        written boolean;
+    BEGIN
+        IF TG_OP = 'INSERT' THEN
+            written := NEW.bank_account_number IS NOT NULL OR NEW.bank_name IS NOT NULL;
+        ELSE
+            written := (NEW.bank_account_number IS NOT NULL
+                        AND NEW.bank_account_number IS DISTINCT FROM OLD.bank_account_number)
+                       OR (NEW.bank_name IS NOT NULL AND NEW.bank_name IS DISTINCT FROM OLD.bank_name);
+        END IF;
+        IF written THEN
+            RAISE EXCEPTION 'the support account is the membership''s (migration 58)'
+                USING ERRCODE = 'check_violation';
+        END IF;
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+    CREATE OR REPLACE TRIGGER herd_bank_guard BEFORE INSERT OR UPDATE ON herd
+        FOR EACH ROW EXECUTE FUNCTION herd_bank_guard();
+"""
+
+
 def _create_support_account_guards():
-    """Migration 58's CHECKs, from init() too: a known account type, and the herd's old account columns empty."""
+    """Migration 58's guards, from init() too: a known account type, and nothing new in the herd's account columns."""
     if isinstance(DATABASE, SqliteDatabase):
         return
     types = ", ".join(f"'{kind}'" for kind in ACCOUNT_TYPES)
-    for name, table, expression in (
-        ("ck_membership_bank_account_type", "membership", f"bank_account_type IN ({types})"),
-        ("ck_herd_no_bank_account", "herd", "bank_account_number IS NULL AND bank_name IS NULL"),
-    ):
-        if not DATABASE.execute_sql("SELECT 1 FROM pg_constraint WHERE conname = %s", (name,)).fetchone():
-            DATABASE.execute_sql(f'ALTER TABLE "{table}" ADD CONSTRAINT "{name}" CHECK ({expression})')
+    name = "ck_membership_bank_account_type"
+    if not DATABASE.execute_sql("SELECT 1 FROM pg_constraint WHERE conname = %s", (name,)).fetchone():
+        DATABASE.execute_sql(f'ALTER TABLE "membership" ADD CONSTRAINT "{name}" CHECK (bank_account_type IN ({types}))')
+    # a database that ran this branch's earlier 58 has a CHECK that keeps every herd's columns empty
+    DATABASE.execute_sql('ALTER TABLE "herd" DROP CONSTRAINT IF EXISTS "ck_herd_no_bank_account"')
+    DATABASE.execute_sql(HERD_BANK_GUARD_SQL)
 
 
 def _sort_support_accounts():
@@ -5114,10 +5141,11 @@ def _sort_support_accounts():
     Migration 58's reading, every herd included, active or not: (moves, conflicts, orphans). `moves` maps a membership
     to the (number, bank) its herds hold, for a membership without an account of its own. `conflicts` maps a
     membership to the herds whose accounts may be different destinations, `orphans` lists the herds with an account
-    but no membership: both have no safe target. A text that is only whitespace (tabs, newlines and no-break spaces
-    too) is no value. Two herds hold the same account only with the same number and bank together: the number by
-    account_parts (digits, letters such as BG or PG, and where the dash is), the bank ignoring case and blanks. Nothing
-    is merged or guessed. A household whose persons are all anonymised gets no account (U14) and is neither.
+    but no membership: both have no safe target, and their accounts stay on the herds. A text that is only whitespace
+    (tabs, newlines and no-break spaces too) is no value. Two herds hold the same account only with the same number
+    and bank together: the number by account_parts (digits, letters such as BG or PG, and where the dash is), the bank
+    ignoring case and blanks. Nothing is merged or guessed. A household whose persons are all anonymised gets no
+    account (U14) and is neither.
     """
 
     def key(number, name):
@@ -5161,30 +5189,37 @@ def _sort_support_accounts():
 
 
 def _move_support_accounts():
-    """Migration 58's move (_sort_support_accounts): it stops, naming only ids and counts, on any account without a
-    safe target, before it writes; else it moves and empties every herd's columns without an audit copy."""
+    """
+    Migration 58's move (_sort_support_accounts). An account without a safe target stays on its herd (Jonas
+    2026-11-26) until a data correction moves it; the log names only ids and counts. Returns how many herds kept
+    theirs. Every other herd's columns are emptied without an audit copy.
+    """
     moves, conflicts, orphans = _sort_support_accounts()
-    if conflicts or orphans:
-        raise RuntimeError(
-            "Migration 58 stopped, nothing moved: correct the support accounts first. "
-            f"{len(conflicts)} memberships whose herds hold different accounts (membership_id {sorted(conflicts)}); "
-            f"{len(orphans)} herds with an account but no membership (herd_id {orphans})."
-        )
+    kept = sorted([*orphans, *(herd for herds in conflicts.values() for herd in herds)])
+    if kept:
+        logger.warning(
+            "Migration 58: %s herds keep their support account on the herd (herd_id %s): %s memberships whose herds "
+            "hold different accounts (membership_id %s), %s herds without a membership.",
+            len(kept), kept, len(conflicts), sorted(conflicts), len(orphans),
+        )  # fmt: skip
     for membership_id, (number, name) in moves.items():
         Membership.update(bank_account_number=number, bank_name=name).where(Membership.id == membership_id).execute()
     # The trigger would copy every account into new audit rows (migration 40's guard); the herds are emptied unlogged.
     DATABASE.execute_sql('ALTER TABLE "herd" DISABLE TRIGGER "audit_trigger"')
     DATABASE.execute_sql(
         "UPDATE herd SET bank_account_number = NULL, bank_name = NULL"
-        " WHERE bank_account_number IS NOT NULL OR bank_name IS NOT NULL"
+        " WHERE (bank_account_number IS NOT NULL OR bank_name IS NOT NULL) AND herd_id <> ALL(%s)",
+        (kept,),
     )
     DATABASE.execute_sql('ALTER TABLE "herd" ENABLE TRIGGER "audit_trigger"')
+    return len(kept)
 
 
 def migrate_57_to_58():
     """
     The support account moves from the herd to its membership, with a type (bankkonto, bankgiro or plusgiro; Jonas
-    2026-11-18), so that a member with two herds has one account. The herd's columns stay, empty under a CHECK.
+    2026-11-18), so that a member with two herds has one account. The herd's columns stay: empty, or holding an
+    account without a safe target until a correction moves it (Jonas 2026-11-26), and a guard keeps writers out.
     """
     with DATABASE.atomic():
         if not isinstance(DATABASE, SqliteDatabase):
@@ -5194,11 +5229,13 @@ def migrate_57_to_58():
         for field in (Membership.bank_account_type, Membership.bank_account_number, Membership.bank_name):
             if field.name not in existing:
                 migrate(DATABASE_MIGRATOR.add_column("membership", field.name, field))
+        kept = 0
         if not isinstance(DATABASE, SqliteDatabase):
-            _move_support_accounts()
+            kept = _move_support_accounts()
+            _create_audit_table_and_triggers()  # the herd's account out of new audit snapshots
             _create_support_account_guards()
         SchemaHistory.insert(  # pylint: disable=E1120
-            version=58, comment=SUPPORT_ACCOUNT_58, applied=datetime.now()
+            version=58, comment=f"{SUPPORT_ACCOUNT_58}; {kept} herds keep theirs", applied=datetime.now()
         ).execute()
 
 
