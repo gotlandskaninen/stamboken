@@ -457,8 +457,9 @@ class TestLegacyGoogleLoginNeverAdopts(DatabaseTest):
             self.assertEqual(evil.post("/api/unlink/google").get_data(as_text=True), "1")
             # Removing the identity ended the session; the attacker signs in with the password.
             evil.post("/api/login", json={"username": attacker.email, "password": "pass"})
-            moved = evil.patch("/api/manage/user/", json={"email": self.ADDRESS, "validated": False})
-            self.assertEqual(moved.get_json(), {"status": "updated"})
+            # the old route is closed (ADR-0020); the account's e-mail changes as it did through it
+            moved = da.update_user({"id": attacker.id, "email": self.ADDRESS, "validated": False}, attacker.uuid)
+            self.assertEqual(moved, {"status": "updated"})
 
             victim = APP.test_client(use_cookies=True)
             self.assertNothingLinked(victim, self.first_login(victim, auto_validate=False))
@@ -567,12 +568,7 @@ class TestHolderCannotChangeValidated(DatabaseTest):
         APP.config["TESTING"] = True
         super().setUp()
 
-    def patch(self, actor, url, body):
-        client = APP.test_client(use_cookies=True)
-        client.post("/api/login", json={"username": actor.email, "password": "pass"})
-        return client.patch(url, json=body).get_json()
-
-    def update(self, actor, body):  # the by-id route is closed (410, ADR-0020): the function behind it
+    def update(self, actor, body):  # the legacy route is closed (410, ADR-0020): the function behind it
         return da.update_user(body, actor.uuid)
 
     def validated(self, user):
@@ -582,8 +578,8 @@ class TestHolderCannotChangeValidated(DatabaseTest):
         for user in (self.viewer, self.manager, self.admin):
             with self.subTest(user.email):
                 db.User.update(validated=True).where(db.User.id == user.id).execute()
-                body = {"email": f"ny-{user.email}@example.org", "validated": False}
-                self.assertEqual(self.patch(user, "/api/manage/user/", body), {"status": "updated"})
+                body = {"id": user.id, "email": f"ny-{user.email}@example.org", "validated": False}
+                self.assertEqual(self.update(user, body), {"status": "updated"})
                 self.assertTrue(self.validated(user))
 
     def test_a_manager_cannot_validate_their_own_account(self):
@@ -615,10 +611,8 @@ class TestHolderCannotChangeValidated(DatabaseTest):
                 self.assertEqual(self.validated(self.viewer), value)
 
     def test_a_member_still_cannot_send_validated_true(self):
-        body = {"email": self.viewer.email, "validated": True}
-        self.assertEqual(
-            self.patch(self.viewer, "/api/manage/user/", body), {"status": "error", "message": "forbidden"}
-        )
+        body = {"id": self.viewer.id, "email": self.viewer.email, "validated": True}
+        self.assertEqual(self.update(self.viewer, body), {"status": "error", "message": "forbidden"})
         self.assertFalse(self.validated(self.viewer))
 
 

@@ -1927,7 +1927,7 @@ class TestUserAdminContracts(FlaskTest):
     def test_account_role_and_password_writes_are_gone(self):
         """ADR-0020: creating an account, changing one by id, roles and passwords answer 410 and change
         nothing. The answer is the same for admin, genbanksansvarig and viewer, for another account, the
-        caller's own id and an unknown id. A member's own e-mail (PATCH without id) stays open."""
+        caller's own id and an unknown id, and also without an id (the old own-account change)."""
         accounts = {"status": "error", "message": "Konton och roller hanteras nu i nya Stamboken."}
         password = {
             "status": "error",
@@ -1962,6 +1962,8 @@ class TestUserAdminContracts(FlaskTest):
                         ("POST", f"/api/manage/user/{target}", form, accounts),
                         ("PATCH", f"/api/manage/user/{target}", form, accounts),
                         ("UPDATE", f"/api/manage/user/{target}", form, accounts),
+                        ("PATCH", "/api/manage/user/", form, accounts),
+                        ("UPDATE", "/api/manage/user/", form, accounts),
                         ("POST", "/api/manage/role", role, accounts),
                         ("PATCH", "/api/manage/role", role, accounts),
                         ("UPDATE", "/api/manage/role", role, accounts),
@@ -1975,31 +1977,8 @@ class TestUserAdminContracts(FlaskTest):
         self.assertEqual((anonymous.status_code, anonymous.get_json()), (410, password))
         self.assertEqual(snapshot(), before)
 
-    def test_manage_user_self_patch_no_id_returns_status(self):
-        """Inventory row: PATCH /api/manage/user/ (settings.tsx:72) — self-service, no id in URL."""
-        with self.app as ctx:
-            self.login(ctx, self.admin)
-            response = ctx.patch(
-                "/api/manage/user/",
-                json={"email": self.admin.email, "validated": True},
-            )
-            self.assertEqual(response.status_code, 200)
-            self.assertIn("status", response.get_json())
-
-    def test_manage_user_self_patch_changes_only_the_own_account(self):
-        """PATCH without id is the one open write into update_user, which lets a genbanksansvarig change other
-        accounts: the route replaces the body's id with the caller's own, so another account stays as it was."""
-        with self.app as ctx:
-            self.login(ctx, self.manager)
-            response = ctx.patch(
-                "/api/manage/user/", json={"id": self.viewer.id, "email": "flyttad@example.org", "validated": False}
-            )
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(db.User.get_by_id(self.viewer.id).email, self.viewer.email)
-        self.assertEqual(db.User.get_by_id(self.manager.id).email, "flyttad@example.org")
-
-    def test_manage_user_self_patch_cannot_take_another_accounts_email(self):
-        """A self-service PATCH may not take an address another
+    def test_update_user_cannot_take_another_accounts_email(self):
+        """update_user (behind the closed own-account route, ADR-0020) may not take an address another
         account holds (any casing). The CMS itself keys on google_email +
         validated (resolveFlaskUser.ts), never on this field."""
         import utils.database as db
@@ -2010,21 +1989,13 @@ class TestUserAdminContracts(FlaskTest):
         admin.validated = True
         admin.save()
 
-        with self.app as ctx:
-            self.login(ctx, self.owner)
-            patch = ctx.patch("/api/manage/user/", json={"email": cms_admin, "validated": False})
-            cased = ctx.patch("/api/manage/user/", json={"email": "CMS-Admin@Gotlandskaninen.se", "validated": False})
-            me = ctx.get("/api/user").get_json()
+        own = {"id": self.owner.id, "validated": False}
+        patch = da.update_user({**own, "email": cms_admin}, self.owner.uuid)
+        cased = da.update_user({**own, "email": "CMS-Admin@Gotlandskaninen.se"}, self.owner.uuid)
 
-        self.assertEqual(
-            me["email"],
-            "owner",
-            f"owner (id={self.owner.id}) took the CMS admin's email: PATCH -> {patch.get_json()}, "
-            f"GET /api/user email={me['email']!r} validated={me['validated']}",
-        )
-        self.assertEqual(patch.status_code, 200)
-        self.assertEqual(patch.get_json(), {"status": "error", "message": "email already in use"})
-        self.assertEqual(cased.get_json(), {"status": "error", "message": "email already in use"})
+        self.assertEqual(db.User.get_by_id(self.owner.id).email, "owner", f"owner took the CMS admin's email: {patch}")
+        self.assertEqual(patch, {"status": "error", "message": "email already in use"})
+        self.assertEqual(cased, {"status": "error", "message": "email already in use"})
 
     def test_manage_user_get_by_id_returns_shape(self):
         """Inventory row: GET /api/manage/user/{x} (userForm.tsx:111) — admin looks up another user."""

@@ -289,14 +289,15 @@ class TestOAuthAutoLinkRoutes(FlaskTest):
             first = self._token_login(client, "eve@gotlandskaninen.se", "sub-eve")
             self.assertEqual(first.status_code, 200, first.get_json())
             self.assertIsNone(self._linked_to())  # sanity: no link yet
-            patch = client.patch("/api/manage/user/", json={"email": "anna@gotlandskaninen.se", "validated": False})
+            # the old route is closed (ADR-0020); the account's e-mail changes as it did through it
+            patch = da.update_user({"id": eve.id, "email": "anna@gotlandskaninen.se", "validated": False}, eve.uuid)
             client.get("/api/logout")
             second = self._token_login(client, "eve@gotlandskaninen.se", "sub-eve")
 
         self.assertIsNone(
             self._linked_to(),
             f"Anna's member row linked to eve (user {eve.id}) whose Google-verified email is "
-            f"eve@gotlandskaninen.se: PATCH -> {patch.get_json()}, 2nd /api/auth/google -> {second.status_code}",
+            f"eve@gotlandskaninen.se: update -> {patch}, 2nd /api/auth/google -> {second.status_code}",
         )
 
     def test_token_login_links_the_signed_in_account_not_an_email_twin(self):
@@ -392,11 +393,9 @@ class TestOAuthAutoLinkRoutes(FlaskTest):
         """Eve self-sets the address of a member who has not signed in yet; Anna's
         first Google login must not attach her Google identity to Eve's account."""
         eve = da.register_user("eve@gotlandskaninen.se", "pass", username="eve", validated=True)
-        with self.app as client:
-            client.post("/api/login", json={"username": "eve", "password": "pass"})
-            patch = client.patch("/api/manage/user/", json={"email": "anna@gotlandskaninen.se", "validated": False})
-            client.get("/api/logout")
-        self.assertEqual(patch.get_json(), {"status": "updated"})
+        # the old route is closed (ADR-0020); the account's e-mail changes as it did through it
+        patch = da.update_user({"id": eve.id, "email": "anna@gotlandskaninen.se", "validated": False}, eve.uuid)
+        self.assertEqual(patch, {"status": "updated"})
         eve_now = db.User.get_by_id(eve.id)
         self.assertEqual((eve_now.email, eve_now.validated), ("anna@gotlandskaninen.se", True))
 
@@ -406,7 +405,7 @@ class TestOAuthAutoLinkRoutes(FlaskTest):
         eve_google = db.Authenticators.select().where(
             (db.Authenticators.user == eve.id) & (db.Authenticators.auth == "google")
         )
-        self.assertFalse(eve_google.exists(), f"Anna's Google identity linked to eve: PATCH -> {patch.get_json()}")
+        self.assertFalse(eve_google.exists(), f"Anna's Google identity linked to eve: update -> {patch}")
         self.assertEqual(resp.status_code, 200)
         self.assertIn("Det finns redan ett konto", resp.data.decode())
         self.assertIsNone(db.User.get_by_id(eve.id).google_email)
