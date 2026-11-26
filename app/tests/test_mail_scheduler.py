@@ -88,3 +88,30 @@ class TestMailJobs(MailTest):
             job.assert_not_called()
             herdbook._catch_up_arsrapport_invitations(datetime(2026, 12, 31, 7, 10, tzinfo=stockholm))
             job.assert_called_once()
+
+    def test_followup_job_runs_on_leader_and_closes_connection(self):
+        lock = os.path.join(tempfile.mkdtemp(), "scheduler.lock")
+        with (
+            mock.patch.object(herdbook, "SCHEDULER_LOCK_PATH", lock),
+            mock.patch.object(ci, "init_redis"),
+            mock.patch.object(ci, "start_pubsub_listener"),
+            mock.patch.object(ci, "set_cache_and_functions"),
+            mock.patch.object(herdbook, "_warm_genetics_in_background"),
+            mock.patch.object(herdbook.apscheduler.schedulers.background, "BackgroundScheduler") as scheduler_cls,
+        ):
+            herdbook.initialize_app()
+        calls = [
+            c
+            for c in scheduler_cls.return_value.add_job.call_args_list
+            if herdbook._send_arsrapport_followups in c.args
+        ]
+        self.assertEqual(
+            sorted((c.kwargs["trigger"], c.kwargs.get("hours")) for c in calls), [("date", None), ("interval", 1)]
+        )
+        with (
+            mock.patch.object(herdbook, "send_due_reminders", side_effect=RuntimeError("database gone")),
+            mock.patch.object(herdbook.genetics.ps, "_close_db_connection") as close,
+            self.assertLogs(herdbook.APP.logger, "ERROR"),
+        ):
+            herdbook._send_arsrapport_followups()  # logged, never raised into the scheduler
+        close.assert_called_once()

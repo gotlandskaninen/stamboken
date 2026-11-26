@@ -114,5 +114,5 @@ def retry_message(message_id):
 @limiter.limit("30 per minute", key_func=lambda: str(current_user.id))
 def cancel_message(message_id):
     """ "Stoppa": a queued mail is never sent."""
-    fields = {"status": "cancelled", "last_error": "stoppat i statusvyn"}
+    fields = {"status": "cancelled", "last_error": mail.STOPPED}
     return _transition(message_id, ("queued",), fields, "Bara köade utskick kan stoppas.")

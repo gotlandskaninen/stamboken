@@ -192,6 +192,26 @@ meddelanden och köparuppgifter är inte med. Köp och försäljningar från ett
   `TRANSFER` är registrerad, medan posten är öppen) eller `klart` (stängd, också som dubblett eller
   skräp).
 
+## Påminnelser
+
+Jobbet `arsrapport_followups` körs i schemaläggarens ledare varje timme och en gång vid start
+(`app/utils/arsrapport_remind.py`). Det lägger påminnelsen `arsrapport.paminnelse` i mejlkön till
+varje aktiv besättning utan inskickad rapport, i genbanker vars inbjudningar har gått
+(`sent_at`). Tillfällena följer rundans `deadline`:
+
+- påminnelse 1 från deadline−11 kl. 07.00 tills påminnelse 2 börjar, och påminnelse 2 från
+  deadline−2 kl. 07.00 till och med sista dagen, allt i svensk tid;
+- före kl. 07.00 köar jobbet inget, och efter ett längre avbrott bara den senaste påminnelsen;
+- en påminnelse som har gått för ett tillfälle går aldrig igen, också om `deadline` flyttas. En
+  köad påminnelse prövas när den skickas: är rapporten inskickad, länken ogiltig, rundan stängd
+  eller tillfället passerat avbryts den (`cancelled`), och jobbet köar en ny om den fortfarande
+  behövs. En påminnelse som någon har stoppat i statusvyn, eller som misslyckades eller studsade,
+  ersätts inte; den skickas igen med "Försök igen".
+
+Mejlet har bara id:n och flaggor (`round_id`, `code_id`, `slot`, `scheduled`); länken byggs när
+det skickas. Saknar besättningen en giltig kod skapas den först (`issue_code`) och sparas, och
+sedan läggs påminnelsen i kön under rapportens lås. I demon köar jobbet inget.
+
 ## Den tomma blanketten
 
 `GET /api/v2/arsrapport/blankett.pdf` skickar filen
