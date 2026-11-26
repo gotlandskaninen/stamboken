@@ -12,10 +12,15 @@ import utils.matrikel as matrikel
 from blueprints import members as members_routes
 from blueprints import memberships as memberships_routes
 from herdbook import APP
-from utils.members import try_auto_link_member
+from utils.members import CONSENT_TEXT_VERSION, try_auto_link_member
 
 from tests.database_test import _USE_POSTGRES
 from tests.test_person_link_api import LinkApiBase
+
+
+def _consent(body):
+    """A profile PATCH body: the answer and the version of the text the page showed."""
+    return {"text_version": CONSENT_TEXT_VERSION, **body}
 
 
 @unittest.skipUnless(_USE_POSTGRES, "FOR UPDATE serialisation needs PostgreSQL")
@@ -289,7 +294,7 @@ class TestLinkRaces(LinkApiBase):
         def consent_patch(client, body, key):
             try:
                 responses[key] = client.patch(
-                    "/api/v2/members/me/consent", data=json.dumps(body), content_type="application/json"
+                    "/api/v2/members/me/consent", data=json.dumps(_consent(body)), content_type="application/json"
                 )
             except Exception as exc:  # pylint: disable=broad-except
                 failures.append(exc)
@@ -584,7 +589,7 @@ class TestLinkRaces(LinkApiBase):
     def test_consent_patch_vs_main_member_swap(self):
         ms, person, other, client = self._selfservice_fixture(53, "swapconsent")
         resp = self._paused_selfservice_patch(
-            client, "/api/v2/members/me/consent", {"email": True}, self._swap_competitor(ms.id, other.id)
+            client, "/api/v2/members/me/consent", _consent({"email": True}), self._swap_competitor(ms.id, other.id)
         )
         self.assertEqual(resp.status_code, 403, resp.data)
         self._assert_selfservice_untouched(ms.id, person.id, 53)
@@ -592,7 +597,7 @@ class TestLinkRaces(LinkApiBase):
     def test_consent_patch_vs_unlink(self):
         ms, person, _other, client = self._selfservice_fixture(54, "unlinkconsent")
         resp = self._paused_selfservice_patch(
-            client, "/api/v2/members/me/consent", {"email": True}, self._unlink_competitor(person.id)
+            client, "/api/v2/members/me/consent", _consent({"email": True}), self._unlink_competitor(person.id)
         )
         self.assertEqual(resp.status_code, 409, resp.data)
         self._assert_selfservice_untouched(ms.id, person.id, 54)
@@ -602,7 +607,7 @@ class TestLinkRaces(LinkApiBase):
         Koharen export for a person who exercised the right to be forgotten."""
         ms, person, _other, client = self._selfservice_fixture(55, "anonconsent")
         resp = self._paused_selfservice_patch(
-            client, "/api/v2/members/me/consent", {"email": True}, self._anonymize_competitor(person.id)
+            client, "/api/v2/members/me/consent", _consent({"email": True}), self._anonymize_competitor(person.id)
         )
         self.assertEqual(resp.status_code, 409, resp.data)
         self.assertEqual(db.Membership.get_by_id(ms.id).publication_consent, {})

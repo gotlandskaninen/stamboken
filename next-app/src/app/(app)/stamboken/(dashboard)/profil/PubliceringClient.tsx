@@ -7,7 +7,7 @@ import {
 } from "@/components/member/PublicationFields";
 import { useSnackbar } from "@/components/SnackbarProvider";
 import { useNotifications } from "@/contexts/NotificationContext";
-import { UTOM_ALL } from "../arsrapport/lib";
+import { CONSENT_TEXT_VERSION, UTOM_ALL } from "../arsrapport/lib";
 import { updateConsent } from "./actions";
 import styles from "./profil.module.css";
 import type { Consent } from "./types";
@@ -57,20 +57,25 @@ export function PubliceringClient({
 
   const save = (chosen: Publication) =>
     start(async () => {
-      // Partial update: send only the keys that actually moved, so a second
-      // tab's withdrawal cannot be replayed from this tab's stale read. The
-      // first answer is the exception: all four keys go up so that a Nej is
-      // recorded as an answer instead of staying unset.
+      // A tick within a standing Ja sends only the keys that moved, so a
+      // second tab's withdrawal cannot be replayed from this tab's stale read.
+      // A Ja or Nej, and the first answer, is whole: all four keys go up, so
+      // nothing another tab allowed stays in an answer the member did not give.
       const consent = toConsent(chosen);
+      const partial = hasAnswered && baseline.name && chosen.ja;
       const changed = CONSENT_KEYS.filter((k) => consent[k] !== baseline[k]);
-      if (hasAnswered && changed.length === 0) {
+      if (partial && changed.length === 0) {
         showSnackbar("Publiceringsval sparade", "success");
         return;
       }
-      const patch: Partial<Consent> = hasAnswered
+      const patch: Partial<Consent> = partial
         ? Object.fromEntries(changed.map((k) => [k, consent[k]]))
         : consent;
-      const result = await updateConsent(patch);
+      // The version of the text this page shows: the server refuses another.
+      const result = await updateConsent({
+        ...patch,
+        text_version: CONSENT_TEXT_VERSION,
+      });
       if (result.ok) {
         // The backend merged our keys onto the row it locked — its answer is
         // the truth for every key, including one another tab changed.

@@ -553,6 +553,17 @@ def _new_person_names(data, *, optional):
     return {"first_name": first, "last_name": last}
 
 
+def _new_holder(membership, actor):
+    """A new huvudmedlem has not answered the Koharen question: the answer was the previous holder's (5.11).
+    In the caller's transaction, under the membership lock."""
+    from utils.members import (  # pylint: disable=import-outside-toplevel  # utils.members imports this module
+        CONSENT_TEXT_VERSION,
+        set_consent,
+    )
+
+    set_consent(membership, {}, source="admin", text_version=CONSENT_TEXT_VERSION, user=actor.id if actor else None)
+
+
 def add_person(membership, data, actor):
     """Create a person row under `membership` and audit it.
 
@@ -583,6 +594,8 @@ def add_person(membership, data, actor):
         )
         if role == "huvudmedlem" and locked.membership_status != Status.FRIEXEMPLAR:
             reserve_login_address(person.email, person.id)
+        if role == "huvudmedlem":
+            _new_holder(locked, actor)
         write_matrikel_audit(
             actor,
             "person_added",
@@ -690,6 +703,7 @@ def reactivate_person(member, actor):
             queue_member_added(person)
         if person.role == "huvudmedlem":
             reserve_holder(person.id)
+            _new_holder(membership, actor)
             write_matrikel_audit(
                 actor,
                 "main_member_changed",
@@ -747,6 +761,7 @@ def swap_main_member(membership, new_main, actor):
         new_main.save()
         reserve_holder(new_main.id)
         cancel_member_added([new_main.id])
+        _new_holder(membership, actor)
         write_matrikel_audit(
             actor,
             "main_member_changed",

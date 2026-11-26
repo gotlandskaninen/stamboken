@@ -42,11 +42,22 @@ import ProfilPage from "@/app/(app)/stamboken/(dashboard)/profil/page";
 
 afterEach(cleanup);
 
-const show = async (hasActiveHerd: boolean) => {
+const show = async (hasActiveHerd: boolean, ja = false) => {
   const membership = { id: 1 };
+  const me = {
+    role: "huvudmedlem",
+    membership,
+    has_active_herd: hasActiveHerd,
+    publication_consent: {
+      name: ja,
+      phone: false,
+      email: false,
+      address: false,
+    },
+  };
   fetchApi.mockImplementation(async (path: string) =>
     path === "/v2/members/me"
-      ? { role: "huvudmedlem", membership, has_active_herd: hasActiveHerd }
+      ? me
       : path === "/v2/my-membership"
         ? { membership: { ...membership, persons: [], herds: [] } }
         : null,
@@ -63,5 +74,10 @@ describe("ProfilPage's Koharen card", () => {
   it("is not shown without an active herd in a genebank", async () => {
     await show(false);
     expect(screen.queryByText("Koharen-frågan")).toBeNull();
+  });
+
+  it("is shown without an active herd while a Ja stands, so it can be withdrawn", async () => {
+    await show(false, true);
+    expect(screen.getByText("Koharen-frågan")).toBeTruthy();
   });
 });

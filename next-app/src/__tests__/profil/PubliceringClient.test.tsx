@@ -24,7 +24,10 @@ vi.mock("@/app/(app)/stamboken/(dashboard)/profil/actions", () => ({
 
 import { updateConsent } from "@/app/(app)/stamboken/(dashboard)/profil/actions";
 import { PubliceringClient } from "@/app/(app)/stamboken/(dashboard)/profil/PubliceringClient";
-import { CONSENT_TEXT } from "@/app/(app)/stamboken/(dashboard)/arsrapport/lib";
+import {
+  CONSENT_TEXT,
+  CONSENT_TEXT_VERSION,
+} from "@/app/(app)/stamboken/(dashboard)/arsrapport/lib";
 
 type Consent = {
   name: boolean;
@@ -32,6 +35,7 @@ type Consent = {
   email: boolean;
   address: boolean;
 };
+const V = CONSENT_TEXT_VERSION;
 const NEJ = { name: false, phone: false, email: false, address: false };
 const JA_EMAIL = { name: true, phone: false, email: true, address: false };
 
@@ -103,7 +107,9 @@ describe("PubliceringClient", () => {
     renderIt(NEJ, false);
     fireEvent.click(radio("Nej"));
     save();
-    await waitFor(() => expect(updateConsent).toHaveBeenCalledWith(NEJ));
+    await waitFor(() =>
+      expect(updateConsent).toHaveBeenCalledWith({ ...NEJ, text_version: V }),
+    );
   });
 
   it("sends only the keys that changed", async () => {
@@ -117,20 +123,25 @@ describe("PubliceringClient", () => {
         "success",
       ),
     );
-    expect(updateConsent).toHaveBeenCalledWith({ phone: true });
+    expect(updateConsent).toHaveBeenCalledWith({
+      phone: true,
+      text_version: V,
+    });
   });
 
-  it("turns every allowed key off at Nej", async () => {
+  it("sends a Nej whole", async () => {
     acknowledge(NEJ);
     renderIt(JA_EMAIL);
     fireEvent.click(radio("Nej"));
     save();
     await waitFor(() =>
-      expect(updateConsent).toHaveBeenCalledWith({ name: false, email: false }),
+      expect(updateConsent).toHaveBeenCalledWith({ ...NEJ, text_version: V }),
     );
   });
 
-  it("starts a new Ja with nothing ticked, as the paper form", async () => {
+  it("sends a new Ja whole: a key another tab allowed is not kept", async () => {
+    // The tab opened on Nej; another tab saved Ja with e-post meanwhile.
+    // This Ja allows only the name, so e-post must go up as false.
     acknowledge({ ...NEJ, name: true });
     renderIt(NEJ);
     fireEvent.click(radio("Ja"));
@@ -139,7 +150,11 @@ describe("PubliceringClient", () => {
     expect(box("postnummer och ort").checked).toBe(false);
     save();
     await waitFor(() =>
-      expect(updateConsent).toHaveBeenCalledWith({ name: true }),
+      expect(updateConsent).toHaveBeenCalledWith({
+        ...NEJ,
+        name: true,
+        text_version: V,
+      }),
     );
   });
 
@@ -165,7 +180,10 @@ describe("PubliceringClient", () => {
     fireEvent.click(box("telefonnummer"));
     save();
     await waitFor(() =>
-      expect(updateConsent).toHaveBeenCalledWith({ phone: true }),
+      expect(updateConsent).toHaveBeenCalledWith({
+        phone: true,
+        text_version: V,
+      }),
     );
     await waitFor(() => expect(box("e-postadress").checked).toBe(false));
     view.rerender(<PubliceringClient initial={merged} answered />);
