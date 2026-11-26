@@ -25,7 +25,7 @@ på skärmen) och slutar med **Skärmarna** (vad varje sida innehåller).
     [sälja](#sälja-eller-flytta-en-kanin), [provpara](#provpara),
     [besättningsuppgifter](#uppdatera-besättningsuppgifter), [profil](#uppdatera-din-profil)
   - Skärmarna: [Min besättning](#min-besättning), [Kaninens sida](#kaninens-sida),
-    [Alla kaniner](#alla-kaniner), [Provparning](#provparning), [Min profil](#min-profil),
+    [Alla kaniner](#alla-kaniner), [Provparning](#provparning), [Färgatlas](#färgatlas), [Min profil](#min-profil),
     [Mina inskick](#mina-inskick), [Ladda upp intyg](#ladda-upp-intyg-skärmen),
     [Årsrapport](#årsrapport), [Årsrapport för en besättning](#årsrapport-för-en-besättning),
     [Status för årsrapporten](#status-för-årsrapporten), [Notiser](#notiser),
@@ -165,7 +165,8 @@ Under formuläret leder länken **Kom igång** till introduktionen för nya anv�
 
 Högst upp finns menyn med länkarna **Min besättning**, **Alla kaniner**, **Genetik**,
 **Provparning**, **Profil**, **Mina inskick** och **Årsrapport**. Arbetar du med
-inläsningen av intyg finns också **Inkorg**. På mobilen ligger länkarna bakom
+inläsningen av intyg finns också **Inkorg**. Under **Resurser** finns
+**Färgatlas** och **Avelsråd**. På mobilen ligger länkarna bakom
 menyknappen (tre streck) längst till vänster, och där finns också **Tyck till**.
 Logotypen **Stamboken** tar dig alltid till Min besättning.
 
@@ -859,6 +860,30 @@ avkomman F: bra upp till N %, utred närmare upp till M %, över det hög inavel
 **Avelsråd** öppnar föreningens avelsråd. Se [Provpara](#provpara).
 
 ![Provparning](provparning-desktop.png)
+
+#### Färgatlas
+
+<!-- route: /stamboken/fargatlas -->
+
+Du hittar sidan under **Resurser** i menyn.
+Föreningens färgnummer i grupper efter bestämningsnyckeln, och mellerudskaninens
+nummer i en egen grupp. Varje färg har ett kort med foto, nummer, namn, beskrivning och vad
+som skiljer den från närliggande färger; en färg utan foto har bara text. Klicka på
+fotot för en större bild. Grupperna och **Gå till nummer** högst upp tar dig direkt till
+en grupp eller en färg. **Skriv ut** ger grupperna på papper utan meny. Färgnumret
+anger grundfärgen, också när pälsen är rex: välj då **Rex** vid **Päls**.
+
+Överst på sidan finns **Hjälp mig välja**, bestämningsnyckeln för gotlandskanin. Den
+ställer en fråga i taget om kaninens färg och teckning och slutar i ett färgnummer.
+Dina svar står överst; klicka på ett av dem för att ändra det. **Tillbaka** går ett steg
+bakåt och **Börja om** till första frågan. Efter numret svarar du **Ja** eller **Nej**
+på frågorna om pälsen och ögonen. Vid utskrift kommer nyckeln med som en numrerad lista.
+
+I färgvalet, när du registrerar eller redigerar en kanin, öppnar **Visa färgen**
+kortet för den färg som är vald. För gotlandskanin finns också **Hjälp mig välja**:
+**Välj** i slutet sätter färgen, och **Stäng** lämnar färgen som den var. Guiden
+väljer inte päls åt dig: svarar du **Ja** på frågan om pälsen påminner färgvalet dig om
+att välja **Rex** vid **Päls**.
 
 #### Min profil
 

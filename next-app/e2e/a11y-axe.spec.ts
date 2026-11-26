@@ -42,6 +42,7 @@ const PAGES: Record<string, [Role, Target]> = {
   "/stamboken/min-besattning": ["owner", "/stamboken/min-besattning"],
   "/stamboken/profil": ["owner", "/stamboken/profil"],
   "/stamboken/provparning": ["owner", "/stamboken/provparning"],
+  "/stamboken/fargatlas": ["owner", "/stamboken/fargatlas"],
   "/stamboken/alla-kaniner": ["owner", "/stamboken/alla-kaniner"],
   "/stamboken/genetik": ["owner", "/stamboken/genetik"],
   "/stamboken/individ/[number]": ["owner", "/stamboken/individ/G1274-2112"],

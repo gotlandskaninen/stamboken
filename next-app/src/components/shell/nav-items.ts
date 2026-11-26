@@ -46,6 +46,27 @@ export const NAV_ITEMS: {
 
 export type NavItem = (typeof NAV_ITEMS)[number];
 
+// Avelsråd: the association's document; it becomes a page in Stamboken (stamboken #165).
+export const AVELSRAD_URL =
+  "https://drive.google.com/file/d/1GAC5Gjbq9KOQwxcDuAfGxHotfnpoaq-y/view?usp=share_link";
+
+// "Resurser": reference material for logged-in members, a submenu so the top menu does not grow with it.
+export const RESURSER: (NavItem & { extern?: boolean })[] = [
+  {
+    key: "fargatlas",
+    i18nKey: "sidebar.fargatlas",
+    href: "/stamboken/fargatlas",
+    icon: "palette",
+  },
+  {
+    key: "avelsrad",
+    i18nKey: "sidebar.avelsrad",
+    href: AVELSRAD_URL,
+    icon: "book",
+    extern: true,
+  },
+];
+
 // "Mina inskick" and "Årsrapport" are for every logged-in user; "Inkorg" only for those who work
 // in the intake queue (works_in_queue from /v2/inkorg/notiser/antal).
 export function navItemsFor(worksInQueue: boolean): NavItem[] {

@@ -13,6 +13,7 @@ from .bunny_v2 import bunny_v2_bp
 from .buyer_link import buyer_link_bp
 from .certificates import certificates_bp
 from .code_login import code_login_bp
+from .fargatlas_v2 import fargatlas_v2_bp
 from .genetics import genetics_bp
 from .herd_tracking import herd_tracking_bp
 from .inbox import inbox_bp
@@ -43,6 +44,7 @@ def register_blueprints(app):
     app.register_blueprint(buyer_link_bp)
     app.register_blueprint(certificates_bp)
     app.register_blueprint(code_login_bp)
+    app.register_blueprint(fargatlas_v2_bp)
     app.register_blueprint(genetics_bp)
     app.register_blueprint(herd_tracking_bp)
     app.register_blueprint(inbox_bp)
