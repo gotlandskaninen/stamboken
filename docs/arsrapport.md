@@ -69,6 +69,20 @@ Fältet `on_time` måste finnas. Valet skrivs under samma lås som Skicka och l�
 orört, så det gäller också efter en senare ändring. Den som satte det sparas i `on_time_set_by`.
 Utan en inskickad rapport blir svaret 404.
 
+## Köparen i utkastet
+
+`PUT …/besattning/<besättning>/<år>/utkast` tar emot köparna som säljaren har skrivit i
+försäljningsdialogen i `kopare`, bredvid `data`: `{"<kaninens id>": <köparen>}`. Servern sparar
+varje köpare som en `BuyerContact` till `kept_until`, som köparen över Dra tillbaka, och utkastet
+får bara `kopare_id` och försäljningens datum som det skrevs (`kopare_datum`). Svaret har
+`kopare: {"<kaninens id>": {kopare_id, kept_buyer_date}}` för de köpare som sparades och
+`refusals` med koden `kopare` för dem som inte gjorde det, och utkastet sparas ändå. Bara en roll
+som får sälja sparar en köpare så. En försäljning som rapporten redan har registrerat utanför
+genbanken och "såld utanför genbanken" sparar ingen. Skicka kopplar köparen till försäljningen och
+köar köparens mejl. Ändras försäljningen eller köparen raderas den sparade köparen direkt, och
+skickas rapporten aldrig raderas den av gallringen. Se tillägget 2026-11-26 i
+[ADR-0016](adr/0016-agarbyte-flytt-dag-0-och-berattigat-intresse.md).
+
 ## Försäljningsförslag
 
 `GET …/besattning/<besättning>/<år>/forslag` svarar `{"forslag": [{id, individual_id, number, name,

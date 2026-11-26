@@ -272,6 +272,37 @@ Jonas beslutade 2026-11-26, efter arbetsgruppens förslag 5 b och 6, en
   mejlet hänvisar den som köpt flera kaniner till dataskyddsadressen (Jonas
   2026-11-26: inget avtryck i det här fallet).
 
+## Tillägg 2026-11-26 (årsrapport v2): köparen sparas när försäljningen sparas
+
+Köparen som säljaren skrev i årsrapportens försäljningsdialog fanns bara i
+webbläsarens minne fram till Skicka. Efter en omladdning eller på en annan
+enhet var köparen borta. Jonas beslutade 2026-11-26 att köparen sparas när
+försäljningen sparas, på samma sätt som köparen över Dra tillbaka ovan.
+Regeln att utkastet aldrig har köparen gäller som förut, och "Dina uppgifter"
+sparas aldrig i ett utkast.
+
+* Autosparningen skickar köparen bredvid utkastet. Servern kontrollerar den
+  med försäljningens datum och samma regler som vid Skicka (#273 och
+  postadressen), och sparar den som en `BuyerContact` till `kept_until`.
+  Utkastet får bara köparens id och försäljningens datum som det skrevs
+  (`kopare_id`, `kopare_datum`, utan `fran_rapport`). Ett fel visas i
+  dialogen och på raden.
+* Ändras försäljningen, dess datum eller köparen raderas den sparade köparen
+  direkt. Skickas rapporten aldrig raderas den av gallringen efter
+  `kept_until`, och rundans `end_date` flyttar den som ovan.
+* Skicka kopplar köparen till försäljningen, `purge_at` blir fem år från
+  försäljningen och köparen får mejlen som en ny köpare. Ingen försäljning
+  har hållit den tidigare.
+* Bara en roll som får sälja sparar köparen så. En skötares och den
+  personliga länkens försäljning är ett förslag, och dess köpare finns kvar i
+  minnet till Skicka som förut. Detsamma gäller en försäljning som rapporten
+  redan har registrerat utanför genbanken, som rättas vid Skicka. "Såld
+  utanför genbanken" sparar ingen köpare.
+* Ingen rad håller köparen medan den sparas. Säljaren ser bara "Köparen finns
+  sparad", och genbanksansvarig ser köparen först när rapporten har skickats.
+  En köpare utan bevis (`email_notice_only`) räknar månaden till mejlet från
+  dagen då den sparades.
+
 ## Mer information
 
 Köparens uppgifter sparas med berättigat intresse som rättslig grund,
@@ -297,3 +328,4 @@ Relaterade beslut: [ADR-0014](0014-authorization-model.md)
 | 2026-11-23 | Jonas Hagberg | Kontrollsidan: "Såld" för varje byte av besättning i den rättade historiken, och "Intygas av" är den fysiska person som utfärdade intyget, med namn bara efter eget val (issue #6) |
 | 2026-11-25 | Jonas Hagberg | Pappret heter försäljningsbevis i stället för överlåtelsebevis, samma ord som Sälj och Försäljning i Stamboken (arbetsgruppen 2026-11-24/25) |
 | 2026-11-26 | Jonas Hagberg | Tillägg: försäljning utan försäljningsbevis till och med 2027, e-post bara för informationsmejlet eller ingen köpare (#273, förslag 5 b och 6) |
+| 2026-11-26 | Jonas Hagberg | Tillägg: årsrapporten sparar köparen när försäljningen sparas, inte först vid Skicka |
