@@ -20,6 +20,7 @@ from herdbook import APP, limiter  # noqa: E402
 from utils.members import CONSENT_TEXT_VERSION, consent_answered, effective_consent  # noqa: E402
 
 from tests.database_test import DatabaseTest  # noqa: E402
+from tests.ht_helpers import count_queries  # noqa: E402
 
 limiter.enabled = False
 
@@ -1136,7 +1137,25 @@ class TestKoharenExport(MatrikelApiTest):
 
     def test_formula_injection_guarded(self):
         db.Member.update(first_name="=HYPERLINK()").where(db.Member.email == "anna@example.com").execute()
-        self.assertTrue(self._rows()[1][1].startswith(" ="))
+        db.Herd.update(herd="=G9001").where(db.Herd.herd == "G9001").execute()  # the herd code is free text
+        self.assertEqual(self._rows()[1][:2], [" =G9001", " =HYPERLINK() Andersson"])
+
+    def test_queries_do_not_grow_with_the_answers(self):
+        """The text version of every answer is read in one query, for the export and the matrikel list."""
+
+        def queries(url):
+            with count_queries() as counter:
+                self.assertEqual(self.client.get(url).status_code, 200)
+            return counter["n"]
+
+        self.login("matrikel")
+        before = {url: queries(url) for url in ("/api/v2/members/koharen-export", "/api/v2/members?per_page=100")}
+        for number in range(20, 26):
+            ms = _mk_membership(number=number)
+            _mk_person(ms, "Ny", str(number))
+            db.Herd.create(herd=f"G90{number}", genebank=self.genebanks[0], membership=ms, is_active=True)
+            _answer(ms, EVERYTHING)
+        self.assertEqual({url: queries(url) for url in before}, before)
 
 
 EXPORTS = ("/api/v2/members/address-list", "/api/v2/members/export", "/api/v2/members/koharen-export")

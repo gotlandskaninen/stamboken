@@ -16,6 +16,8 @@ membership → user → person FOR UPDATE itself. Callers pass ids only.
 import logging
 from datetime import datetime, timezone
 
+from peewee import fn
+
 from utils.database import Member, Membership, PublicationConsentChange, User
 from utils.matrikel import ConfirmRequired, LinkError, link_member_user
 
@@ -38,9 +40,19 @@ CONSENT_TEXT_VERSIONS = ("2026-11", "2026-11-16", "2026-11-18", CONSENT_TEXT_VER
 WORKSPACE_DOMAIN = "@gotlandskaninen.se"
 
 
-def stored_consent(row) -> dict:
+def latest_text_versions(membership_ids) -> dict[int, str]:
+    """Each membership's latest publication_consent_change text version, in one query (a list, an export)."""
+    change = PublicationConsentChange
+    ids = list(membership_ids)
+    last = change.select(fn.MAX(change.id)).where(change.membership.in_(ids)).group_by(change.membership)
+    rows = change.select(change.membership, change.text_version).where(change.id.in_(last))
+    return {row.membership_id: row.text_version for row in rows}
+
+
+def stored_consent(row, versions=None) -> dict:
     """The membership's publication_consent JSONB as stored — `{}` when it is not an object, or when its latest
-    publication_consent_change row answers another text than CONSENT_TEXT_VERSIONS (or there is none).
+    publication_consent_change row answers another text than CONSENT_TEXT_VERSIONS (or there is none). A caller
+    with many memberships passes their `latest_text_versions`; without it the membership's own row is read.
 
     Anything that is not a dict (a legacy or hand-edited blob) counts as never
     answered rather than as consent.
@@ -48,17 +60,11 @@ def stored_consent(row) -> dict:
     raw = row.publication_consent
     if not isinstance(raw, dict) or not raw:
         return {}
-    # shortcut: one query per membership with an answer (matrikel list, Koharen export); batch it if they get slow
-    latest = (
-        PublicationConsentChange.select(PublicationConsentChange.text_version)
-        .where(PublicationConsentChange.membership == row.id)
-        .order_by(PublicationConsentChange.id.desc())
-        .first()
-    )
-    return raw if latest is not None and latest.text_version in CONSENT_TEXT_VERSIONS else {}
+    version = (versions if versions is not None else latest_text_versions([row.id])).get(row.id)
+    return raw if version in CONSENT_TEXT_VERSIONS else {}
 
 
-def effective_consent(row) -> dict[str, bool]:
+def effective_consent(row, versions=None) -> dict[str, bool]:
     """Normalize stored JSONB to the full-key boolean shape used by consumers.
 
     v2: takes the Membership row — publication consent governs the matrikel
@@ -69,7 +75,7 @@ def effective_consent(row) -> dict[str, bool]:
     blob must not publish either — `bool("false")` is True, and the Koharen
     export would print the e-mail.
     """
-    raw = stored_consent(row)
+    raw = stored_consent(row, versions)
     return {k: raw.get(k) is True for k in CONSENT_KEYS}
 
 

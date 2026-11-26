@@ -59,6 +59,7 @@ from utils.members import (
     CONSENT_TEXT_VERSION,
     consent_answered,
     effective_consent,
+    latest_text_versions,
     set_consent,
     stored_consent,
 )
@@ -101,7 +102,7 @@ def _person_to_dict(p: Member) -> dict:
     }
 
 
-def _membership_to_dict(ms: Membership, persons: list[Member] | None = None) -> dict:
+def _membership_to_dict(ms: Membership, persons: list[Member] | None = None, versions=None) -> dict:
     # Flat main-member fields (None-safe) match the frontend MembershipRow
     # contract (matrikel/types.ts): the matrikel list renders
     # main_first_name/main_last_name/main_email/main_phone directly.
@@ -119,7 +120,7 @@ def _membership_to_dict(ms: Membership, persons: list[Member] | None = None) -> 
         "city": ms.city,
         "postal_address": ms.postal_address,
         **{field: getattr(ms, field) for field in BILLING_FIELDS},
-        "publication_consent": effective_consent(ms),
+        "publication_consent": effective_consent(ms, versions),
         "payment_note": ms.payment_note,
         "joined_date": ms.joined_date.isoformat() if ms.joined_date else None,
         "notes": ms.notes,
@@ -204,8 +205,10 @@ def list_members():
     # extra round trips on the busiest matrikel endpoint).
     persons_by_membership: dict[int, list[Member]] = {}
     active_herds: dict[int, list[dict]] = {}
+    versions = {}
     if items:
         ids = [ms.id for ms in items]
+        versions = latest_text_versions(ids)
         for person in Member.select().where(Member.membership.in_(ids)).order_by(Member.id):
             persons_by_membership.setdefault(person.membership_id, []).append(person)
         for herd in (
@@ -222,7 +225,7 @@ def list_members():
         {
             "items": [
                 {
-                    **_membership_to_dict(ms, persons_by_membership.get(ms.id, [])),
+                    **_membership_to_dict(ms, persons_by_membership.get(ms.id, []), versions),
                     "active_herds": active_herds.get(ms.id, []),
                 }
                 for ms in items
@@ -934,14 +937,15 @@ def export_koharen():
                 Member.end_date.is_null(True),
             )
         }
+        versions = latest_text_versions({h.membership_id for h in herds})
         for herd in herds:
             ms, holder = herd.membership, holders.get(herd.membership_id)
-            consent = effective_consent(ms)  # only a literal true: Nej and {} are no row
+            consent = effective_consent(ms, versions)  # only a literal true: Nej and {} are no row
             if holder is None or not consent["name"]:
                 continue
             rows.append(
                 [
-                    herd.herd,
+                    csv_safe(herd.herd),
                     csv_safe(ms.organization_name or holder.display_name),
                     csv_safe(holder.phone) if consent["phone"] else "",
                     csv_safe(holder.email) if consent["email"] else "",
