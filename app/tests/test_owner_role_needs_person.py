@@ -15,7 +15,7 @@ class TestOwnerRoleNeedsPerson(FlaskTest):
         self.bo = da.register_user("bo@example.org", "pass", username="bo", fullname="Bo Svensson")
 
     def _grants(self, herd):
-        """The v2 admin panel and the legacy route, as admin: [(status, json, owns afterwards)]."""
+        """The v2 admin panel, as admin: [(status, json, owns afterwards)]. The legacy route is closed (ADR-0020)."""
         results = []
         with self.app as ctx:
             self.login(ctx, self.admin)
@@ -24,11 +24,10 @@ class TestOwnerRoleNeedsPerson(FlaskTest):
                     "/api/v2/admin/role",
                     {"operation": "add", "user_id": self.bo.id, "role": {"level": "owner", "herd": herd.id}},
                 ),
-                ("/api/manage/role", {"action": "add", "role": "owner", "user": self.bo.id, "herd": herd.id}),
             ):
                 resp = ctx.post(path, json=body)
                 results.append((resp.status_code, resp.get_json(), self._owns(herd)))
-                self.bo.remove_role("owner", herd.id)  # the second route starts from the same state
+                self.bo.remove_role("owner", herd.id)
                 self.bo.save()
         return results
 

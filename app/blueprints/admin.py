@@ -47,8 +47,8 @@ def admin_grant_role():
              | {"level": "manager" | "helper" | "viewer", "genebank": <int>}
              | {"level": "owner", "herd": <int>}}   # numeric Herd.id
 
-    Legacy POST /api/manage/role is UNTOUCHED — the
-    v2 panel routes ALL role writes here. Delegates to
+    The legacy /api/manage/role is closed (410, ADR-0020); all role
+    writes come here. Delegates to
     data_access.update_role(), so the last-admin invariant fires
     (ValidationError → 409 application/problem+json) and the hbuser
     audit trigger records the write.
@@ -411,8 +411,8 @@ def admin_rate_limited(exc):
     )
 
 
-# Dedicated admin password reset. The legacy
-# /api/manage/setpassword/ aliases stay untouched (self-service path).
+# Dedicated admin password reset. The legacy /api/manage/setpassword/
+# routes are closed (410, ADR-0020).
 
 
 @admin_bp.route("/users/<int:u_id>/password-reset", methods=["POST"])

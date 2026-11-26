@@ -1022,6 +1022,15 @@ def get_users():
     return jsonify(users=users)
 
 
+def _admin_gone(message):
+    """ADR-0020: a closed admin write of the old app. Nothing is written, whoever asks.
+    The legacy forms show `message`."""
+    return jsonify({"status": "error", "message": message}), 410
+
+
+ACCOUNTS_GONE = "Konton och roller hanteras nu i nya Stamboken."
+
+
 @APP.route(
     "/api/manage/user/",
     defaults={"u_id": False},
@@ -1031,111 +1040,27 @@ def get_users():
 @login_required
 def manage_user(u_id):
     """
-    Returns user information and a list of all roles for the requested `u_id`.
-
-    The return value from this function should be:
-        JSON: {
-            status: 'unchanged' | 'updated' | 'created' | 'success' | 'error',
-            message?: string,
-            data?: any
-        }
+    Returns user information and a list of all roles for the requested `u_id`
+    (the caller's own without an id). Every write is closed (ADR-0020) and
+    answers 410.
     """
-
-    # Handle file upload for profile pictures
-    profile_picture_url = None
-    if "profile_picture" in request.files:
-        file = request.files["profile_picture"]
-        if file and file.filename and allowed_file(file.filename):
-            # Create unique filename
-            filename = secure_filename(file.filename)
-            unique_filename = f"{uuid.uuid4().hex}_{filename}"
-            file_path = os.path.join(APP.config["UPLOAD_FOLDER"], unique_filename)
-
-            try:
-                file.save(file_path)
-                profile_picture_url = unique_filename  # Only filename, not full URL
-                APP.logger.info("Profile picture uploaded")
-            except Exception as e:
-                APP.logger.error("Error uploading file: %s", type(e).__name__)  # e carries the path
-                return jsonify({"status": "error", "message": "Failed to upload image"})
-
-    # Get form data (could be JSON or form data depending on upload)
-    if request.content_type and "multipart/form-data" in request.content_type:
-        form = request.form.to_dict()
-    else:
-        form = request.json if request.method != "GET" else {}
-
-    # Add profile picture URL to form if uploaded
-    if profile_picture_url:
-        form["profile_picture"] = profile_picture_url
-
-    if not u_id:
-        # If not provided, default to current user.
-        u_id = current_user.id
-        if form:
-            form["id"] = u_id
-
-    if request.method == "GET":
-        retval = da.get_user(u_id, session.get("user_id", None))
-    if request.method in ("UPDATE", "PATCH"):
-        retval = da.update_user(form, session.get("user_id", None))
-        if retval.get("status") == "updated":
-            auth_log.info("user updated actor=%s target=%s", current_user.id, form.get("id", u_id))
-    if request.method == "POST":
-        retval = da.add_user(form, session.get("user_id", None))
-        if retval.get("status") != "error":
-            auth_log.info("user created actor=%s", current_user.id)
-    return jsonify(retval)
+    if request.method != "GET":
+        return _admin_gone(ACCOUNTS_GONE)
+    return jsonify(da.get_user(u_id or current_user.id, session.get("user_id", None)))
 
 
 @APP.route("/api/manage/setpassword/", defaults={"u_id": False}, methods=["POST"])
 @APP.route("/api/manage/setpassword/<u_id>", methods=["POST"])
 def change_userpassword(u_id):
-    """
-    Set password for user u_id. Administrators can set password for any user.
-    Non-administrators need to present the old password or a token.
-    """
-
-    if request.method != "POST":
-        return abort(400)  # Makes the linter happy
-
-    form = request.json
-
-    if not current_user.is_authenticated:
-        return abort(403)  # Makes the linter happy
-
-    if not u_id:
-        u_id = current_user.id
-    # Basic auth's one-request session has no mark, so it never holds here: no password change through Basic auth.
-    retval = da.change_password(current_user, u_id, form, session_stamps=session)
-    if retval:
-        auth_log.info("password changed actor=%s target=%s", current_user.id, u_id)
-    return jsonify(retval)
+    """Gone (ADR-0020): an admin resets passwords in the new Stamboken (/api/v2/admin/users/<id>/password-reset)."""
+    return _admin_gone("Lösenord byts inte längre i gamla Stamboken. Admin återställer lösenord i nya Stamboken.")
 
 
 @APP.route("/api/manage/role", methods=["POST", "PATCH", "UPDATE"])
 @login_required
 def manage_roles():
-    """
-    Changes or adds roles for the user identified by `u_id`, and returns a
-    status a json status message.
-    The input data should be formatted like:
-        {action: add | remove,
-         role: owner | manager | viewer,
-         user: <id>,
-         herd | genebank: <id>
-        }
-
-    The return value will be formatted like:
-        JSON: {
-            status: 'unchanged' | 'updated' | 'created' | 'success' | 'error',
-            message?: string,
-            data?: any
-        }
-    """
-    form = request.json
-    status = da.update_role(form, session.get("user_id", None))
-    return jsonify(status)
+    """Gone (ADR-0020): roles are granted and removed in the new Stamboken (POST /api/v2/admin/role)."""
+    return _admin_gone(ACCOUNTS_GONE)
 
 
 @APP.route("/api/manage/herd", methods=["POST", "PATCH"])
@@ -1625,8 +1550,8 @@ def _link_member_if_any(user, verified_email) -> None:
     Auto-link a Member to this freshly-authenticated User by matching the
     address the identity provider just verified against
     Member.workspace_email (the provisioned login, NOT the contact email).
-    Never User.email: any user can rewrite that through
-    PATCH /api/manage/user/. No verified address, no link.
+    Never User.email: it is no verified address (the old app let any user
+    rewrite it). No verified address, no link.
     Case-insensitive — the unique index is on LOWER(workspace_email) and
     Google may deliver different casing.
 
@@ -3017,52 +2942,26 @@ def get_yearly_report_rounds():
         return jsonify({"status": "error", "message": "Unauthorized"})
 
 
+ROUNDS_GONE = "Årsrapportens rundor hanteras nu i nya Stamboken."
+
+
+# Gone (ADR-0020): rounds are set in the new Stamboken (PUT /api/v2/arsrapport/rundor/<year>), on the same table.
 @APP.route("/api/manage/yearly_report_round", methods=["POST"])
 @login_required
 def create_yearly_report_round():
-    """
-    Creates a new YearlyReportRound.
-    Only accessible to admin or manager users.
-    """
-    user_id = session.get("user_id", None)
-    form = request.json
-    result = da.create_yearly_report_round(form, user_id)
-    if result["status"] == "success":
-        return jsonify(result), 201
-    else:
-        return jsonify(result), 403
+    return _admin_gone(ROUNDS_GONE)
 
 
 @APP.route("/api/manage/yearly_report_round/<int:round_id>", methods=["PATCH"])
 @login_required
 def update_yearly_report_round(round_id):
-    """
-    Updates an existing YearlyReportRound.
-    Only accessible to admin or manager users.
-    """
-    user_id = session.get("user_id", None)
-    form = request.json
-    form["id"] = round_id
-    result = da.update_yearly_report_round(round_id, form, user_id)
-    if result["status"] == "success":
-        return jsonify(result)
-    else:
-        return jsonify(result), 403
+    return _admin_gone(ROUNDS_GONE)
 
 
 @APP.route("/api/manage/yearly_report_round/<int:round_id>", methods=["DELETE"])
 @login_required
 def delete_yearly_report_round(round_id):
-    """
-    Deletes an existing YearlyReportRound.
-    Only accessible to admin or manager users.
-    """
-    user_id = session.get("user_id", None)
-    result = da.delete_yearly_report_round(round_id, user_id)
-    if result["status"] == "success":
-        return jsonify(result)
-    else:
-        return jsonify(result), 403
+    return _admin_gone(ROUNDS_GONE)
 
 
 @APP.route("/", defaults={"path": ""})

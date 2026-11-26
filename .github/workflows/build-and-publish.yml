@@ -164,7 +164,7 @@ jobs:
 
   # ============================================
   # Build Legacy Frontend - PRODUCTION branch
-  # Bygger från gotlandskaninen/stamboken-legacy, låst på SHA (production v.1.1.6 + härdning, legacy-PR #5).
+  # Bygger från gotlandskaninen/stamboken-legacy, låst på SHA (production v.1.1.6 + härdning, legacy-PR #5; stängda funktioner enligt ADR-0020, legacy-PR #10).
   # Bumpa SHA:n i en PR när legacy ändras.
   # ============================================
   build-legacy-prod:
@@ -177,12 +177,12 @@ jobs:
       - name: Checkout this repo (for build scripts)
         uses: actions/checkout@v6
 
-      - name: Checkout legacy frontend (production + banner om nya Stamboken, legacy-PR #7, #8 och #9)
+      - name: Checkout legacy frontend (production + banner om nya Stamboken, legacy-PR #7–#10)
         uses: actions/checkout@v6
         with:
           repository: gotlandskaninen/stamboken-legacy
           path: legacy-src
-          ref: bfd23ff10c7e35209ca4d03c68661f6c2d73aaa5
+          ref: 7a72f77e5684087282d29c846b1f3dc1fbe919e4
           fetch-depth: 0
 
       # Sidfoten visar Stambokens version och länkar till dess release
@@ -229,7 +229,7 @@ jobs:
 
   # ============================================
   # Build Legacy Frontend - TEST branch
-  # Bygger från gotlandskaninen/stamboken-legacy, låst på SHA (test-prod v.1.1.6 + härdning, legacy-PR #6).
+  # Bygger från gotlandskaninen/stamboken-legacy, låst på SHA (test-prod v.1.1.6 + härdning, legacy-PR #6; stängda funktioner enligt ADR-0020, legacy-PR #11).
   # ============================================
   build-legacy-test:
     runs-on: ubuntu-latest
@@ -246,7 +246,7 @@ jobs:
         with:
           repository: gotlandskaninen/stamboken-legacy
           path: legacy-src
-          ref: 34a0daa7629cd5fe836d66b5662af164c154103d
+          ref: 3f61b3ac3b639fc1ade6ae84788ba12c31a505e1
           fetch-depth: 0
 
       - name: Get latest legacy release tag

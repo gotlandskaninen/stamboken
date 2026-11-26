@@ -211,7 +211,7 @@ export async function resetPassword(
     // NEW dedicated endpoint (rate-limited 10/h per admin).
     // Body {"password": ...} covers BOTH change_password branches server-
     // side (INSERT for Google-only users, UPDATE otherwise). The legacy
-    // /api/manage/setpassword aliases are NOT used and NOT touched.
+    // /api/manage/setpassword routes are closed (410, ADR-0020).
     await fetchApi(`/v2/admin/users/${userId}/password-reset`, {
       method: "POST",
       body: JSON.stringify({ password: plaintext }),

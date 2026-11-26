@@ -1,7 +1,7 @@
 # Every API call the legacy frontend makes: method, URL template (<x> is a
 # dynamic segment, query strings dropped) and the call site.
 # Read by hand from gotlandskaninen/stamboken-legacy at
-# 49e403d3410c5720f3412db2be041b30bfe46bc9, the commit
+# 7a72f77e5684087282d29c846b1f3dc1fbe919e4, the commit
 # .github/workflows/build-and-publish.yml pins (build-legacy-prod). The URLs are
 # assembled from parts, so each call site was read, not just grepped.
 # Extract again when that pin moves. test_access_rules.py checks each row
@@ -17,10 +17,10 @@ GET	/api/breeding/<x>	frontend/src/SelectHerdStep.tsx:89
 GET	/api/herd/<x>	frontend/src/YearlyReportForm.tsx:82
 GET	/api/breeding/<x>	frontend/src/YearlyReportForm.tsx:87
 POST	/api/herd/<x>/yearlyreport	frontend/src/YearlyReportForm.tsx:258
-GET	/api/manage/yearly_report_rounds	frontend/src/YearlyReportRounds.tsx:87
-PATCH	/api/manage/yearly_report_round/<x>	frontend/src/YearlyReportRounds.tsx:171
-POST	/api/manage/yearly_report_round	frontend/src/YearlyReportRounds.tsx:176
-DELETE	/api/manage/yearly_report_round/<x>	frontend/src/YearlyReportRounds.tsx:211
+GET	/api/manage/yearly_report_rounds	frontend/src/YearlyReportRounds.tsx:88
+PATCH	/api/manage/yearly_report_round/<x>	frontend/src/YearlyReportRounds.tsx:172
+POST	/api/manage/yearly_report_round	frontend/src/YearlyReportRounds.tsx:177
+DELETE	/api/manage/yearly_report_round/<x>	frontend/src/YearlyReportRounds.tsx:212
 GET	/api/herd/<x>/yearlyreport	frontend/src/YearlyReportStep.tsx:36
 GET	/api/manage/yearly-reports/<x>/<x>	frontend/src/YearlyReportViewer.tsx:92
 GET	/api/manage/yearly-reports/<x>/<x>/export	frontend/src/YearlyReportViewer.tsx:116
@@ -72,15 +72,15 @@ PATCH	/api/individual	frontend/src/individual_weighthull.tsx:297
 GET	/api/user	frontend/src/navigation.tsx:107
 GET	/api/login/google	frontend/src/navigation.tsx:109
 GET	/api/manage/yearly_report_rounds	frontend/src/navigation.tsx:143
-GET	/api/login/google	frontend/src/navigation.tsx:273
-GET	/api/login/google	frontend/src/navigation.tsx:412
-POST	/api/manage/setpassword/	frontend/src/settings.tsx:58
-PATCH	/api/manage/user/	frontend/src/settings.tsx:72
-POST	/api/linked	frontend/src/settings.tsx:86
-POST	/api/link/<x>	frontend/src/settings.tsx:117
-GET	/api/link/<x>	frontend/src/settings.tsx:140
-POST	/api/unlink/<x>	frontend/src/settings.tsx:151
-POST	/api/login/available	frontend/src/settings.tsx:162
+GET	/api/login/google	frontend/src/navigation.tsx:258
+GET	/api/login/google	frontend/src/navigation.tsx:397
+POST	/api/manage/setpassword/	frontend/src/settings.tsx:59
+PATCH	/api/manage/user/	frontend/src/settings.tsx:73
+POST	/api/linked	frontend/src/settings.tsx:87
+POST	/api/link/<x>	frontend/src/settings.tsx:118
+GET	/api/link/<x>	frontend/src/settings.tsx:141
+POST	/api/unlink/<x>	frontend/src/settings.tsx:152
+POST	/api/login/available	frontend/src/settings.tsx:163
 POST	/api/testbreed	frontend/src/testbreed_recommendation.tsx:114
 GET	/api/manage/user/<x>	frontend/src/userForm.tsx:111
 POST	/api/manage/setpassword/	frontend/src/userForm.tsx:135
