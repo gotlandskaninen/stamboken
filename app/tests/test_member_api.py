@@ -17,7 +17,7 @@ from blueprints import members as members_routes  # noqa: E402
 # The export is consumed by the importer — reuse its pure parsing helpers.
 from cli.members import _group_rows, _read_rows  # noqa: E402
 from herdbook import APP, limiter  # noqa: E402
-from utils.members import consent_answered, effective_consent  # noqa: E402
+from utils.members import CONSENT_TEXT_VERSION, consent_answered, effective_consent  # noqa: E402
 
 from tests.database_test import DatabaseTest  # noqa: E402
 
@@ -30,6 +30,12 @@ def _mk_membership(number=None, status="active", **kwargs):
 
 def _mk_person(membership, first, last, email=None, role="huvudmedlem", **kwargs):
     return db.Member.create(membership=membership, first_name=first, last_name=last, email=email, role=role, **kwargs)
+
+
+def _answer(membership, value, text_version=CONSENT_TEXT_VERSION):
+    """The membership's Koharen answer with its history row, as every writer leaves it (set_consent)."""
+    db.Membership.update(publication_consent=value).where(db.Membership.id == membership.id).execute()
+    db.PublicationConsentChange.create(membership=membership, value=value, text_version=text_version, source="profil")
 
 
 class MatrikelApiTest(DatabaseTest):
@@ -326,8 +332,7 @@ class TestSelfService(MatrikelApiTest):
     def test_patch_consent_merges_onto_the_stored_answer(self):
         """The body is a PARTIAL update: keys the member did not
         submit keep their stored value, and no key is invented for them."""
-        self.ms.publication_consent = {"email": True}
-        self.ms.save()
+        _answer(self.ms, {"email": True})
         self.login("linked")
         resp = self.client.patch(
             "/api/v2/members/me/consent",
@@ -344,8 +349,7 @@ class TestSelfService(MatrikelApiTest):
     def test_withdrawn_consent_stays_withdrawn_in_the_koharen_export(self):
         """GDPR: a withdrawal must survive the next partial save of another
         switch — the export's e-post cell stays blank."""
-        self.ms.publication_consent = {"name": True, "email": True}
-        self.ms.save()
+        _answer(self.ms, {"name": True, "email": True})
         db.Herd.create(herd="G9008", genebank=self.genebanks[0], membership=self.ms, is_active=True)
         self.person.phone = "070-9"
         self.person.save()
@@ -376,8 +380,7 @@ class TestSelfService(MatrikelApiTest):
         refused — must not print in the Koharen export (bool("false") is True),
         GET /me must report it as off, and the next partial save must persist
         it as false instead of carrying the coercion forward."""
-        self.ms.publication_consent = {"name": True, "email": "false", "phone": 1}
-        self.ms.save()
+        _answer(self.ms, {"name": True, "email": "false", "phone": 1})
         db.Herd.create(herd="G9008", genebank=self.genebanks[0], membership=self.ms, is_active=True)
         self.person.phone = "070-9"
         self.person.save()
@@ -404,6 +407,19 @@ class TestSelfService(MatrikelApiTest):
             db.Membership.get_by_id(self.ms.id).publication_consent,
             {"name": True, "email": False, "phone": False, "address": True},
         )
+
+    def test_an_answer_to_an_older_text_is_asked_again(self):
+        """5.11: a new text that says more applies only after a new answer. The old profile asked about the member
+        directory ("profil-2025"): nothing is chosen, and the same answer to this question is recorded."""
+        _answer(self.ms, EVERYTHING, "profil-2025")
+        self.login("linked")
+        me = self.client.get("/api/v2/members/me").get_json()
+        self.assertEqual((me["consent_answered"], me["publication_consent"]), (False, dict.fromkeys(EVERYTHING, False)))
+        resp = self.client.patch("/api/v2/members/me/consent", json=EVERYTHING)
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertTrue(resp.get_json()["consent_answered"])
+        last = db.PublicationConsentChange.select().order_by(db.PublicationConsentChange.id.desc()).first()
+        self.assertEqual((last.value, last.text_version, last.source), (EVERYTHING, CONSENT_TEXT_VERSION, "profil"))
 
     def test_non_object_stored_consent_is_never_answered(self):
         """A JSONB array or scalar in publication_consent is neither consent nor
@@ -978,24 +994,20 @@ class TestKoharenExport(MatrikelApiTest):
     def setUp(self):
         super().setUp()
         gotland, mellerud = self.genebanks
-        self.full = _mk_membership(
-            number=6, address="Gatan 1", postal_code="623 55", city="Visby", publication_consent=EVERYTHING
-        )
+        self.full = _mk_membership(number=6, address="Gatan 1", postal_code="623 55", city="Visby")
+        _answer(self.full, EVERYTHING)
         _mk_person(self.full, "Anna", "Andersson", "anna@example.com", phone="070-1")
         _mk_person(self.full, "Frida", "Andersson", "frida@example.com", role="familjemedlem", phone="070-2")
-        self.partial = _mk_membership(
-            number=7,
-            address="Gatan 2",
-            postal_code="621 45",
-            city="Visby",
-            publication_consent={"name": True, "phone": False, "email": True, "address": False},
-        )
+        self.partial = _mk_membership(number=7, address="Gatan 2", postal_code="621 45", city="Visby")
+        _answer(self.partial, {"name": True, "phone": False, "email": True, "address": False})
         _mk_person(self.partial, "Bo", "Bengtsson", "bo@example.com", phone="070-3")
-        nej = _mk_membership(number=8, publication_consent=dict.fromkeys(EVERYTHING, False))
+        nej = _mk_membership(number=8)
+        _answer(nej, dict.fromkeys(EVERYTHING, False))
         _mk_person(nej, "Cy", "Cyklop", "cy@example.com")
-        unset = _mk_membership(number=9, address="Gatan 9", postal_code="621 99", city="Visby", publication_consent={})
+        unset = _mk_membership(number=9, address="Gatan 9", postal_code="621 99", city="Visby")
         _mk_person(unset, "Ulla", "Unset", "ulla@example.com")
-        inactive = _mk_membership(number=10, status="inactive", publication_consent=EVERYTHING)
+        inactive = _mk_membership(number=10, status="inactive")
+        _answer(inactive, EVERYTHING)
         _mk_person(inactive, "In", "Aktiv")
         for herd, genebank, membership, active in (
             ("M9201", mellerud, self.full, True),
@@ -1037,14 +1049,27 @@ class TestKoharenExport(MatrikelApiTest):
             with self.subTest(value=value):
                 self.assertNotIn(value, text)
 
+    def test_only_an_answer_to_this_question_is_listed(self):
+        """5.11: a new text that says more applies only after a new answer. The old profile's yes ("profil-2025")
+        and a yes without history are left out; every text that named the list and the herd number counts."""
+        for number, version in ((11, "profil-2025"), (12, None), (13, "2026-11"), (14, "2026-11-18")):
+            ms = _mk_membership(number=number, postal_code="621 00", city="Visby")
+            _mk_person(ms, "Ny", str(number))
+            db.Herd.create(herd=f"G90{number}", genebank=self.genebanks[0], membership=ms, is_active=True)
+            if version is None:
+                db.Membership.update(publication_consent=EVERYTHING).where(db.Membership.id == ms.id).execute()
+            else:
+                _answer(ms, EVERYTHING, version)
+        self.assertEqual([r[0] for r in self._rows()[1:]], ["G9001", "G9002", "G9013", "G9014", "M9201"])
+
     def test_family_member_never_stands_in_for_the_holder(self):
         db.Member.update(end_date=date.today()).where(db.Member.email == "anna@example.com").execute()
         self.assertEqual([r[0] for r in self._rows()[1:]], ["G9002"])
 
     def test_organization_is_listed_by_its_name_with_its_contact(self):
-        self.partial.organization_name = "Testföreningen"
-        self.partial.organization_number = "552222-0002"
-        self.partial.save()
+        db.Membership.update(organization_name="Testföreningen", organization_number="552222-0002").where(
+            db.Membership.id == self.partial.id
+        ).execute()
         self.assertIn(["G9002", "Testföreningen", "", "bo@example.com", "", ""], self._rows())
 
     def test_file_name_and_audit_row(self):

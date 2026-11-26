@@ -12,6 +12,7 @@ import utils.data_access as da  # noqa: E402
 import utils.database as db  # noqa: E402
 import utils.matrikel as matrikel  # noqa: E402
 from herdbook import APP, limiter  # noqa: E402
+from utils.members import CONSENT_TEXT_VERSION  # noqa: E402
 
 from tests.database_test import DatabaseTest  # noqa: E402
 
@@ -210,6 +211,9 @@ class TestBillingAddressExport(BillingTestBase):
         """The Koharen export is published: the billing address must not reach it, whatever the consent."""
         everything = {"name": True, "phone": True, "email": True, "address": True}
         db.Membership.update(publication_consent=everything).execute()
+        db.PublicationConsentChange.create(
+            membership=self.membership, value=everything, text_version=CONSENT_TEXT_VERSION, source="profil"
+        )
         db.Herd.create(herd="G9006", genebank=self.genebanks[0], membership=self.membership, is_active=True)
         self.login()
         resp = self.client.get("/api/v2/members/koharen-export")

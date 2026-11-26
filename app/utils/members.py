@@ -27,6 +27,10 @@ CONSENT_KEYS = ("name", "phone", "email", "address")
 # question says "besättning" where it said "genbank" (same scope), on the form v5 and in the report alike.
 # Bumped 2026-11-20: the Ja answer now asks per item that MAY appear (it asked which must not), same stored keys.
 CONSENT_TEXT_VERSION = "2026-11-20"  # the profile asks the same question since step 5 (it had "profil-2025")
+# Every version of the question that named Koharen's list of active herds and the herd number. An answer to another
+# text (the old profile's member directory, "profil-2025") or one without history is no answer to this question: a
+# new text that says more applies only after a new answer (5.11). A bump that says more drops the older versions here.
+CONSENT_TEXT_VERSIONS = ("2026-11", "2026-11-16", "2026-11-18", CONSENT_TEXT_VERSION)
 
 # Only Phase 9-provisioned Workspace addresses may auto-link. The
 # /api/auth/google flow enforces this domain, but the flask-dance
@@ -35,13 +39,23 @@ WORKSPACE_DOMAIN = "@gotlandskaninen.se"
 
 
 def stored_consent(row) -> dict:
-    """The publication_consent JSONB as stored — `{}` when it is not an object.
+    """The membership's publication_consent JSONB as stored — `{}` when it is not an object, or when its latest
+    publication_consent_change row answers another text than CONSENT_TEXT_VERSIONS (or there is none).
 
     Anything that is not a dict (a legacy or hand-edited blob) counts as never
     answered rather than as consent.
     """
     raw = row.publication_consent
-    return raw if isinstance(raw, dict) else {}
+    if not isinstance(raw, dict) or not raw:
+        return {}
+    # shortcut: one query per membership with an answer (matrikel list, Koharen export); batch it if they get slow
+    latest = (
+        PublicationConsentChange.select(PublicationConsentChange.text_version)
+        .where(PublicationConsentChange.membership == row.id)
+        .order_by(PublicationConsentChange.id.desc())
+        .first()
+    )
+    return raw if latest is not None and latest.text_version in CONSENT_TEXT_VERSIONS else {}
 
 
 def effective_consent(row) -> dict[str, bool]:
@@ -62,10 +76,9 @@ def effective_consent(row) -> dict[str, bool]:
 def consent_answered(row) -> bool:
     """Has the member answered the Koharen question at all?
 
-    `publication_consent = {}` means *never answered* — the export prints
-    "ej angivet", and the profil page submits all four keys on the first save
-    so an all-off answer is still recorded as answered. One predicate, used by
-    both the export and GET /v2/members/me.
+    `publication_consent = {}`, or an answer to an older text, means *never
+    answered* — the export leaves it out, and the profil page submits all four
+    keys on the first save so an all-off answer is still recorded as answered.
     """
     raw = stored_consent(row)
     return any(key in raw for key in CONSENT_KEYS)
@@ -79,8 +92,9 @@ def consent_from_answer(ja: bool, utom: list[str]) -> dict[str, bool]:
 def set_consent(membership, value, *, source, text_version, user=None, report=None, submission=None, at=None) -> bool:
     """
     Writes `value` as the membership's publication consent, with one publication_consent_change row (D9, art. 7.1),
-    when it differs from the stored value, `{}` included. Consent only: never the whole row. A report's write names its
-    `report` and `submission` ids. The caller holds the membership's lock. Returns whether it wrote.
+    when it differs from the stored answer to this question, `{}` included: the same answer to an older text is new.
+    Consent only: never the whole row. A report's write names its `report` and `submission` ids. The caller holds the
+    membership's lock. Returns whether it wrote.
     """
     if value == stored_consent(membership):
         return False
