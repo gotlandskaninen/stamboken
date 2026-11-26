@@ -17,6 +17,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from peewee import (
     JOIN,
+    SQL,
     Case,
     DatabaseError,
     DataError,
@@ -1680,6 +1681,8 @@ def get_herd(herd_id, user_uuid=None):
                 return None
             herd = Herd.get(Herd.herd == herd_id)
             data = herd.filtered_dict(user)
+            if "bank_account_number" in data:  # the account's revision, which the old app sends back with the herd
+                data["bank_account_revision"] = support_account_revision(herd.membership_id)
             data["individuals"] = []
             if data["genebank"] not in user.accessible_genebanks:
                 return None
@@ -1928,7 +1931,26 @@ def _account_text(value):
     return None if value is None else str(value).strip() or None
 
 
-def _herd_account_change(herd, sent, user):
+STALE_ACCOUNT = "Kontot för stödet har ändrats sedan sidan lästes in. Ladda om sidan och försök igen."
+
+
+def support_account_revision(membership_id):
+    """
+    The id of the membership's latest logged change of its support account, 0 before the first (migration 58 logs
+    none): every writer logs one kontakt_andrad row naming the columns. A herd form read before the upgrade carries
+    none, so it counts as 0, which holds only while the account is the migrated one.
+    """
+    if membership_id is None:
+        return 0
+    latest = MatrikelAudit.select(fn.MAX(MatrikelAudit.id)).where(
+        MatrikelAudit.membership == membership_id,
+        MatrikelAudit.action == "kontakt_andrad",
+        SQL("payload->'fields' ?| %s", (["bank_account_type", "bank_account_number", "bank_name"],)),
+    )
+    return latest.scalar() or 0
+
+
+def _herd_account_change(herd, sent, user, revision=None):
     """
     The herd PATCH's bank fields `sent` as a change to the herd's membership (migration 58): (columns to write, None)
     or (None, the error answer). Call it under lock_herd, which locks the membership first.
@@ -1940,7 +1962,10 @@ def _herd_account_change(herd, sent, user):
     together; the same account written otherwise changes at most the bank. Anything else is refused: a blank never
     clears, a bank alone never changes, and a mask that is not the stored account's any more is a stale form, which
     must not write an old account back. A non-writer gets the same Forbidden for every value, so it never tells
-    whether a guess was right (as legacy_contact_form). A herd without a membership has no account.
+    whether a guess was right (as legacy_contact_form). A herd without a membership has no account. A change needs
+    `revision`, the support_account_revision the form read (none: a form from before the upgrade, 0), to be the
+    current one: a form read before another change, or before migration 58 when the herd page showed the whole number,
+    gets a reload message instead of writing back what it read.
     """
     if not sent:
         return None, None
@@ -1972,6 +1997,12 @@ def _herd_account_change(herd, sent, user):
         bank = _account_text(sent.get("bank_name"))
         changes = {"bank_account_type": None, "bank_account_number": number, "bank_name": bank}
     changes = {column: value for column, value in changes.items() if value != _account_text(getattr(stored, column))}
+    try:
+        read = int(revision or 0)
+    except (TypeError, ValueError):
+        read = -1
+    if changes and read != support_account_revision(herd.membership_id):
+        return None, {"status": "error", "message": STALE_ACCOUNT}
     return changes or None, None
 
 
@@ -2000,7 +2031,8 @@ def update_herd(form, user_uuid, *, legacy=False):
             # stored value echoed by the legacy SPA cannot block the save. Response unchanged.
             form = {k: v for k, v in form.items() if k not in BANK_PRIVACY_FIELDS}
             # The account is the membership's (migration 58): decided here, written with the herd below.
-            account, refusal = _herd_account_change(herd, {f: form[f] for f in HERD_BANK_FIELDS if f in form}, user)
+            sent = {f: form[f] for f in HERD_BANK_FIELDS if f in form}
+            account, refusal = _herd_account_change(herd, sent, user, form.get("bank_account_revision"))
             if refusal:
                 return refusal
             bad = invalid_privacy_field(form)

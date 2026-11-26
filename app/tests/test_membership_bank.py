@@ -242,6 +242,9 @@ class SupportAccountTest(InboxTest):
         ms = db.Membership.get_by_id(self.ms.id)
         return ms.bank_account_type, ms.bank_account_number, ms.bank_name
 
+    def revision(self):
+        return da.support_account_revision(self.ms.id)
+
     def audits(self):
         return [(a.action, a.payload) for a in db.MatrikelAudit.select().order_by(db.MatrikelAudit.id)]
 
@@ -352,9 +355,21 @@ class TestReaders(SupportAccountTest):
         self.assertIsNone(account_end(self.herd(2)))
 
 
+RELOAD = {
+    "status": "error",
+    "message": "Kontot för stödet har ändrats sedan sidan lästes in. Ladda om sidan och försök igen.",
+}
+
+
 class TestLegacyWriters(SupportAccountTest):
     def save(self, user, **fields):
         return da.update_herd({"id": self.herds[0].id, **fields}, user.uuid, legacy=True)
+
+    def read(self, user, index=0):
+        """What the old app reads (GET /api/herd/<code>) and sends back."""
+        data = da.get_herd(self.herds[index].herd, user.uuid)
+        data.pop("individuals")
+        return data
 
     def test_masked_echo_keeps_the_account_and_a_partial_mask_is_refused(self):
         for user in (self.manager, self.main):
@@ -394,7 +409,8 @@ class TestLegacyWriters(SupportAccountTest):
         ).execute()
         self.assertEqual(self.save(self.main, bank_account_number="PG 123456-6"), {"status": "updated"})
         self.assertEqual(self.stored(), (None, "PG 123456-6", None))  # the bank went with the old account
-        self.assertEqual(self.save(self.main, bank_account_number="pg 1234566", bank_name="Nya"), {"status": "updated"})
+        again = {"bank_account_number": "pg 1234566", "bank_name": "Nya", "bank_account_revision": self.revision()}
+        self.assertEqual(self.save(self.main, **again), {"status": "updated"})
         self.assertEqual(self.stored(), (None, "PG 123456-6", "Nya"))  # the same account written otherwise: the bank
 
     def test_no_one_blanks_it_on_the_herd_page(self):
@@ -416,8 +432,8 @@ class TestLegacyWriters(SupportAccountTest):
                                         manager.uuid, legacy=True), {"status": "updated"})  # fmt: skip
         forms = {"admin": self.herd().filtered_dict(admin), "manager": self.herd().filtered_dict(manager)}
         # then the account changes again, to one ending like the first, with another bank
-        self.assertEqual(da.update_herd({"id": self.herds[1].id, "bank_account_number": "9999-112", "bank_name": "Nya"},
-                                        manager.uuid, legacy=True), {"status": "updated"})  # fmt: skip
+        again = {**self.read(manager, 1), "bank_account_number": "9999-112", "bank_name": "Nya"}
+        self.assertEqual(da.update_herd(again, manager.uuid, legacy=True), {"status": "updated"})
         for name, form in (("empty", empty_form), *forms.items()):
             with self.subTest(name):
                 user = manager if name == "manager" else admin
@@ -425,6 +441,27 @@ class TestLegacyWriters(SupportAccountTest):
                 self.assertEqual(result["status"], "error", result)
                 self.assertEqual(self.stored(), (None, "9999-112", "Nya"))
         self.assertNotEqual(self.herd().herd_name, "Gammal")
+
+    def test_a_form_read_before_the_upgrade_or_a_change_never_writes_its_number(self):
+        """Before migration 58 the herd page showed admin the whole number, and the old app sends it back; a form
+        carries the revision it read, none from before the upgrade. Its number is refused with a reload message once
+        the account has changed since, never written."""
+        admin, manager = db.User.get_by_id(self.admin.id), db.User.get_by_id(self.manager.id)
+        old_form = {**self.herd().filtered_dict(admin), "bank_account_number": ACCOUNT}  # origin/main's answer
+        self.assertNotIn("bank_account_revision", old_form)
+        fresh = self.read(manager, 1)
+        self.assertEqual(self.save(admin, **old_form), {"status": "updated"})  # nothing changed yet: an echo
+        changed = {**fresh, "bank_account_number": OTHER, "bank_name": "Nya"}
+        self.assertEqual(da.update_herd(changed, manager.uuid, legacy=True), {"status": "updated"})
+        self.assertEqual(self.save(admin, **{**old_form, "herd_name": "Gammal"}), RELOAD)
+        self.assertEqual(self.save(admin, bank_account_number="5555-12345"), RELOAD)  # typed into a form without one
+        typed = {**fresh, "bank_account_number": "5555-12345"}  # read after the upgrade, before that change
+        self.assertEqual(da.update_herd(typed, manager.uuid, legacy=True), RELOAD)
+        self.assertEqual(self.stored(), (None, OTHER, "Nya"))
+        self.assertNotEqual(self.herd().herd_name, "Gammal")
+        reread = {**self.read(manager, 1), "bank_account_number": "5555-12345"}
+        self.assertEqual(da.update_herd(reread, manager.uuid, legacy=True), {"status": "updated"})
+        self.assertEqual(self.stored(), (None, "5555-12345", "Nya"))  # with the bank the form sent
 
     def test_a_paused_main_member_with_a_legacy_owner_role_writes_no_account(self):
         db.Membership.update(membership_status="inactive").where(db.Membership.id == self.ms.id).execute()

@@ -480,7 +480,9 @@ class KontaktTest(PaperTest):
 
     def later_account(self):
         """An account written on the herd page (the legacy herd PATCH), which lands on the membership and its log."""
-        return da.update_herd({"id": self.h.id, "bank_account_number": "1111-2222333"}, self.admin.uuid, legacy=True)
+        revision = da.support_account_revision(self.member.membership_id)  # the form was read just now
+        form = {"id": self.h.id, "bank_account_number": "1111-2222333", "bank_account_revision": revision}
+        return da.update_herd(form, self.admin.uuid, legacy=True)
 
     def test_later_herd_audit_from_before_migration_58_still_counts(self):  # D19
         """An account change in a herd's audit_log, from before the account moved to the membership: on any herd of
