@@ -2,7 +2,7 @@
 
 The service supplies two hooks: key_fn(genebank_id) returns the key of the
 current state (cheap, read per request), load_fn(genebank_id) returns
-(key, rows, member_numbers[, recovery_eligible]) read consistently. Keys are compared for equality
+(key, rows, member_numbers[, recovery_eligible[, reference_start]]) read consistently. Keys are compared for equality
 only; a per-process build sequence decides which build wins.
 
 Stale-while-revalidate: a reader whose key moved on gets the
@@ -15,13 +15,16 @@ pin the snapshot it started with so nested reads agree.
 
 import contextlib
 import contextvars
+import hashlib
 import itertools
+import json
 import logging
 import threading
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from datetime import date
 
 import numpy as np
 
@@ -64,6 +67,11 @@ class PedigreeSnapshot:
     fge: float | None
     band_cuts: tuple | None
     recovery_eligible: frozenset = frozenset()  # numbers plausibly alive and breedable, read with the pedigree
+    reference_start: date | None = None  # first day of the membership window, read with the members
+    # sha256 of the inputs, equal across workers: pedigree rows with their membership, and carrier eligibility.
+    # reference_start is not in it: the route adds the date outside the memo, from the pinned snapshot.
+    fingerprint: str = ""
+    eligible_fingerprint: str = ""
     derived: dict = field(default_factory=dict, repr=False)
     _guard: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _name_locks: dict = field(default_factory=dict, repr=False)
@@ -107,7 +115,11 @@ class PedigreeSnapshot:
         return self.memo("reference_kinship", compute)
 
 
-def build_snapshot(genebank_id, rows, members, key, seq, recovery_eligible=frozenset()):
+def _sha256(value):
+    return hashlib.sha256(json.dumps(value, separators=(",", ":")).encode()).hexdigest()
+
+
+def build_snapshot(genebank_id, rows, members, key, seq, recovery_eligible=frozenset(), reference_start=None):
     raw = [
         Individual(
             id=row["number"],
@@ -164,6 +176,10 @@ def build_snapshot(genebank_id, rows, members, key, seq, recovery_eligible=froze
         fge=fge,
         band_cuts=cuts,
         recovery_eligible=frozenset(recovery_eligible),
+        reference_start=reference_start,
+        # Exactly what the arrays above are built from, so equal fingerprints give equal results.
+        fingerprint=_sha256([[ind.id, ind.sex, ind.sire_id, ind.dam_id, ind.is_active] for ind in raw]),
+        eligible_fingerprint=_sha256(sorted(recovery_eligible)),
     )
 
 
@@ -253,8 +269,11 @@ def _schedule(genebank_id, key=None):
         return fut
 
 
-def snapshot_status(genebank_id):
-    """(snapshot | None, stale): the current snapshot, or the previous one while a rebuild runs."""
+def snapshot_status(genebank_id, wait=True):
+    """(snapshot | None, stale): the current snapshot, or the previous one while a rebuild runs.
+
+    A cold start waits for its build unless `wait` is false; it then only starts it.
+    """
     pinned_snap = (_pinned.get() or {}).get(genebank_id)
     if pinned_snap is not None:
         return pinned_snap, False
@@ -272,7 +291,7 @@ def snapshot_status(genebank_id):
     fut = _schedule(genebank_id, key)
     if snap is not None:
         return snap, True
-    if fut is not None:
+    if fut is not None and wait:
         fut.result()  # cold start: wait for the one build (it runs on its own connection)
     snap = _snapshots.get(genebank_id)
     return snap, snap is not None and snap.key != key

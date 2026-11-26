@@ -72,6 +72,10 @@ export interface InboxDocument {
   herd_tracking_id?: number | null;
   has_original?: boolean;
   has_copy: boolean;
+  /** The copy was checked against the registry (the rabbit's badge), or null. */
+  verified_at?: string | null;
+  /** The genebank of the rabbit the document is saved on: where its copy is redone or removed. */
+  individual_genebank_id?: number | null;
 }
 
 // The image reading (docs/inkorg.md, "Tolkning"): its status on a document and
@@ -102,6 +106,22 @@ export type InterpretationSummary = {
 /** The proposal the form shows: only a finished reading's. */
 export const shownProposal = (doc: InboxDocument): Proposal | null =>
   doc.interpretation_status === "klar" ? doc.proposal : null;
+
+/**
+ * Stamboken proposes "stämmer med registret": the reading names the rabbit the document is saved on, read and
+ * confirmed by the registry, and no check failed. Only a proposal: the handler ticks the box herself.
+ */
+export const checksPass = (doc: InboxDocument): boolean => {
+  const proposal = shownProposal(doc);
+  if (!proposal || !doc.individual) return false;
+  const { individual, paper_number } = proposal.fields;
+  const same = [individual, paper_number].some(
+    (f) => f?.source === "läst" && f.value === doc.individual,
+  );
+  // The certificate number too: a rabbit read with a digital certificate has none compared.
+  const certificate = proposal.fields.paper_certificate?.source === "läst";
+  return same && certificate && !proposal.checks.some((c) => c.ok === false);
+};
 
 export interface InboxEvent {
   id: number;

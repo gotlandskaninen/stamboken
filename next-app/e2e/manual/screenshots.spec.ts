@@ -1,16 +1,12 @@
 import { test, expect, type Page, type BrowserContext } from "@playwright/test";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { hideTyckTillWhileClicking } from "./hide-tyck-till";
 
-// Skärmbilder till användarmanualen. Varje post ger två filer i public/stamboken/manual/:
+// Skärmbilder till användarmanualen. Varje post ger två bilder i public/stamboken/manual/
+// (projektet "manual" i playwright.manual-screenshots.config.ts):
 // <namn>-mobil.png (375 px) och <namn>-desktop.png (1280 px). Kräver att
 // mutation-manual-flows.spec.ts körts först (kull med kullista, utfärdat intyg)
 // och att MANUAL_CERT_UUID pekar på ett utfärdat intyg (annars hoppas den bilden).
 
-const OUT = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "../../public/stamboken/manual",
-);
 const USERS = {
   owner: { username: "test-gk-owner", password: "test-gk-owner-pass" },
   manager: { username: "test-gk-manager", password: "test-gk-pass" },
@@ -24,6 +20,8 @@ type Shot = {
   path: string;
   actions?: string[];
   fullPage?: boolean;
+  /** A heading that must be on the page, where a 200 can still be an error page. */
+  heading?: string;
 };
 
 const SHOTS: Shot[] = [
@@ -134,7 +132,6 @@ const SHOTS: Shot[] = [
     role: "manager",
     path: "/stamboken/genetik?genebank=1",
     actions: ["wait:8000"],
-    fullPage: true,
   },
   {
     name: "genetik-prioriteringar",
@@ -226,6 +223,7 @@ if (process.env.MANUAL_CERT_UUID) {
     name: "verifiera-intyg",
     role: "anonymous",
     path: `/stamboken/verifiera/${process.env.MANUAL_CERT_UUID}`,
+    heading: "Äkta genbanksintyg",
   });
 }
 
@@ -291,6 +289,14 @@ async function act(page: Page, action: string) {
   await page.waitForTimeout(800);
 }
 
+test.beforeEach(async ({ page }) => {
+  await hideTyckTillWhileClicking(page);
+  // The beta banner takes room on every picture; closed as a reader would.
+  await page.addInitScript(() =>
+    localStorage.setItem("herdbook-wip-banner-dismissed", "1"),
+  );
+});
+
 for (const shot of SHOTS) {
   for (const [suffix, viewport] of [
     ["mobil", { width: 375, height: 812 }],
@@ -299,7 +305,15 @@ for (const shot of SHOTS) {
     test(`${shot.name} (${suffix})`, async ({ page, context }) => {
       await page.setViewportSize(viewport);
       await login(page, context, shot.role);
-      await page.goto(shot.path, { waitUntil: "networkidle" });
+      const res = await page.goto(shot.path, { waitUntil: "networkidle" });
+      // A 404 or a redirect to sign-in must fail, not become a picture.
+      expect(res?.status(), shot.path).toBeLessThan(400);
+      if (shot.role !== "anonymous")
+        expect(new URL(page.url()).pathname).not.toBe("/auth/sign-in");
+      if (shot.heading)
+        await expect(
+          page.getByRole("heading", { name: shot.heading }),
+        ).toBeVisible();
       await page
         .getByText("Laddar")
         .first()
@@ -309,16 +323,9 @@ for (const shot of SHOTS) {
       await page.addStyleTag({
         content: "nextjs-portal { display: none !important; }",
       });
-      // Beta-bannern tar plats på varje bild; stäng den (valet sparas i webbläsaren).
-      const beta = page
-        .getByRole("alert")
-        .filter({ hasText: "nya Stamboken" })
-        .getByRole("button", { name: "Stäng" });
-      if (await beta.isVisible().catch(() => false)) await beta.click();
       for (const a of shot.actions ?? []) await act(page, a);
       await page.waitForTimeout(500);
-      await page.screenshot({
-        path: path.join(OUT, `${shot.name}-${suffix}.png`),
+      await expect(page).toHaveScreenshot(`${shot.name}-${suffix}.png`, {
         fullPage: shot.fullPage ?? false,
       });
     });

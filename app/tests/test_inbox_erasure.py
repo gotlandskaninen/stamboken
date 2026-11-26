@@ -263,3 +263,23 @@ class TestEraseWhatThePersonSent(ErasureTest):
         self.assertTrue(self.exists(erased.public_path))
         self.assertEqual(self.certificate_served(), 200)
         self.assertEqual(db.MailMessage.get_by_id(row).status, "cancelled")
+
+    def test_erasing_an_account_without_a_person_erases_what_it_sent(self):
+        item, document = self.certified()  # uploaded by the owner's account, the copy on G1-2112
+        unsaved, unsaved_document = self.uploaded()
+        reply = inbox.log_event(item, None, "svar", text=f"Ring mig på {PHONE}", sender_user=self.owner.id)
+        db.InboxItem.update(sender_address="agare@example.org").where(db.InboxItem.id == item.id).execute()
+        db.User.update(_privileges="[]").where(db.User.id == self.owner.id).execute()  # #250: no role, no person
+
+        matrikel.erase_unlinked_account(self.owner.id, self.admin.id)
+
+        self.assertIsNone(db.InboxItem.get_or_none(db.InboxItem.id == unsaved.id))
+        self.assertFalse(self.exists(unsaved_document.original_path))
+        kept = self.reload(item)
+        self.assertEqual((kept.message, kept.sender_address), (None, None))
+        self.assertNotIn(PHONE, self.text(item))
+        self.assertNotIn("sender_user", db.InboxEvent.get_by_id(reply.id).detail or {})
+        erased = db.InboxDocument.get_by_id(document.id)
+        self.assertIsNone(erased.original_path)
+        self.assertFalse(self.exists(document.original_path))
+        self.assertTrue(self.exists(erased.public_path))  # the rabbit keeps its masked certificate

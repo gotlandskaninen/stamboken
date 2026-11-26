@@ -138,7 +138,17 @@ describe("the queue's server actions", () => {
   it("send the rotation together with the rectangles drawn in it", async () => {
     const rect = { x: 0, y: 0, w: 0.3, h: 1 };
     await confirmMask(12, 31, 90, [rect]);
-    expect(body(0)).toEqual({ rotation: 90, mask_rects: [rect] });
+    expect(body(0)).toEqual({
+      rotation: 90,
+      mask_rects: [rect],
+      matches_registry: false,
+    });
+  });
+
+  it("send whether the handler found the certificate and the registry in agreement", async () => {
+    const rect = { x: 0, y: 0, w: 0.3, h: 1 };
+    await confirmMask(12, 31, 0, [rect], false, true);
+    expect(body(0)).toMatchObject({ matches_registry: true });
   });
 
   it("need the explicit no_personal_data for an empty list", async () => {
@@ -149,6 +159,7 @@ describe("the queue's server actions", () => {
       rotation: 180,
       mask_rects: [],
       no_personal_data: true,
+      matches_registry: false,
     });
   });
 

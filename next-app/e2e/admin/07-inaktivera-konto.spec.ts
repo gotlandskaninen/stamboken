@@ -10,6 +10,7 @@ import {
   CONFIRM_BUTTON,
   DEACTIVATED_BANNER,
   INACTIVE_FILTER,
+  SAVED_NOTICE,
   SEARCH_FIELD,
 } from "./helpers/copy";
 
@@ -41,9 +42,14 @@ test("deactivate blocks login, shows banner + filter; reactivate restores", asyn
     .getByRole("button", { name: CONFIRM_BUTTON })
     .click();
 
-  // Red banner on the detail page (§4.12 UI).
-  await page.goto(detailUrl);
+  // #249: the toggle stays on the account page and shows the new state:
+  // the red banner (§4.12 UI) and the switch off.
+  await expect(page.getByText(SAVED_NOTICE)).toBeVisible();
+  expect(page.url()).toBe(detailUrl);
   await expect(page.getByText(DEACTIVATED_BANNER)).toBeVisible();
+  await expect(
+    page.getByRole("switch", { name: ACTIVE_TOGGLE }),
+  ).not.toBeChecked();
 
   // Inaktiv list filter finds the account (§3.1).
   await page.goto("/stamboken/admin/anvandare?active=false");

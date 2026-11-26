@@ -18,12 +18,15 @@ try {
     draft: false,
     data: {
       slug: "kontoregler",
-      title: "Kontoregler för webbläsartestet",
+      // The manual's screenshots (manual-screenshots.yml) show their own wording.
+      title: process.env.KONTOREGLER_TITEL ?? "Kontoregler för webbläsartestet",
       layout: [
         {
           blockType: "richText",
           content: buildEditorState({
-            text: "Använd bara ditt eget testkonto.",
+            text:
+              process.env.KONTOREGLER_TEXT ??
+              "Använd bara ditt eget testkonto.",
           }),
         },
       ],

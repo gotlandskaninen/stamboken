@@ -9,10 +9,27 @@ POSTGRES_DB env var which is set before database.py is imported.
 Sequential runs (no -n flag) use the default herdbook_test database.
 """
 
+import functools
 import os
 
 import psycopg2
 from psycopg2 import sql
+
+
+def pytest_sessionstart(session):
+    """Hash test passwords with one pbkdf2 round instead of scrypt.
+
+    scrypt takes about 0.2 s per hash, and DatabaseTest.insert_default
+    registers four users before every test. check_password_hash reads the
+    method from the stored hash, so logins are still checked for real.
+    Imported here, after pytest_configure has pointed POSTGRES_DB at the
+    worker's database.
+    """
+    import utils.data_access as da  # pylint: disable=import-outside-toplevel
+
+    # Kept so test_register_user_hashes_with_scrypt checks the module's own binding, not a stand-in.
+    da.PRODUCTION_GENERATE_PASSWORD_HASH = da.generate_password_hash
+    da.generate_password_hash = functools.partial(da.generate_password_hash, method="pbkdf2:sha256:1")
 
 
 def pytest_configure(config):

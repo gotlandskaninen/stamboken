@@ -1141,7 +1141,7 @@ def set_account_active(u_id, active, actor_user_id=None):
                 if target is None:
                     raise ValueError("user-not-found")
                 if active and target.email == f"raderad-{target.id}":  # not_erased(), on the locked row
-                    raise ValidationError("erased", "Kontot tömdes när personen anonymiserades och kan inte aktiveras.")
+                    raise ValidationError("erased", "Kontots uppgifter är raderade, så kontot kan inte aktiveras.")
                 if not active and _count_current_admins(locked, exclude_user_id=u_id) == 0:
                     raise ValidationError(
                         "last-admin",
@@ -1170,6 +1170,45 @@ def set_account_active(u_id, active, actor_user_id=None):
 def _is_int_id(value):
     """A real integer id: bool is an int subclass, str/float ids are not ids."""
     return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _owner_refused(user_id, herd_id):
+    """Checked only when the owner role is granted (existing owner roles stay): the reason the account may not own the
+    herd, or None when it is linked to an active person in the herd's active membership.
+
+    Locks: the caller (update_role) holds the account's row, and link_member_user and unlink_member_user lock that
+    row too, so a link or unlink of this account waits for the grant. Ending a person or changing the membership's
+    status locks only the membership, so it can still commit between this read and the grant. The membership is not
+    locked here: update_role must take the account rows first, and taking the membership after them is the reverse
+    of link_member_user's order (membership, then account), which could deadlock."""
+    herd = Herd.get_or_none(Herd.id == int(herd_id))
+    if herd is None:
+        return ValidationError("herd-not-found", f"Besättningen med id {int(herd_id)} finns inte.", status=404)
+    if herd.membership_id is None:
+        return ValidationError(
+            "herd-without-membership",
+            "Besättningen är inte kopplad till något medlemskap. "
+            "Koppla den i matrikeln innan du ger rollen besättningsägare.",
+        )
+    in_membership = (
+        Member.select()
+        .join(Membership)
+        .where(
+            Member.membership == herd.membership_id,
+            Member.user == user_id,
+            Member.end_date.is_null(True),
+            Membership.membership_status == "active",
+        )
+        .exists()
+    )
+    if in_membership:
+        return None
+    return ValidationError(
+        "owner-requires-person",
+        "Rollen besättningsägare kan bara ges till ett konto som är kopplat till en person "
+        "(huvudmedlem, familjemedlem eller skötare) i besättningens medlemskap, och medlemskapet måste vara aktivt. "
+        "Koppla kontot till en person i medlemskapet först.",
+    )
 
 
 def update_role(operation, user_uuid=None, skip_role_check=False):
@@ -1261,7 +1300,8 @@ def update_role(operation, user_uuid=None, skip_role_check=False):
                 # FIRST statement: ordered lock of target + all admins.
                 locked = _lock_role_rows(target_id)
                 target_user = next((u for u in locked if u.id == target_id), None)
-                if target_user is None:
+                # not_erased(), on the locked row: an emptied account (#190, #250) takes no role
+                if target_user is None or target_user.email == f"raderad-{target_user.id}":
                     return {"status": "error", "message": "unknown user"}
 
                 if operation["action"] == "remove" and operation["role"] == "admin":
@@ -1290,6 +1330,10 @@ def update_role(operation, user_uuid=None, skip_role_check=False):
                     target_user.remove_role(operation["role"], operation.get(target))
                     updated = True
                 elif not has_role and operation["action"] == "add":
+                    # Not for the Google sign-in's herd attribute (skip_role_check): the person is linked after it.
+                    if operation["role"] == "owner" and not skip_role_check:
+                        if refused := _owner_refused(target_user.id, operation["herd"]):
+                            raise refused
                     if (
                         operation["role"] in ROLE_LEVELS
                         and not settings.service.allow_role_password_login
@@ -2766,6 +2810,38 @@ def get_paginated_individuals(
         return {"items": [], "total_count": 0, "page": page, "per_page": per_page, "total_pages": 0}
 
 
+def work_list_details(numbers, genebanks):
+    """Name, sex, birth date and current herd per individual number, in the explorer's form.
+
+    For the genetics work list. Read per request, never memoized with the priorities: a sale moves
+    the rabbit without changing the pedigree. Left out: a number the database no longer has, and a
+    rabbit whose current herd is outside `genebanks`, the user's accessible genebanks, by the rule of
+    the individual's own page (get_individual), which a move to the other genebank closes.
+    """
+    if not numbers:
+        return {}
+    wanted = Individual.select(Individual.id).where(Individual.number.in_(numbers))
+    holder = latest_ht_per_individual().where(HerdTracking.individual.in_(wanted)).alias("holder")
+    rows = (
+        Individual.select(Individual.number, Individual.name, Individual.sex, Breeding.birth_date, Herd.herd)
+        .join(Breeding, JOIN.LEFT_OUTER, on=(Individual.breeding == Breeding.id))
+        .switch(Individual)
+        .join(holder, JOIN.LEFT_OUTER, on=((holder.c.i_id == Individual.id) & (holder.c.rank == 1)))
+        .join(Herd, on=(Herd.id == fn.COALESCE(holder.c.herd, Individual.origin_herd_id)))
+        .where(Individual.number.in_(numbers), not_voided(), Herd.genebank.in_(list(genebanks)))
+        .dicts()
+    )
+    return {
+        r["number"]: {
+            "name": r["name"].strip() if r["name"] else None,
+            "sex": r["sex"],
+            "birth_date": r["birth_date"].strftime("%Y-%m-%d") if r["birth_date"] else None,
+            "herd": r["herd"],
+        }
+        for r in rows
+    }
+
+
 def get_all_genebanks():
     """
     Returns a list of all genebanks.
@@ -3913,7 +3989,7 @@ def get_audit_genebank_id(table_name, record_id):
         return None
     try:
         return lookup(record_id)
-    except (DoesNotExist, AttributeError):
+    except (DoesNotExist, AttributeError, ValueError):  # ValueError: a marker row such as an export's
         return None
 
 

@@ -171,7 +171,7 @@ class TestUpload(InboxTest):
             ("gif", self.upload(("x.gif", encoded(photo((100, 100)), "GIF"))), 415),
             ("text named jpg", self.upload(("x.jpg", b"not an image at all")), 415),
             ("corrupt", self.upload(("x.jpg", b"\xff\xd8\xff" + bytes(range(256)) * 8)), 422),
-            ("over 10 MB", self.upload(("x.jpg", b"\xff\xd8\xff" + bytes(10 * 1024 * 1024))), 413),
+            ("over 25 MB", self.upload(("x.jpg", b"\xff\xd8\xff" + bytes(25 * 1024 * 1024))), 413),
             ("40 megapixels", self.upload(("x.png", too_many_pixels)), 413),
             ("11 files", self.upload(*[("x.jpg", encoded(photo((200, 200))))] * 11), 400),
             ("11 pages", self.upload(("x.pdf", pdf(*[photo((200, 200))] * 11))), 400),
@@ -195,16 +195,23 @@ class TestUpload(InboxTest):
                 self.login(username)
                 self.assertEqual(self.upload(herd=herd).status_code, status)
 
-    def test_a_body_over_what_nginx_lets_through_is_refused_as_problem_json(self):
-        noise = Image.frombytes("RGB", (1100, 1100), os.urandom(1100 * 1100 * 3))
+    def test_a_photo_over_the_apps_11_mb_is_stored(self):
+        noise = Image.frombytes("RGB", (2000, 2000), os.urandom(2000 * 2000 * 3))
         big = encoded(noise, "PNG")
-        self.assertLess(len(big), 10 * 1024 * 1024 // 2)  # each file under 10 MB, together over
+        self.assertGreater(len(big), 11 * 1024 * 1024)
         self.login("owner")
-        resp = self.upload(("a.png", big), ("b.png", big), ("c.png", big))
-        self.assertEqual((resp.status_code, resp.mimetype), (413, "application/problem+json"))
-        self.assertIn("10 MB", resp.get_json()["detail"])
-        self.assertFalse(db.InboxItem.select().exists())
         self.assertEqual(self.upload(("a.png", big), accept_warnings="1").status_code, 201)
+
+    def test_a_body_over_what_nginx_lets_through_is_refused_as_problem_json(self):
+        # Refused by its length before any file is read, so the bytes need not be images.
+        part = b"\xff\xd8\xff" + bytes(20 * 1024 * 1024)  # each file under 25 MB, together over 50
+        self.login("owner")
+        resp = self.upload(("a.jpg", part), ("b.jpg", part), ("c.jpg", part))
+        self.assertEqual((resp.status_code, resp.mimetype), (413, "application/problem+json"))
+        self.assertIn("50 MB", resp.get_json()["detail"])
+        self.assertFalse(db.InboxItem.select().exists())
+        noise = Image.frombytes("RGB", (1100, 1100), os.urandom(1100 * 1100 * 3))
+        self.assertEqual(self.upload(("a.png", encoded(noise, "PNG")), accept_warnings="1").status_code, 201)
 
     def test_files_are_removed_when_the_item_cannot_be_written(self):
         self.login("owner")

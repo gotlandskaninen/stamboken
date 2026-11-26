@@ -21,7 +21,10 @@ vi.mock("@/app/(app)/stamboken/(dashboard)/arsrapport/actions", () => ({
   rejectSale: vi.fn(),
 }));
 
-import { StatusTable } from "@/app/(app)/stamboken/(dashboard)/arsrapport/status/[year]/StatusTable";
+import {
+  BlankFormLink,
+  StatusTable,
+} from "@/app/(app)/stamboken/(dashboard)/arsrapport/status/[year]/StatusTable";
 import type {
   StatusRow,
   StatusView,
@@ -141,6 +144,30 @@ describe("StatusTable", () => {
     const phone = screen.getByText("070-000 00 00");
     expect(phone.getAttribute("href")).toBe("tel:0700000000");
     expect(document.querySelectorAll('a[href^="tel:"]')).toHaveLength(1);
+  });
+  it("gives each of two numbers in the phone field its own tel link", () => {
+    render(
+      <StatusTable
+        view={view([{ ...sent, telefon: "08 - 510 122 07 0709 - 55 72 08" }])}
+        year={2026}
+        genebankId={1}
+        filter="alla"
+        canEdit
+        env="demo"
+      />,
+    );
+    const links = [...document.querySelectorAll('a[href^="tel:"]')];
+    expect(links.map((a) => a.getAttribute("href"))).toEqual([
+      "tel:0851012207",
+      "tel:0709557208",
+    ]);
+  });
+  it("says the blank form is missing instead of linking to a 404", () => {
+    render(<BlankFormLink available={false} />);
+    expect(
+      screen.getByText("Den tomma blanketten finns inte på servern än."),
+    ).toBeTruthy();
+    expect(screen.queryByText("Skriv ut tom blankett")).toBeNull();
   });
   it("shows no payment control", () => {
     show(true);
