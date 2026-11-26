@@ -3772,8 +3772,8 @@ def settle_rejection(report, user, rabbit, then, at):
 
 def _receipt_address(params):
     """
-    Where Å7 and Å8 go (U8): to the member the receipt was queued for (a row queued before `member_id` names the
-    herd's main member), at an address that counts for login now, so never to a new one in its seven days' wait.
+    Where Å7 and Å8 go (U8): to the member the receipt was queued for (migration 59 names it in rows queued
+    before), at an address that counts for login now, so never to a new one in its seven days' wait.
     A link's receipt carries the confirmation page of its changes: it goes only while that member is the code's and
     still the herd's main member. None cancels the mail.
     """
@@ -3781,7 +3781,7 @@ def _receipt_address(params):
     if submission is None:
         return None
     herd = YearlyHerdReport.get_by_id(submission.report_id).herd
-    member = Member.get_or_none(Member.id == params["member_id"]) if "member_id" in params else _main_member(herd)
+    member = Member.get_or_none(Member.id == params.get("member_id"))
     if member is None:
         return None
     if submission.access_code_id is not None:

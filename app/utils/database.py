@@ -5688,7 +5688,10 @@ CHANGE_REVOKED_59 = "member_change_request.revoked_reason"  # migration 59's sch
 
 
 def migrate_58_to_59():
-    """Why a change from the report link was revoked (step 5), so the status view keeps "Det var inte jag"."""
+    """
+    Why a change from the report link was revoked (step 5), so the status view keeps "Det var inte jag"; and the
+    member each queued receipt goes to, which the receipt's address now follows.
+    """
     with DATABASE.atomic():
         if "member_change_request" in DATABASE.get_tables():
             if "revoked_reason" not in {c.name for c in DATABASE.get_columns("member_change_request")}:
@@ -5703,6 +5706,13 @@ def migrate_58_to_59():
                     f'ALTER TABLE "member_change_request" ADD CONSTRAINT "{CHANGE_REVOKED_CHECK}"'
                     f" CHECK ({_sql_in('revoked_reason', CHANGE_REVOKED)})"
                 )
+        if "mail_message" in DATABASE.get_tables() and not isinstance(DATABASE, SqliteDatabase):
+            # A receipt is now sent to the member it was queued for: the queue row has always said who.
+            DATABASE.execute_sql(
+                "UPDATE mail_message SET params = params || jsonb_build_object('member_id', recipient_id)"
+                " WHERE kind IN ('arsrapport.kvitto', 'arsrapport.andrad') AND recipient_kind = 'member'"
+                " AND NOT params ? 'member_id'"
+            )
         SchemaHistory.insert(  # pylint: disable=E1120
             version=59, comment=CHANGE_REVOKED_59, applied=datetime.now()
         ).execute()

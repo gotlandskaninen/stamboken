@@ -24,7 +24,6 @@ from utils.database import (
     MatrikelAudit,
     Member,
     MemberChangeRequest,
-    ReportAccessCode,
     YearlyHerdReport,
     YearlyReportSubmission,
 )
@@ -279,27 +278,21 @@ def revoke_withdrawn(report, now):
 # The confirmation page
 
 
-def _submission(token):
+def _invalid():
+    return ArsrapportError(403, arsrapport.LINK_INVALID, code="lank_ogiltig")  # never which part failed
+
+
+def _context(token, *, lock):
     """
-    The submission the mail's token names, or the 403 of a link that does not work (never which part failed). The
-    token is bound to the mailbox the receipt went to (confirm_token): it works only while that address still counts
-    for the code's member, so a mailbox the matrikel replaced cannot confirm. Checked on every read and write.
+    (submission, herd, membership, member, rows) for the mail's token: the submission's changes through the link
+    and the herd's main member now, under the membership's lock and then the rows' with `lock`. A new main member,
+    or a herd moved to another membership, ends the page (D7). The token is bound to the mailbox the receipt went
+    to (confirm_token) and works only while that address counts for the member, checked after the lock, so an
+    address the matrikel replaced while a Bekräfta waited cannot confirm.
     """
     submission = YearlyReportSubmission.get_or_none(YearlyReportSubmission.id == int(token.split(".")[0]))
-    code = ReportAccessCode.get_or_none(ReportAccessCode.id == submission.access_code_id) if submission else None
-    member = Member.get_or_none(Member.id == code.member_id) if code else None
-    for address in report_code.mail_addresses(member, arsrapport.now()) if member else ():
-        if verify_link(f"andringar:{address_hash(address)}", token) == submission.id:
-            return submission
-    raise ArsrapportError(403, arsrapport.LINK_INVALID, code="lank_ogiltig")
-
-
-def _context(submission, *, lock):
-    """
-    (herd, membership, member, rows): the submission's changes through the link and the herd's main member now,
-    under the membership's lock and then the rows' with `lock`. A new main member, or a herd moved to another
-    membership, ends the page (D7).
-    """
+    if submission is None:
+        raise _invalid()
     herd = YearlyHerdReport.get_by_id(submission.report_id).herd
     if lock:
         membership, member = arsrapport._lock_matrikel(herd)
@@ -312,8 +305,13 @@ def _context(submission, *, lock):
     )
     rows = list(query.for_update() if lock else query)
     if not rows or member is None or any(row.member_id != member.id for row in rows):
-        raise ArsrapportError(403, arsrapport.LINK_INVALID, code="lank_ogiltig")
-    return herd, membership, member, rows
+        raise _invalid()
+    if not any(
+        verify_link(f"andringar:{address_hash(address)}", token) == submission.id
+        for address in report_code.mail_addresses(member, arsrapport.now())
+    ):
+        raise _invalid()
+    return submission, herd, membership, member, rows
 
 
 def _address(parts):
@@ -392,7 +390,7 @@ def _view(herd, membership, member, rows, now):
 
 def view(token):
     """GET's answer: never writes."""
-    herd, membership, member, rows = _context(_submission(token), lock=False)
+    _, herd, membership, member, rows = _context(token, lock=False)
     return _view(herd, membership, member, rows, arsrapport.now())
 
 
@@ -405,8 +403,7 @@ def confirm(token, *, account, version):
     of the same field (5.11), never a newer one.
     """
     with DB_PROXY.atomic():
-        submission = _submission(token)
-        herd, membership, member, rows = _context(submission, lock=True)
+        submission, herd, membership, member, rows = _context(token, lock=True)
         now = arsrapport.now()
         shown = _entries(membership, member, rows, now)
         if not hmac.compare_digest(version or "", _version(shown, membership, member, rows)):
@@ -469,7 +466,7 @@ def _revoke_older(row, field, now):
 def not_me(token):
     """ "Det var inte jag": the submission's waiting changes are revoked, and the status view says so."""
     with DB_PROXY.atomic():
-        herd, membership, member, rows = _context(_submission(token), lock=True)
+        _, herd, membership, member, rows = _context(token, lock=True)
         now = arsrapport.now()
         for row in rows:
             if _state(row, now) == "vantar":  # an expired change keeps "kontobyte förföll"

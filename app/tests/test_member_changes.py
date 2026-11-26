@@ -625,3 +625,51 @@ class TestReviewRound1(DetailsTest):
         self.assertEqual(da.update_herd(fix, self.admin.uuid), {"status": "updated"})  # through the sibling herd
         (row,) = self.requests()
         self.assertEqual(row.revoked_reason, "nyare")
+
+    def test_the_mailbox_is_checked_again_under_the_lock(self):
+        receipt = self.submit_changes({"konto": NEW_KONTO})
+        token = self.token(receipt["submission_id"])
+        view = self.client.post("/api/v2/rapport/andringar", json={"token": token}).get_json()
+        lock = arsrapport._lock_matrikel
+
+        def corrected_meanwhile(herd):  # staff replace the address while Bekräfta waits for the lock
+            set_member_email(db.Member.get_by_id(self.member.id), "ratt@example.invalid", self.admin, by="matrikel")
+            return lock(herd)
+
+        with mock.patch.object(arsrapport, "_lock_matrikel", corrected_meanwhile):
+            body = {"token": token, "version": view["version"], "konto": True}
+            response = self.client.post("/api/v2/rapport/andringar/bekrafta", json=body)
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(self.membership().bank_account_number, ACCOUNT)
+
+    def test_a_friexemplar_address_gets_no_mail_and_confirms_nothing(self):
+        receipt = self.submit_changes({"konto": NEW_KONTO})
+        token = self.token(receipt["submission_id"])
+        db.Membership.update(membership_status="friexemplar").where(
+            db.Membership.id == self.member.membership_id
+        ).execute()  # login gives up the address: it is a contact address only
+        response = self.client.post("/api/v2/rapport/andringar", json={"token": token})
+        self.assertEqual(response.status_code, 403)
+        resolve = mail.MAIL_KINDS[arsrapport.ACCOUNT_NOTICE].login_address
+        self.assertIsNone(resolve({"member_id": self.member.id, "membership_id": self.member.membership_id}))
+
+    def test_a_receipt_queued_before_the_upgrade_goes_to_its_member(self):
+        self.link_owner()
+        self.login("owner")
+        self.ok()
+        (kvitto,) = self.mails("arsrapport.kvitto")
+        old = {"submission_id": kvitto.params["submission_id"]}  # as the base branch queued it
+        db.MailMessage.update(params=old).where(db.MailMessage.id == kvitto.id).execute()
+        other = db.Member.create(
+            first_name="Ny",
+            last_name="Huvudmedlem",
+            membership=self.membership(),
+            role="familjemedlem",
+            email="ny-hm@example.invalid",
+        )
+        swap_main_member(self.membership(), other, self.admin)
+        db.SchemaHistory.delete().where(db.SchemaHistory.version == 59).execute()
+        db.migrate_58_to_59()  # the upgrade names the member the row was queued for
+        row = db.MailMessage.get_by_id(kvitto.id)
+        self.assertEqual(row.params, {**old, "member_id": self.member.id})
+        self.assertEqual(mail.MAIL_KINDS[row.kind].login_address(row.params), "g9001@example.invalid")
