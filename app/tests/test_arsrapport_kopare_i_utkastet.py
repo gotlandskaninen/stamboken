@@ -367,6 +367,28 @@ class DialogBuyerTest(KeptBuyerBase):
         self.assertEqual(deleted.new_data, {"action": "ej_informerad"})
         self.assertNotIn("kept_buyer_date", self.row())  # the row needs the buyer again
 
+    def test_dra_tillbaka_may_not_name_the_drafts_buyer(self):  # review r1: void_reason lives in audit_log
+        self.ok(self.body(self.kvar(self.a, vikt=2.8), self.kvar(self.b, vikt=2.8)))
+        self.save(self.sold(), {str(self.a.id): BUYER}, revision=1)
+        self.login("man")
+        response = self.api("POST", "/besattning/G9001/2025/dra-tillbaka", revision=1, reason="Zelda vill inte")
+        self.assertEqual(response.status_code, 422, response.get_data(as_text=True))
+        self.assertEqual([r["code"] for r in response.get_json()["refusals"]], ["orsak_kopare"])
+
+    def test_a_rejected_proposal_takes_the_drafts_buyer_for_that_rabbit(self):  # review r1: no orphan
+        self.caretaker()
+        self.login("skotare")
+        self.ok(self.body(self.sald(self.a, "G9002", 2025, 10, 10), self.kvar(self.b, vikt=2.8)))
+        (proposal,) = db.SaleProposal.select()
+        self.login("owner")
+        self.save(self.sold(), {str(self.a.id): BUYER}, revision=1)
+        self.assertEqual(len(contacts()), 1)
+        self.login("man")
+        response = self.api("POST", f"/forslag/{proposal.id}/avvisa", reason="Fel besättning", then="kvar")
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertEqual(contacts(), {})
+        self.assertNotIn("kopare_id", json.dumps(self.draft()))
+
     def test_a_reason_may_not_name_the_kept_buyer(self):  # it lives in audit_log; no row holds the buyer yet
         self.login("man")
         _, contact = self.kept()

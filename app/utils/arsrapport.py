@@ -871,6 +871,12 @@ def _kept_date(claim):
     return partial_date(sale["ar"], sale["manad"], sale["dag"], today())
 
 
+def _kept_names(claims):
+    """The names of the buyers kept from the sale dialog: no row holds them yet, so _reject_buyer_name needs them."""
+    drafted = [claim["kopare_id"] for claim in _drafted(claims).values()]
+    return [name for (name,) in BuyerContact.select(BuyerContact.name).where(BuyerContact.id.in_(drafted)).tuples()]
+
+
 def _erased_dates(removed_dates, claims):
     """
     _removed_buyers' dates by rabbit, with the sale of each buyer kept from the sale dialog (among `claims`) that
@@ -2462,10 +2468,7 @@ def check(
     proposals = _proposals(report)
     draft = _draft(herd, round_)  # K1: a proposal takes no kept buyer, so only a role that sells reads them (F1)
     claims = _kept_claims(draft.data) if draft is not None and access.can_sell else {}
-    # a buyer kept from the sale dialog is held by no row yet, so _reject_buyer_name needs its name
-    drafted = [claim["kopare_id"] for claim in _drafted(claims).values()]
-    names = [name for (name,) in BuyerContact.select(BuyerContact.name).where(BuyerContact.id.in_(drafted)).tuples()]
-    names += _typed_buyers(sub) + _waiting_buyers(proposals.values())
+    names = _kept_names(claims) + _typed_buyers(sub) + _waiting_buyers(proposals.values())
     refusals += _reason_refusals(sub.reason, own, names)
     removed, removed_dates = _removed_buyers(herd, round_, [rid for rid in own if sub.rabbits[rid].sald], ops)
     removed_dates = _erased_dates(removed_dates, _kept_claims(draft.data) if draft is not None else {})
@@ -3506,7 +3509,9 @@ def withdraw(herd, round_, access, user, *, revision, reason=None, now=None) -> 
         rabbits = sorted({int(key) for submission in submissions for key in submission.data.get("rabbits") or {}})
         _lock_rabbits(rabbits, _lock_items(rabbits, report=report))
         ops = {str(op) for submission in submissions for op in submission.operation_ids}
-        refusals, sold = _reason_refusals(reason, rabbits, _waiting_buyers(sale_proposal.pending(report))), []
+        draft = _draft(herd, round_)  # its kept buyers' names, as Skicka's check reads them
+        names = _kept_names(_kept_claims(draft.data) if draft else {}) + _waiting_buyers(sale_proposal.pending(report))
+        refusals, sold = _reason_refusals(reason, rabbits, names), []
         for rabbit in rabbits:
             remove = diff(current(report, rabbit), [], last)[0]
             if not access.can_sell:  # FB5: a sale the owner registered stays, as an approved proposal does
@@ -3701,9 +3706,10 @@ def settle_rejection(report, user, rabbit, then, at):
     report.save(only=[YearlyHerdReport.revision, YearlyHerdReport.data])
     draft = _draft(herd, round_)
     if draft is not None:  # an Ändra in progress: an old tab's autosave gets the 409 and this draft
-        draft.data = _with_entry(draft.data, key, raw)
+        draft.data, gone = _with_kept(_with_entry(draft.data, key, raw), _kept_claims(draft.data))
         draft.updated_at = max(at, draft.updated_at + timedelta(microseconds=1)).astimezone(timezone.utc)
         draft.save()
+        drop_kept_buyers(gone, user)  # FB6: the entry has no sale now; a dialog's buyer is held by no row to lock
 
 
 @mail_kind("arsrapport.andrad", priority=0, category="T")
