@@ -200,6 +200,7 @@ def _information_mail(params, attempt=1):
         "token": link_token(ERASE_PURPOSE, contact.id),
         "consent": contact.contact_consent_at is not None,
         "membership": membership,
+        "notice_only": contact.email_notice_only,  # no försäljningsbevis (#273): the e-mail only for this mail
         "certificate": pdf is not None,
         "sent_note": note,
         "attachments": [(f"genbanksintyg-{rabbit.number}.pdf", "application/pdf", pdf)] if pdf else [],

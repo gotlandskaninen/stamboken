@@ -28,6 +28,7 @@ from utils.database import (
 from utils.herd_tracking import (
     BUYER_REMOVED,
     BUYER_TEXT_FIELDS,
+    NOT_RECORDED,
     HerdTrackingError,
     HerdTrackingInvalid,
     _audit_user,
@@ -47,14 +48,18 @@ TICKED = ("contact_consent_at", "membership_optin_at")
 def _stored_buyer(buyer, at, sale_date):
     """
     The buyer as the sale takes it again at approval: the text fields and the two ticks, checked now, and when each
-    was ticked (`at`, the submission's time).
+    was ticked (`at`, the submission's time). A sale without a försäljningsbevis (#273): NOT_RECORDED, or the
+    e-mail with notice_only.
     """
-    fields = buyer_contact_fields(buyer, sale_date, address_required=True)
+    fields = buyer_contact_fields(buyer, sale_date, address_required=True, new_sale=True)
+    if fields is None:
+        return dict(NOT_RECORDED)
     return {
         **{key: fields[key] for key in BUYER_TEXT_FIELDS},
         "contact_consent": buyer.get("contact_consent", False),
         "membership_optin": buyer.get("membership_optin", False),
         **{key: at.isoformat() for key in TICKED if fields[key]},
+        **({"notice_only": True} if fields["email_notice_only"] else {}),
     }
 
 
@@ -91,7 +96,7 @@ def propose(
     at = submission.created_at  # when the seller sent it, and ticked the buyer's boxes
     stored = _stored_buyer(buyer, at, sale_date) if buyer is not None else None
     with DB_PROXY.atomic():
-        if stored and stored["email"] and not locks_held:
+        if stored and stored.get("email") and not locks_held:
             # Skicka already checked for erasure under these locks for the whole report.
             arsrapport.lock_report(report.round, report.herd)
             lock_individuals([individual.id])
@@ -258,7 +263,7 @@ def reject(proposal, user, *, reason: str, then: Literal["kvar", "valj_igen"], n
         proposal, report, _ = _locked(proposal)
         if proposal.state != "foreslagen":
             raise arsrapport.ArsrapportError(409, DECIDED)
-        names = [proposal.buyer["name"]] if proposal.buyer else ()
+        names = [proposal.buyer["name"]] if proposal.buyer and proposal.buyer.get("name") else ()
         try:
             _reject_buyer_name([reason], [proposal.individual_id], names=names)
         except HerdTrackingInvalid as exc:
@@ -317,8 +322,9 @@ def decisions(report) -> list[dict]:
             "name": proposal.individual.name,
             "to_herd": proposal.to_herd.herd if proposal.to_herd_id else None,
             "buyer": {"name": proposal.buyer.get("name"), "town": proposal.buyer.get("town")}
-            if proposal.buyer
+            if proposal.buyer and proposal.buyer != NOT_RECORDED
             else None,
+            "buyer_not_recorded": proposal.buyer == NOT_RECORDED,  # såld utanför genbanken (#273)
             "sale_date": proposal.sale_date.isoformat(),
             # without its day in the report (5.3): the date is the month's last day, or the day it was sent
             "day_known": not arsrapport.dayless(proposal.submission.data, proposal.individual_id, "sald"),

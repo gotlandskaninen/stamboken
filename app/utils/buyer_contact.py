@@ -134,6 +134,8 @@ def review_buyer_email(contact_id, body, user):
                     "town": contact.town,
                     "contact_consent": bool(contact.contact_consent_at),
                     "membership_optin": bool(contact.membership_optin_at),
+                    "notice_only": contact.email_notice_only,
+                    **({"postal_address": contact.postal_address} if contact.email_notice_only else {}),
                 },
                 sale.herd_tracking_date,
             )
@@ -297,10 +299,11 @@ def purge_proposal_buyers(now):
     return sum(sale_proposal.clear_buyer(proposal, "gallring_forslag", still=due) for proposal in found)
 
 
-def _null_fields(where, changes, action):
+def _null_fields(where, changes, action, *, email_hash=True):
     """
     Nulls `changes` on the buyers matching `where`, one audit_log row each naming the columns that went (never the
-    values), and the mail queue forgets an e-mail address that went; returns how many.
+    values), and the mail queue forgets an e-mail address that went; returns how many. An e-mail that goes leaves
+    its avtryck (erased_email_hash) unless `email_hash` is False.
     """
     columns = [field.name for field in changes]
     with DB_PROXY.atomic():
@@ -316,7 +319,7 @@ def _null_fields(where, changes, action):
             log_buyer_contact(contact_id, "UPDATE", action, fields=gone)
             if "email" in gone:
                 email = before[contact_id]["email"]
-                if settings.mail.link_secret and is_address(email):
+                if email_hash and settings.mail.link_secret and is_address(email):
                     BuyerContact.update(erased_email_hash=address_hash(email)).where(
                         BuyerContact.id == contact_id
                     ).execute()
@@ -377,7 +380,55 @@ def purge_membership_optin(now):
     return _purge_consent(now, due, optin, BuyerContact.contact_consent_at, "gallring_medlemskap")
 
 
-RULES = (purge_membership_optin, purge_sold_on, purge_dead, purge_expired, purge_proposal_buyers)
+def _notices(condition):
+    """The buyers whose kopare.information is in `condition`."""
+    return MailMessage.select(MailMessage.recipient_id).where(
+        MailMessage.recipient_kind == "buyer_contact", MailMessage.kind == "kopare.information", condition
+    )
+
+
+def purge_notice_email(now):  # pylint: disable=unused-argument  # every rule takes the run's time
+    """
+    #273: an e-mail the seller gave without a försäljningsbevis goes once the notice has gone, and leaves no
+    avtryck. Kept while the notice waits, may be retried, waits for a manager's address check, or for a withdrawn
+    report to be sent again.
+    """
+    due = (
+        BuyerContact.email_notice_only
+        & BuyerContact.email.is_null(False)
+        & BuyerContact.id.in_(_notices(MailMessage.status == "sent"))
+    )
+    return _null_fields(due, {BuyerContact.email: None}, "gallring_efter_mejl", email_hash=False)
+
+
+def purge_undelivered_notice(now):
+    """
+    #273: a buyer the notice did not reach is not kept: the mail bounced, also after its e-mail went, or failed and
+    can no longer be retried (FAILED_NOTICE_KEPT). The sale stays, marked as one whose buyer was removed.
+    """
+    undelivered = _notices(
+        (MailMessage.status == "bounced")
+        | ((MailMessage.status == "failed") & (MailMessage.created_at < now - FAILED_NOTICE_KEPT))
+    )
+
+    def due():
+        return BuyerContact.email_notice_only & BuyerContact.id.in_(undelivered)
+
+    with DB_PROXY.atomic():
+        count, paths = _delete_under_locks(BuyerContact.select(BuyerContact.id).where(due()), due, "studs")
+    remove_originals(paths)
+    return count
+
+
+RULES = (
+    purge_membership_optin,
+    purge_sold_on,
+    purge_dead,
+    purge_expired,
+    purge_proposal_buyers,
+    purge_undelivered_notice,
+    purge_notice_email,
+)
 
 
 def run(now):

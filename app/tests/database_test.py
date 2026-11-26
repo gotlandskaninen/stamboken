@@ -12,7 +12,8 @@ isort:skip_file
 import logging
 import os
 import unittest
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
+from unittest import mock
 
 import psycopg2
 import utils.data_access as da
@@ -20,6 +21,7 @@ import utils.data_access as da
 # pylint: disable=import-error
 import utils.database as db
 from psycopg2 import sql
+from utils import herd_tracking
 from utils import pedigree_snapshot as ps
 
 from tests.ht_helpers import ht_row  # noqa: E402
@@ -148,6 +150,11 @@ class DatabaseTest(unittest.TestCase):
 
     def setUp(self):
         ps.reset_for_tests()  # genebank ids repeat after RESTART IDENTITY
+        # The tests' sales are dated from today and test the försäljningsbevis flow, so they run as if the bevis
+        # were in use already (#273); test_buyer_notice_only tests the real date.
+        patcher = mock.patch.object(herd_tracking, "BEVIS_FROM", date.min)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         if _USE_POSTGRES:
             self._batch_truncate_tables()
         else:

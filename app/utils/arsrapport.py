@@ -72,6 +72,7 @@ from utils.database import (
 from utils.herd_tracking import (
     BUYER_REMOVED,
     DATE_BEFORE_LATEST,
+    NOT_RECORDED,
     QUEUE_CHANGED,
     REPORT_LATER_ROW,
     HerdTrackingError,
@@ -2042,7 +2043,10 @@ def _register_refusals(individual_id, remove, add, ops, admin=False, transfer=No
             if kopare is not None:
                 try:
                     buyer_contact_fields(
-                        kopare, transfer.date, address_required=address_required and not transfer.address_optional
+                        kopare,
+                        transfer.date,
+                        address_required=address_required and not transfer.address_optional,
+                        new_sale=not transfer.address_optional,
                     )
                 except HerdTrackingInvalid as exc:
                     refusals.append(_refusal(individual_id, "kopare", str(exc)))
@@ -2307,7 +2311,7 @@ def check(
                 and (sale["dag"] is None or day.day == sale["dag"])
                 for day in removed_dates.get(rabbit, ())
             )
-        if erased and entry.sald and entry.sald["kopare"] is not None:
+        if erased and entry.sald and entry.sald["kopare"] not in (None, NOT_RECORDED):
             refusals.append(_refusal(rabbit, "kopare", BUYER_REMOVED))
             continue
         if row["state"] != "att_valja":

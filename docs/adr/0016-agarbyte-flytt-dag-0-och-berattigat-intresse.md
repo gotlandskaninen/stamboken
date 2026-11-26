@@ -236,6 +236,34 @@ köparen igen för att skicka rapporten på nytt. Köparen sparas därför kvar
   rapporten skickas utan den eller med en ny köpare. Ett försäljningsförslag
   tar ingen sparad köpare.
 
+## Tillägg 2026-11-26: försäljning utan försäljningsbevis (#273)
+
+Beviset används från 1 januari 2027, och köparen informeras enligt art. 14 på
+beviset. En försäljning utan bevis kan därför inte spara köparen som ovan.
+Jonas beslutade 2026-11-26, efter arbetsgruppens förslag 5 b och 6, en
+övergång för försäljningar till och med 2027 (`TRANSITION_UNTIL`):
+
+* Har köparen e-post skriver säljaren namn, ort, postadress och e-post.
+  Föreningen mejlar köparen (`kopare.information`) vad som sparas och varför,
+  och att uppgifterna kom från säljaren (art. 14.2 f). E-postadressen sparas
+  bara tills mejlet har gått (`email_notice_only`), och utan avtryck. Telefon
+  och kryss tas inte emot, eftersom säljaren inte kan svara ja åt köparen.
+  Namn, ort och postadress sparas i fem år som förut.
+* Studsar mejlet, eller kan det inte längre försökas igen, raderas köparen
+  och försäljningen markeras som en där köparen är borttagen
+  (`buyer_removed`).
+* Har köparen ingen e-post registreras försäljningen utan köpare ("såld
+  utanför genbanken"), och inget sparas om köparen.
+* Före 2027 tar en ny försäljning inte emot en köpare som beviset skulle ha
+  informerat, eftersom beviset inte fanns. Rättelser av registrerade
+  försäljningar berörs inte. Gamla intyg följer samma regel (5 b).
+* 2027 väljer säljaren om köparen fick beviset. Från 2028 gäller bara beviset,
+  tills ett nytt beslut flyttar `TRANSITION_UNTIL`.
+* Raderingslänken i mejlet tar bort köparen för det köpet. Utan avtryck
+  hittar länken inte köparens andra köp när deras e-post är gallrad, så
+  mejlet hänvisar den som köpt flera kaniner till dataskyddsadressen (Jonas
+  2026-11-26: inget avtryck i det här fallet).
+
 ## Mer information
 
 Köparens uppgifter sparas med berättigat intresse som rättslig grund,
@@ -260,3 +288,4 @@ Relaterade beslut: [ADR-0014](0014-authorization-model.md)
 | 2026-11-18 | Jonas Hagberg | Postadressen sparas på berättigat intresse som namn och ort och krävs vid en ny försäljning utom från genbanksansvarig och admin (issue #111); krysset gäller bara e-post och telefon |
 | 2026-11-23 | Jonas Hagberg | Kontrollsidan: "Såld" för varje byte av besättning i den rättade historiken, och "Intygas av" är den fysiska person som utfärdade intyget, med namn bara efter eget val (issue #6) |
 | 2026-11-25 | Jonas Hagberg | Pappret heter försäljningsbevis i stället för överlåtelsebevis, samma ord som Sälj och Försäljning i Stamboken (arbetsgruppen 2026-11-24/25) |
+| 2026-11-26 | Jonas Hagberg | Tillägg: försäljning utan försäljningsbevis till och med 2027, e-post bara för informationsmejlet eller ingen köpare (#273, förslag 5 b och 6) |
