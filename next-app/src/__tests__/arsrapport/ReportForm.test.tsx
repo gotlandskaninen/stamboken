@@ -269,16 +269,40 @@ describe("paper omissions", () => {
     expect(a.submitCompletion).not.toHaveBeenCalled();
   });
 
-  it("keeps unrelated draft edits after completion and full-form switch", async () => {
+  it("keeps a browser copy through an answer: offered, never saved over", async () => {
     vi.useFakeTimers();
     const a = completionActions();
     const v = missingView();
+    // the browser holds an edit the server never got, at the server draft's version
+    const mine = toDraft({
+      ...fromBody(v.draft!.data),
+      message: "Bara i webbläsaren",
+    });
     const copy = JSON.stringify({
-      data: v.draft!.data,
+      data: mine,
       updated_at: v.draft!.updated_at,
       revision: 4,
     });
     window.localStorage.setItem("arsrapport:demo:G9001:2026", copy);
+    const next = missingView([2, 3], 5);
+    next.draft!.updated_at = "2027-01-04T10:01:00+00:00";
+    // the old code autosaved the copy at its old version: the server answers 409 with its newer draft
+    a.saveDraft.mockImplementation(async (...args: unknown[]) =>
+      args[3] === next.draft!.updated_at
+        ? ok({
+            updated_at: "2027-01-04T10:02:00+00:00",
+            submission_key: draftKey,
+          })
+        : {
+            ok: false as const,
+            problem: {
+              status: 409,
+              title: "Konflikt",
+              detail: "Rapporten har ändrats på en annan enhet.",
+              extensions: { draft: next.draft },
+            },
+          },
+    );
     const { rerender } = render(<ReportForm env="demo" view={v} actions={a} />);
     expect(
       screen.getByText("Du har fler ändringar som inte är skickade."),
@@ -291,8 +315,6 @@ describe("paper omissions", () => {
       sendAnswer();
     });
     expect(screen.getByRole("status").textContent).toBe(savedText);
-    const next = missingView([2, 3], 5);
-    next.draft!.updated_at = "2027-01-04T10:01:00+00:00";
     rerender(<ReportForm env="demo" view={next} actions={a} />);
     expect(screen.queryByText("Kanin1")).toBeNull();
     choose(2, "Död");
@@ -304,24 +326,56 @@ describe("paper omissions", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Visa hela rapporten" }),
     );
-    expect(
-      screen.getByText(/Klart\. Årsrapporten för G9001 kom in/),
-    ).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Fortsätt ändra" }));
+    // the refreshed draft is shown, the browser copy waits for the member's choice
+    expect(
+      screen.getByText("Osparade ändringar på den här enheten"),
+    ).toBeTruthy();
+    expect(screen.getByDisplayValue("Min oskickade ändring")).toBeTruthy();
     expect(
       within(row(2)).getByRole("radio", { name: "Död", checked: true }),
     ).toBeTruthy();
-    expect(screen.getByDisplayValue("Min oskickade ändring")).toBeTruthy();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2100);
     });
-    // the browser copy keeps the version it was edited from: a newer server draft answers 409 and is adopted,
-    // never overwritten (review 1)
-    expect(a.saveDraft.mock.calls[0].slice(3, 6)).toEqual([
-      v.draft!.updated_at,
-      draftKey,
-      5,
-    ]);
+    expect(a.saveDraft).not.toHaveBeenCalled();
+    expect(local()).toBe(copy);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Använd den lokala kopian" }),
+    );
+    expect(screen.getByDisplayValue("Bara i webbläsaren")).toBeTruthy();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    const [, , data, updatedAt] = a.saveDraft.mock.calls[0];
+    expect(updatedAt).toBe(next.draft!.updated_at); // over the newer draft only by choice, never a 409
+    expect((data as { message: string }).message).toBe("Bara i webbläsaren");
+    expect(screen.getByDisplayValue("Bara i webbläsaren")).toBeTruthy();
+  });
+
+  it("sends only the rows answered on the focused page, never a draft's", async () => {
+    const a = completionActions();
+    const v = missingView();
+    // the member's draft from the full form has a death for rabbit 2, not sent
+    const drafted = fromBody(v.draft!.data);
+    drafted.rabbits[2] = {
+      ...drafted.rabbits[2],
+      val: "dod",
+      dod: { ar: 2026, manad: 6, dag: null, slaktad: false, anteckning: "" },
+    };
+    v.draft = { ...v.draft!, data: toDraft(drafted) };
+    render(<ReportForm env="demo" view={v} actions={a} />);
+    expect(screen.queryByRole("radio", { checked: true })).toBeNull();
+    choose(1, "Finns kvar");
+    fireEvent.change(within(row(1)).getByLabelText("Vikt"), {
+      target: { value: "2,8" },
+    });
+    await act(async () => {
+      sendAnswer();
+    });
+    expect(screen.getByRole("status").textContent).toBe(savedText);
+    const [, , sent] = a.submitCompletion.mock.calls[0];
+    expect(Object.keys(sent.rabbits)).toEqual(["1"]);
   });
 
   it("takes the refreshed draft back to the full form, with unsent answers on top", async () => {

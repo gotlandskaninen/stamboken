@@ -98,6 +98,7 @@ export interface PaperProps {
   leave: (message: string) => void; // back to the queue, with a message
 }
 const QUEUE = "/stamboken/inkorg";
+const UNSTATED: Entry = { ...EMPTY_ENTRY, val: "ej_angiven" };
 type Gate = "draft" | "reported" | null;
 const enteredFrom = (rabbits: ReportView["rabbits"], s: FormState) =>
   rabbits
@@ -496,6 +497,10 @@ export function ReportForm({
   const frozen = React.useRef<Submission | null>(null);
   const frozenCompletion = React.useRef<Completion | null>(null);
   const keepMissingEdits = React.useRef(false);
+  // The rows answered on the focused page: only they are sent, never a draft's value the member did not touch there.
+  const [answeredHere, setAnsweredHere] = React.useState<ReadonlySet<number>>(
+    () => new Set(),
+  );
   const visibleIds = React.useRef<number[]>([]);
   const boxRef = React.useRef<HTMLDivElement>(null);
   const stopped = React.useRef(false);
@@ -777,7 +782,10 @@ export function ReportForm({
       const entry = state.rabbits[r.id];
       m.set(
         r.id,
-        (!missing || (!!entry?.val && entry.val !== "ej_angiven")) &&
+        (!missing ||
+          (answeredHere.has(r.id) &&
+            !!entry?.val &&
+            entry.val !== "ej_angiven")) &&
           isDone(
             r,
             entry,
@@ -795,6 +803,7 @@ export function ReportForm({
     view.report,
     view.can_sell,
     missing,
+    answeredHere,
   ]);
   const notDone = rabbits.filter((r) => !done.get(r.id));
   const doneCount = rabbits.length - notDone.length;
@@ -926,8 +935,12 @@ export function ReportForm({
 
   const onRow = React.useCallback(
     (id: number, patch: Partial<Entry>) => {
-      // an edit drops the row's errors that it settles
-      const before = stateRef.current.rabbits[id] ?? EMPTY_ENTRY;
+      // an edit drops the row's errors that it settles; the first answer on the focused page starts afresh
+      const fresh = missing && !answeredHere.has(id);
+      if (fresh) setAnsweredHere((ids) => new Set(ids).add(id));
+      const before = fresh
+        ? EMPTY_ENTRY
+        : (stateRef.current.rabbits[id] ?? EMPTY_ENTRY);
       const rabbit = viewRef.current.rabbits.find((x) => x.id === id);
       const after = { ...before, ...patch };
       const v = viewRef.current;
@@ -954,13 +967,13 @@ export function ReportForm({
         rabbits: {
           ...s.rabbits,
           [id]: withoutGoneBuyer({
-            ...(s.rabbits[id] ?? EMPTY_ENTRY),
+            ...(fresh ? EMPTY_ENTRY : (s.rabbits[id] ?? EMPTY_ENTRY)),
             ...patch,
           }),
         },
       }));
     },
-    [edit, missing],
+    [edit, missing, answeredHere],
   );
   const onSell = React.useCallback((id: number) => setSoldFor(id), []);
   const canAddRabbit = canEdit && !isPaper;
@@ -1144,6 +1157,7 @@ export function ReportForm({
     const report = view.report;
     if (!report?.can_complete_missing) return;
     const answered = report.not_stated.filter((id) => {
+      if (!answeredHere.has(id)) return false;
       const val = state.rabbits[id]?.val;
       return val === "kvar" || val === "dod" || val === "sald";
     });
@@ -1264,16 +1278,24 @@ export function ReportForm({
   };
 
   const startChange = () => {
-    if (!localCopy) {
+    // A browser copy from before the server's draft moved on (an answer on the focused page) is offered, never
+    // saved over: the choice of #275's mount, "Osparade ändringar på den här enheten".
+    const local = localCopy ? localChoice(view, store, isPaper) : null;
+    if (!local?.adopt) {
       // the refreshed draft and its version together; answers typed on the focused page and not sent go on top
       const next = fromBody(view.draft?.data ?? view.report?.submitted ?? {});
       if (keepMissingEdits.current)
         for (const id of view.report?.not_stated ?? []) {
           const e = state.rabbits[id];
-          if (e?.val && e.val !== "ej_angiven") next.rabbits[id] = e;
+          if (answeredHere.has(id) && e?.val && e.val !== "ej_angiven")
+            next.rabbits[id] = e;
         }
       setState(next);
       updatedAt.current = view.draft?.updated_at ?? null;
+      if (local?.older) {
+        setOlderCopy(local.older);
+        setVersion(0); // nothing is saved before the choice
+      }
     }
     keepMissingEdits.current = false;
     setLocalCopy(false);
@@ -1669,7 +1691,11 @@ export function ReportForm({
     <RabbitRow
       key={r.id}
       r={r}
-      entry={state.rabbits[r.id]}
+      entry={
+        missing && !answeredHere.has(r.id)
+          ? UNSTATED // the paper's answer, not a draft's
+          : state.rabbits[r.id]
+      }
       ending={!missing && state.ending}
       year={year}
       canSell={view.can_sell}
