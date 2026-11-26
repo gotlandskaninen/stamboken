@@ -16,6 +16,7 @@ som PDF. Reglerna finns i `app/utils/arsrapport.py` och endpointsen i
 | `POST /api/v2/arsrapport/forslag/<id>/godkann` och `…/avvisa` | admin och genbanksansvarig i besättningens genbank. Hjälpare, ägare och genbanksansvarig i den andra genbanken får 403. |
 | `POST /api/v2/arsrapport/besattning/<besättning>/<år>/kop` och `…/kop/inskick` | den som får rapportera för besättningen, inloggad eller via länken (`report_actor_required`). Länken når bara sin egen besättning och sitt år. |
 | `POST /api/v2/arsrapport/besattning/<besättning>/<år>/paminnelse` | admin och genbanksansvarig i besättningens genbank. Hjälpare, ägare, kassör och länken får 401 eller 403. |
+| `POST /api/v2/arsrapport/besattning/<besättning>/<år>/komplettera` och `…/komplettera/torrkorning` | den som får rapportera för besättningen, inloggad eller via länken, men aldrig från blankett (`?post=` ger 400). |
 | `GET /api/v2/arsrapport/blankett.pdf` | alla som är inloggade |
 
 ## Statusvyn
@@ -229,6 +230,16 @@ huvudmedlemmen om just dem (`arsrapport.fraga_saknade`, Å22), en gång per rapp
 öppen. Mejlet listar de kaniner som fortfarande saknas när det skickas och har rapportlänken. Har
 alla besvarats, dragits tillbaka eller blivit ett avslut går inget. Ett svar på mejlet blir en
 vanlig post i kön; inget i det skrivs i rapporten.
+
+Svaret går till `POST …/komplettera` med `{submission_key, revision, rabbits}`, bara kaniner som
+fortfarande är ej angivna och var och en Finns kvar, Död eller Såld. Servern lägger svaren över
+rapportens senaste inskick under rapportens lås och skickar in resten oförändrat: de andra ej
+angivna kaninerna, hälsosvaret, meddelandet och väntande försäljningar står kvar, och datumet då
+rapporten kom in ändras inte. Försäljning via länken blir ett förslag som vanligt. Kvittot och
+mejlet Å8 är som för Ändra. Utkastet tas inte bort (Jonas 2026-11-26): en kanin som utkastet
+fortfarande har som ej angiven får svaret, och medlemmens andra ändringar står kvar till ett
+vanligt Skicka. `ReportView.report` har `not_stated` och `can_complete_missing`, som är sann så
+länge rundan är öppen och en rapport från blankett, som inte är ett avslut, har ej angivna kaniner.
 
 Mejlet har bara id:n och flaggor (`round_id`, `code_id`, `slot`, `scheduled`); länken byggs när
 det skickas. Saknar besättningen en giltig kod skapas den först (`issue_code`) och sparas, och
