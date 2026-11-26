@@ -433,8 +433,9 @@ NOTICE_WITHIN = timedelta(days=30)  # art. 14.3: the buyer without a försäljni
 def purge_uninformed(now):
     """
     #273: a buyer without a försäljningsbevis is kept only if the association can tell them within a month. A
-    pending proposal's e-mail buyer becomes "såld utanför genbanken", and a buyer whose address has waited that long
-    for a manager's check goes.
+    pending proposal's e-mail buyer becomes "såld utanför genbanken", and a buyer whose notice has not gone in that
+    time goes: its address waits for a manager's check, its mail still waits or fails, or a withdrawn report has not
+    been sent again.
     """
     late = now - NOTICE_WITHIN
 
@@ -453,13 +454,14 @@ def purge_uninformed(now):
         .where(HerdTracking.holder_contact == BuyerContact.id)
     )
 
-    def unchecked():
+    def unsent():  # the e-mail goes once the notice has (purge_notice_email)
         got = fn.COALESCE(proposed, BuyerContact.created_at)
-        return BuyerContact.email_notice_only & BuyerContact.email_review_pending & (got < late)
+        told = BuyerContact.id.in_(_notices(MailMessage.status == "sent"))
+        return BuyerContact.email_notice_only & BuyerContact.email.is_null(False) & ~told & (got < late)
 
     with DB_PROXY.atomic():
         deleted, paths = _delete_under_locks(
-            BuyerContact.select(BuyerContact.id).where(unchecked()), unchecked, "ej_informerad"
+            BuyerContact.select(BuyerContact.id).where(unsent()), unsent, "ej_informerad"
         )
     remove_originals(paths)
     return count + deleted

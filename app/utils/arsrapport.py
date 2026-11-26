@@ -2199,7 +2199,9 @@ def _report_transfer(herd, round_, entry, current_effects, sale, claim, removed,
         kept = _kept_contact(herd, round_, entry, claim, sale)
         return TransferIndividual(target, day, buyer=buyer, buyer_contact_id=kept, address_optional=paper)
     contact = (
-        BuyerContact.select(BuyerContact.name, BuyerContact.town, BuyerContact.postal_address)
+        BuyerContact.select(
+            BuyerContact.name, BuyerContact.town, BuyerContact.postal_address, BuyerContact.email_notice_only
+        )
         .join(HerdTracking, on=(HerdTracking.holder_contact == BuyerContact.id))
         .where(HerdTracking.id == registered.ref)
         .first()
@@ -2215,8 +2217,10 @@ def _report_transfer(herd, round_, entry, current_effects, sale, claim, removed,
         )
     ):
         buyer = {**buyer, "postal_address": contact.postal_address}
+    # only a buyer registered the old way may be corrected the old way before 2027 (#273)
+    corrects = contact is not None and not contact.email_notice_only
     return TransferIndividual(
-        target, day, buyer=buyer, address_optional=contact is not None or paper, corrects_sale=True
+        target, day, buyer=buyer, address_optional=contact is not None or paper, corrects_sale=corrects
     )
 
 

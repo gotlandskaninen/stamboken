@@ -1058,8 +1058,12 @@ def _refuse_buyerless_sales_outside(parsed, pairs):
         if event["buyer"] is not None and index in pairs and pairs[index].buyer_removed:
             raise HerdTrackingConflict(BUYER_REMOVED)  # never registered again, as in attach_buyer
         buyer = event["buyer"]
-        if buyer and index not in pairs and not buyer["email_notice_only"] and event["date"] < BEVIS_FROM:
-            raise HerdTrackingInvalid(f"Händelse {index + 1}: {BEVIS_NOT_YET}")  # a sale new to the register
+        if buyer and not buyer["email_notice_only"] and event["date"] < BEVIS_FROM:
+            # only a buyer registered the old way may be corrected the old way before 2027 (#273)
+            replaced = pairs[index].holder_contact_id if index in pairs else None
+            old_way = BuyerContact.select().where(BuyerContact.id == replaced, ~BuyerContact.email_notice_only)
+            if replaced is None or not old_way.exists():
+                raise HerdTrackingInvalid(f"Händelse {index + 1}: {BEVIS_NOT_YET}")
         if event["buyer"] is None and index not in pairs and not event["not_recorded"]:
             hint = "ange köparens namn och ort" if event["kind"] == "TRANSFER" else "välj Flytt, där köparen anges"
             raise HerdTrackingInvalid(f"Händelse {index + 1}: en försäljning utanför föreningen: {hint}.")

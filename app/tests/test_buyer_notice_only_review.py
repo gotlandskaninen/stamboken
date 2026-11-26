@@ -1,12 +1,13 @@
 """Regression tests for sales without a försäljningsbevis through reports, the inbox and the nightly purge."""
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
 import utils.database as db
 from utils import buyer_contact, buyer_mail, herd_tracking, inbox, mail, settings
 from utils.herd_tracking import BEVIS_NOT_YET, BUYER_REMOVED, NOT_RECORDED, HerdTrackingInvalid, record_herd_tracking
+from utils.mail import SALE_WITHDRAWN
 
 from tests.arsrapport_fixtures import ArsrapportTest
 from tests.inbox_fixtures import QUALITY
@@ -91,6 +92,14 @@ class TestReportReview(ArsrapportTest):
         (new,) = rows(self.rabbit, "TRANSFER")
         self.assertEqual((new.herd_id, new.holder_contact_id), (self.gx1.id, None))
         self.assertIsNone(db.BuyerContact.get_or_none(db.BuyerContact.id == contact_id))
+
+    def test_a_sale_sent_without_a_buyer_takes_no_buyer_the_old_way_before_2027(self):
+        self.login("owner")
+        self.ok(self.submit(self.sale_body(NOT_RECORDED)))
+        with mock.patch.object(herd_tracking, "BEVIS_FROM", REAL_BEVIS_FROM):
+            self.assert_buyer_refusal(self.submit(self.sale_body(BUYER, revision=1)), BEVIS_NOT_YET)
+        (sale,) = rows(self.rabbit, "TRANSFER")
+        self.assertIsNone(sale.holder_contact_id)
 
     def test_the_month_runs_from_the_proposal_through_the_address_check(self):
         known = self.rabbits(self.herd, 1)[0]
@@ -205,18 +214,43 @@ class TestReportReview(ArsrapportTest):
 
 
 class TestSaleReview(NoticeOnlyTest):
-    def test_before_2027_only_a_replacement_outside_sale_accepts_the_old_format(self):
+    def test_before_2027_only_a_buyer_registered_the_old_way_is_corrected_the_old_way(self):
         event = {"kind": "TRANSFER", "date": DAY, "herd": "GX1", "buyer": BUYER}
+        with (
+            mock.patch.object(herd_tracking, "BEVIS_FROM", REAL_BEVIS_FROM),
+            self.assertRaisesRegex(HerdTrackingInvalid, BEVIS_NOT_YET),
+        ):
+            herd_tracking.correct_herd_tracking(self.rabbit, self.manager, None, [], [event])
+        buyerless = record_herd_tracking(self.individuals[1], self.gx1, DAY, "TRANSFER", self.manager)
+        sale = record_herd_tracking(self.rabbit, self.gx1, DAY, "TRANSFER", self.manager, buyer=BUYER)  # before #273
         with mock.patch.object(herd_tracking, "BEVIS_FROM", REAL_BEVIS_FROM):
-            with self.assertRaisesRegex(HerdTrackingInvalid, BEVIS_NOT_YET):
-                herd_tracking.correct_herd_tracking(self.rabbit, self.manager, None, [], [event])
+            with self.assertRaisesRegex(HerdTrackingInvalid, BEVIS_NOT_YET):  # a new buyer for a sale without one
+                herd_tracking.correct_herd_tracking(
+                    self.individuals[1], self.manager, None, [buyerless.id], [event], reason="Rättelse"
+                )
 
-            sale = record_herd_tracking(self.rabbit, self.gx1, DAY, "TRANSFER", self.manager)
             (replacement,) = herd_tracking.correct_herd_tracking(
                 self.rabbit, self.manager, None, [sale.id], [event], reason="Rättelse av försäljning"
             )
         self.assertIsNotNone(db.HerdTracking.get_by_id(sale.id).voided_at)
         self.assertEqual(replacement.holder_contact.name, BUYER["name"])
+
+    def test_a_notice_not_sent_within_a_month_takes_the_buyer_with_it(self):
+        now = datetime.now(timezone.utc)
+        stuck = self.sale()  # its mail still queued
+        withdrawn = record_herd_tracking(self.individuals[1], self.gx1, DAY, "TRANSFER", self.manager, buyer=NOTICE)
+        db.MailMessage.update(status="cancelled", last_error=SALE_WITHDRAWN).where(
+            db.MailMessage.recipient_id == withdrawn.holder_contact_id
+        ).execute()
+        db.BuyerContact.update(created_at=now - timedelta(days=29)).execute()
+        buyer_contact.purge_uninformed(now)
+        self.assertIsNotNone(self.contact(stuck))
+        self.assertIsNotNone(self.contact(withdrawn))
+        db.BuyerContact.update(created_at=now - timedelta(days=31)).execute()
+        buyer_contact.purge_uninformed(now)
+        self.assertIsNone(self.contact(stuck))
+        self.assertIsNone(self.contact(withdrawn))
+        self.assertTrue(db.HerdTracking.get_by_id(stuck.id).buyer_removed)
 
     def test_cancelled_notice_removes_the_buyer_only_when_the_sale_was_not_withdrawn(self):
         withdrawn = self.sale()
