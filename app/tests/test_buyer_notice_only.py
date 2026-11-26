@@ -110,12 +110,12 @@ class TestDatabase(NoticeOnlyTest):
             "created_by_user": self.owner,
             "purge_at": datetime.now(timezone.utc) + timedelta(days=1),
         }
-        for extra in (
-            {},
-            {"email_notice_only": True, "phone": "070-000 00 00"},
-            {"email_notice_only": True, "contact_consent_at": datetime.now(timezone.utc)},
+        for case, extra in (
+            ("no yes, no flag", {}),
+            ("flag and phone", {"email_notice_only": True, "phone": "070-000 00 00"}),
+            ("flag and a yes", {"email_notice_only": True, "contact_consent_at": datetime.now(timezone.utc)}),
         ):
-            with self.subTest(extra=extra), self.assertRaises(IntegrityError), db.DB_PROXY.atomic():
+            with self.subTest(case), self.assertRaises(IntegrityError), db.DB_PROXY.atomic():
                 db.BuyerContact.create(**row, **extra)
         db.BuyerContact.create(**row, email_notice_only=True)
 
