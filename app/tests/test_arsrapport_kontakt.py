@@ -248,6 +248,25 @@ class KontaktTest(PaperTest):
                 self.assertEqual(codes(dry), {"konto_ogiltigt"})
         self.assertEqual(self.account(), (None, OLD_ACCOUNT, "Gamla banken"))
 
+    def test_a_ticked_box_types_a_migrated_account(self):
+        """Migration 58 left the type NULL; a form with the same account and a ticked box stores the type, and a form
+        without a ticked box changes nothing (test_no_change_no_event_and_no_mail)."""
+        self.login("man")
+        cases = (
+            ("8327-4471 5512", {"typ": "bankkonto", "clearing": "8327", "konto": "4471 5512"}, "bankkonto"),
+            ("123-4567", {"typ": "bankgiro", "konto": "1234567"}, "bankgiro"),
+        )
+        for revision, (number, konto, typ) in enumerate(cases):
+            with self.subTest(typ):
+                db.Membership.update(bank_account_type=None, bank_account_number=number).where(
+                    db.Membership.id == self.member.membership_id
+                ).execute()
+                item = self.form(self.manager)
+                extra = {"revision": revision, "reason": "Ny blankett"} if revision else {}
+                receipt = self.ok(item, self.paper(item, matrikel(konto=konto), **extra))
+                self.assertEqual(receipt["matrikel"], ["konto"])
+                self.assertEqual(self.account()[:2], (typ, number))  # the number stays as it was written
+
     def test_same_digits_as_another_type_is_a_new_account(self):
         """A stored type keeps a bankgiro and a plusgiro of the same digits apart; a stored NULL type does not."""
         db.Membership.update(bank_account_type="plusgiro", bank_account_number="1234567-8").where(

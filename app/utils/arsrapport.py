@@ -2572,6 +2572,8 @@ def apply_paper_matrikel(herd, membership, member, submission, item, user, matri
         if name == "konto":  # the same digits are the same account, unless the stored type says otherwise
             moved = not _same("bank_account_number", row.bank_account_number, columns["bank_account_number"])
             differ = columns if moved or row.bank_account_type not in (None, columns["bank_account_type"]) else {}
+            if not differ and row.bank_account_type is None and (matrikel["konto"] or {}).get("typ"):
+                differ = {"bank_account_type": columns["bank_account_type"]}  # a ticked box types a migrated account
         else:
             differ = {
                 column: value for column, value in columns.items() if not _same(column, getattr(row, column), value)
