@@ -19,7 +19,7 @@ import {
   removePendingUpload,
 } from "@/utils/uploadRetryQueue";
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+const MAX_FILE_SIZE = 25 * 1024 * 1024; // the server's limit
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp"];
 
 async function compressImage(
@@ -115,7 +115,7 @@ export function PhotoUpload({ individualNumber }: PhotoUploadProps) {
 
     // Validate size
     if (file.size > MAX_FILE_SIZE) {
-      setError("Filen är för stor (max 10 MB)");
+      setError("Filen är för stor (max 25 MB)");
       return;
     }
 

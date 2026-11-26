@@ -386,7 +386,7 @@ def _attachments(msg):
 
 def _store(attachments):
     """
-    Each attachment through the upload's checks and conversion (at most MAX_FILES images in all, 10 MB a file,
+    Each attachment through the upload's checks and conversion (at most MAX_FILES images in all, 25 MB a file,
     re-saved as JPEG without EXIF): (stored (path, sha256, quality), names and reasons for skipped files).
     """
     from blueprints.inbox import MAX_FILES, _each_image, _Refused  # the upload's; its refusals need an app context
