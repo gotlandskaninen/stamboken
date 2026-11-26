@@ -871,6 +871,29 @@ def _kept_date(claim):
     return partial_date(sale["ar"], sale["manad"], sale["dag"], today())
 
 
+def _erased_dates(removed_dates, claims):
+    """
+    _removed_buyers' dates by rabbit, with the sale of each buyer kept from the sale dialog (among `claims`) that
+    was erased on request. No row ties such a buyer to its sale, only the draft's claim, so the sale takes no
+    buyer again while the draft names it. One that went at kept_until (gallring_kvar) was not erased.
+    """
+    claims = {key: claim for key, claim in claims.items() if claim["fran_rapport"] is None}
+    if not claims:
+        return removed_dates
+    erased = AuditLog.select(AuditLog.record_id).where(
+        AuditLog.table_name == BuyerContact._meta.table_name,
+        AuditLog.operation == "DELETE",
+        AuditLog.new_data["action"].in_(("radering", "invandning")),
+        AuditLog.record_id.in_([str(claim["kopare_id"]) for claim in claims.values()]),
+    )
+    erased = {int(record_id) for (record_id,) in erased.tuples()}
+    dates = {rabbit: set(days) for rabbit, days in removed_dates.items()}
+    for key, claim in claims.items():
+        if claim["kopare_id"] in erased:
+            dates.setdefault(int(key), set()).add(_kept_date(claim))
+    return dates
+
+
 def _keep_buyers(herd, round_, access, user, report, stored, buyers, claims):
     """
     K1 in save_draft, under its locks. The stored `claims` stay on the sales still outside the genebank, and go with
@@ -889,9 +912,10 @@ def _keep_buyers(herd, round_, access, user, report, stored, buyers, claims):
     latest = (_submissions(report)[-1].data.get("rabbits") or {}) if report is not None else {}
     ops = report_ops(report) if report is not None else set()
     removed, removed_dates = _removed_buyers(herd, round_, [int(key) for key in buyers], ops)
+    removed_dates = _erased_dates(removed_dates, claims)
     listed = report_list(herd, round_.report_year, report) if buyers else []
     choosing = {str(row["id"]) for row in listed if row["state"] == "att_valja"}  # what Skicka takes (check)
-    typed, refusals = {}, []
+    typed, replaced, refusals = {}, set(), []
     for key, buyer in sorted(buyers.items()):
         entry = rabbits.get(key)
         if key not in choosing or not _sale_outside(entry) or buyer.get("not_recorded"):
@@ -917,12 +941,14 @@ def _keep_buyers(herd, round_, access, user, report, stored, buyers, claims):
             )
         except HerdTrackingInvalid as exc:
             refusals.append(_refusal(int(key), "kopare", str(exc)))
+            replaced.add(key)  # a new buyer was typed, if refused: the kept one is not the sale's buyer any more
             continue
         typed[key] = (fields, sale)
-    rest = {key: claim for key, claim in claims.items() if key not in typed}
+    replaced |= set(typed)
+    rest = {key: claim for key, claim in claims.items() if key not in replaced}
     stored, gone = _with_kept(stored, rest)
     try:  # the rabbits' locks before the addresses'
-        drop_kept_buyers(gone | {claims[key]["kopare_id"] for key in typed if key in claims}, user, lock=True)
+        drop_kept_buyers(gone | {claims[key]["kopare_id"] for key in replaced if key in claims}, user, lock=True)
     except QueueChanged as exc:
         raise ArsrapportError(409, QUEUE_CHANGED) from exc
     if not typed:
@@ -1203,8 +1229,10 @@ def report_view(herd, round_, access, user):
     rabbits = {row["id"]: row for row in report_list(herd, year, report)}
     ops = report_ops(report) if report else set()
     removed, removed_dates = _removed_buyers(herd, round_, list(rabbits), ops)
+    removed_dates = _erased_dates(removed_dates, _kept_claims(draft.data) if draft else {})
     for rabbit, dates in removed_dates.items():
-        rabbits[rabbit]["removed_buyer_dates"] = sorted(day.isoformat() for day in dates)
+        if rabbit in rabbits:
+            rabbits[rabbit]["removed_buyer_dates"] = sorted(day.isoformat() for day in dates)
     for rabbit in removed:
         rabbits[rabbit]["buyer_removed"] = True
     claims = _kept_claims(draft.data) if draft and access.can_sell else {}
@@ -2440,6 +2468,7 @@ def check(
     names += _typed_buyers(sub) + _waiting_buyers(proposals.values())
     refusals += _reason_refusals(sub.reason, own, names)
     removed, removed_dates = _removed_buyers(herd, round_, [rid for rid in own if sub.rabbits[rid].sald], ops)
+    removed_dates = _erased_dates(removed_dates, _kept_claims(draft.data) if draft is not None else {})
     for rabbit, row in rows.items():
         entry, before = sub.rabbits.get(rabbit), before_entries.get(rabbit)
         if entry is None:

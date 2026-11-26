@@ -195,6 +195,29 @@ class DialogBuyerTest(KeptBuyerBase):
         answer = self.save(self.sold(), {"9" * 30: BUYER})
         self.assertEqual((answer["kopare"], contacts()), ({}, {}))
 
+    def test_a_refused_new_buyer_lets_go_of_the_kept_one(self):  # review r1: B refused must not leave A for Skicka
+        answer, contact = self.kept()
+        email_only = {**OTHER, "email": "xena@example.invalid"}  # no tick: refused
+        answer = self.save(self.sold(), {str(self.a.id): email_only}, updated_at=answer["updated_at"])
+        self.assertEqual([r["code"] for r in answer["refusals"]], ["kopare"])
+        self.assertEqual(contacts(), {})
+        self.assertNotIn("kopare_id", json.dumps(self.draft()))
+        self.assertNotIn("kept_buyer_date", self.row())
+        self.assertEqual(self.refused(self.sent(contact.id)), [(self.a.id, "kopare_saknas")])
+
+    def test_a_buyer_erased_before_skicka_is_never_registered_for_that_sale(self):  # review r1
+        answer, contact = self.kept()
+        buyer_contact.erase_buyer_contact(contact.id, db.User.get_by_id(self.admin.id))
+        self.assertIn(SOLD_ON.isoformat(), self.row()["removed_buyer_dates"])
+        again = self.save(self.sold(), {str(self.a.id): BUYER}, updated_at=answer["updated_at"])
+        self.assertEqual(again["refusals"], [{"individual_id": self.a.id, "code": "kopare", "message": BUYER_REMOVED}])
+        self.assertEqual(contacts(), {})
+        self.assertEqual(self.refused(self.sent(kopare=BUYER)), [(self.a.id, "kopare")])
+        self.ok(self.sent(contact.id))  # without a buyer: a sale whose buyer was removed
+        (sale,) = sales(self.a, active=True)
+        self.assertEqual((sale.holder_contact_id, sale.buyer_removed), (None, True))
+        self.assertEqual(contacts(), {})
+
     def test_an_invalid_buyer_is_refused_beside_a_saved_draft(self):
         email_only = {**OTHER, "email": "xena@example.invalid"}
         answer = self.save(self.sold(), {str(self.a.id): email_only})
