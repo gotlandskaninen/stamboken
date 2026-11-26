@@ -40,7 +40,13 @@ from utils.database import (
     current_holder_row,
     not_voided,
 )
-from utils.herd_tracking import HerdTrackingError, attach_buyer, correct_herd_tracking, is_manager_of
+from utils.herd_tracking import (
+    NOT_RECORDED,
+    HerdTrackingError,
+    attach_buyer,
+    correct_herd_tracking,
+    is_manager_of,
+)
 from utils.individual_commands import (
     AssignPaperCertificate,
     IndividualRefused,
@@ -903,7 +909,9 @@ def transfer(item_id, document_id):
                 if not (is_manager_of(user, seller.genebank_id) or grant.allows(user, seller)):
                     raise inbox.InboxError(403, "Du får inte koppla ett bevis till kaninens försäljning.")
                 # A sale registered without its buyer gets the one the proof shows; past its five years, none.
-                if buyer is not None and attach_buyer(proven, buyer, user) is None:
+                if buyer == NOT_RECORDED:  # såld utanför genbanken (#273): nothing is kept, the proof is cleared
+                    proven.buyer_removed = True
+                elif buyer is not None and attach_buyer(proven, buyer, user) is None:
                     proven.buyer_removed = True  # so the proof is cleared below
                 row = proven
             elif herd in OUTSIDE_GENEBANK_HERDS and buyer is None:
