@@ -801,3 +801,27 @@ test("11. Genbanksansvarig ser rätt status för alla typer", async ({
   await page.goto("/stamboken/arsrapport/status/2025?filter=att_ringa");
   await expect(page.getByText("Inga besättningar att ringa.")).toBeVisible();
 });
+
+test("12. Dina uppgifter: huvudmedlemmen ändrar i rapporten, andra ser vem som gör det", async ({
+  page,
+  context,
+}) => {
+  await loginInline(page, context, USERS.owner);
+  // M9001's main member is this account (5.11, D1): the details are filled in and saved with Skicka
+  await page.goto("/stamboken/arsrapport/M9001/2025");
+  await page.getByRole("button", { name: /^(Ändra|Fortsätt ändra)$/ }).click();
+  await expect(page.getByText(/^E-post: /)).toBeVisible();
+  await page.getByLabel("Telefon").fill("0709-555 666");
+  await page.getByRole("button", { name: SEND }).click();
+  await submitted(page);
+  await expect(page.getByText("Sparat i matrikeln: telefon.")).toBeVisible();
+  // M9002 is the account's herd, but its main member is someone else
+  await page.goto("/stamboken/arsrapport/M9002/2025");
+  await page.getByRole("button", { name: /^(Ändra|Fortsätt ändra)$/ }).click();
+  await expect(
+    page.getByText(
+      "Huvudmedlemmen ändrar kontaktuppgifterna, kontot för stödet och svaret om Koharen.",
+    ),
+  ).toBeVisible();
+  await expect(page.getByLabel("Telefon")).toHaveCount(0);
+});
