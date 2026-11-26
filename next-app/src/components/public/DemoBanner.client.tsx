@@ -16,7 +16,7 @@ export function DemoBanner() {
   return (
     <Alert
       severity="warning"
-      sx={{ borderRadius: 0, justifyContent: "center", displayPrint: "none" }}
+      sx={{ borderRadius: 0, justifyContent: "center" }}
     >
       TESTMILJÖ – här kan du öva fritt. Allt återställs varje natt.
     </Alert>

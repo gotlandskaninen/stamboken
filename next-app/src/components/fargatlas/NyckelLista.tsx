@@ -34,9 +34,12 @@ export function NyckelLista({
                   <li key={s.id}>
                     {s.text}
                     {s.hjalp && ` (${s.hjalp})`} →{" "}
-                    {typeof s.till === "number"
-                      ? `${s.till} ${namn.get(s.till) ?? ""}`.trim()
-                      : `fråga ${ids.indexOf(s.till) + 1}`}
+                    {typeof s.till !== "number"
+                      ? `fråga ${ids.indexOf(s.till) + 1}`
+                      : namn.has(s.till)
+                        ? `${s.till} ${namn.get(s.till)}`
+                        : // as the guide on screen: a number the colour list lacks is no instruction
+                          `${s.till}, som inte finns i Stambokens färglista: fråga genbanksansvarig`}
                     {s.anteckning && `. ${s.anteckning}`}
                   </li>
                 ))}

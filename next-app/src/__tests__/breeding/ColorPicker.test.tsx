@@ -320,6 +320,24 @@ describe("ColorPicker", () => {
       await waitFor(() => expect(screen.queryByText(/Kom ihåg/)).toBeNull());
     });
 
+    it("Välj skickar databasens namn som det är, också med ett mellanslag på slutet", async () => {
+      // Some production colour names end with a space; the backend looks the colour up by that exact name.
+      getFargatlas.mockResolvedValue(medNyckel);
+      const onChange = vi.fn();
+      render(
+        <ColorPicker
+          options={[{ id: 22, name: "Viltgrå ", comment: null }]}
+          value=""
+          onChange={onChange}
+          genebank="Gotlandskanin"
+        />,
+      );
+      await oppna();
+      await tillViltgra();
+      fireEvent.click(screen.getByRole("button", { name: /^Välj 22/ }));
+      expect(onChange).toHaveBeenCalledWith("Viltgrå ");
+    });
+
     it("stäng utan val ändrar inget", async () => {
       getFargatlas.mockResolvedValue(medNyckel);
       const onChange = vi.fn();

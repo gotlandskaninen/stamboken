@@ -233,5 +233,11 @@ describe("NyckelLista", () => {
     ).toBeDefined();
     expect(screen.getByText(/Ja, testvilt → 22 Viltgrå/)).toBeDefined();
     expect(screen.getByText(/^Nej → fråga 3/)).toBeDefined();
+    // 12 is not in this colour list: the printed key says so, as the guide on screen does
+    expect(
+      screen.getByText(
+        /Testsvar A \(Testhjälp A\.\) → 12, som inte finns i Stambokens färglista/,
+      ),
+    ).toBeDefined();
   });
 });
