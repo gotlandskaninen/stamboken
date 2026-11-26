@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { forwardedFor } from "@/lib/forwardedFor";
 import {
   MODE_COOKIE,
+  isTestHost,
   initialMode,
   modeCookieOptions,
   sessionCookieOptions,
@@ -62,7 +63,14 @@ export async function middleware(request: NextRequest) {
     current !== "demo" &&
     current !== "prod" &&
     !request.cookies.has(RETRY_COOKIE);
-  const mode = lookup ? await modeFromProd(request, sessionCookie.value) : null;
+  // The test host is always demo, even with a "prod" cookie from before.
+  const mode = isTestHost(request.headers)
+    ? current === "demo"
+      ? null
+      : "demo"
+    : lookup
+      ? await modeFromProd(request, sessionCookie.value)
+      : null;
   if (mode) request.cookies.set(MODE_COOKIE, mode);
   // Expose the path so server components (requireUser) can preserve destination.
   const response = mode

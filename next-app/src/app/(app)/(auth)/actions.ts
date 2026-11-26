@@ -6,6 +6,8 @@ import { fetchApi } from "@/lib/api";
 import { forwardedFor } from "@/lib/forwardedFor";
 import {
   MODE_COOKIE,
+  PROD_ORIGIN,
+  isTestHost,
   initialMode,
   modeCookieOptions,
   parseMode,
@@ -99,7 +101,7 @@ export async function loginWithGoogle(credential: string, returnTo?: string) {
   cookieStore.set("session", sessionValue, cookieOptions);
   cookieStore.set(
     MODE_COOKIE,
-    initialMode(!!body.v2_prod_access),
+    initialMode(!!body.v2_prod_access, await headers()),
     modeCookieOptions,
   );
 
@@ -146,7 +148,7 @@ export async function loginWithPassword(
   cookieStoreForPw.set("session", sessionValue, cookieOptions);
   cookieStoreForPw.set(
     MODE_COOKIE,
-    initialMode(!!body.v2_prod_access),
+    initialMode(!!body.v2_prod_access, await headers()),
     modeCookieOptions,
   );
 
@@ -161,6 +163,10 @@ export async function loginWithPassword(
  */
 export async function setMode(target: Mode) {
   const normalized = parseMode(target);
+
+  // The test host is demo only; production lives on its own origin.
+  if (normalized === "prod" && isTestHost(await headers()))
+    redirect(`${PROD_ORIGIN}/stamboken`);
 
   // The re-check MUST read the PROD backend (forceProd): hbuser in prod is the
   // source of truth for promotion. The default mode-aware path would consult
@@ -313,7 +319,7 @@ async function finishCodeLogin(
   store.set("session", session, cookieOptions);
   store.delete("login_request");
   const mode =
-    data.pending === true ? "prod" : initialMode(data.v2_prod_access);
+    data.pending === true ? "prod" : initialMode(data.v2_prod_access, await headers());
   store.set(MODE_COOKIE, mode, modeCookieOptions);
   const destination = safeReturnTo(returnTo);
   if (data.pending === true) {
