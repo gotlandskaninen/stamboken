@@ -43,10 +43,12 @@ export const TEST_HOST = (
 export const PROD_ORIGIN =
   process.env.PROD_ORIGIN || "https://gotlandskaninen.se";
 
-/** True when the request was made to {@link TEST_HOST} (port ignored). */
+/**
+ * True when the request was made to {@link TEST_HOST} (port ignored). Host
+ * only: nginx sets Host on the Next.js routes, X-Forwarded-Host is client-supplied.
+ */
 export function isTestHost(h: Pick<Headers, "get">): boolean {
-  const raw = h.get("x-forwarded-host") || h.get("host") || "";
-  const host = raw.split(",")[0].trim().toLowerCase().replace(/:\d+$/, "");
+  const host = (h.get("host") || "").trim().toLowerCase().replace(/:\d+$/, "");
   return host === TEST_HOST;
 }
 

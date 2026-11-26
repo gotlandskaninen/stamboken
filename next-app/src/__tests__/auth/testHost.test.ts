@@ -25,7 +25,11 @@ vi.mock("@/lib/api", () => ({
   fetchApi: vi.fn(async () => ({ v2_prod_access: h.prodAccess })),
 }));
 
-import { loginWithPassword, setMode } from "@/app/(app)/(auth)/actions";
+import {
+  loginWithPassword,
+  redeemLoginLink,
+  setMode,
+} from "@/app/(app)/(auth)/actions";
 
 function stubFlask() {
   vi.stubGlobal(
@@ -59,39 +63,70 @@ beforeEach(() => {
 describe("testmiljön sb.gotlandskaninen.se", () => {
   it("login sets demo on the test host even with v2_prod_access", async () => {
     h.incoming = new Headers({
-      "x-forwarded-host": "SB.gotlandskaninen.se:443",
+      host: "SB.gotlandskaninen.se:443",
     });
     await run(() => loginWithPassword("u", "p"));
     expect(modeSet()[0][1]).toBe("demo");
   });
 
   it("login on the main host is unchanged", async () => {
-    h.incoming = new Headers({ "x-forwarded-host": "gotlandskaninen.se" });
+    h.incoming = new Headers({ host: "gotlandskaninen.se" });
     await run(() => loginWithPassword("u", "p"));
     expect(modeSet()[0][1]).toBe("prod");
   });
 
-  it("falls back to Host when x-forwarded-host is missing", async () => {
-    h.incoming = new Headers({ host: "sb.gotlandskaninen.se:3000" });
+  it("ignores a client-supplied x-forwarded-host", async () => {
+    h.incoming = new Headers({
+      host: "gotlandskaninen.se",
+      "x-forwarded-host": "sb.gotlandskaninen.se",
+    });
+    await run(() => loginWithPassword("u", "p"));
+    expect(modeSet()[0][1]).toBe("prod");
+    h.set.mockClear();
+    h.incoming = new Headers({
+      host: "sb.gotlandskaninen.se:3000",
+      "x-forwarded-host": "gotlandskaninen.se",
+    });
     await run(() => loginWithPassword("u", "p"));
     expect(modeSet()[0][1]).toBe("demo");
   });
 
   it("setMode prod on the test host redirects to production, no cookie", async () => {
-    h.incoming = new Headers({ "x-forwarded-host": "sb.gotlandskaninen.se" });
+    h.incoming = new Headers({ host: "sb.gotlandskaninen.se" });
     expect(await run(() => setMode("prod"))).toBe(
-      "NEXT_REDIRECT:https://gotlandskaninen.se/stamboken",
+      "NEXT_REDIRECT:https://gotlandskaninen.se/stamboken/byt-till-prod",
     );
     expect(h.set).not.toHaveBeenCalled();
   });
 
   it("setMode demo on the test host and prod on the main host set cookies", async () => {
-    h.incoming = new Headers({ "x-forwarded-host": "sb.gotlandskaninen.se" });
+    h.incoming = new Headers({ host: "sb.gotlandskaninen.se" });
     await setMode("demo");
     expect(modeSet()[0][1]).toBe("demo");
     h.set.mockClear();
     h.incoming = new Headers({ host: "gotlandskaninen.se" });
     await setMode("prod");
     expect(modeSet()[0][1]).toBe("prod");
+  });
+
+  it.each([
+    ["sb.gotlandskaninen.se", "demo"],
+    ["gotlandskaninen.se", "prod"],
+  ])("pending code login on %s sets %s", async (host, mode) => {
+    h.incoming = new Headers({ host });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ pending: true }), {
+            headers: {
+              "content-type": "application/json",
+              "set-cookie": "session=abc; Path=/",
+            },
+          }),
+      ),
+    );
+    await run(() => redeemLoginLink("tok"));
+    expect(modeSet()[0][1]).toBe(mode);
   });
 });

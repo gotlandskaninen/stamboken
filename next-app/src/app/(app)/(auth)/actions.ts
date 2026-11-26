@@ -166,7 +166,7 @@ export async function setMode(target: Mode) {
 
   // The test host is demo only; production lives on its own origin.
   if (normalized === "prod" && isTestHost(await headers()))
-    redirect(`${PROD_ORIGIN}/stamboken`);
+    redirect(`${PROD_ORIGIN}/stamboken/byt-till-prod`);
 
   // The re-check MUST read the PROD backend (forceProd): hbuser in prod is the
   // source of truth for promotion. The default mode-aware path would consult
@@ -320,7 +320,7 @@ async function finishCodeLogin(
   store.delete("login_request");
   const mode =
     data.pending === true
-      ? "prod"
+      ? initialMode(true, await headers())
       : initialMode(data.v2_prod_access, await headers());
   store.set(MODE_COOKIE, mode, modeCookieOptions);
   const destination = safeReturnTo(returnTo);
