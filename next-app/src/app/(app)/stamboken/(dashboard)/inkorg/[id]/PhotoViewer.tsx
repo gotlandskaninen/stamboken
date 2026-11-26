@@ -111,15 +111,15 @@ export function PhotoViewer({
   useEffect(() => {
     const vp = viewportRef.current;
     if (!vp) return;
-    // A press in the photo until it ends anywhere: a masking rectangle or the photo is being dragged, and its
+    // Presses in the photo until each ends anywhere: a masking rectangle or the photo is being dragged, and its
     // maths needs the photo still. Safari's wheel events say no button is down, and Delete can remove the rectangle.
-    let held = false;
-    const press = () => (held = true);
-    const release = () => (held = false);
+    const held = new Set<number>();
+    const press = (e: PointerEvent) => held.add(e.pointerId);
+    const release = (e: PointerEvent) => held.delete(e.pointerId);
     const onWheel = (e: WheelEvent) => {
       const mode = e.deltaMode; // first: Firefox turns lines into pixels once a delta is read
       if (e.ctrlKey) return;
-      if (held || e.buttons) return e.preventDefault();
+      if (held.size || e.buttons) return e.preventDefault();
       const stage = stageRef.current;
       const sideways = Math.abs(e.deltaX) > Math.abs(e.deltaY);
       const last = e.deltaY > 0 ? 0 : ZOOMS.length - 1;

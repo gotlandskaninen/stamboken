@@ -86,16 +86,20 @@ describe("PhotoViewer: the mouse wheel zooms", () => {
     expect(wheel(region, 100, { buttons: 1 }).defaultPrevented).toBe(true);
   });
 
-  it("holds it still from a press in the photo until it ends, as Safari says no button is down", () => {
+  it("holds it still while any press in the photo lasts, as Safari says no button is down", () => {
     const region = setup();
-    act(() => {
-      region.dispatchEvent(new Event("pointerdown", { bubbles: true }));
-    });
+    const pointer = (type: string, pointerId: number, target: EventTarget) =>
+      act(() => {
+        target.dispatchEvent(
+          Object.assign(new Event(type, { bubbles: true }), { pointerId }),
+        );
+      });
+    pointer("pointerdown", 1, region); // a finger on a masking rectangle
+    pointer("pointerdown", 2, region);
+    pointer("pointerup", 2, window); // another pointer lets go elsewhere
     expect(wheel(region, -100).defaultPrevented).toBe(true);
     expect(screen.getByText("100 %")).toBeInTheDocument();
-    act(() => {
-      window.dispatchEvent(new Event("pointerup"));
-    });
+    pointer("pointerup", 1, window);
     wheel(region, -100);
     expect(screen.getByText("150 %")).toBeInTheDocument();
   });
