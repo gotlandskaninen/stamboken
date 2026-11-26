@@ -224,6 +224,12 @@ Den har besättningsnummer och läge, uppdelat på blankett som inte är inmatad
 en länk till statusvyn med filtret "Ej svarat". Inga namn eller kontaktuppgifter. Listan läses när
 mejlet skickas; har alla svarat eller är mottagaren inte längre genbanksansvarig går inget.
 
+Lämnar en rapport från blankett kaniner som "Ej angiven på blanketten" frågar Stamboken
+huvudmedlemmen om just dem (`arsrapport.fraga_saknade`, Å22), en gång per rapport medan rundan är
+öppen. Mejlet listar de kaniner som fortfarande saknas när det skickas och har rapportlänken. Har
+alla besvarats, dragits tillbaka eller blivit ett avslut går inget. Ett svar på mejlet blir en
+vanlig post i kön; inget i det skrivs i rapporten.
+
 Mejlet har bara id:n och flaggor (`round_id`, `code_id`, `slot`, `scheduled`); länken byggs när
 det skickas. Saknar besättningen en giltig kod skapas den först (`issue_code`) och sparas, och
 sedan läggs påminnelsen i kön under rapportens lås. I demon köar jobbet inget.

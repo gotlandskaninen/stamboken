@@ -9,6 +9,7 @@ in Stockholm, the second on deadline−2 at 07:00. A reminder delivered for one 
 also if the deadline moves; a queued one is judged again when it is sent.
 """
 
+import json
 import logging
 from datetime import datetime, time, timedelta
 
@@ -22,12 +23,15 @@ from utils.database import (
     DB_PROXY,
     Genebank,
     Herd,
+    Individual,
     MailMessage,
     ReportAccessCode,
     User,
+    YearlyHerdReport,
     YearlyReportDraft,
     YearlyReportRound,
     YearlyReportRoundGenebank,
+    YearlyReportSubmission,
 )
 from utils.mail import STOPPED, enqueue_mail, mail_kind
 
@@ -35,6 +39,7 @@ logger = logging.getLogger(__name__)
 
 REMINDER = "arsrapport.paminnelse"
 UNANSWERED = "arsrapport.ej_svarat"
+MISSING = "arsrapport.fraga_saknade"
 # shortcut: Å5 is caught up for two weeks after it is due, so a round from before step 6 never mails at deploy;
 # make it a column on the activation (sent_at) if a list should be resent or tracked.
 UNANSWERED_DAYS = 14
@@ -117,6 +122,22 @@ def _covered(rows, scheduled, slot, now):
     return False
 
 
+def _issue(herd, round_, now):
+    """
+    D8's first phase: the herd's code for its main member now, issued and committed in a transaction of its own, so
+    the herd's code lock is never taken under the report's. A 409 without an address or when the member changed.
+    """
+    member = report_code.invitation_recipient(herd, now=now)
+    if member is None:
+        raise ArsrapportError(409, NO_RECIPIENT)
+    try:
+        with DB_PROXY.atomic():
+            round_ = arsrapport._lock_round(round_)  # pylint: disable=protected-access  # before the codes, as new_link
+            return report_code.issue_code(herd, round_, member, now=now)
+    except report_code.StaleRecipient as exc:
+        raise ArsrapportError(409, STALE_RECIPIENT) from exc
+
+
 def _remind(herd, round_, now, *, scheduled, user=None):
     """
     D8: the herd's code is issued and committed first (issue_code takes the herd's code lock, which is never taken
@@ -128,15 +149,7 @@ def _remind(herd, round_, now, *, scheduled, user=None):
         raise ArsrapportError(409, REFUSED[reason])
     if _covered(reminders(round_, [herd.id]), scheduled, slot, now):
         return None
-    member = report_code.invitation_recipient(herd, now=now)
-    if member is None:
-        raise ArsrapportError(409, NO_RECIPIENT)
-    try:
-        with DB_PROXY.atomic():
-            round_ = arsrapport._lock_round(round_)  # pylint: disable=protected-access  # before the codes, as new_link
-            code = report_code.issue_code(herd, round_, member, now=now)
-    except report_code.StaleRecipient as exc:
-        raise ArsrapportError(409, STALE_RECIPIENT) from exc
+    code = _issue(herd, round_, now)
     with DB_PROXY.atomic():
         round_ = arsrapport._lock_round(round_)  # pylint: disable=protected-access  # the order of Skicka
         arsrapport.lock_report(round_, herd)
@@ -309,4 +322,119 @@ def _ej_svarat(params):
         "other": [(row["herd"], OTHER_STATES[row["state"]]) for row in rows if row["state"] in OTHER_STATES],
         "link": f"{settings.service.host.rstrip('/')}/stamboken/arsrapport/status/{round_.report_year}"
         f"?genebank_id={genebank.id}&filter=ej_svarat",
+    }
+
+
+# Å22: the rabbits a paper form left out (ej angivna), asked about once per report (D7, spec 5.5)
+
+
+def _missing_refusal(herd, round_, report_id, code, now):
+    """
+    Why Å22 about the report is not wanted now, or None: the one test of the scan, the recheck and the builder. The
+    report must still be the herd's current one, from paper, not an ending, and leave rabbits unstated.
+    """
+    today = now.astimezone(STOCKHOLM).date()
+    if code is not None and report_code.refusal(code, herd, today=today) is not None:
+        return "lank"
+    if not arsrapport.round_open(round_, herd.genebank_id, today):
+        return "rundan_stangd"
+    report = arsrapport.current_report(herd, round_)
+    if report is None or report.id != report_id:
+        return "ny_rapport"
+    data = json.loads(report.data)
+    if data.get("ending_genbank") or not data.get("not_stated"):
+        return "besvarad"
+    paper = YearlyReportSubmission.select().where(
+        YearlyReportSubmission.report == report.id, YearlyReportSubmission.source == "paper"
+    )
+    return None if paper.exists() else "inte_blankett"
+
+
+def _questions(report_ids):
+    rows = MailMessage.select().where(
+        MailMessage.kind == MISSING,
+        MailMessage.ref_type == "yearlyherdreport",
+        MailMessage.ref_id.in_(list(report_ids)),
+    )
+    return list(rows.order_by(MailMessage.id))
+
+
+def _ask(report, now):
+    """Å22 for one report, in D8's two phases; the mail id, or None when it is not wanted or already went."""
+    herd, round_ = report.herd, report.round
+    if _missing_refusal(herd, round_, report.id, None, now) is not None:
+        return None
+    code = _issue(herd, round_, now)
+    with DB_PROXY.atomic():
+        round_ = arsrapport._lock_round(round_)  # pylint: disable=protected-access  # the order of Skicka
+        arsrapport.lock_report(round_, herd)
+        code = ReportAccessCode.select().where(ReportAccessCode.id == code.id).for_update("FOR SHARE").get()
+        herd = Herd.get_by_id(herd.id)
+        if _missing_refusal(herd, round_, report.id, code, now) is not None:
+            return None
+        rows = _questions([report.id])
+        if any(map(counts, rows)):  # P4: once per report; only one cancelled as obsolete is asked again
+            return None
+        return enqueue_mail(
+            MISSING,
+            "member",
+            code.member_id,
+            {"report_id": report.id, "code_id": code.id},
+            ref=("yearlyherdreport", report.id),
+            herd=herd,
+            genebank=herd.genebank_id,
+            dedupe_key=f"{MISSING}:{report.id}:{rows[-1].id if rows else 0}",
+        )
+
+
+def send_missing_questions(now: datetime) -> int:
+    """
+    The hourly job's Å22: each submitted report from paper in an open round that leaves rabbits unstated and has not
+    had its question. Found after the paper submission commits, never from inside it.
+    """
+    if settings.service.demo_instance:
+        logger.info("Årsrapportens frågor om saknade kaniner hoppas över i demomiljön")
+        return 0
+    today = now.astimezone(STOCKHOLM).date()
+    paper = YearlyReportSubmission.select(YearlyReportSubmission.report).where(YearlyReportSubmission.source == "paper")
+    reports = list(
+        YearlyHerdReport.select()
+        .join(YearlyReportRound)
+        .where(
+            YearlyHerdReport.status == "submitted",
+            YearlyHerdReport.id.in_(paper),
+            YearlyReportRound.start_date <= today,
+            YearlyReportRound.end_date >= today,
+        )
+        .order_by(YearlyHerdReport.id)
+    )
+    asked = {row.ref_id for row in _questions([report.id for report in reports]) if counts(row)}
+    total = 0
+    for report in reports:
+        if report.id in asked or not json.loads(report.data).get("not_stated"):
+            continue
+        try:
+            total += _ask(report, now) is not None
+        except ArsrapportError:
+            continue  # no address: the status view's "ej angivna" is the manager's
+        except Exception:  # pylint: disable=broad-except  # one report's failure stops no other
+            logger.exception("Queueing the question about report %s failed", report.id)
+    return total
+
+
+@mail_kind(MISSING, priority=1, category="T", login_address=_link_address)
+def _fraga_saknade(params):
+    """The rabbits still unstated when it is sent, with the link that shows only them."""
+    code = ReportAccessCode.get_or_none(ReportAccessCode.id == params["code_id"])
+    if code is None:
+        return None
+    herd, round_ = Herd.get_by_id(code.herd_id), code.round
+    if _missing_refusal(herd, round_, params["report_id"], code, arsrapport.now()) is not None:
+        return None
+    missing = json.loads(arsrapport.current_report(herd, round_).data)["not_stated"]
+    rabbits = Individual.select(Individual.number, Individual.name).where(Individual.id.in_(missing))
+    return {
+        **_common(herd, round_),
+        "rabbits": [" ".join(filter(None, (r.number, r.name))) for r in rabbits.order_by(Individual.number)],
+        "link": report_code.code_url(code),
     }
