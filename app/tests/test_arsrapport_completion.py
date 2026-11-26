@@ -278,6 +278,65 @@ class TestCompletion(CompletionTest):
         self.assertEqual(self.current().revision, revision + 1)
 
 
+class TestRaces(CompletionTest):
+    """P11: real PostgreSQL transactions started together; no deadlock, and no partial write."""
+
+    def race(self, **work):
+        barrier, results = threading.Barrier(len(work)), {}
+
+        def started(fn):
+            def run():
+                barrier.wait(timeout=10)
+                return fn()
+
+            return run
+
+        self.assertTrue(run_all(*(in_thread(results, name, started(fn)) for name, fn in work.items())))
+        return results
+
+    def complete(self, rabbit, revision):
+        sub = arsrapport.parse_completion(
+            {"submission_key": str(uuid.uuid4()), "revision": revision, "rabbits": dict([self.kvar(rabbit, vikt=3.0)])}
+        )
+        access = arsrapport.Access("code", code=self.code)
+        return arsrapport.submit(self.h, self.round_, access, report_code.CodeActor(self.code), sub, completion=True)
+
+    def test_completion_races_approval_of_another_sale(self):
+        import utils.sale_proposal as sale_proposal  # pylint: disable=import-outside-toplevel
+
+        self.open_link()
+        self.assertEqual(self.answer(self.sald(self.doe, "G9002", 2025, 8, 3))[0].status_code, 200)
+        (proposal,) = db.SaleProposal.select()
+        manager, revision = db.User.get_by_id(self.manager.id), self.current().revision
+        results = self.race(
+            answer=lambda: self.complete(self.buck, revision),
+            approve=lambda: sale_proposal.approve(proposal, manager, now=arsrapport.now()).id,
+        )
+        self.assertIsInstance(results["answer"], dict, results)
+        self.assertIsInstance(results["approve"], int, results)
+        self.assertEqual(db.SaleProposal.get_by_id(proposal.id).state, "godkand")
+        self.assertTrue(self.attested(self.buck))
+        self.assertEqual(self.data()["not_stated"], [self.doe2.id])
+
+    def test_completion_races_withdrawal(self):
+        self.open_link()
+        revision, access = self.current().revision, arsrapport.Access("code", code=self.code)
+        actor = report_code.CodeActor(self.code)
+        results = self.race(
+            answer=lambda: self.complete(self.buck, revision),
+            withdraw=lambda: arsrapport.withdraw(self.h, self.round_, access, actor, revision=revision) and "ok",
+        )
+        won = [name for name, value in results.items() if not (isinstance(value, str) and "Error" in value)]
+        self.assertEqual(len(won), 1, results)  # the other is refused, never half done
+        submitted = db.YearlyHerdReport.select().where(db.YearlyHerdReport.status == "submitted")
+        if won == ["withdraw"]:
+            self.assertFalse(submitted.exists())
+            self.assertFalse(self.attested(self.buck))
+        else:
+            self.assertEqual(submitted.count(), 1)
+            self.assertTrue(self.attested(self.buck))
+
+
 class TestDraft(CompletionTest):
     def draft(self, **rabbits):
         """A member's draft from Ändra: the submitted rabbits, with `rabbits` (id: entry) changed, in body and form."""
