@@ -1647,12 +1647,10 @@ def link_member_user(person_id, user_id, *, actor, mode, confirmed_herd_ids=None
             raise LinkError(AddressTaken.title, detail) from exc
         conveyed = link_access_delta(person, user)  # under the locks, right before the save
         conveyed_ids = {h["id"] for h in conveyed}
-        if mode == "matrikel_epost" and (
-            person.role != "huvudmedlem" or person.membership.membership_status == "inactive"
-        ):
+        if mode == "matrikel_epost" and person.membership.membership_status == "inactive":
             raise LinkError(
                 "Kontot kan inte skapas",
-                "Bara huvudmedlemmen i ett aktivt eller väntande medlemskap kan skapa ett konto.",
+                "Bara en person i ett aktivt eller väntande medlemskap kan skapa ett konto.",
             )
         if (
             conveyed_ids

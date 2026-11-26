@@ -66,8 +66,9 @@ Klicka på **Stamboken** uppe till höger på föreningens webbplats och sedan p
 Där finns tre sätt att logga in:
 
 - **Med en kod i ett mejl.** Du skriver den e-postadress som står i föreningens
-  matrikel och får en kod dit. Det fungerar för huvudmedlemmen i ett
-  medlemskap och för den vars konto är kopplat till sin rad i matrikeln.
+  matrikel och får en kod dit. Det fungerar för den som står med en egen
+  e-postadress i matrikeln: huvudmedlemmen och de familjemedlemmar och skötare
+  som huvudmedlemmen har lagt in.
 - **Med föreningskontot (Google)**, om du har en adress som slutar på
   @gotlandskaninen.se.
 - **Med användarnamn och lösenord**, samma uppgifter som i gamla Stamboken.
@@ -91,7 +92,7 @@ mejla då <admin@gotlandskaninen.se>.
 3. Skriv koden i fältet **Engångskod** och klicka **Logga in med kod**. Koden
    gäller i tio minuter och bara i webbläsaren där du bad om den.
 
-Är du inte huvudmedlem och har inget konto, eller saknar matrikeln din adress,
+Saknar matrikeln din adress, eller har någon annan i matrikeln samma adress,
 kommer inget mejl. Mejla då <admin@gotlandskaninen.se>.
 
 ![Fältet för engångskoden](logga-in-kod-desktop.png)
@@ -116,8 +117,8 @@ inte. Skriv då koden på inloggningssidan i stället.
 
 <!-- route: /auth/skapa-konto -->
 
-Är du huvudmedlem och har inget konto i Stamboken kommer du efter koden till
-sidan **Skapa mitt konto**:
+Har du inget konto i Stamboken kommer du efter koden till sidan
+**Skapa mitt konto**:
 
 1. Läs **Regler för ditt konto** på sidan.
 2. Kryssa i rutan **Jag har läst reglerna och följer dem.**
@@ -1657,7 +1658,8 @@ Sökfält, filtren **Roll**, **Konto**, **Riktiga stamboken** och **Webbkurs**, 
 **Roller**, **Status och åtkomst** och **Senast aktiv**. Saknar ett konto med en roll
 namn står det "Namn saknas". Sidstorlek väljs längst ned.
 
-Nya konton skapas inte här. En huvudmedlem skapar sitt konto själv med en kod, se
+Nya konton skapas inte här. Huvudmedlemmar, familjemedlemmar och skötare skapar
+sitt konto själva med en kod, se
 [Skapa ditt konto första gången](#skapa-ditt-konto-första-gången). En godkänd
 medlemsansökan lägger in medlemmen i matrikeln men skapar inget konto.
 

@@ -1,4 +1,4 @@
-"""Account creation after a main member has proved control of a login address."""
+"""Account creation after a person in the matrikel has proved control of a login address."""
 
 import os
 from datetime import datetime, timedelta, timezone
@@ -93,6 +93,9 @@ def _existing_account(person, address):
 
     herd_ids = {str(h.id) for h in Herd.select(Herd.id).where(Herd.membership == person.membership_id)}
     owners = User.select(User._privileges).where(User._privileges.contains('"owner"'))
+    # For anyone but the main member, her linked account owns the herds: only an unlinked owner may be this person.
+    if person.role != "huvudmedlem":
+        owners = owners.where(User.id.not_in(linked_accounts))
     # Older owner roles can have a herd id stored as a string.
     return bool(herd_ids) and any(
         isinstance(role, dict) and role.get("level") == "owner" and str(role.get("herd")).lstrip("0") in herd_ids
@@ -122,7 +125,7 @@ def create_pending_account(_displayed_version, displayed_sha256):
         if person.user_id is not None:
             raise AccountConflict
         contact = (person.email or "").strip()
-        if not contact or person.role != "huvudmedlem" or address_hash(contact) != session["pending_contact"]:
+        if not contact or address_hash(contact) != session["pending_contact"]:
             raise InvalidPending
         login_code.lock_holder_addresses(person)
         # Existing accounts can acquire an address or an owner role outside the registry.

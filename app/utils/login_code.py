@@ -270,11 +270,31 @@ _ADDRESSES = f"""
     WHERE ms.membership_status <> 'friexemplar'
 """
 
+# Who gets a code: the holders above, and a family member or keeper without an account (#269), but only while no
+# other person has her address, now or as a previous address that still counts. She never takes an address from a
+# holder and needs no reservation: a holder who gets the address later (reserve_login_address) ends hers.
+_LOGIN_ADDRESSES = f"""
+    SELECT member_id, address FROM ({_ADDRESSES}) h
+    UNION
+    SELECT m.member_id, lower(btrim(m.email)) FROM member m JOIN membership ms ON ms.membership_id = m.membership_id
+    WHERE m.end_date IS NULL AND m.user_id IS NULL AND m.role <> 'huvudmedlem' AND btrim(m.email) <> ''
+        AND ms.membership_status <> 'friexemplar'
+        AND NOT EXISTS (
+            SELECT 1 FROM member o
+            WHERE o.member_id <> m.member_id AND o.end_date IS NULL AND lower(btrim(o.email)) = lower(btrim(m.email))
+        )
+        AND NOT EXISTS (
+            SELECT 1 FROM member_previous_address r
+            WHERE r.member_id <> m.member_id AND r.login_until > %(now)s
+                AND lower(btrim(r.address)) = lower(btrim(m.email))
+        )
+"""
+
 
 def login_holder(address):
     """Resolve only an unambiguous reservation, including addresses still in their waiting period."""
     rows = DB_PROXY.execute_sql(
-        f"SELECT member_id FROM ({_ADDRESSES}) a WHERE address = %(address)s LIMIT 2",
+        f"SELECT member_id FROM ({_LOGIN_ADDRESSES}) a WHERE address = %(address)s LIMIT 2",
         {"now": _utcnow(), "address": address},
     ).fetchall()
     return Member.get_or_none(Member.id == rows[0][0]) if len(rows) == 1 else None
@@ -284,10 +304,7 @@ def login_address(person, hashed_address):
     """Resolve the original recipient again, using today's account, membership and address validity."""
     if person.end_date or person.membership.membership_status == "inactive":
         return None
-    if person.user_id:
-        if not person.user.is_active or holds_role(person.user, password_override=False):
-            return None
-    elif person.role != "huvudmedlem":
+    if person.user_id and (not person.user.is_active or holds_role(person.user, password_override=False)):
         return None
     now = _utcnow()
     previous = MemberPreviousAddress.select(MemberPreviousAddress.address).where(
