@@ -1242,7 +1242,8 @@ administratörer, genbanksansvariga och genbankshjälpare, och alla tre kan se h
    innan kopian finns; den följer också med när du bekräftar maskningen, och kopian görs
    efter den. Har du vridit fotot utan att ha ärendet börjar du om från den sparade
    vridningen när du tar det.
-   Zoom, **Kontrast** och **Förstärk blyerts** ändrar bara hur fotot visas. Ange **Typ**
+   Zoom, **Kontrast** och **Förstärk blyerts** ändrar bara hur fotot visas. Med musens
+   rullhjul zoomar du in och ut där pekaren står. Ange **Typ**
    (Intyg, Bevis, Årsblankett eller Annat) och **Format**.
 3. Ett intyg: välj **Ny kanin** eller **Pappersintyg på en kanin som finns** och skriv av
    fälten. Under **Mor** och **Far** visar Stamboken registrets uppgifter, så att du kan

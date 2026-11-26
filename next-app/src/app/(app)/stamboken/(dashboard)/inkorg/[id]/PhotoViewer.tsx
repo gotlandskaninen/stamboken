@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useMode } from "@/lib/mode-context";
 import { enhancePencil, moveRect, resizeRect } from "../image";
@@ -12,6 +12,7 @@ import styles from "../inkorg.module.css";
 const MAX_SIDE = 2400;
 const ZOOMS = [1, 1.5, 2, 3, 4, 6];
 const STEP = 0.01;
+const WHEEL_STEP = 50; // px of wheel per zoom step: one notch of a mouse wheel, several flicks of a trackpad
 const KEYS: Record<string, [number, number]> = {
   ArrowLeft: [-STEP, 0],
   ArrowRight: [STEP, 0],
@@ -59,6 +60,9 @@ export function PhotoViewer({
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [failed, setFailed] = useState(false);
   const [zoom, setZoom] = useState(0);
+  // Where in the viewport a wheel zoom was aimed, kept still while the stage grows; and the zoom last laid out.
+  const anchor = useRef<{ x: number; y: number } | null>(null);
+  const laidOut = useRef(0);
   const [contrast, setContrast] = useState(100);
   const [pencil, setPencil] = useState(false);
 
@@ -94,6 +98,47 @@ export function PhotoViewer({
       ctx.putImageData(pixels, 0, 0);
     }
   }, [image, rotation, pencil]);
+
+  // The wheel zooms a step at a time; at 100 % a wheel down, and a sideways swipe, scroll on.
+  // A listener of our own: React's onWheel is passive and cannot keep the page still.
+  useEffect(() => {
+    const vp = viewportRef.current;
+    if (!vp) return;
+    let spun = 0;
+    const onWheel = (e: WheelEvent) => {
+      const sideways = Math.abs(e.deltaX) > Math.abs(e.deltaY);
+      if (sideways || (e.deltaY > 0 && zoom === 0)) return;
+      e.preventDefault();
+      spun += e.deltaY * (e.deltaMode === 1 ? 16 : 1); // Firefox counts lines
+      if (Math.abs(spun) < WHEEL_STEP) return;
+      const next = Math.min(
+        ZOOMS.length - 1,
+        Math.max(0, zoom + (spun < 0 ? 1 : -1)),
+      );
+      spun = 0;
+      if (next === zoom) return;
+      const box = vp.getBoundingClientRect();
+      anchor.current = {
+        x: e.clientX - box.left - vp.clientLeft,
+        y: e.clientY - box.top - vp.clientTop,
+      };
+      setZoom(next);
+    };
+    vp.addEventListener("wheel", onWheel, { passive: false });
+    return () => vp.removeEventListener("wheel", onWheel);
+  }, [zoom]);
+
+  useLayoutEffect(() => {
+    const vp = viewportRef.current;
+    const from = laidOut.current;
+    const at = anchor.current;
+    laidOut.current = zoom;
+    anchor.current = null;
+    if (!vp || !at || from === zoom) return;
+    const ratio = ZOOMS[zoom] / ZOOMS[from];
+    vp.scrollLeft = (vp.scrollLeft + at.x) * ratio - at.x;
+    vp.scrollTop = (vp.scrollTop + at.y) * ratio - at.y;
+  }, [zoom]);
 
   // Mouse drag pans; touch scrolls natively and the keyboard scrolls the focused viewport.
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
