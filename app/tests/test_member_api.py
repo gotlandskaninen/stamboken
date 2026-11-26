@@ -421,6 +421,14 @@ class TestSelfService(MatrikelApiTest):
         last = db.PublicationConsentChange.select().order_by(db.PublicationConsentChange.id.desc()).first()
         self.assertEqual((last.value, last.text_version, last.source), (EVERYTHING, CONSENT_TEXT_VERSION, "profil"))
 
+    def test_me_says_whether_the_koharen_question_applies(self):
+        """The question is about a herd: only an active herd in a genebank makes the profile ask it."""
+        self.login("linked")
+        for herd, active, asked in (("G9008", False, False), ("GX1", True, False), ("M9208", True, True)):
+            db.Herd.create(herd=herd, genebank=self.genebanks[0], membership=self.ms, is_active=active)
+            with self.subTest(herd=herd):
+                self.assertIs(self.client.get("/api/v2/members/me").get_json()["has_active_herd"], asked)
+
     def test_non_object_stored_consent_is_never_answered(self):
         """A JSONB array or scalar in publication_consent is neither consent nor
         an answer — the export falls back to "ej angivet"."""

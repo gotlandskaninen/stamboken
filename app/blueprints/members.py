@@ -77,6 +77,9 @@ from blueprints.common import (
 
 members_bp = Blueprint("members", __name__, url_prefix="/api")
 
+# A herd in Koharen's list: active, and not the genebank's "sold outside" pseudo herd.
+ACTIVE_GENEBANK_HERD = (Herd.is_active == True) & Herd.herd.not_in(OUTSIDE_GENEBANK_HERDS)  # noqa: E712
+
 VALID_MEMBERSHIP_STATUSES = tuple(Status)
 
 
@@ -424,6 +427,8 @@ def _me_response(m: Member) -> dict:
     # decide whether the first Spara must submit all four keys — a partial
     # PATCH of an all-off answer would otherwise leave the row "ej angivet".
     data["consent_answered"] = consent_answered(ms)
+    # The Koharen question is about a herd: the profile asks it only with one in the list (5.11)
+    data["has_active_herd"] = Herd.select().where(Herd.membership == ms, ACTIVE_GENEBANK_HERD).exists()
     main = (
         Member.select(Member.first_name, Member.last_name, Member.role, Membership.id, Membership.organization_name)
         .join(Membership)
@@ -915,11 +920,7 @@ def export_koharen():
         herds = list(
             Herd.select(Herd, Membership)
             .join(Membership)
-            .where(
-                Herd.is_active == True,  # noqa: E712
-                Herd.herd.not_in(OUTSIDE_GENEBANK_HERDS),
-                Membership.membership_status == "active",
-            )
+            .where(ACTIVE_GENEBANK_HERD, Membership.membership_status == "active")
             .order_by(Herd.herd)
         )
         holders = {

@@ -88,11 +88,13 @@ export default async function ProfilPage() {
                     city: me.membership.city ?? "",
                   }}
                 />
-                <PubliceringClient
-                  readOnly={readOnly}
-                  initial={me.publication_consent}
-                  answered={me.consent_answered}
-                />
+                {me.has_active_herd && (
+                  <PubliceringClient
+                    readOnly={readOnly}
+                    initial={me.publication_consent}
+                    answered={me.consent_answered}
+                  />
+                )}
                 <PersonerClient
                   isMainMember={myMembership.is_main_member}
                   persons={myMembership.membership.persons}
