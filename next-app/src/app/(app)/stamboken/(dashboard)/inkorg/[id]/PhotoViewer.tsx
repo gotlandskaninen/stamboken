@@ -60,9 +60,16 @@ export function PhotoViewer({
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [failed, setFailed] = useState(false);
   const [zoom, setZoom] = useState(0);
-  // Where in the viewport a wheel zoom was aimed, kept still while the stage grows; and the zoom last laid out.
-  const anchor = useRef<{ x: number; y: number } | null>(null);
-  const laidOut = useRef(0);
+  // A wheel zoom's aim: the pointer on screen, and the photo's point under it as fractions of the photo.
+  const anchor = useRef<{
+    cx: number;
+    cy: number;
+    fx: number;
+    fy: number;
+  } | null>(null);
+  const shown = useRef(0); // the zoom last laid out, for the wheel's listener
+  const spun = useRef(0); // wheel travel not yet a whole step
+  const dragging = useRef(false); // a masking rectangle is being dragged: its maths holds the photo's size
   const [contrast, setContrast] = useState(100);
   const [pencil, setPencil] = useState(false);
 
@@ -99,45 +106,55 @@ export function PhotoViewer({
     }
   }, [image, rotation, pencil]);
 
-  // The wheel zooms a step at a time; at 100 % a wheel down, and a sideways swipe, scroll on.
-  // A listener of our own: React's onWheel is passive and cannot keep the page still.
+  // The wheel zooms a step at a time; at 100 % a wheel down, a sideways swipe and a pinch
+  // (ctrlKey) are the page's. A listener of our own: React's onWheel is passive.
+  const viewer = Boolean(onRotate);
   useEffect(() => {
     const vp = viewportRef.current;
     if (!vp) return;
-    let spun = 0;
     const onWheel = (e: WheelEvent) => {
       const sideways = Math.abs(e.deltaX) > Math.abs(e.deltaY);
-      if (sideways || (e.deltaY > 0 && zoom === 0)) return;
+      if (e.ctrlKey || sideways || (e.deltaY > 0 && shown.current === 0))
+        return;
       e.preventDefault();
-      spun += e.deltaY * (e.deltaMode === 1 ? 16 : 1); // Firefox counts lines
-      if (Math.abs(spun) < WHEEL_STEP) return;
+      const stage = stageRef.current;
+      if (dragging.current || pan.current || !stage) return;
+      spun.current += e.deltaY * (e.deltaMode === 1 ? 16 : 1); // Firefox counts lines
+      if (Math.abs(spun.current) < WHEEL_STEP) return;
+      // One step per event: a mouse notch is one step whatever its size; a trackpad's flicks add up.
+      const step = spun.current < 0 ? 1 : -1;
+      spun.current %= WHEEL_STEP;
       const next = Math.min(
         ZOOMS.length - 1,
-        Math.max(0, zoom + (spun < 0 ? 1 : -1)),
+        Math.max(0, shown.current + step),
       );
-      spun = 0;
-      if (next === zoom) return;
-      const box = vp.getBoundingClientRect();
+      if (next === shown.current) return; // at the end: no zoom, so no aim left for the buttons' next one
+      const photo = stage.getBoundingClientRect();
+      if (!photo.width || !photo.height) return;
       anchor.current = {
-        x: e.clientX - box.left - vp.clientLeft,
-        y: e.clientY - box.top - vp.clientTop,
+        cx: e.clientX,
+        cy: e.clientY,
+        fx: (e.clientX - photo.left) / photo.width,
+        fy: (e.clientY - photo.top) / photo.height,
       };
-      setZoom(next);
+      setZoom((z) => Math.min(ZOOMS.length - 1, Math.max(0, z + step)));
     };
     vp.addEventListener("wheel", onWheel, { passive: false });
     return () => vp.removeEventListener("wheel", onWheel);
-  }, [zoom]);
+  }, [viewer]);
 
+  // After the stage is laid out at the new size: the same point of the photo back under the pointer.
   useLayoutEffect(() => {
+    shown.current = zoom;
     const vp = viewportRef.current;
-    const from = laidOut.current;
+    const stage = stageRef.current;
     const at = anchor.current;
-    laidOut.current = zoom;
     anchor.current = null;
-    if (!vp || !at || from === zoom) return;
-    const ratio = ZOOMS[zoom] / ZOOMS[from];
-    vp.scrollLeft = (vp.scrollLeft + at.x) * ratio - at.x;
-    vp.scrollTop = (vp.scrollTop + at.y) * ratio - at.y;
+    if (!vp || !stage || !at) return;
+    // Measured now, so a scroll the browser already cut back at the edge counts.
+    const photo = stage.getBoundingClientRect();
+    vp.scrollLeft += photo.left + at.fx * photo.width - at.cx;
+    vp.scrollTop += photo.top + at.fy * photo.height - at.cy;
   }, [zoom]);
 
   // Mouse drag pans; touch scrolls natively and the keyboard scrolls the focused viewport.
@@ -166,6 +183,7 @@ export function PhotoViewer({
     e.preventDefault();
     e.stopPropagation();
     mask.onSelect(i);
+    dragging.current = true;
     const { width, height } = stage.getBoundingClientRect();
     const start = { x: e.clientX, y: e.clientY, rect: mask.rects[i] };
     const target = e.currentTarget as HTMLElement;
@@ -181,6 +199,7 @@ export function PhotoViewer({
       );
     };
     const end = () => {
+      dragging.current = false;
       target.removeEventListener("pointermove", move);
       target.removeEventListener("pointerup", end);
       target.removeEventListener("pointercancel", end);
