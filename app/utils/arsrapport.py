@@ -1092,17 +1092,21 @@ def report_view(herd, round_, access, user):
     moved = {  # a sale after 31 December keeps the rabbit on the list, counted by its move (via_flytt)
         rabbit for rabbit, row in rabbits.items() if row["state"] == "via_flytt" and row["later"]["kind"] == "TRANSFER"
     }
-    later_sales = HerdTracking.select(HerdTracking.id, HerdTracking.individual).where(
-        HerdTracking.individual.in_(sorted(moved)),
-        HerdTracking.from_herd == herd.id,
-        HerdTracking.kind == "TRANSFER",
-        ht_not_voided(),
-        HerdTracking.herd_tracking_date > last,
+    later_sales = (
+        HerdTracking.select(HerdTracking.id, HerdTracking.individual, Herd.herd)
+        .join(Herd, on=(HerdTracking.herd == Herd.id))
+        .where(
+            HerdTracking.individual.in_(sorted(moved)),
+            HerdTracking.from_herd == herd.id,
+            HerdTracking.kind == "TRANSFER",
+            ht_not_voided(),
+            HerdTracking.herd_tracking_date > last,
+        )
     )
-    later_sales = dict(later_sales.tuples())
+    later_sales = {row_id: (rabbit, to) for row_id, rabbit, to in later_sales.tuples()}
     undo = _undoable(user, access, [row["id"] for row in sales.dicts()] + list(later_sales))
-    for row_id, rabbit in later_sales.items():
-        rabbits[rabbit]["undo"] = row_id if row_id in undo else None
+    for row_id, (rabbit, to) in later_sales.items():  # `undo_to`: the buyer's herd, for Ångra's question
+        rabbits[rabbit] |= {"undo": row_id if row_id in undo else None, "undo_to": to}
     claims = _kept_claims(draft.data) if draft and access.can_sell else {}
     if ops or claims:
         dates = HerdTracking.select(

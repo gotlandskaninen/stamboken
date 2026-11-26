@@ -170,7 +170,7 @@ class SellNowTest(ArsrapportTest):
     def test_a_sale_after_new_year_keeps_the_row_counted_by_its_move(self):
         self.sold(ar=2026, manad=1, dag=5, kopare=BUYER)
         row = next(row for row in self.page()["rabbits"] if row["id"] == self.a.id)
-        self.assertEqual((row["state"], row["undo"]), ("via_flytt", sales(self.a)[0].id))
+        self.assertEqual((row["state"], row["undo"], row["undo_to"]), ("via_flytt", sales(self.a)[0].id, "GX1"))
         self.assertEqual(self.skicka(self.kvar(self.b, vikt=2.8)).status_code, 200)
         self.assertEqual(len(sales(self.a)), 1)
 

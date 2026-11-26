@@ -593,7 +593,7 @@ describe("ReportForm", () => {
     expect(refresh).not.toHaveBeenCalled();
   });
 
-  it("offers Ångra on a sale of the year and on a rabbit counted by its move", async () => {
+  it("offers Ångra on a sale of the year and on a rabbit counted by its move, and asks first", async () => {
     const a = sellingActions();
     const sales = [
       {
@@ -609,6 +609,7 @@ describe("ReportForm", () => {
       state: "via_flytt",
       later: { kind: "TRANSFER", date: "2027-01-05" },
       undo: 56,
+      undo_to: "G9002",
     });
     render(
       <ReportForm
@@ -617,11 +618,24 @@ describe("ReportForm", () => {
         actions={a as never}
       />,
     );
-    const buttons = screen.getAllByRole("button", { name: "Ångra" });
-    expect(buttons).toHaveLength(2);
-    await act(async () => fireEvent.click(buttons[0]));
-    await act(async () => fireEvent.click(buttons[1]));
-    expect(a.undoSale.mock.calls.map((c) => c[0]).sort()).toEqual([55, 56]);
+    const NOTE =
+      "Kaninen kommer tillbaka till din besättning, och köparens uppgifter tas bort.";
+    for (const [i, id] of [
+      [0, 56], // the row comes before "Sålda under 2026"
+      [1, 55],
+    ] as const) {
+      fireEvent.click(screen.getAllByRole("button", { name: "Ångra" })[i]);
+      const dialog = screen.getByRole("dialog");
+      expect(within(dialog).getByText(NOTE)).toBeTruthy();
+      expect(a.undoSale).toHaveBeenCalledTimes(i); // nothing undone before the question is answered
+      await act(async () =>
+        fireEvent.click(
+          within(dialog).getByRole("button", { name: "Ångra försäljning" }),
+        ),
+      );
+      expect(a.undoSale.mock.calls[i][0]).toBe(id);
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    }
     expect(refresh).toHaveBeenCalled();
   });
 

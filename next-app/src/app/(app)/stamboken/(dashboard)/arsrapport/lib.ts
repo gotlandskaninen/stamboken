@@ -32,6 +32,7 @@ export interface RabbitView {
   state: "att_valja" | "redan_rapporterad" | "via_flytt";
   later: { kind: string; date: string } | null;
   undo?: number | null; // a sale after 31 December the viewer may Ångra (the `later` move)
+  undo_to?: string; // that sale's buyer herd, for Ångra's question
   buyer_removed?: boolean;
   removed_buyer_dates?: string[];
   registered_buyer_date?: string;

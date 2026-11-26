@@ -65,7 +65,8 @@ import {
 } from "./AddRabbit";
 import { uploadPhoto } from "./rabbitActions";
 import { reportError } from "./reportError";
-import { newOperationId } from "@/lib/herdTracking";
+import type { HerdTrackingRow } from "@/lib/herdTracking";
+import { VoidHerdTrackingDialog } from "@/components/individual/VoidHerdTrackingDialog";
 import styles from "./arsrapport.module.css";
 
 export type ReportActions = Pick<
@@ -960,16 +961,31 @@ export function ReportForm({
     if (isPaper) focusLater("paper-number"); // the next row
     return null;
   };
-  const [undoError, setUndoError] = React.useState<React.ReactNode>(null);
-  const undoSale = async (htId: number) => {
+  // Ångra asks first, in the rabbit page's dialog (Jonas 2026-11-26): the sale's row, its day and buyer herd.
+  const [undoing, setUndoing] = React.useState<{
+    id: number;
+    date: string;
+    to: string;
+  } | null>(null);
+  const [undoBusy, setUndoBusy] = React.useState(false);
+  const [undoError, setUndoError] = React.useState<string | null>(null);
+  const askUndo = (id: number, date: string, to: string) => {
     setUndoError(null);
+    setUndoing({ id, date, to });
+  };
+  const undoSale = async (operationId: string) => {
+    setUndoBusy(true);
     const res = await track(
       key,
-      actions.undoSale!(htId, newOperationId(), env),
+      actions.undoSale!(undoing!.id, operationId, env),
     );
-    if (!res.ok)
-      setUndoError(reportError("Försäljningen", "ångras", res.problem));
+    setUndoBusy(false);
     refreshView();
+    if (!res.ok)
+      return setUndoError(
+        res.problem.detail || "Försäljningen kunde inte ångras. Försök igen.",
+      );
+    setUndoing(null);
   };
   const canAddRabbit = canEdit && !isPaper;
   const addRabbit = canAddRabbit && (
@@ -1945,7 +1961,10 @@ export function ReportForm({
                       onChange={onRow}
                       onSell={onSell}
                       onUndo={
-                        actions.undoSale ? (id) => void undoSale(id) : undefined
+                        actions.undoSale
+                          ? (id) =>
+                              askUndo(id, r.later?.date ?? "", r.undo_to ?? "")
+                          : undefined
                       }
                       onNextWeight={onNextWeight}
                     />
@@ -2155,7 +2174,7 @@ export function ReportForm({
                           <button
                             type="button"
                             className="sb-btn sb-btn-secondary sb-btn-sm"
-                            onClick={() => void undoSale(s.undo!)}
+                            onClick={() => askUndo(s.undo!, s.date, s.to_herd)}
                           >
                             Ångra
                           </button>
@@ -2164,11 +2183,6 @@ export function ReportForm({
                     </li>
                   ))}
                 </ul>
-              )}
-              {undoError && (
-                <p className={styles.errorText} role="alert">
-                  {undoError}
-                </p>
               )}
             </MbCard>
 
@@ -2512,6 +2526,29 @@ export function ReportForm({
           if (isPaper) focusLater("paper-number"); // the next row
         }}
         onClose={() => setSoldFor(null)}
+      />
+      <VoidHerdTrackingDialog
+        open={!!undoing}
+        mode="undoSale"
+        row={
+          undoing &&
+          ({
+            date: undoing.date,
+            kind: "TRANSFER",
+            herd: {
+              label:
+                undoing.to === "GX1" || undoing.to === "MX1"
+                  ? "Såld utanför genbanken"
+                  : undoing.to,
+            },
+            reason_replaced: true, // the report asks no reason: the system's, as for a seller with a buyer outside
+          } as unknown as HerdTrackingRow)
+        }
+        note="Kaninen kommer tillbaka till din besättning, och köparens uppgifter tas bort."
+        busy={undoBusy}
+        error={undoError}
+        onClose={() => setUndoing(null)}
+        onConfirm={(_reason, operationId) => void undoSale(operationId)}
       />
       <PurchaseDialog
         open={buying}
