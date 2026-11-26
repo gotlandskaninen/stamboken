@@ -564,6 +564,25 @@ def account_end(value):
     return ACCOUNT_MASK + (digits[-2:] if len(digits) >= 5 else "")
 
 
+def account_parts(text):
+    """
+    What tells two written accounts apart: (digits, letters, digits before the first dash or None). The dash marks
+    where a clearing number ends, or a giro number's last part begins (123-4567 is a bankgiro, 123456-7 a plusgiro),
+    and letters such as BG or PG name the kind. Blanks, case and the marks . , do not count.
+
+    >>> account_parts(" BG 123-4567 ")
+    ('1234567', 'bg', 3)
+    >>> account_parts("8327-9, 123 456 789 12")
+    ('8327912345678912', '', 4)
+    >>> account_parts(None)
+    ('', '', None)
+    """
+    text = (text or "").casefold()
+    head, dash, _ = text.partition("-")
+    letters = "".join(c for c in text if c.isalpha())
+    return re.sub(r"\D", "", text), letters, len(re.sub(r"\D", "", head)) if dash else None
+
+
 def remove_fields_by_privacy(data, access_level):
     """
     Removes fields according to a given access level (private, authenticated
@@ -5065,30 +5084,32 @@ def _create_support_account_guards():
             DATABASE.execute_sql(f'ALTER TABLE "{table}" ADD CONSTRAINT "{name}" CHECK ({expression})')
 
 
-def _move_support_accounts():
+def _sort_support_accounts():
     """
-    Migration 58's move, every herd included, active or not: each membership takes the account its herds hold, and
-    keeps one it holds already. A text that is only whitespace (tabs, newlines and no-break spaces too) is no value.
-    Herds agree only on the same number and bank together, compared without whitespace and the marks . , - and
-    ignoring case; letters such as BG or PG stay, so they keep two accounts apart. Nothing is merged or guessed: a
-    membership whose herds (or its own account) differ, or an account on a herd without a membership, stops the
-    migration before it writes, naming only ids and counts. A household whose persons are all anonymised gets no
-    account (U14); its herds are emptied like the others.
+    Migration 58's reading, every herd included, active or not: (moves, conflicts, orphans). `moves` maps a membership
+    to the (number, bank) its herds hold, for a membership without an account of its own. `conflicts` maps a
+    membership to the herds whose accounts may be different destinations, `orphans` lists the herds with an account
+    but no membership: both have no safe target. A text that is only whitespace (tabs, newlines and no-break spaces
+    too) is no value. Two herds hold the same account only with the same number and bank together: the number by
+    account_parts (digits, letters such as BG or PG, and where the dash is), the bank ignoring case and blanks. Nothing
+    is merged or guessed. A household whose persons are all anonymised gets no account (U14) and is neither.
     """
 
     def key(number, name):
-        number, name = (number or "").strip(), (name or "").strip()
-        return re.sub(r"[\s.,\-]", "", number).casefold(), " ".join(name.casefold().split()), bool(number or name)
+        return account_parts(number), " ".join((name or "").casefold().split())
+
+    def blank(number, name):
+        return not (number or "").strip() and not (name or "").strip()
 
     rows = DATABASE.execute_sql(
         "SELECT herd_id, membership_id, bank_account_number, bank_name FROM herd"
         " WHERE bank_account_number IS NOT NULL OR bank_name IS NOT NULL ORDER BY herd_id"
     ).fetchall()
-    rows = [row for row in rows if key(*row[2:])[2]]
+    rows = [row for row in rows if not blank(*row[2:])]
     orphans = [herd_id for herd_id, membership_id, *_ in rows if membership_id is None]
     held = {}
-    for _, membership_id, number, name in (row for row in rows if row[1] is not None):
-        held.setdefault(membership_id, []).append((number, name))
+    for herd_id, membership_id, number, name in (row for row in rows if row[1] is not None):
+        held.setdefault(membership_id, []).append((herd_id, number, name))
     # the names anonymize_person writes (utils.matrikel.ANONYMIZED_FIRST_NAME and _LAST_NAME)
     erased = {
         row[0]
@@ -5102,20 +5123,26 @@ def _move_support_accounts():
         "SELECT membership_id, bank_account_number, bank_name FROM membership WHERE membership_id = ANY(%s)",
         (list(held),),
     ).fetchall()
-    moves, conflicts = {}, []
+    moves, conflicts = {}, {}
     for membership_id, *own in stored:
         if membership_id in erased:
             continue
-        accounts = held[membership_id] + ([tuple(own)] if key(*own)[2] else [])
+        accounts = [account[1:] for account in held[membership_id]] + ([] if blank(*own) else [tuple(own)])
         if len({key(*account) for account in accounts}) > 1:
-            conflicts.append(membership_id)
-        elif not key(*own)[2]:
+            conflicts[membership_id] = [account[0] for account in held[membership_id]]
+        elif blank(*own):
             moves[membership_id] = [(value or "").strip() or None for value in accounts[0]]
+    return moves, conflicts, orphans
+
+
+def _move_support_accounts():
+    """Migration 58's move (_sort_support_accounts): it stops, naming only ids and counts, on any account without a
+    safe target, before it writes; else it moves and empties every herd's columns without an audit copy."""
+    moves, conflicts, orphans = _sort_support_accounts()
     if conflicts or orphans:
-        conflicts = sorted(conflicts)
         raise RuntimeError(
             "Migration 58 stopped, nothing moved: correct the support accounts first. "
-            f"{len(conflicts)} memberships whose herds hold different accounts (membership_id {conflicts}); "
+            f"{len(conflicts)} memberships whose herds hold different accounts (membership_id {sorted(conflicts)}); "
             f"{len(orphans)} herds with an account but no membership (herd_id {orphans})."
         )
     for membership_id, (number, name) in moves.items():

@@ -109,7 +109,7 @@ class TestMigration58(IsolatedSchemaTest):
         with db.DB_PROXY.atomic() as tx:
             # G2 has the same account written otherwise; M3 (inactive) only a bank name; G4, without a membership,
             # only blanks: tab, newline, no-break space
-            self.to_v57({g1: (f" {ACCOUNT} ", "Banken"), g2: ("83274471-5512", " banken\t"), m3: (None, " Bara bank "),
+            self.to_v57({g1: (f" {ACCOUNT} ", "Banken"), g2: ("8327-44715512", " banken\t"), m3: (None, " Bara bank "),
                          self.orphan: ("\t\n", "\u00a0")})  # fmt: skip
             audit_rows = self.herd_audit_rows()
             db.migrate_57_to_58()
@@ -130,7 +130,7 @@ class TestMigration58(IsolatedSchemaTest):
             db.Membership.id == self.a.id
         ).execute()
         with db.DB_PROXY.atomic() as tx:
-            self.to_v57({g1: ("8327 4471 5512", None)}, drop_columns=False)  # the same account
+            self.to_v57({g1: ("8327-4471  5512", None)}, drop_columns=False)  # the same account
             db.migrate_57_to_58()
             self.assertEqual(self.account(self.a), ("bankkonto", ACCOUNT, None))
             self.assertEqual(self.herd_accounts(), [])
@@ -152,6 +152,10 @@ class TestMigration58(IsolatedSchemaTest):
             "one bank missing": {g1: (ACCOUNT, "Banken"), g2: (ACCOUNT, None)},
             "bankgiro and plusgiro": {g1: ("BG 123-4567", None), g2: ("PG 1234567", None)},
             "a marker on one": {g1: ("1234567", None), g2: ("bg 123-4567", None)},
+            # the dash says where the clearing number or the giro number's last part begins
+            "giro formats": {g1: ("123-4566", None), g2: ("123456-6", None)},
+            "clearing boundary": {g1: ("8327-4471 5512", None), g2: ("83274471-5512", None)},
+            "a dash on one": {g1: ("1234566", None), g2: ("123-4566", None)},
             "no membership": {m3: (ACCOUNT, None), self.orphan: (OTHER, None)},
         }
         for case, accounts in cases.items():
