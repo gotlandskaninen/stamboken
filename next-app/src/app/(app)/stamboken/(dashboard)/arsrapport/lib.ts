@@ -391,7 +391,7 @@ export const REFUSAL_TEXT: Record<string, string> = {
     "Kaninen har en senare händelse i Stamboken. Genbanksansvarig kan rätta.",
   forsaljning_skotare:
     "Försäljningen registreras av ägaren eller genbanksansvarig.",
-  kopare_saknas: "Skriv köparens namn och ort.",
+  kopare_saknas: "Fyll i köparen, eller välj såld utanför genbanken.",
   halsa_saknas: "Välj Inga sjukdomsfall eller defekter, eller Ja.",
   ej_angiven_digitalt: "Ej angiven finns bara när en blankett matas in.",
   orsak_kravs: "Skriv varför rapporten ändras.",

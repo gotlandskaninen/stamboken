@@ -246,9 +246,10 @@ Subject: Vi har fått dina bilder
 """
 
 
-def report(message_id, part="message/rfc822"):
+def report(message_id, part="message/rfc822", action="failed"):
     body = "Hej!\n" if part == "message/rfc822" else ""
-    return REPORT.format(part=part, message_id=message_id, body=body).replace("\n", "\r\n").encode()
+    text = REPORT.replace("Action: failed", f"Action: {action}")
+    return text.format(part=part, message_id=message_id, body=body).replace("\n", "\r\n").encode()
 
 
 class TestSorting(GmailTest):
@@ -268,6 +269,15 @@ class TestSorting(GmailTest):
                 self.assertEqual(self.items(), [])
                 self.assertEqual(db.GmailProcessed.get_by_id(gmail_id).kind, "bounce")
                 self.assertTrue(self.done(gmail_id))
+
+    def test_a_delay_report_is_no_bounce(self):  # a bounce deletes a buyer told without a bevis (#273)
+        row_id = self.queue()
+        db.MailMessage.update(status="sent").where(db.MailMessage.id == row_id).execute()
+        gmail_id = self.fake.deliver(report(mail.message_id(row_id), action="delayed"))
+        self.read()
+        self.assertEqual(self.row(row_id).status, "sent")
+        self.assertEqual(self.items(), [])
+        self.assertEqual(db.GmailProcessed.get_by_id(gmail_id).kind, "ignored")
 
     def test_a_bounce_of_another_environments_mail_touches_nothing(self):
         row_id = self.queue()

@@ -1935,7 +1935,7 @@ REFUSALS = {  # the copy the client shows (P44)
     "ej_angiven_digitalt": "Ej angiven finns bara när en blankett matas in.",
     "forsaljning_skotare": "Försäljningen registreras av ägaren eller genbanksansvarig.",
     "salj_via_lank": "Försäljningen registrerar du hos genbanksansvarig. Ring eller mejla.",
-    "kopare_saknas": "Skriv köparens namn och ort.",
+    "kopare_saknas": "Fyll i köparen, eller välj såld utanför genbanken.",
     "senare_handelse": "Kaninen har en senare händelse i Stamboken. Genbanksansvarig kan rätta.",
     "okand_kanin": "Kaninen finns inte i listan för besättningen.",
     "halsa_saknas": "Välj Inga sjukdomsfall eller defekter, eller Ja.",

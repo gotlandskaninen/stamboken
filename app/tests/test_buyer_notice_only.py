@@ -125,11 +125,21 @@ class TestDatabase(NoticeOnlyTest):
         sql("ALTER TABLE buyer_contact DROP CONSTRAINT buyer_contact_notice_only_no_consent")
         sql("ALTER TABLE buyer_contact DROP CONSTRAINT buyer_contact_email_phone_need_consent")
         sql("ALTER TABLE buyer_contact DROP COLUMN email_notice_only")
+        # the old check, as version 56 left it in prod: the migration replaces it
+        sql(
+            "ALTER TABLE buyer_contact ADD CONSTRAINT buyer_contact_email_phone_need_consent CHECK ((email IS NULL "
+            "AND phone IS NULL) OR contact_consent_at IS NOT NULL OR membership_optin_at IS NOT NULL)"
+        )
         rewind_migrations(57)
         db.check_migrations()
+        rewind_migrations(57)
         db.check_migrations()  # replay-safe
-        checks = {r[0] for r in sql("SELECT conname FROM pg_constraint WHERE conrelid = 'buyer_contact'::regclass")}
-        self.assertLessEqual({"buyer_contact_email_phone_need_consent", "buyer_contact_notice_only_no_consent"}, checks)
+        query = (
+            "SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = 'buyer_contact'::regclass"
+        )
+        checks = dict(sql(query).fetchall())
+        self.assertIn("email_notice_only", checks["buyer_contact_email_phone_need_consent"])
+        self.assertIn("buyer_contact_notice_only_no_consent", checks)
         self.assertIn("email_notice_only", {c.name for c in db.DATABASE.get_columns("buyer_contact")})
 
 

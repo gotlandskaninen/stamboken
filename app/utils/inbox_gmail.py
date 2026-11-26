@@ -269,9 +269,13 @@ def read_message(gmail_id, raw, received_at=None):
     here = _hostname().lower()
     report = _delivery_report(msg)
     if report is not None:
-        original, diagnostic, text = report
+        original, diagnostic, text, transient = report
         if _hosts(original) - {here}:
             return DEMO
+        if transient:  # the mail is on its way: nothing for the queue or a human
+            with DB_PROXY.atomic():
+                _processed(gmail_id, "ignored")
+            return None
         with DB_PROXY.atomic():
             if mail.record_bounce(original, diagnostic):
                 _processed(gmail_id, "bounce")
@@ -444,13 +448,18 @@ def _match(address):
 
 
 def _delivery_report(msg):
-    """(the bounced mail's Message-ID, the diagnostic, the readable text) of a delivery report, else None."""
+    """
+    (the bounced mail's Message-ID, the diagnostic, the readable text, whether it only says the mail is delayed or
+    went on) of a delivery report, else None. Only a failed delivery is a bounce: a bounce deletes a buyer told
+    without a försäljningsbevis (#273).
+    """
     if (
         msg.get_content_type() != "multipart/report"
         or (msg.get_param("report-type") or "").lower() != "delivery-status"
     ):
         return None
     original = diagnostic = text = None
+    actions = set()
     for part in msg.walk():
         kind = part.get_content_type()
         if kind == "text/plain" and text is None:
@@ -458,6 +467,8 @@ def _delivery_report(msg):
         elif kind == "message/delivery-status":
             for fields in part.get_payload():
                 diagnostic = diagnostic or fields.get("Diagnostic-Code") or fields.get("Status")
+                if fields.get("Action"):
+                    actions.add(str(fields["Action"]).strip().lower())
         elif kind in ("message/rfc822", "text/rfc822-headers") and original is None:
             headers = (
                 part.get_payload()[0]
@@ -465,7 +476,8 @@ def _delivery_report(msg):
                 else HeaderParser(policy=policy.default).parsestr(_content(part))
             )
             original = headers.get("Message-ID")
-    return (str(original).strip() if original else None), (str(diagnostic) if diagnostic else None), text
+    transient = bool(actions) and "failed" not in actions  # delayed, delivered, relayed or expanded (RFC 3464)
+    return (str(original).strip() if original else None), (str(diagnostic) if diagnostic else None), text, transient
 
 
 def _auto_reply(msg):

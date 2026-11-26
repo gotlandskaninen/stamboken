@@ -451,7 +451,7 @@ def _operation_rows(individual_ids, operation_id):
     )
 
 
-KEPT_BUYER_GONE = "Köparen finns inte längre sparad. Skriv köparens namn och ort."
+KEPT_BUYER_GONE = "Köparen finns inte längre sparad. Fyll i köparen, eller välj såld utanför genbanken."
 
 
 def record_herd_tracking(
