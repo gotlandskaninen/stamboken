@@ -83,6 +83,15 @@ def daytime(now):
     return SEND_HOUR <= now.astimezone(STOCKHOLM).hour <= LAST_HOUR
 
 
+def _by_day(now):
+    """A builder's member mail waits in the queue until 07:00 when the queue reaches it at night (a relay outage)."""
+    if daytime(now):
+        return
+    local = now.astimezone(STOCKHOLM)
+    day = local.date() + timedelta(days=local.hour > LAST_HOUR)
+    raise Later(datetime.combine(day, time(SEND_HOUR), STOCKHOLM), "medlemmar får mejl dagtid")
+
+
 def _sendable(code, herd, today):
     """The link is valid and the queue can send to its member's login address (else it cancels every hour)."""
     return report_code.refusal(code, herd, today=today) is None and is_address(_link_address({"code_id": code.id}))
@@ -249,6 +258,7 @@ def _paminnelse(params):
     herd, round_, now = Herd.get_by_id(code.herd_id), code.round, arsrapport.now()
     if _refusal(herd, round_, code, params["scheduled"], params["slot"], now) is not None:
         return None
+    _by_day(now)
     draft = YearlyReportDraft.select().where(YearlyReportDraft.herd == herd.id, YearlyReportDraft.round == round_.id)
     slot = reminder_slot(round_, now)
     return {
@@ -379,7 +389,9 @@ def _missing_refusal(herd, round_, report, code, now):
         return "rundan_stangd"
     if report is None or report.status != "submitted":
         return "ny_rapport"
-    return None if arsrapport.completable(report) else "besvarad"
+    if not arsrapport.completable(report):
+        return "besvarad"
+    return None if _paper_since(report) >= now - timedelta(days=MISSING_DAYS) else "for_gammal"
 
 
 def _paper_since(report):
@@ -452,7 +464,7 @@ def send_missing_questions(now: datetime) -> int:
     for report in reports:
         if report.id in asked or not json.loads(report.data).get("not_stated"):
             continue
-        if _paper_since(report) < now - timedelta(days=MISSING_DAYS):
+        if _paper_since(report) < now - timedelta(days=MISSING_DAYS):  # also in _missing_refusal; skips a lock here
             continue
         try:
             total += _ask(report, now) is not None
@@ -471,8 +483,10 @@ def _fraga_saknade(params):
     report = YearlyHerdReport.get_or_none(YearlyHerdReport.id == params["report_id"])
     if report is None or report.herd_id != herd.id:
         return None
-    if _missing_refusal(herd, round_, report, code, arsrapport.now()) is not None:
+    now = arsrapport.now()
+    if _missing_refusal(herd, round_, report, code, now) is not None:
         return None
+    _by_day(now)
     missing = json.loads(report.data)["not_stated"]  # the same read as the check: never an empty list
     rabbits = Individual.select(Individual.number, Individual.name).where(Individual.id.in_(missing))
     return {

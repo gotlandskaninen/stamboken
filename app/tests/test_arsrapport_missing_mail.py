@@ -172,6 +172,18 @@ class TestMissingQuestion(MissingTest):
         (row,) = self.questions()
         self.assertEqual(row.params["code_id"], results["link"])
 
+    def test_a_queued_question_waits_for_morning_and_expires_with_its_week(self):  # review 2
+        self.ask()
+        (row,) = self.questions()
+        self.now = datetime(2026, 1, 12, 23, 30, tzinfo=STOCKHOLM)
+        with self.assertRaises(mail.Later) as later:
+            self.build(row)
+        self.assertEqual(later.exception.until, datetime(2026, 1, 13, 7, 0, tzinfo=STOCKHOLM))
+        self.now = ENTERED + timedelta(days=remind.MISSING_DAYS) - timedelta(minutes=1)
+        self.assertIsNotNone(self.build(row))
+        self.now = ENTERED + timedelta(days=remind.MISSING_DAYS, minutes=1)  # queued on day 7, reached on day 8
+        self.assertIsNone(self.build(row))
+
     def test_no_question_at_night_or_for_an_old_form(self):  # review 1: no mass Å22 at the first deploy
         self.assertEqual(self.ask(datetime(2026, 1, 12, 21, 0, tzinfo=STOCKHOLM)), 0)
         self.assertEqual(self.ask(datetime(2026, 1, 13, 6, 59, tzinfo=STOCKHOLM)), 0)

@@ -143,6 +143,23 @@ class TestCompletion(CompletionTest):
         self.assertEqual(row["flags"]["forsaljning_avvisad"], 1)
         self.assertTrue(self.api("GET", PATH).get_json()["report"]["from_paper"])
 
+    def test_the_change_mail_keeps_the_paper_arrival_date(self):  # review 2: Å8 and its PDF
+        import utils.arsrapport_pdf as arsrapport_pdf  # pylint: disable=import-outside-toplevel
+
+        self.at(date(2026, 2, 2))  # after the deadline (31 January); the form came on 10 January
+        self.open_link()
+        response, _ = self.answer(self.kvar(self.buck, vikt=3.0))
+        self.assertEqual(response.status_code, 200, response.get_json())
+        (row,) = db.MailMessage.select().where(db.MailMessage.kind == "arsrapport.andrad")
+        variables = mail.MAIL_KINDS[row.kind].build(row.params)
+        variables.pop("attachments")
+        body = mail.render(row.kind, variables)[1]
+        self.assertIn("ändrades den 2026-02-02", body)
+        self.assertIn("Årsrapporten kom in 2026-01-10", body)
+        self.assertNotIn("kom in 2026-02-02", body)
+        submission = arsrapport._submissions(self.current())[-1]
+        self.assertEqual(arsrapport_pdf.receipt_context(self.current(), submission)["received"], "2026-01-10")
+
     def test_completion_validates_only_answered_missing_rows(self):
         self.rabbits(self.h, 1)  # registered since: not on the form, and not required now
         self.open_link()

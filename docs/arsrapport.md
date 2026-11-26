@@ -209,7 +209,7 @@ varje aktiv besättning utan inskickad rapport, i genbanker vars inbjudningar ha
 - påminnelse 1 från deadline−11 kl. 07.00 tills påminnelse 2 börjar, och påminnelse 2 från
   deadline−2 kl. 07.00 till och med sista dagen, allt i svensk tid;
 - jobbet mejlar medlemmar bara mellan kl. 07.00 och 20.59, och efter ett längre avbrott bara den
-  senaste påminnelsen;
+  senaste påminnelsen. En påminnelse eller Å22 som kön når på natten väntar till kl. 07.00;
 - en inbjudan eller en ny länk som har gått eller väntar sedan tillfället började räknas som dess
   påminnelse, så en sen inbjudan följs inte av en påminnelse samma timme;
 - en påminnelse som har gått för ett tillfälle går aldrig igen, också om `deadline` flyttas. En

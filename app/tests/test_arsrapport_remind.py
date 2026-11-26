@@ -317,6 +317,20 @@ class TestQueue(ReminderTest):
         self.assertEqual(self.job(datetime(2026, 1, 30, 9, 0, tzinfo=STOCKHOLM)), 1)  # G9002 only
         self.assertEqual(len(self.rows(self.h)), 1)
 
+    def test_a_reminder_the_queue_reaches_at_night_waits_for_morning(self):  # review 2: rechecked when sent
+        self.job(SLOT1)
+        row = self.rows(self.h)[0]
+        self.now = datetime(2026, 1, 20, 23, 30, tzinfo=STOCKHOLM)  # the relay was down all day
+        with self.assertRaises(mail.Later) as later:
+            self.build(row)
+        self.assertEqual(later.exception.until, datetime(2026, 1, 21, 7, 0, tzinfo=STOCKHOLM))
+        self.now = datetime(2026, 1, 21, 6, 0, tzinfo=STOCKHOLM)
+        with self.assertRaises(mail.Later) as later:
+            self.build(row)
+        self.assertEqual(later.exception.until, datetime(2026, 1, 21, 7, 0, tzinfo=STOCKHOLM))
+        self.now = datetime(2026, 1, 21, 7, 0, tzinfo=STOCKHOLM)
+        self.assertIsNotNone(self.build(row))
+
     def test_no_member_mail_at_night(self):
         self.assertEqual(self.job(datetime(2026, 1, 20, 21, 0, tzinfo=STOCKHOLM)), 0)
         self.assertEqual(self.job(datetime(2026, 1, 21, 6, 59, tzinfo=STOCKHOLM)), 0)
