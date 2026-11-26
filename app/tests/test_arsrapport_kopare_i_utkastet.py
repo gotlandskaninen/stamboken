@@ -177,6 +177,24 @@ class DialogBuyerTest(KeptBuyerBase):
         self.assertEqual(contacts(), {})
         self.assertNotIn("kopare_id", json.dumps(self.draft()))
 
+    def test_a_buyer_anywhere_in_the_draft_is_refused(self):  # review r1: a buyer misplaced inside `data`
+        key = str(self.a.id)
+        for data in ({**self.sold(), "kopare": {key: BUYER}}, {**self.sold(), "extra": [{"kopare": BUYER}]}):
+            with self.subTest(data=list(data)[-1]):
+                response = self.api("PUT", "/besattning/G9001/2025/utkast", data=data, updated_at=None)
+                self.assertEqual(response.status_code, 400, response.get_data(as_text=True))
+        self.assertFalse(db.YearlyReportDraft.select().exists())
+
+    def test_a_typed_buyer_against_the_forms_marker_keeps_nothing(self):  # review r1: no contact without a claim
+        key, data = str(self.a.id), self.sold()
+        data["rabbits"][key]["sald"]["kopare"] = {"not_recorded": True}
+        answer = self.save(data, {key: BUYER})
+        self.assertEqual((answer["kopare"], contacts()), ({}, {}))
+
+    def test_a_key_no_rabbit_has_is_no_server_error(self):  # review r1: filtered before any query
+        answer = self.save(self.sold(), {"9" * 30: BUYER})
+        self.assertEqual((answer["kopare"], contacts()), ({}, {}))
+
     def test_an_invalid_buyer_is_refused_beside_a_saved_draft(self):
         email_only = {**OTHER, "email": "xena@example.invalid"}
         answer = self.save(self.sold(), {str(self.a.id): email_only})

@@ -744,19 +744,11 @@ def stored_body(body: dict) -> dict:
 
 
 def _holds_private(body):
-    """A matrikel or a buyer in the body or in its `form`: never stored in a draft (section 6)."""
-    rabbits = body.get("rabbits")
-    entries = rabbits.values() if isinstance(rabbits, dict) else ()
-    return (
-        body.get("matrikel") is not None
-        or any(
-            isinstance(entry, dict)
-            and isinstance(entry.get("sald"), dict)
-            and _private("kopare", entry["sald"].get("kopare"))
-            for entry in entries
-        )
-        or _has_private(body.get("form"))
-    )
+    """
+    A matrikel or a buyer anywhere in the body, its `form` included: never stored in a draft (section 6). Only
+    såld utanför genbanken passes (_private); the sale dialog's typed buyers go beside the body (save_draft).
+    """
+    return _has_private(body)
 
 
 # K1: a buyer kept across Dra tillbaka, or kept from the sale dialog (Jonas 2026-11-26); only the server writes them.
@@ -903,6 +895,8 @@ def _keep_buyers(herd, round_, access, user, report, stored, buyers, claims):
     for key, buyer in sorted(buyers.items()):
         entry = rabbits.get(key)
         if key not in choosing or not _sale_outside(entry) or buyer.get("not_recorded"):
+            continue
+        if _not_recorded(entry["sald"].get("kopare")):  # the form says såld utanför genbanken: no buyer to keep
             continue
         if _sale_outside(latest.get(key)):
             continue
