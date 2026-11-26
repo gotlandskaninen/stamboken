@@ -54,7 +54,7 @@ export function RoundPanel({
     ([key]) =>
       dates[key] !== "" && dates[key] !== (round?.[key] ?? defaults[key]),
   ).map(([key]) => key);
-  // Dates the server has not filled in yet get its defaults before activation.
+  // Dates the server has not filled in yet get its defaults on the next save, which the fields already show.
   const incomplete = round === null || DATES.some(([key]) => !round[key]);
 
   async function run(activate: boolean) {
@@ -66,7 +66,7 @@ export function RoundPanel({
       const body = Object.fromEntries(
         changedKeys.map((key) => [key, dates[key]]),
       );
-      if (changedKeys.length > 0 || (activate && incomplete)) {
+      if (changedKeys.length > 0 || incomplete) {
         const saved = await saveRound(year, body, env);
         if (!saved.ok) {
           setError(saved.problem.detail || saved.problem.title);
@@ -224,7 +224,7 @@ export function RoundPanel({
             <button
               type="button"
               className={`sb-btn ${styles.btn}`}
-              disabled={busy || changedKeys.length === 0}
+              disabled={busy || (changedKeys.length === 0 && !incomplete)}
               onClick={() => run(false)}
             >
               {busy ? "Sparar …" : "Spara datum"}

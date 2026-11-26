@@ -7,9 +7,9 @@ import { MODE_COOKIE, parseMode } from "@/lib/mode";
 import { Masthead } from "@/components/shell/Masthead";
 import { manages, type QueueList } from "../../../inkorg/lib";
 import {
-  currentRoundYear,
   defaultRoundDates,
   parseFilter,
+  regularRoundYear,
   todayStockholm,
   type Round,
   type StatusView,
@@ -35,19 +35,23 @@ export default async function StatusPage({
   await requireQueueWorker();
   const env = parseMode((await cookies()).get(MODE_COOKIE)?.value);
 
+  // Ops puts the blank form on the server (docs/arsrapport.md); until then the link would open a 404. Only a
+  // confirmed 404 hides the link. Started first and awaited last, so a slow check does not hold up the table.
+  const blankFormCheck = fetchApi("/v2/arsrapport/blankett.pdf", {
+    method: "HEAD",
+    timeout: 3000,
+  }).then(
+    () => true,
+    (e) => !(e instanceof ApiError && e.status === 404),
+  );
   // The genebanks the user may open: admin all, others where they manage or help.
-  const [queue, all, rounds, blankForm] = await Promise.all([
+  const [queue, all, rounds] = await Promise.all([
     fetchApi<QueueList>("/v2/inkorg?limit=1"),
     fetchApi<{ genebanks: { id: number; name: string }[] }>("/genebanks").then(
       (r) => r.genebanks ?? [],
     ),
     fetchApi<{ rounds: Round[] }>("/v2/arsrapport/rundor").then(
       (r) => r.rounds,
-    ),
-    // Ops puts the blank form on the server (docs/arsrapport.md); until then the link would open a 404.
-    fetchApi("/v2/arsrapport/blankett.pdf", { method: "HEAD" }).then(
-      () => true,
-      (e) => !(e instanceof ApiError && e.status === 404),
     ),
   ]);
   const mine = queue.my_genebanks ?? [];
@@ -65,11 +69,12 @@ export default async function StatusPage({
   if (!genebank) notFound();
   const canEdit = manages(user, genebank.id);
   const today = todayStockholm();
-  // The rounds there are, the current one (which may not exist yet) and this page's.
+  // The rounds there are, the regular year's (which may not exist yet, also while an older round is open) and
+  // this page's.
   const years = [
     ...new Set([
       ...rounds.map((r) => r.year),
-      currentRoundYear(rounds, today),
+      regularRoundYear(rounds, today),
       Number(year),
     ]),
   ].sort((a, b) => b - a);
@@ -100,6 +105,7 @@ export default async function StatusPage({
           `/v2/arsrapport/rundor/${year}/genbanker/${genebank.id}/mottagare`,
         )
       : null;
+  const blankForm = await blankFormCheck;
 
   return (
     <>

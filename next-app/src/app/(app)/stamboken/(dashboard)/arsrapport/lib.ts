@@ -1167,23 +1167,35 @@ export const defaultRoundDates = (year: number) => ({
   end_date: `${year + 1}-03-30`,
 });
 
-// The round managers work on: the oldest one still open, else last year's until it would close, then this year's.
-export function currentRoundYear(rounds: Round[], today: string): number {
-  const open = rounds
-    .filter((r) => r.end_date && today <= r.end_date)
-    .map((r) => r.year);
-  if (open.length > 0) return Math.min(...open);
+// The year being reported now, whether or not its round exists: last year's until that round (or its default)
+// closes, then this year's.
+export function regularRoundYear(rounds: Round[], today: string): number {
   const year = Number(today.slice(0, 4));
   const last = rounds.find((r) => r.year === year - 1);
   const lastEnd = last?.end_date ?? defaultRoundDates(year - 1).end_date;
   return today <= lastEnd ? year - 1 : year;
 }
 
-// A phone field can hold two numbers, "08 - 510 122 07 0709 - 55 72 08": split before each "NN - ", but a
-// piece with too few digits to be a number ("+46", "070 123") stays with the next one.
+// The round managers work on: the oldest one open today (a round prepared for later does not count), else the
+// regular year's.
+export function currentRoundYear(rounds: Round[], today: string): number {
+  const open = rounds
+    .filter(
+      (r) =>
+        r.start_date &&
+        r.end_date &&
+        r.start_date <= today &&
+        today <= r.end_date,
+    )
+    .map((r) => r.year);
+  return open.length > 0 ? Math.min(...open) : regularRoundYear(rounds, today);
+}
+
+// A phone field can hold two numbers, "08 - 510 122 07 0709 - 55 72 08": split before a piece that starts like
+// a number of its own ("0NN - ", "+NN - "), but a piece with too few digits to be one ("Mobil") stays with the next.
 export function phoneNumbers(text: string): string[] {
   const numbers: string[] = [];
-  for (const piece of text.trim().split(/\s+(?=\d+\s*-\s*\d)/)) {
+  for (const piece of text.trim().split(/\s+(?=(?:\+|0)\d*\s*-\s*\d)/)) {
     const prev = numbers.at(-1);
     if (prev !== undefined && prev.replace(/\D/g, "").length < 7)
       numbers[numbers.length - 1] = `${prev} ${piece}`;

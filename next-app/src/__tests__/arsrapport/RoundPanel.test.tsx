@@ -10,9 +10,10 @@ import {
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 const sendTestMail = vi.fn();
+const saveRound = vi.fn();
 vi.mock("@/app/(app)/stamboken/(dashboard)/arsrapport/actions", () => ({
   activateGenebank: vi.fn(),
-  saveRound: vi.fn(),
+  saveRound: (...a: unknown[]) => saveRound(...a),
   sendTestMail: (...a: unknown[]) => sendTestMail(...a),
 }));
 
@@ -168,6 +169,29 @@ describe("RoundPanel without an open round", () => {
     expect(screen.getByLabelText("Stänger")).toHaveProperty(
       "value",
       "2027-03-30",
+    );
+  });
+});
+
+describe("RoundPanel with an activated round missing a date", () => {
+  it("saves the shown default with Spara datum", async () => {
+    saveRound.mockResolvedValue({ ok: true });
+    render(
+      <RoundPanel
+        year={2026}
+        genebankId={1}
+        genebankName="Gotland"
+        round={{ ...round, end_date: null }}
+        canEdit
+        recipients={null}
+        env="demo"
+      />,
+    );
+    const save = screen.getByText("Spara datum") as HTMLButtonElement;
+    expect(save.disabled).toBe(false);
+    fireEvent.click(save);
+    await waitFor(() =>
+      expect(saveRound).toHaveBeenCalledWith(2026, {}, "demo"),
     );
   });
 });

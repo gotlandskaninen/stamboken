@@ -5,6 +5,7 @@ import {
   currentRoundYear,
   defaultRoundDates,
   phoneNumbers,
+  regularRoundYear,
   filterRows,
   parseFilter,
   toCall,
@@ -217,15 +218,20 @@ describe("phoneNumbers", () => {
       "070 123 45-67",
       "0498 12-34-56",
       "Mobil 070-1234567",
+      "+46 70 123 45-67",
     ])
       expect(phoneNumbers(one)).toEqual([one]);
   });
 });
 
 describe("currentRoundYear", () => {
-  const round = (year: number, end_date: string | null): Round => ({
+  const round = (
+    year: number,
+    end_date: string | null,
+    start_date: string | null = `${year}-12-31`,
+  ): Round => ({
     year,
-    start_date: null,
+    start_date,
     deadline: null,
     end_date,
     is_active: false,
@@ -246,6 +252,11 @@ describe("currentRoundYear", () => {
     expect(currentRoundYear([round(2025, "2027-01-24")], "2027-01-01")).toBe(
       2025,
     );
+  });
+  it("is not a round prepared for later, and the switch keeps the regular year", () => {
+    const later = [round(2027, "2028-03-30")];
+    expect(currentRoundYear(later, "2027-01-15")).toBe(2026);
+    expect(regularRoundYear(later, "2027-01-15")).toBe(2026);
   });
   it("is last year's until its default close when it does not exist yet", () => {
     expect(currentRoundYear([round(2025, "2026-03-30")], "2027-01-15")).toBe(
