@@ -6,6 +6,7 @@ isort:skip_file
 import datetime
 import io
 import os
+from unittest import mock
 
 import utils.database as db  # noqa: E402
 from PIL import Image  # noqa: E402
@@ -95,7 +96,7 @@ class TestCopy(CopyTest):
         self.assertEqual(resp.status_code, 200, resp.get_json())
         stored = db.InboxDocument.get_by_id(document.id)
         self.assertEqual(resp.get_json()["document"]["verified_at"], stored.verified_at.isoformat())
-        self.assertEqual((stored.verified_by_id, stored.verified_certificate), (self.helper.id, "P-1"))
+        self.assertEqual((stored.verified_by_id, stored.saved_certificate), (self.helper.id, "P-1"))
 
         self.login("spec")  # a viewer: sees the badge, not the copy
         rabbit = self.client.get("/api/v2/individual/G1-2112").get_json()
@@ -123,7 +124,38 @@ class TestCopy(CopyTest):
         resp = self.client.delete(f"/api/v2/inkorg/{item.id}/dokument/{document.id}/kopia")
         self.assertEqual(resp.status_code, 200, resp.get_json())
         stored = db.InboxDocument.get_by_id(document.id)
-        self.assertEqual((stored.verified_at, stored.verified_by_id, stored.verified_certificate), (None, None, None))
+        self.assertEqual((stored.verified_at, stored.verified_by_id), (None, None))
+        self.assertEqual(stored.saved_certificate, "P-1")  # what the photo was saved as stays
+
+    def test_the_check_is_of_the_certificate_the_photo_was_saved_as(self):
+        item, document = self.saved_document()  # saved as P-1
+        db.Individual.update(certificate="P-2").where(db.Individual.number == "G1-2112").execute()
+        rects = [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+        resp = self.mask(item, document, mask_rects=rects, matches_registry=True)
+        self.assertEqual(resp.status_code, 409, resp.get_json())
+        self.assertIsNone(db.InboxDocument.get_by_id(document.id).verified_at)
+        self.assertEqual(self.mask(item, document, mask_rects=rects).status_code, 200)  # unchecked, it goes on
+
+    def test_a_manager_of_another_genebank_who_helps_here_cannot_redo_a_closed_copy(self):
+        item, document = self.saved_document()
+        rects = [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+        self.mask(item, document, mask_rects=rects, matches_registry=True)
+        db.InboxItem.update(genebank=None).where(db.InboxItem.id == item.id).execute()  # any manager "manages" it
+        both = self.user("bada", ("manager", self.genebanks[1].id), ("helper", self.genebanks[0].id))
+        db.User.update(v2_prod_access=True).where(db.User.id == both.id).execute()
+        self.login("bada")
+        self.assertEqual(self.mask(item, document, mask_rects=rects).status_code, 409)  # not the handler, closed
+        self.assertIsNotNone(db.InboxDocument.get_by_id(document.id).verified_at)
+
+    def test_a_failed_cleanup_does_not_fail_a_committed_redo(self):
+        item, document = self.saved_document()
+        rects = [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+        self.mask(item, document, mask_rects=rects)
+        self.login("man")
+        with mock.patch("utils.inbox.remove_files", side_effect=PermissionError("read-only")):
+            resp = self.mask(item, document, mask_rects=rects, matches_registry=True)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertIsNotNone(db.InboxDocument.get_by_id(document.id).verified_at)
 
     def test_masking_needs_a_saved_certificate_and_a_confirmation(self):
         self.login("owner")

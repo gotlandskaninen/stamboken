@@ -789,8 +789,11 @@ def _assign_certificate(body, user, grant, document):
         # A photo of the certificate the rabbit already has: nothing is written, the document is linked so its copy
         # can go on the rabbit. A helper may link in her genebank too (Jonas 2026-11-26). Under the rabbit's lock, so
         # a rename or a new certificate cannot slip in before the link is saved.
-        if not lock_individual_for_edit(individual.id):
-            raise inbox.InboxError(404, "Kaninen finns inte i Stamboken.")
+        try:
+            if not lock_individual_for_edit(individual.id):
+                raise inbox.InboxError(404, "Kaninen finns inte i Stamboken.")
+        except HerdTrackingError as exc:  # its litter changed since it was read
+            raise _Refused(_command_problem(exc)) from None
         individual = Individual.get_by_id(individual.id)
         if individual.certificate != certificate.strip():
             raise inbox.InboxError(409, f"{individual.number} har ändrats. Öppna posten igen och spara på nytt.")
@@ -975,9 +978,13 @@ def confirm_mask(item_id, document_id):
         return jsonify({"item": inbox.items_json([item])[0], "document": inbox.documents_json([document])[0]})
 
     answer = _locked(item_id, action)
-    # The copy it replaced, once the new one is committed; the nightly job takes what is left behind.
-    if replaced and replaced[0] and InboxDocument.get_by_id(document_id).public_path != replaced[0]:
-        inbox.remove_files(replaced)
+    # The copy it replaced, once the new one is committed. The commit decides the answer: a file left behind is
+    # logged and taken by the nightly job.
+    try:
+        if replaced and replaced[0] and InboxDocument.get_by_id(document_id).public_path != replaced[0]:
+            inbox.remove_files(replaced)
+    except Exception:  # pylint: disable=broad-except
+        logger.warning("The replaced copy of document %s was not removed", document_id, exc_info=True)
     return answer
 
 

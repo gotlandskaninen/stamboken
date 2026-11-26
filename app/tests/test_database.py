@@ -1692,7 +1692,7 @@ class TestDatabaseMigration(DatabaseTest):
             db.SchemaHistory.insert(version=42, comment="test seed", applied=datetime.now()).execute()  # pylint: disable=E1120
         db.DATABASE.execute_sql(  # and the columns of later migrations, as on a real database at 42
             "ALTER TABLE inbox_document DROP COLUMN seller_member_id, DROP COLUMN buyer_member_id, "
-            "DROP COLUMN verified_at, DROP COLUMN verified_by_id, DROP COLUMN verified_certificate, "
+            "DROP COLUMN verified_at, DROP COLUMN verified_by_id, DROP COLUMN saved_certificate, "
             "ALTER COLUMN original_path SET NOT NULL"
         )
         db.DATABASE.execute_sql("ALTER TABLE inbox_item DROP COLUMN sender_authenticated")
@@ -1720,10 +1720,12 @@ class TestDatabaseMigration(DatabaseTest):
             return columns, indexes, keys
 
         fresh = shape()
+        item = db.InboxItem.create(kind="upload", genebank=self.genebanks[0], herd=self.herds[0])
+        saved = db.InboxDocument.create(item=item, mime="image/jpeg", sha256="0" * 64, individual=self.individuals[0])
         rewind_migrations(56)
         db.DATABASE.execute_sql(
             "ALTER TABLE inbox_document DROP COLUMN verified_at, DROP COLUMN verified_by_id, "
-            "DROP COLUMN verified_certificate"
+            "DROP COLUMN saved_certificate"
         )
 
         db.check_migrations()
@@ -1731,6 +1733,8 @@ class TestDatabaseMigration(DatabaseTest):
         self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
         self.assertEqual(shape(), fresh)
         self.assertIn(("verified_by_id", "hbuser", "user_id"), fresh[2])
+        # A certificate saved before 56 has the number its rabbit has.
+        self.assertEqual(db.InboxDocument.get_by_id(saved.id).saved_certificate, self.individuals[0].certificate)
 
     def _drop_rex_column(self):
         """The schema before 45 -> 46: no rex column, the audit trigger on, and the version row gone."""

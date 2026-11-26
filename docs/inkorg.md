@@ -914,7 +914,7 @@ Bekräftar vridningen och maskningen tillsammans och gör kopian av just det par
 Båda värdena sparas på dokumentet i samma transaktion som kopian görs. Det som redan står på
 dokumentet (från `PATCH`) används inte: kopian visar exakt det paret som skickades. Likaså
 `matches_registry`: varje anrop sätter `verified_at`, den som bekräftade (`verified_by`) och kaninens
-intygsnummer just då (`verified_certificate`) på nytt, eller tar bort dem. Görs kopian om utan
+intygsnummer just då (`saved_certificate`) på nytt, eller tar bort dem. Görs kopian om utan
 `matches_registry` försvinner märkningen. En ny kopia sparas under ett nytt filnamn, och den gamla
 filen tas bort när den nya är sparad; blir den kvar tar nattjobbet den.
 

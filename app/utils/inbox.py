@@ -40,7 +40,9 @@ from utils.database import (
     YearlyReportRound,
     not_voided,
 )
+from utils.herd_tracking import HerdTrackingError
 from utils.inbox_proposal import build_proposal
+from utils.individual_commands import lock_individual_for_edit
 from utils.individual_number_v2 import NUMBER_PATTERN, parse_number
 from utils.individual_policy import Role
 from utils.log_masking import mask_tokens
@@ -880,12 +882,20 @@ def confirm_mask(item, document, user, rotation, rects, no_personal_data=None, m
     found the certificate and the registry in agreement: the rabbit's badge. Each call sets it anew, as it does the
     pair. Returns the copy it replaced, for the caller to remove after the commit.
     """
-    if not (document.public_path and manages(user, item.genebank_id)):
-        require_handler(item, user)
     if document.doc_type != "intyg" or document.individual_id is None:
+        if not (document.public_path and manages(user, item.genebank_id)):
+            require_handler(item, user)
         raise InboxError(409, "Spara kaninen från intyget först.")
-    if not may_publish(user, document.individual):
-        raise InboxError(403, f"Du får inte lägga kopian på {document.individual.number}.")
+    try:  # the rabbit under its lock (item, litters, rabbits): its certificate is read once, here
+        lock_individual_for_edit(document.individual_id)
+    except HerdTrackingError as exc:
+        raise InboxError(exc.status, exc.detail) from None
+    rabbit = Individual.get_by_id(document.individual_id)
+    # Redone without holding the item: only by a manager of the rabbit's genebank, or an admin.
+    if not (document.public_path and manages(user, rabbit.current_herd.genebank_id)):
+        require_handler(item, user)
+    if not may_publish(user, rabbit):
+        raise InboxError(403, f"Du får inte lägga kopian på {rabbit.number}.")
     rotation, rects = _rotation(rotation), _rects(rects)
     if rects is None:
         raise InboxError(400, "Ange mask_rects: rektanglarna som täcker säljaren och köparen.")
@@ -893,12 +903,13 @@ def confirm_mask(item, document, user, rotation, rects, no_personal_data=None, m
         raise InboxError(400, 'En tom mask_rects kräver "no_personal_data": true: intyget visar ingen säljare.')
     if matches_registry is not None and not isinstance(matches_registry, bool):
         raise InboxError(400, "matches_registry är true eller false.")
-    certificate = document.individual.certificate
-    if matches_registry and not certificate:
-        raise InboxError(409, f"{document.individual.number} har inget pappersintyg i Stamboken att jämföra med.")
+    if matches_registry and (not rabbit.certificate or rabbit.certificate != document.saved_certificate):
+        # The check is of the certificate the photo was saved as: a number changed since is not the one compared.
+        raise InboxError(
+            409, f"{rabbit.number} har inte längre intyget {document.saved_certificate}. Kontrollera kaninen igen."
+        )
     document.rotation, document.mask_rects = rotation, rects
-    checked = (now(), user.id, certificate) if matches_registry else (None, None, None)
-    document.verified_at, document.verified_by, document.verified_certificate = checked
+    document.verified_at, document.verified_by = (now(), user.id) if matches_registry else (None, None)
     document.done_at = document.done_at or now()
     replaced = document.public_path
     make_copy(document)
@@ -916,12 +927,12 @@ def remove_copy(item, document, user):
     made again). The caller holds the item's lock, and removes the returned file after the commit.
     """
     genebank = document.individual.current_herd.genebank_id if document.individual_id else item.genebank_id
-    if not manages(user, genebank):
+    if not manages(user, genebank):  # the rabbit's genebank: an item without one is any manager's
         raise InboxError(403, "Bara genbanksansvarig och admin kan ta bort en kopia.")
     if document.public_path is None:
         raise InboxError(409, "Dokumentet har ingen kopia.")
     path, document.public_path = document.public_path, None
-    document.verified_at = document.verified_by = document.verified_certificate = None  # the badge goes with it
+    document.verified_at = document.verified_by = None  # the badge goes with the copy
     document.save()
     log_event(item, user, "kopia_borttagen", document=document.id)
     return path
@@ -948,7 +959,7 @@ def checked_at(individual):
     copy = paper_certificate(individual)
     if copy is None or copy.verified_at is None or not individual.certificate:
         return None
-    return copy.verified_at if copy.verified_certificate == individual.certificate else None
+    return copy.verified_at if copy.saved_certificate == individual.certificate else None
 
 
 def paper_certificate(individual):
@@ -1332,9 +1343,14 @@ def herd_holder(herd_id):
 
 
 def saved(item, document, user, individual, action):
-    """The rabbit a certificate document registered or certified; its seller is the holder of the rabbit's herd."""
+    """
+    The rabbit a certificate document registered or certified, with the certificate number it was saved as; its
+    seller is the holder of the rabbit's herd, unless a sale through the document recorded seller and buyer first.
+    """
     document.individual = individual
-    document.seller_member = herd_holder(individual.current_herd.id) or document.seller_member
+    document.saved_certificate = individual.certificate
+    if document.herd_tracking_id is None:
+        document.seller_member = herd_holder(individual.current_herd.id) or document.seller_member
     document.save()
     log_event(item, user, "sparad", document=document.id, action=action, individual=individual.number)
 

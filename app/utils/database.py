@@ -75,7 +75,7 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # the yearly report v2 (51) + organization name and number on membership (52) +
 # notice.individual and buyer_contact.erased_email_hash (53) +
 # acceptance of the account rules (54) + each history year's realised Ne (55) +
-# a paper certificate's copy checked against the registry, inbox_document.verified_at, _by and _certificate (56).
+# a paper certificate's copy checked against the registry, inbox_document.saved_certificate, verified_at, _by (56).
 CURRENT_SCHEMA_VERSION = 56
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
@@ -2478,11 +2478,11 @@ class InboxDocument(BaseModel):
     # The members the photo shows, recorded when it is saved through the queue, so an erasure finds it.
     seller_member = ForeignKeyField(Member, null=True, on_delete="SET NULL", backref="+")
     buyer_member = ForeignKeyField(Member, null=True, on_delete="SET NULL", backref="+")
-    # The handler found the certificate and the registry in agreement when the copy was made (the rabbit's badge),
-    # for the rabbit's paper certificate number then: a later certificate is not the one checked.
+    # The paper certificate number the document was saved as, and whether its handler found the certificate and the
+    # registry in agreement when the copy was made (the rabbit's badge, only while the rabbit keeps that number).
+    saved_certificate = TextField(null=True)
     verified_at = TimestampTZField(null=True)
     verified_by = ForeignKeyField(User, null=True, on_delete="SET NULL", backref="+")
-    verified_certificate = TextField(null=True)
 
     class Meta:
         table_name = "inbox_document"
@@ -4984,7 +4984,12 @@ def migrate_55_to_56():
             "ALTER TABLE inbox_document ADD COLUMN IF NOT EXISTS verified_by_id INTEGER "
             'REFERENCES "hbuser" ("user_id") ON DELETE SET NULL'
         )
-        DATABASE.execute_sql("ALTER TABLE inbox_document ADD COLUMN IF NOT EXISTS verified_certificate TEXT")
+        DATABASE.execute_sql("ALTER TABLE inbox_document ADD COLUMN IF NOT EXISTS saved_certificate TEXT")
+        # A certificate saved before: the number its rabbit has, which the save gave it or found on it.
+        DATABASE.execute_sql(
+            "UPDATE inbox_document d SET saved_certificate = i.certificate FROM individual i "
+            "WHERE d.individual_id = i.individual_id AND d.doc_type = 'intyg' AND d.saved_certificate IS NULL"
+        )
         _create_field_indexes(InboxDocument, "verified_by")
         SchemaHistory.insert(  # pylint: disable=E1120
             version=56, comment="inbox_document: copy checked against the registry", applied=datetime.now()
@@ -5483,7 +5488,7 @@ MIGRATIONS = {
     (52, 53): migrate_52_to_53,  # notice.individual, buyer_contact.erased_email_hash
     (53, 54): migrate_53_to_54,  # account rules acceptance
     (54, 55): migrate_54_to_55,  # realised Ne per history year
-    (55, 56): migrate_55_to_56,  # inbox_document.verified_at, verified_by, verified_certificate
+    (55, 56): migrate_55_to_56,  # inbox_document.verified_at, verified_by, saved_certificate
 }
 
 

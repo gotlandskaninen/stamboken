@@ -287,6 +287,30 @@ class TestSaveEndpoint(GrantTest):
             self.assertIsNone(db.InboxDocument.get_by_id(unlinked.id).individual_id)
         self.assertFalse(db.InboxEvent.select().where(db.InboxEvent.kind == "sparad").exists())
 
+    def test_linking_after_a_sale_through_the_document_keeps_its_seller_and_buyer(self):
+        item, document = self.taken(self.manager)
+        self.login("man")
+        sold = self.transfer(item, document, individual="G1-2111", herd="G2", date=date.today().isoformat())
+        self.assertEqual(sold.status_code, 200, sold.get_json())
+        before = db.InboxDocument.get_by_id(document.id)
+        body = {"action": "pappersintyg", "individual": "G1-2111", "paper_certificate": "12", "paper_number": "G1-2111"}
+        self.assertEqual(self.save(item, document, **body).status_code, 200)
+        after = db.InboxDocument.get_by_id(document.id)
+        self.assertEqual(
+            (after.seller_member_id, after.buyer_member_id), (before.seller_member_id, before.buyer_member_id)
+        )
+        self.assertEqual(after.saved_certificate, "12")
+
+    def test_a_litter_changed_under_the_link_is_a_conflict(self):
+        item, document = self.taken(self.helper)
+        self.login("hjalp")
+        body = {"action": "pappersintyg", "individual": "G1-2111", "paper_certificate": "12", "paper_number": "G1-2111"}
+        conflict = HerdTrackingConflict("Kullen har ändrats.")
+        with mock.patch("blueprints.inbox.lock_individual_for_edit", side_effect=conflict):
+            resp = self.save(item, document, **body)
+        self.assertEqual(resp.status_code, 409, resp.get_json())
+        self.assertIsNone(db.InboxDocument.get_by_id(document.id).individual_id)
+
     def test_only_a_role_in_the_rabbits_genebank_makes_its_copy(self):
         # A mail without a genebank: any queue worker may take it over, but only the rabbit's genebank masks it.
         item, document = self.taken(self.helper)
