@@ -29,12 +29,13 @@ from utils.database import (
     OUTSIDE_GENEBANK_HERDS,
     Genebank,
     Herd,
+    MatrikelAudit,
     ReportAccessCode,
     SaleProposal,
     YearlyReportRound,
 )
 from utils.legacy_compat import report_link_only
-from utils.matrikel import resolve_own_membership
+from utils.matrikel import LinkError, resolve_own_membership, unlink_member_user
 from utils.report_code import CodeActor, actor_key
 
 from .common import check_genebank_access, json_login_required, manager_required, problem
@@ -442,6 +443,25 @@ def status(year):
     # The phone is for calling; helpers do not get it.
     with_phone = check_genebank_access(genebank_id) is None
     return jsonify(arsrapport.status_view(round_, genebank_id, with_phone=with_phone))
+
+
+# [Next.js] "Koppla bort" in the status view (5.1): the genebank's manager, or admin, undoes the account link a main
+# member made with a code to the matrikel's e-mail ("nytt konto"). Only that link: `link_id` is its audit row.
+@arsrapport_bp.route("/v2/arsrapport/kontokoppling/<int:link_id>/hav", methods=["POST"])
+@json_login_required
+@manager_required
+def undo_account_link(link_id):
+    audit = MatrikelAudit.get_or_none(MatrikelAudit.id == link_id, MatrikelAudit.action == "person_user_linked")
+    if audit is None or (audit.payload or {}).get("source") != "matrikel_epost":
+        return problem(404, "Hittades inte", "Kopplingen finns inte.")
+    genebanks = {herd.genebank_id for herd in Herd.select(Herd.genebank).where(Herd.membership == audit.membership_id)}
+    if not (current_user.is_admin or genebanks & set(current_user.is_manager or ())):
+        return problem(403, "Åtkomst nekad", "Du saknar behörighet för denna genbank.")
+    try:
+        unlink_member_user(audit.payload["person_id"], actor=current_user, mode="arsrapport", link_audit_id=link_id)
+    except LinkError as exc:
+        return problem(exc.status, exc.title, exc.detail)
+    return jsonify({"ok": True})
 
 
 # [Next.js] The blank årsblankett as a PDF, put on the private volume by ops (docs/arsrapport.md).

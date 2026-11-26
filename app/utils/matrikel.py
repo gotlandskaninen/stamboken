@@ -1707,13 +1707,25 @@ def _detach_user_locked(person: Member, *, actor: User | None, mode: str) -> int
     return user_id
 
 
-def unlink_member_user(person_id, *, actor, mode="admin"):
+def unlink_member_user(person_id, *, actor, mode="admin", link_audit_id=None):
     """Detach the account — allowed on ended persons too (the release valve
-    for the blocked-relink case). Returns (person, lost_genebank_ids)."""
+    for the blocked-relink case). With `link_audit_id` (the status view's
+    "nytt konto", spec 5.1) only the link that audit row recorded: refused
+    under the locks once the person was linked or unlinked since, or holds
+    another account. Returns (person, lost_genebank_ids)."""
     with DB_PROXY.atomic():
         person, user = _lock_for_detach(person_id)
         if user is None:
             raise LinkError("Personen har inget kopplat konto", "Det finns inget konto att koppla bort")
+        if link_audit_id is not None:
+            since = MatrikelAudit.select().where(
+                MatrikelAudit.membership == person.membership_id,
+                MatrikelAudit.action.in_(("person_user_linked", "person_user_unlinked")),
+                MatrikelAudit.id >= link_audit_id,
+            )
+            rows = [row for row in since if (row.payload or {}).get("person_id") == person.id]
+            if [row.id for row in rows] != [link_audit_id] or rows[0].payload.get("user_id") != user.id:
+                raise LinkError("Kopplingen har ändrats", "Kontot har redan kopplats om. Läs in sidan igen.")
         before = user.effective_herd_ids()
         _detach_user_locked(person, actor=actor, mode=mode)
         lost = before - User.get_by_id(user.id).effective_herd_ids()
