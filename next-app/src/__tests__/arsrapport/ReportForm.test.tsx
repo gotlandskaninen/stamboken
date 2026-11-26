@@ -16,6 +16,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
 import {
   ReportForm,
   type ReportActions,
+  forgetTabWrites,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/ReportForm";
 import {
   PENDING_SALE_TEXT,
@@ -75,6 +76,7 @@ const actions = (): {
   }) as never;
 
 beforeEach(() => {
+  forgetTabWrites(); // module memory of the tab, as after a hard load
   window.scrollTo = vi.fn(); // jsdom does not implement it
   window.localStorage.clear();
   refresh.mockReset();
@@ -1087,6 +1089,7 @@ describe("ReportForm", () => {
     expect(a.saveDraft.mock.calls[0][2].rabbits["1"].val).toBe("kvar");
     expect(a.saveDraft.mock.calls[0][3]).toBe(draft.updated_at);
     cleanup();
+    forgetTabWrites(); // a new page load: the mock's answer above is not this view's history
 
     copy("2026-12-31T10:00:00+00:00");
     render(
@@ -1525,6 +1528,124 @@ describe("ReportForm", () => {
       });
     });
     expect(local()).toContain('"2"');
+  });
+
+  it("waits for a Skicka still being checked when Back comes first", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    let checked!: (v: unknown) => void;
+    a.dryRun.mockImplementationOnce(
+      () => new Promise((resolve) => (checked = resolve)),
+    );
+    const before = view();
+    const old = render(<ReportForm env="demo" view={before} actions={a} />);
+    fillAll();
+    send();
+    old.unmount(); // Back while the dry run is on its way
+    render(<ReportForm env="demo" view={before} actions={a} />);
+    expect(screen.getAllByText("Hämtar senaste versionen…")).not.toHaveLength(
+      0,
+    );
+    await act(async () => {});
+    expect(refresh).not.toHaveBeenCalled();
+    await act(async () => {
+      checked({ ok: true, data: { ok: true, refusals: [], warnings: [] } });
+    });
+    expect(a.submitReport).toHaveBeenCalledTimes(1);
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it("reads a view again that holds another draft version than the last one this tab saved", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    const first = render(<ReportForm env="demo" view={view()} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    first.unmount();
+    // a page read before that save answered, shown for the first time
+    render(<ReportForm env="demo" view={view()} actions={a} />);
+    await act(async () => {});
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not let a retry overwrite the copy another form wrote since", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    a.saveDraft.mockImplementation(() => fail(502)); // offline
+    render(<ReportForm env="demo" view={view()} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    const key = Object.keys(window.localStorage).find((k) =>
+      k.startsWith("arsrapport:"),
+    )!;
+    window.localStorage.setItem(
+      key,
+      JSON.stringify({
+        data: { rabbits: { "2": { val: "kvar" } } },
+        updated_at: null,
+        revision: null,
+        writer: "a form mounted later",
+      }),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5100); // the retry
+    });
+    expect(local()).toContain('"2"');
+  });
+
+  it("offers Ladda om sidan when a write on its way does not answer", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    a.saveDraft.mockImplementationOnce(() => new Promise(() => {}));
+    const before = view();
+    const old = render(<ReportForm env="demo" view={before} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    old.unmount();
+    render(<ReportForm env="demo" view={before} actions={a} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(screen.getByRole("button", { name: "Ladda om sidan" })).toBeTruthy();
+  });
+
+  it("takes only the view its own reload brings, not one another refresh brought meanwhile", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    const later = answerLater();
+    a.saveDraft.mockImplementationOnce(() => later.call);
+    const before = view();
+    const old = render(<ReportForm env="demo" view={before} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    old.unmount();
+    const { rerender } = render(
+      <ReportForm env="demo" view={before} actions={a} />,
+    );
+    rerender(<ReportForm env="demo" view={view()} actions={a} />); // read before the save
+    expect(screen.getAllByText("Hämtar senaste versionen…")).not.toHaveLength(
+      0,
+    );
+    await act(async () => {
+      later.answer();
+    });
+    rerender(
+      <ReportForm
+        env="demo"
+        view={savedDraft({ "1": { val: "kvar" } })}
+        actions={a}
+      />,
+    );
+    expect(screen.queryByText("Hämtar senaste versionen…")).toBeNull();
+    expect(checked(1)).toBe(true);
   });
 
   it("does not read the page again on Back when nothing was saved from it", async () => {

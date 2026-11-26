@@ -38,7 +38,10 @@ vi.mock(
   }),
 );
 
-import { ReportForm } from "@/app/(app)/stamboken/(dashboard)/arsrapport/ReportForm";
+import {
+  ReportForm,
+  forgetTabWrites,
+} from "@/app/(app)/stamboken/(dashboard)/arsrapport/ReportForm";
 import {
   ADD_FROM_CERTIFICATE,
   RABBIT_SAVED,
@@ -76,6 +79,7 @@ const PAPER = {
 };
 
 beforeEach(() => {
+  forgetTabWrites(); // module memory of the tab, as after a hard load
   window.scrollTo = vi.fn(); // jsdom does not implement it
   window.localStorage.clear();
   refresh.mockReset();

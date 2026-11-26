@@ -17,6 +17,7 @@ import {
   ReportForm,
   type PaperProps,
   type ReportActions,
+  forgetTabWrites,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/ReportForm";
 import type {
   Receipt,
@@ -82,6 +83,7 @@ const paperView = (over: Partial<ReportView> = {}): ReportView =>
   });
 
 beforeEach(() => {
+  forgetTabWrites(); // module memory of the tab, as after a hard load
   window.scrollTo = vi.fn(); // jsdom does not implement it
   window.localStorage.clear();
   refresh.mockReset();

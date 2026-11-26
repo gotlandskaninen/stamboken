@@ -239,9 +239,20 @@ const track = <T,>(key: string, call: Promise<T>): Promise<T> => {
 };
 const allAnswered = (key: string) =>
   Promise.allSettled([...(onTheirWay.get(key) ?? [])]);
+// The draft version this tab last had from the server: a view with another
+// one was read before or after it, and is read again to be sure.
+const lastDraft = new Map<string, string | null>();
+// A hard load starts the tab's memory over; tests do the same between cases.
+export const forgetTabWrites = () => {
+  writes.clear();
+  onTheirWay.clear();
+  askedAt.clear();
+  lastDraft.clear();
+};
 const outdated = (v: ReportView, key: string) =>
   !!onTheirWay.get(key)?.size ||
-  (shownAt.get(v) ?? Infinity) < (writes.get(key) ?? 0);
+  (shownAt.get(v) ?? Infinity) < (writes.get(key) ?? 0) ||
+  (lastDraft.has(key) && lastDraft.get(key) !== (v.draft?.updated_at ?? null));
 
 // A copy the server never confirmed (closed tab, lost connection) wins while
 // the server is still at the version it was edited from; otherwise the
@@ -518,6 +529,7 @@ export function ReportForm({
     setState(s);
     setEntered(enteredFrom(view.rabbits, s));
     updatedAt.current = d.updated_at;
+    lastDraft.set(key, d.updated_at);
     // a draft with no key (written by Dra tillbaka) must not revive a spent one
     keyRef.current = d.submission_key ?? newKey();
     setSavedAt(fmtTime(d.updated_at));
@@ -537,18 +549,22 @@ export function ReportForm({
   }, [key]);
   // The writes still on their way go first: the new view must hold them.
   const reload = React.useCallback(() => {
-    resync.current = true;
-    reloadFrom.current = viewRef.current;
     stopped.current = true;
     setSoldFor(null); // a sale dialog cannot save into a state about to be replaced
     setSyncing(true); // editing and Skicka wait for the answer
-    clearTimeout(syncTimer.current);
-    void allAnswered(key).then(() => {
-      refreshView();
-      // No answer after 10 s: stay locked and offer a full reload. A late
-      // answer still syncs the form (the effect below).
+    // No answer after 10 s, from the lock and again from the refresh: stay
+    // locked and offer a full reload. A late answer still syncs the form.
+    const clock = () => {
       clearTimeout(syncTimer.current);
       syncTimer.current = setTimeout(() => setSyncTimeout(true), 10000);
+    };
+    clock();
+    void allAnswered(key).then(() => {
+      // only the view this refresh brings resets the form, not one another refresh brought meanwhile
+      resync.current = true;
+      reloadFrom.current = viewRef.current;
+      refreshView();
+      clock();
     });
   }, [key, refreshView]);
   React.useEffect(() => {
@@ -570,6 +586,7 @@ export function ReportForm({
     setLocalCopy(false);
     keyRef.current = view.draft?.submission_key ?? newKey();
     updatedAt.current = view.draft?.updated_at ?? null;
+    lastDraft.set(key, updatedAt.current);
     setSavedAt(view.draft ? fmtTime(view.draft.updated_at) : null);
     frozen.current = null;
     if (!keepLocal.current) {
@@ -589,7 +606,7 @@ export function ReportForm({
         setVersion(1); // autosave sends it
       }
     }
-  }, [view, store, isPaper, writer]);
+  }, [view, store, isPaper, writer, key]);
 
   // Back brought a view from before this tab's own writes: read it again.
   React.useEffect(() => {
@@ -645,7 +662,10 @@ export function ReportForm({
           ),
         );
         clearTimeout(slow);
-        if (res.ok) updatedAt.current = res.data.updated_at; // the server's truth, whatever came meanwhile
+        if (res.ok) {
+          updatedAt.current = res.data.updated_at; // the server's truth, whatever came meanwhile
+          lastDraft.set(key, updatedAt.current);
+        }
         // Skicka started while this save was on its way: its answer says nothing about the form any more.
         if (!autosaveAnswerKept(sentAt, submissions.current)) {
           setSaveState((s) => (s === "saving" ? "saved" : s));
@@ -698,14 +718,23 @@ export function ReportForm({
   });
 
   // Autosave: 2 s after the last change, from the revision the page started from.
+  const copiedVersion = React.useRef(0);
   React.useEffect(() => {
     if (version === 0 || mode !== "form" || !canEdit || stopped.current) return;
-    writeLocal(store, herd.herd, year, {
-      data: toDraft(stateRef.current),
-      updated_at: updatedAt.current,
-      revision: viewRef.current.report?.revision ?? null,
-      writer,
-    });
+    const copy = readLocal(store, herd.herd, year);
+    // a retry (no new edit) leaves alone a copy another form has written since
+    if (
+      version !== copiedVersion.current ||
+      !copy?.writer ||
+      copy.writer === writer
+    )
+      writeLocal(store, herd.herd, year, {
+        data: toDraft(stateRef.current),
+        updated_at: updatedAt.current,
+        revision: viewRef.current.report?.revision ?? null,
+        writer,
+      });
+    copiedVersion.current = version;
     autosavePending.current = true;
     autosaveTimer.current = setTimeout(
       () => void flushRef.current(),
@@ -1012,6 +1041,7 @@ export function ReportForm({
       keyRef.current = keyAfter("ok", keyRef.current!);
       frozen.current = null;
       updatedAt.current = null;
+      lastDraft.set(key, null); // Skicka took the draft
       if (ownsLocal()) writeLocal(store, herd.herd, year, null);
       setLocalCopy(false);
       setReceipt(res.data);
@@ -1036,7 +1066,17 @@ export function ReportForm({
     else handle(res.problem);
   };
 
+  // Skicka is held from the dry run on: a form mounted meanwhile (Back) waits for it.
   const skicka = async () => {
+    let over = () => {};
+    hold(key, new Promise<void>((resolve) => (over = resolve)));
+    try {
+      await checkAndSend();
+    } finally {
+      over();
+    }
+  };
+  const checkAndSend = async () => {
     if (phase !== "idle" || syncing || olderCopy || refreshing) return;
     setRefusals(null);
     if (!link && readModeCookieClient() !== env) return fail(ENV_TEXT);
@@ -1106,6 +1146,7 @@ export function ReportForm({
         setState(fromBody(d.data));
         updatedAt.current = d.updated_at;
       }
+      lastDraft.set(key, d ? d.updated_at : null);
       setWithdrawn(fmtDate(new Date().toISOString()));
       setReceipt(null);
       setMode("form");
