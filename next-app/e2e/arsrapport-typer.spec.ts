@@ -260,6 +260,38 @@ test("3. Typ A: medianbesättning i mobilen", async ({ page, context }) => {
   expect(taps).toBeLessThanOrEqual(20);
 });
 
+// Back from the profile used to show the page as it was before the save, and the next save met "ändrad på en
+// annan enhet" (Jonas 2026-11-26). Only a real browser has Next's router cache. M9006 is reported in full later.
+test("3b. Tillbaka från profilen behåller det sparade", async ({
+  page,
+  context,
+}) => {
+  await loginInline(page, context, USERS.owner);
+  await page.goto("/stamboken/arsrapport/M9006/2025");
+  await expect(rows(page)).toHaveCount(6);
+  await hydrated(page);
+  const saveOf = () =>
+    page.waitForResponse(
+      (r) =>
+        r.request().method() === "POST" &&
+        r.url().endsWith("/stamboken/arsrapport/M9006/2025"),
+    );
+  let saved = saveOf();
+  await kvar(rabbit(page, "M9006-2411")).check();
+  await saved;
+  await page.getByRole("link", { name: "Gå till profilen" }).click();
+  await page.waitForURL("**/stamboken/profil");
+  await page.goBack();
+  await expect(kvar(rabbit(page, "M9006-2411"))).toBeChecked();
+  saved = saveOf();
+  await kvar(rabbit(page, "M9006-2412")).check();
+  await saved;
+  await expect(page.getByText(/annan enhet/)).toHaveCount(0);
+  await page.reload();
+  await expect(kvar(rabbit(page, "M9006-2411"))).toBeChecked();
+  await expect(kvar(rabbit(page, "M9006-2412"))).toBeChecked();
+});
+
 test("4. Typ B: ovan användare, långsamt nät och smal skärm", async ({
   page,
   context,
