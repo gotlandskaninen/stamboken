@@ -172,6 +172,23 @@ describe("paper omissions", () => {
   const sendAnswer = () =>
     fireEvent.click(screen.getByRole("button", { name: "Skicka svar" }));
 
+  it("shows the paper's day, not a time, after the last answer by link", () => {
+    const v = missingView([]);
+    v.report = {
+      ...v.report!,
+      source: "link",
+      from_paper: true,
+      received_at: "2027-01-11T23:00:00+00:00",
+    };
+    render(<ReportForm env="demo" view={v} actions={completionActions()} />);
+    expect(
+      screen.getByText(
+        /Klart\. Årsrapporten för G9001 kom in 12 januari 2027\./,
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(/kl\. 00\.00/)).toBeNull();
+  });
+
   it("shows only missing rabbits and sends only answered rows", async () => {
     const a = completionActions();
     render(<ReportForm env="demo" view={missingView()} actions={a} />);

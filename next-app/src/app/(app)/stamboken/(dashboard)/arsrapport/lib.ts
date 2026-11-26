@@ -252,6 +252,7 @@ export interface ReportView {
     submitted: (Partial<DraftData> & { received_on?: string }) | null;
     can_change: boolean;
     not_stated: number[];
+    from_paper?: boolean; // a submission came from paper: the receipt shows its day, not a time
     can_complete_missing: boolean;
     can_withdraw: boolean;
     withdraw_until: string | null;

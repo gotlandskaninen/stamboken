@@ -976,6 +976,7 @@ def _report_json(report, round_, access, is_open):
         "can_withdraw": can_withdraw,
         "withdraw_until": _iso(until),
         "not_stated": json.loads(report.data).get("not_stated") or [],
+        "from_paper": from_paper(report),  # the receipt shows the day the form came, without a time
         # P9: the focused page for the rabbits a paper form left out (Å22), also after an answer by link
         "can_complete_missing": is_open and access.item is None and completable(report),
     }
@@ -3181,9 +3182,12 @@ def submit(herd, round_, access, user, sub, *, now=None, completion=False) -> di
         membership, member = _lock_matrikel(herd) if paper and sub.paper["matrikel"] is not None else (None, None)
         old_email = member.email if member is not None else None
         report = YearlyHerdReport.select().where(same & (YearlyHerdReport.status == "submitted")).for_update().first()
-        answered = sub.rabbits
+        answered, open_choices = sub.rabbits, {}
         if completion:
             sub = merge_completion(report, sub)
+            # a rabbit left to choose again ("välj igen", val null) is no entry, but the next submission keeps it
+            latest = _submissions(report)[-1].data.get("rabbits") or {}
+            open_choices = {k: e for k, e in latest.items() if isinstance(e, dict) and e.get("val") is None}
         draft = _draft(herd, round_)  # K1: its kept buyers are linked again or deleted, under the rabbits' locks
         kept = {int(key): claim["kopare_id"] for key, claim in (_kept_claims(draft.data) if draft else {}).items()}
         ids = sorted(set(sub.rabbits) | set(kept))
@@ -3274,7 +3278,8 @@ def submit(herd, round_, access, user, sub, *, now=None, completion=False) -> di
                 **_by(user, "user", "access_code"),
                 operation_ids=grant.operation_ids,
                 added_measurements=added,
-                data={**submitted_body(sub), "litters_added": _litters_added(herd, round_)},
+                data=_with_open_choices(submitted_body(sub), open_choices)
+                | {"litters_added": _litters_added(herd, round_)},
                 request_hash=digest,
             )
         except IntegrityError as exc:  # the key, taken meanwhile for another herd, which this lock does not cover
@@ -3335,18 +3340,24 @@ def parse_completion(body: dict) -> Submission:
     return Submission(key, body["revision"], None, rabbits, {}, None)
 
 
-def completable(report) -> bool:
-    """P9: a submitted report from paper (any of its submissions, not the latest source), not an ending, with rabbits
-    still unstated."""
-    if report is None:
-        return False
-    data = json.loads(report.data)
-    if data.get("ending_genbank") or not data.get("not_stated"):
-        return False
+def _with_open_choices(body, open_choices):
+    return {**body, "rabbits": {**open_choices, **body["rabbits"]}} if open_choices else body
+
+
+def from_paper(report) -> bool:
+    """P9: one of the report's submissions came from paper; the latest source is the link's after an answer."""
     paper = YearlyReportSubmission.select().where(
         YearlyReportSubmission.report == report.id, YearlyReportSubmission.source == "paper"
     )
     return paper.exists()
+
+
+def completable(report) -> bool:
+    """A submitted report from paper, not an ending, with rabbits still unstated."""
+    if report is None:
+        return False
+    data = json.loads(report.data)
+    return not data.get("ending_genbank") and bool(data.get("not_stated")) and from_paper(report)
 
 
 def merge_completion(report, patch: Submission) -> Submission:

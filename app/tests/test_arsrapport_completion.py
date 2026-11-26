@@ -128,6 +128,21 @@ class TestCompletion(CompletionTest):
         self.assertEqual(db.SaleProposal.get_by_id(proposal.id).state, "foreslagen")  # not taken back
         self.assertEqual(self.data()["not_stated"], [self.doe2.id])
 
+    def test_completion_keeps_a_rabbit_left_to_choose_again(self):  # review 1: "välj igen" is val null
+        import utils.sale_proposal as sale_proposal  # pylint: disable=import-outside-toplevel
+
+        self.open_link()
+        self.assertEqual(self.answer(self.sald(self.doe, "G9002", 2025, 8, 3))[0].status_code, 200)
+        (proposal,) = db.SaleProposal.select()
+        manager = db.User.get_by_id(self.manager.id)
+        sale_proposal.reject(proposal, manager, reason="Fel köpare", then="valj_igen", now=arsrapport.now())
+        self.assertEqual(self.answer(self.kvar(self.buck, vikt=3.0))[0].status_code, 200)
+        latest = arsrapport._submissions(self.current())[-1]
+        self.assertIsNone(latest.data["rabbits"][str(self.doe.id)]["val"])
+        (row,) = [r for r in arsrapport.status_view(self.round_, self.gotland.id)["rows"] if r["herd"] == "G9001"]
+        self.assertEqual(row["flags"]["forsaljning_avvisad"], 1)
+        self.assertTrue(self.api("GET", PATH).get_json()["report"]["from_paper"])
+
     def test_completion_validates_only_answered_missing_rows(self):
         self.rabbits(self.h, 1)  # registered since: not on the form, and not required now
         self.open_link()
