@@ -1,4 +1,4 @@
-"""Account creation after a main member has proved control of a login address."""
+"""Account creation after a person in the matrikel has proved control of a login address."""
 
 import os
 from datetime import datetime, timedelta, timezone
@@ -10,7 +10,7 @@ from flask import current_app, session
 from peewee import fn
 
 from utils import data_access, login_code, matrikel, settings
-from utils.database import DB_PROXY, AccountRulesSnapshot, Herd, Member, User
+from utils.database import DB_PROXY, AccountRulesSnapshot, Herd, HerdAccessGrant, Member, User
 from utils.mail import address_hash
 
 PENDING_FOR = timedelta(minutes=15)
@@ -79,7 +79,7 @@ def published_rules():
 
 
 def _existing_account(person, address):
-    addresses = {a.strip().lower() for a in (person.email, address) if a}
+    addresses = {a.strip().lower() for a in (person.email, address, person.workspace_email) if a}
     linked_accounts = Member.select(Member.user).where(Member.user.is_null(False))
     if (
         User.select()
@@ -92,12 +92,36 @@ def _existing_account(person, address):
         return True
 
     herd_ids = {str(h.id) for h in Herd.select(Herd.id).where(Herd.membership == person.membership_id)}
+    granted = {str(g.herd_id) for g in _grants(person)} - herd_ids
     owners = User.select(User._privileges).where(User._privileges.contains('"owner"'))
+    unlinked = owners.where(User.id.not_in(linked_accounts))
+    # The main member's own herds: any owner may be her. Anyone else's, and a granted herd of another membership: the
+    # linked accounts there are other people's, so only an unlinked owner may be this person.
+    return _owns(herd_ids, owners if person.role == "huvudmedlem" else unlinked) or _owns(granted, unlinked)
+
+
+def _owns(herd_ids, accounts):
     # Older owner roles can have a herd id stored as a string.
     return bool(herd_ids) and any(
         isinstance(role, dict) and role.get("level") == "owner" and str(role.get("herd")).lstrip("0") in herd_ids
-        for account in owners
+        for account in accounts
         for role in account.privileges
+    )
+
+
+def _grants(person):
+    return HerdAccessGrant.select(HerdAccessGrant.herd).where(
+        (HerdAccessGrant.member == person.id) & HerdAccessGrant.revoked_at.is_null(True)
+    )
+
+
+def _granted_outside(person):
+    """A grant on another membership's herd: an address only the main member vouches for must not convey it."""
+    return (
+        _grants(person)
+        .join(Herd)
+        .where(Herd.membership.is_null(True) | (Herd.membership != person.membership_id))
+        .exists()
     )
 
 
@@ -122,7 +146,7 @@ def create_pending_account(_displayed_version, displayed_sha256):
         if person.user_id is not None:
             raise AccountConflict
         contact = (person.email or "").strip()
-        if not contact or person.role != "huvudmedlem" or address_hash(contact) != session["pending_contact"]:
+        if not contact or address_hash(contact) != session["pending_contact"]:
             raise InvalidPending
         login_code.lock_holder_addresses(person)
         # Existing accounts can acquire an address or an owner role outside the registry.
@@ -139,6 +163,9 @@ def create_pending_account(_displayed_version, displayed_sha256):
         except data_access.AddressInUseError as exc:
             raise AccountConflict from exc
         if _existing_account(person, address):
+            raise AccountConflict
+        # shortcut: the page then says an account may already exist; the way out, matrikelansvarig, is the same.
+        if person.role != "huvudmedlem" and _granted_outside(person):
             raise AccountConflict
         accepted_at = datetime.now(timezone.utc)
         AccountRulesSnapshot.get_or_create(

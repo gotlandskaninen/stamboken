@@ -569,6 +569,7 @@ def add_person(membership, data, actor):
         locked = Membership.select().where(Membership.id == membership.id).for_update().get()
         if locked.membership_status == "inactive":
             raise ValueError("Kan inte lägga till personer i ett inaktivt medlemskap")
+        lock_addresses([data.get("email")])  # waits for a code login creating an account on the same address
         person = Member.create(
             membership=membership,
             **_new_person_names(data, optional=locked.organization_name and role == "huvudmedlem"),
@@ -1130,6 +1131,7 @@ def set_member_email(person, address, actor, *, by):
         # Someone who holds no login address (ended, friexemplar, or reactivated and not yet linked) must not keep
         # previous ones: they would wake up when she is linked.
         if not holder and person.email != address:
+            lock_addresses([address])  # waits for a code login creating an account on the same address
             _expire_previous_addresses([person.id])
         if _same(person.email, address):
             if person.email != address:  # the same address, spelled otherwise
@@ -1497,7 +1499,8 @@ def resolve_own_membership(user):
 # Kontokoppling — ONE lock-owning operation writes
 # member.user_id. Lock order everywhere: membership → user → person, all
 # FOR UPDATE. A link that grants herd access needs admin confirmation,
-# except when a main member creates her own account using a verified code.
+# except when a person creates her own account using a verified code
+# (anyone but the main member only with grants inside her membership, login_account).
 # --------------------------------------------------------------------------
 
 LINK_MODES = ("admin", "cli", "oauth", "matrikel_epost")
@@ -1647,12 +1650,10 @@ def link_member_user(person_id, user_id, *, actor, mode, confirmed_herd_ids=None
             raise LinkError(AddressTaken.title, detail) from exc
         conveyed = link_access_delta(person, user)  # under the locks, right before the save
         conveyed_ids = {h["id"] for h in conveyed}
-        if mode == "matrikel_epost" and (
-            person.role != "huvudmedlem" or person.membership.membership_status == "inactive"
-        ):
+        if mode == "matrikel_epost" and person.membership.membership_status == "inactive":
             raise LinkError(
                 "Kontot kan inte skapas",
-                "Bara huvudmedlemmen i ett aktivt eller väntande medlemskap kan skapa ett konto.",
+                "Bara en person i ett aktivt eller väntande medlemskap kan skapa ett konto.",
             )
         if (
             conveyed_ids
