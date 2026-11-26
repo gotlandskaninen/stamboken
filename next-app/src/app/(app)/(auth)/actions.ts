@@ -319,7 +319,9 @@ async function finishCodeLogin(
   store.set("session", session, cookieOptions);
   store.delete("login_request");
   const mode =
-    data.pending === true ? "prod" : initialMode(data.v2_prod_access, await headers());
+    data.pending === true
+      ? "prod"
+      : initialMode(data.v2_prod_access, await headers());
   store.set(MODE_COOKIE, mode, modeCookieOptions);
   const destination = safeReturnTo(returnTo);
   if (data.pending === true) {
