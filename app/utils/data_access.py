@@ -3808,7 +3808,7 @@ def get_yearly_reports(
 
                 # Format publish information based on allowPublication array
                 publish_info = "Nej, ingen publicering"
-                allow_publication = form_data.get("allowPublication", [])
+                allow_publication = form_data.get("allowPublication") or []
 
                 if "noPublication" in allow_publication:
                     publish_info = "Nej, ingen publicering"
@@ -3838,7 +3838,8 @@ def get_yearly_reports(
                     if excluded:
                         publish_info = f"Ja, men inte {' och '.join(excluded)}"
                     else:
-                        publish_info = "Ja för publicering i Koharen"
+                        # No tick is no answer: a legacy answer is never consent (GDPR session, Jonas 2026-11-23)
+                        publish_info = "Ej angivet"
 
                 report = {
                     "herd": r.herd.herd,  # Changed from genebank_number to herd

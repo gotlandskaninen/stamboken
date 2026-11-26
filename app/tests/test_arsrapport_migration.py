@@ -489,6 +489,21 @@ class TestArsrapportMigration(IsolatedSchemaTest):
         counts = {r["report_year"]: r["report_count"] for r in da.get_yearly_report_rounds_with_counts()}
         self.assertEqual(counts, {2025: 1, 2026: 0})
 
+    def test_legacy_summary_without_choice_is_ej_angivet(self):
+        """Legacy answers are never consent (2026-11-23): no tick is "Ej angivet", never a yes."""
+        cases = {
+            "G91": ("{}", "Ej angivet"),
+            "G92": ('{"allowPublication": []}', "Ej angivet"),
+            "G93": ('{"allowPublication": null}', "Ej angivet"),
+            "G94": ('{"allowPublication": ["all"]}', "Ja för publicering i Koharen"),
+            "G95": ('{"allowPublication": ["noPublication"]}', "Nej, ingen publicering"),
+            "G96": ('{"allowPublication": ["noPhone"]}', "Ja, men inte telefonnummer"),
+        }
+        for code, (data, _) in cases.items():
+            self._old_report(db.Herd.create(genebank=self.genebanks[0], herd=code), data=data)
+        published = {r["herd"]: r["publish"] for r in da.get_yearly_reports(self.round.id, self.genebanks[0].id)}
+        self.assertEqual(published, {code: shown for code, (_, shown) in cases.items()})
+
     def test_legacy_save_is_closed_where_v2_took_over(self):
         older = self._old_report(self.herds[0])
         v2 = self._report(data='{"ending_genbank": false}')
