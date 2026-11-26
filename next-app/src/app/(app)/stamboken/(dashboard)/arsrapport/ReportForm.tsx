@@ -208,6 +208,26 @@ const writeLocal = (
   }
 };
 
+// Next shows the same view object again when the user comes Back to the page.
+// A view this tab has written past (a saved draft, a litter) is read again
+// instead: the form would otherwise start from before those writes, and its
+// next save would meet a conflict (Jonas 2026-11-26).
+const outdated = new WeakSet<ReportView>();
+
+// A copy the server never confirmed (closed tab, lost connection) wins while
+// the server is still at the version it was edited from; otherwise the
+// server's version stays and the user chooses.
+const localChoice = (v: ReportView, store: Mode | "link", isPaper: boolean) => {
+  // behind the member-draft gate nothing is adopted: the choice comes first
+  if (gateOf(v, isPaper) === "draft") return null;
+  const local = readLocal(store, v.herd.herd, v.year);
+  if (!local) return null;
+  const current =
+    local.updated_at === (v.draft?.updated_at ?? null) &&
+    local.revision === (v.report?.revision ?? null);
+  return current ? { adopt: fromBody(local.data) } : { older: local.data };
+};
+
 // Focus the first control on a rabbit's row that still needs input.
 function focusRow(id: number): boolean {
   const row = document.getElementById(`rabbit-${id}`);
@@ -374,7 +394,10 @@ export function ReportForm({
     list: Litter[];
   } | null>(null);
   const litters = saved?.base === view.litters ? saved.list : view.litters;
-  const setLitters = (list: Litter[]) => setSaved({ base: view.litters, list });
+  const setLitters = (list: Litter[]) => {
+    outdated.add(view);
+    setSaved({ base: view.litters, list });
+  };
   const [litterOpen, setLitterOpen] = React.useState(false);
   // "Lägg till kanin från intyget" (4b): registered at once, so the note says it stays
   const [rabbitOpen, setRabbitOpen] = React.useState(false);
@@ -413,6 +436,9 @@ export function ReportForm({
   const saving = React.useRef(false);
   const again = React.useRef(false);
   const resync = React.useRef(false);
+  // the view a reload started from, and whether the local copy waits for the new one
+  const reloadFrom = React.useRef<ReportView | null>(null);
+  const keepLocal = React.useRef(false);
   const pendingFocus = React.useRef<number | null>(null);
   const pendingEl = React.useRef<string | null>(null);
   // Skicka against autosave: a submission in flight, how many have started,
@@ -435,25 +461,15 @@ export function ReportForm({
     setVersion((v) => v + 1);
   }, []);
 
-  // A copy the server never confirmed (closed tab, lost connection) wins while
-  // the server is still at the version it was edited from; otherwise the
-  // server's version stays and the user chooses.
+  // The local copy (localChoice), once React has hydrated. An outdated view
+  // waits for the reload below and is compared after it.
   React.useEffect(() => {
-    // behind the member-draft gate nothing is adopted: the choice comes first
-    if (gateOf(viewRef.current, isPaper) === "draft") return;
-    const local = readLocal(store, herd.herd, year);
-    const server = viewRef.current;
-    if (
-      local &&
-      (local.updated_at !== (server.draft?.updated_at ?? null) ||
-        local.revision !== (server.report?.revision ?? null))
-    ) {
-      setOlderCopy(local.data);
-    } else if (local) {
-      const s = fromBody(local.data);
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage exists only after hydration
-      setState(s);
-      setEntered(enteredFrom(viewRef.current.rabbits, s));
+    if (outdated.has(viewRef.current)) return;
+    const c = localChoice(viewRef.current, store, isPaper);
+    if (c?.older) setOlderCopy(c.older);
+    else if (c?.adopt) {
+      setState(c.adopt);
+      setEntered(enteredFrom(viewRef.current.rabbits, c.adopt));
       setLocalCopy(true);
       setVersion((v) => v + 1);
     }
@@ -461,6 +477,7 @@ export function ReportForm({
 
   // The server's draft replaces the whole editing state: form, mode and key.
   const adoptDraft = (d: ServerDraft) => {
+    outdated.add(view);
     const s = fromBody(d.data);
     setState(s);
     setEntered(enteredFrom(view.rabbits, s));
@@ -475,19 +492,21 @@ export function ReportForm({
   };
   // A conflict with no draft to adopt (a report was submitted meanwhile): load
   // ReportView again and reset everything from it when it arrives.
-  const reload = () => {
+  const reload = React.useCallback(() => {
     resync.current = true;
+    reloadFrom.current = viewRef.current;
     stopped.current = true;
     setSoldFor(null); // a sale dialog cannot save into a state about to be replaced
     setSyncing(true); // editing and Skicka wait for the answer
-    router.refresh();
+    routerRef.current.refresh();
     clearTimeout(syncTimer.current);
     // No answer after 10 s: stay locked and offer a full reload. A late
     // answer still syncs the form (the effect below).
     syncTimer.current = setTimeout(() => setSyncTimeout(true), 10000);
-  };
+  }, []);
   React.useEffect(() => {
-    if (!resync.current) return;
+    // the reload's own view comes again when React runs effects twice (development)
+    if (!resync.current || view === reloadFrom.current) return;
     resync.current = false;
     stopped.current = false;
     clearTimeout(syncTimer.current);
@@ -504,9 +523,30 @@ export function ReportForm({
     setLocalCopy(false);
     keyRef.current = view.draft?.submission_key ?? newKey();
     updatedAt.current = view.draft?.updated_at ?? null;
+    setSavedAt(view.draft ? fmtTime(view.draft.updated_at) : null);
     frozen.current = null;
-    writeLocal(store, view.herd.herd, view.year, null);
+    if (!keepLocal.current) writeLocal(store, view.herd.herd, view.year, null);
+    else {
+      // a reload on mount: the local copy is compared with the new view
+      keepLocal.current = false;
+      const c = localChoice(view, store, isPaper);
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- the local copy waited for this view
+      if (c?.older) setOlderCopy(c.older);
+      else if (c?.adopt) {
+        setState(c.adopt);
+        setEntered(enteredFrom(view.rabbits, c.adopt));
+        setLocalCopy(true);
+        setVersion(1); // autosave sends it
+      }
+    }
   }, [view, store, isPaper]);
+
+  // Back brought a view from before this tab's own writes: read it again.
+  React.useEffect(() => {
+    if (!outdated.has(viewRef.current)) return;
+    keepLocal.current = true;
+    reload();
+  }, [reload]);
 
   // One save in flight at a time: a change made meanwhile is sent after it
   // has been answered, with the version it returned.
@@ -542,7 +582,10 @@ export function ReportForm({
           ),
         );
         clearTimeout(slow);
-        if (res.ok) updatedAt.current = res.data.updated_at; // the server's truth, whatever came meanwhile
+        if (res.ok) {
+          updatedAt.current = res.data.updated_at; // the server's truth, whatever came meanwhile
+          outdated.add(viewRef.current);
+        }
         // Skicka started while this save was on its way: its answer says nothing about the form any more.
         if (!autosaveAnswerKept(sentAt, submissions.current)) {
           setSaveState((s) => (s === "saving" ? "saved" : s));

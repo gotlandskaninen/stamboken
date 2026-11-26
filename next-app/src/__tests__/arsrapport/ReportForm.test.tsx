@@ -1220,6 +1220,104 @@ describe("ReportForm", () => {
     ).toBe(false); // reset from the reloaded view
   });
 
+  // Next shows the view object from before the save again when the user comes Back (Jonas 2026-11-26).
+  const savedDraft = (rabbits: Record<string, { val: string }>) =>
+    view({
+      draft: {
+        data: { rabbits },
+        updated_at: "2026-12-31T10:00:00+00:00",
+        submission_key: null,
+        own: true,
+      },
+    } as never);
+  const checked = (n: number) =>
+    (within(row(n)).getByLabelText("Finns kvar") as HTMLInputElement).checked;
+
+  it("reads the page again when Back brings a view from before its own save, and saves on without a conflict", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    const before = view();
+    const first = render(<ReportForm env="demo" view={before} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    expect(a.saveDraft).toHaveBeenCalledTimes(1);
+    first.unmount(); // to the profile, and Back
+    const { rerender } = render(
+      <ReportForm env="demo" view={before} actions={a} />,
+    );
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(screen.getAllByText("Hämtar senaste versionen…")).not.toHaveLength(
+      0,
+    );
+    expect(
+      within(row(2)).getByLabelText("Finns kvar").matches(":disabled"),
+    ).toBe(true);
+    rerender(
+      <ReportForm
+        env="demo"
+        view={savedDraft({ "1": { val: "kvar" } })}
+        actions={a}
+      />,
+    );
+    expect(checked(1)).toBe(true);
+    expect(screen.getAllByText(/sparat \(senast 11\.00\)/)).not.toHaveLength(0);
+    choose(2, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    expect(a.saveDraft).toHaveBeenCalledTimes(2);
+    expect(a.saveDraft.mock.calls[1][3]).toBe("2026-12-31T10:00:00+00:00");
+    expect(screen.queryByText(/annan enhet/)).toBeNull();
+  });
+
+  it("keeps a change made just before leaving, when Back reads the page again", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    const before = view();
+    const first = render(<ReportForm env="demo" view={before} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    choose(2, "Finns kvar"); // left before its autosave: only the local copy has it
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    first.unmount();
+    const { rerender } = render(
+      <ReportForm env="demo" view={before} actions={a} />,
+    );
+    expect(refresh).toHaveBeenCalledTimes(1);
+    rerender(
+      <ReportForm
+        env="demo"
+        view={savedDraft({ "1": { val: "kvar" } })}
+        actions={a}
+      />,
+    );
+    expect([checked(1), checked(2)]).toEqual([true, true]);
+    expect(
+      screen.queryByText("Osparade ändringar på den här enheten"),
+    ).toBeNull();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    expect(a.saveDraft).toHaveBeenCalledTimes(2);
+    expect(a.saveDraft.mock.calls[1][2]).toMatchObject({
+      rabbits: { "1": { val: "kvar" }, "2": { val: "kvar" } },
+    });
+  });
+
+  it("does not read the page again on Back when nothing was saved from it", () => {
+    const a = actions();
+    const before = view();
+    render(<ReportForm env="demo" view={before} actions={a} />).unmount();
+    render(<ReportForm env="demo" view={before} actions={a} />);
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
   it("an error link clears the search and filter and focuses the control that needs input", async () => {
     const a = actions();
     a.dryRun.mockImplementation(() =>
@@ -1427,13 +1525,8 @@ describe("ReportForm", () => {
       getMothers: vi.fn(() => ok({ honor: [] })) as never,
       changeLitter: changeLitter as never,
     };
-    render(
-      <ReportForm
-        env="demo"
-        view={view({ litters: [preliminary] })}
-        actions={withLitters}
-      />,
-    );
+    const shown = view({ litters: [preliminary] });
+    render(<ReportForm env="demo" view={shown} actions={withLitters} />);
     expect(screen.getAllByText(/\(preliminärt\)/).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "Lägg till kull" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Bekräfta antalet" }));
@@ -1456,6 +1549,10 @@ describe("ReportForm", () => {
     await waitFor(() =>
       expect(screen.queryAllByText(/\(preliminärt\)/)).toHaveLength(0),
     );
+    // the litter is written, the view is not: Back reads the page again
+    cleanup();
+    render(<ReportForm env="demo" view={shown} actions={withLitters} />);
+    expect(refresh).toHaveBeenCalledTimes(1);
   });
 
   it("lists litters as a table with a summary line", () => {
