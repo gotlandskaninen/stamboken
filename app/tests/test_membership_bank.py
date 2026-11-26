@@ -361,6 +361,27 @@ RELOAD = {
 }
 
 
+class TestPayoutRead(SupportAccountTest):
+    def test_admin_and_kassor_read_the_whole_account_from_the_membership(self):
+        """Codex #278 r2: the herd page shows only the end and the legacy report list only legacy reports, so those
+        who pay the support out read the membership itself, a matrikel_admin without any genebank role too."""
+        path = f"/api/v2/memberships/{self.ms.id}/support-account"
+        whole = {"bank_account_type": "bankkonto", "bank_account_number": ACCOUNT, "bank_name": "Banken"}
+        for name in ("kassor", "admin"):
+            with self.subTest(name):
+                self.login(name)
+                response = self.client.get(path)
+                self.assertEqual((response.status_code, response.json), (200, whole))
+                self.assertEqual(response.headers["Cache-Control"], "no-store")
+        self.assertEqual(self.client.get("/api/v2/memberships/999999/support-account").status_code, 404)
+        for name in ("man", "main", "care", "owner", "hjalp"):
+            with self.subTest(name):
+                self.login(name)
+                response = self.client.get(path)
+                self.assertEqual(response.status_code, 403)
+                self.assertNotIn(DIGITS[0], response.get_data(as_text=True))
+
+
 class TestLegacyWriters(SupportAccountTest):
     def save(self, user, **fields):
         return da.update_herd({"id": self.herds[0].id, **fields}, user.uuid, legacy=True)
