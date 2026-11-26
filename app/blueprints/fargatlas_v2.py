@@ -3,11 +3,15 @@ The colour atlas (stamboken #37): the colours with the atlas's texts and photos,
 package lies under PRIVATE_UPLOAD_FOLDER (utils/fargatlas.py), which nginx does not serve.
 """
 
+import logging
+
 from extensions import limiter
 from flask import Blueprint, jsonify, request, send_file
 from utils import fargatlas
 
 from .common import json_login_required, problem
+
+logger = logging.getLogger(__name__)
 
 fargatlas_v2_bp = Blueprint("fargatlas_v2", __name__, url_prefix="/api/v2")
 
@@ -28,7 +32,12 @@ def foto(foto_id):
     path = fargatlas.foto_sokvag(foto_id, request.args.get("storlek", "1600"))
     if path is None:
         return problem(404, "Hittades inte", "Fotot finns inte.")
-    response = send_file(path, mimetype="image/jpeg", max_age=86400)
-    # send_file says public; the photos are for logged-in users, so no shared cache may keep them.
-    response.headers["Cache-Control"] = "private, max-age=86400"
+    try:
+        response = send_file(path, mimetype="image/jpeg", max_age=0)
+    except OSError as error:  # removed or unreadable since the check, for instance after a package copy
+        logger.warning("Colour atlas photo %s cannot be opened: %s", foto_id, type(error).__name__)
+        return problem(404, "Hittades inte", "Fotot finns inte.")
+    # Never kept by a shared cache, and checked again on each use: a photo taken out of the package, or a session
+    # that is no longer valid, stops at once. The ETag keeps that check to a 304 while the photo stays.
+    response.headers["Cache-Control"] = "private, no-cache"
     return response
