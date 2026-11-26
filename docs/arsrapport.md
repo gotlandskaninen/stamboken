@@ -15,6 +15,7 @@ som PDF. Reglerna finns i `app/utils/arsrapport.py` och endpointsen i
 | `GET /api/v2/arsrapport/besattning/<besättning>/<år>/forslag` | admin och genbanksansvarig i besättningens genbank. Hjälpare får 403. |
 | `POST /api/v2/arsrapport/forslag/<id>/godkann` och `…/avvisa` | admin och genbanksansvarig i besättningens genbank. Hjälpare, ägare och genbanksansvarig i den andra genbanken får 403. |
 | `POST /api/v2/arsrapport/besattning/<besättning>/<år>/kop` och `…/kop/inskick` | den som får rapportera för besättningen, inloggad eller via länken (`report_actor_required`). Länken når bara sin egen besättning och sitt år. |
+| `POST /api/v2/arsrapport/besattning/<besättning>/<år>/paminnelse` | admin och genbanksansvarig i besättningens genbank. Hjälpare, ägare, kassör och länken får 401 eller 403. |
 | `GET /api/v2/arsrapport/blankett.pdf` | alla som är inloggade |
 
 ## Statusvyn
@@ -24,7 +25,8 @@ som PDF. Reglerna finns i `app/utils/arsrapport.py` och endpointsen i
 ```text
 {round, genebank_id, activated, counts: {läge: antal},
  rows: [{herd, herd_name, state, source, membership_after_end, received_at, on_time_override,
-         inbox_item_id, telefon (bara för genbanksansvariga och administratör),
+         inbox_item_id, needs_report, last_reminder: {queued_at, sent_at, status} | null,
+         telefon (bara för genbanksansvariga och administratör),
          flags: {ej_angivna, ej_angivna_paverkar, forsaljning_vantar, forsaljning_avvisad,
                  forsaljning_avvisad_paverkar, kopt_efter_inskick, kop_anmalt},
          villkor: {hane, hona, kull, i_tid},
@@ -37,6 +39,10 @@ som PDF. Reglerna finns i `app/utils/arsrapport.py` och endpointsen i
   `inskickad`, `blankett_vantar` (en öppen post med en arsblankett i läget `vantar_uppfodare`),
   `blankett_inkommen` (en sådan post i något annat öppet läge), `paborjad` (ett utkast finns),
   `ingen_epost` (huvudmedlemmen saknar e-post), `ej_rapporterad`. `counts` har alla lägena.
+- **Ej svarat (`needs_report`):** en aktiv besättning utan inskickad rapport, också med utkast, med
+  en blankett i kön eller utan e-post. Filtret "Ej svarat" och listan Å5 nedan är samma besättningar.
+- **Senaste påminnelsen (`last_reminder`):** den senaste påminnelsen som har gått eller kan gå, med
+  mejlköns status. En som kön avbröt för att den inte längre behövdes visas inte.
 - **Stödvillkoren (`villkor`)** prövas per besättning mot kaninerna den höll 31 december
   (`innehav` i `arsrapport_statistik.py`):
   - `hane` och `hona`: minst en okastrerad kanin av könet. Kastrerade kaniner räknas inte, och inte
@@ -207,6 +213,16 @@ varje aktiv besättning utan inskickad rapport, i genbanker vars inbjudningar ha
   eller tillfället passerat avbryts den (`cancelled`), och jobbet köar en ny om den fortfarande
   behövs. En påminnelse som någon har stoppat i statusvyn, eller som misslyckades eller studsade,
   ersätts inte; den skickas igen med "Försök igen".
+
+Knappen "Skicka påminnelse" (`POST …/paminnelse`, svar `{"queued": true | false}`) köar en
+påminnelse med prioritet 1. `false` betyder att en redan väntar i kön eller har gått i dag. En
+påminnelse från knappen räknas för det tillfälle den hamnar i.
+
+Dagen efter `deadline` kl. 07.00 går listan `arsrapport.ej_svarat` (Å5) till varje aktiv
+genbanksansvarig i genbanken, en gång per runda, också om rundan har stängt, och i högst 14 dagar.
+Den har besättningsnummer och läge, uppdelat på blankett som inte är inmatad och inget inskick, och
+en länk till statusvyn med filtret "Ej svarat". Inga namn eller kontaktuppgifter. Listan läses när
+mejlet skickas; har alla svarat eller är mottagaren inte längre genbanksansvarig går inget.
 
 Mejlet har bara id:n och flaggor (`round_id`, `code_id`, `slot`, `scheduled`); länken byggs när
 det skickas. Saknar besättningen en giltig kod skapas den först (`issue_code`) och sparas, och

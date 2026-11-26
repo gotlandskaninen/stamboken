@@ -79,7 +79,7 @@ from utils.matrikel import purge_matrikel_audit_values, purge_previous_addresses
 from utils import inbox  # isort:skip
 from utils.inbox import queue_digests  # isort:skip
 from utils.arsrapport_invite import send_due_invitations  # isort:skip
-from utils.arsrapport_remind import send_due_reminders  # isort:skip
+from utils.arsrapport_remind import send_due_reminders, send_due_unanswered  # isort:skip
 from utils import inbox_gmail  # isort:skip
 from utils import inbox_purge  # isort:skip
 from utils import buyer_contact  # isort:skip
@@ -376,7 +376,7 @@ def _send_arsrapport_followups():
     """
     now = datetime.datetime.now(datetime.timezone.utc)
     try:
-        for name, due in (("reminders", send_due_reminders),):
+        for name, due in (("reminders", send_due_reminders), ("unanswered lists", send_due_unanswered)):
             try:
                 APP.logger.info("Queued %s yearly report %s", due(now), name)
             except Exception:  # pylint: disable=broad-except

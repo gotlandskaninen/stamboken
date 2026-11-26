@@ -23,6 +23,7 @@ import {
   newLink,
   saveDraft,
   saveRound,
+  sendReminder,
   sendTestMail,
   setOnTime,
   submitReport,
@@ -181,6 +182,23 @@ describe("arsrapport actions", () => {
       await sendTestMail(2026, 0, "demo"),
     ])
       expect(r).toMatchObject({ ok: false, problem: { status: 400 } });
+    expect(fetchApi).not.toHaveBeenCalled();
+  });
+  it("posts an empty reminder request and refuses a bad herd", async () => {
+    fetchApi.mockResolvedValue({ queued: true });
+    expect(await sendReminder("G9001", 2026, "demo")).toEqual({
+      ok: true,
+      data: { queued: true },
+    });
+    expect(fetchApi).toHaveBeenCalledWith(
+      "/v2/arsrapport/besattning/G9001/2026/paminnelse",
+      expect.objectContaining({ method: "POST", body: "{}" }),
+    );
+    fetchApi.mockClear();
+    expect(await sendReminder("../x", 2026, "demo")).toMatchObject({
+      ok: false,
+      problem: { status: 400 },
+    });
     expect(fetchApi).not.toHaveBeenCalled();
   });
 });

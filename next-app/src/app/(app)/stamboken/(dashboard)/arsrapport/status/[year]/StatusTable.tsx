@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import type { Mode } from "@/lib/mode";
 import { useMode } from "@/lib/mode-context";
 import { ConfirmDialog } from "../../../admin/_components/ConfirmDialog";
-import { newLink, setOnTime } from "../../actions";
+import { newLink, sendReminder, setOnTime } from "../../actions";
 import {
   INVITATION_TEXT,
   ROW_STATES,
@@ -44,6 +44,24 @@ const CONDITIONS = [
   ["i_tid", "I tid"],
 ] as const;
 const ON_TIME = { "": null, ja: true, nej: false } as const;
+
+function reminderText(reminder: StatusRow["last_reminder"]) {
+  switch (reminder?.status) {
+    case "queued":
+    case "sending":
+      return "Påminnelse i mejlkön";
+    case "sent":
+      return reminder.sent_at
+        ? `Påminnelse skickad ${fmtDate(reminder.sent_at)}`
+        : null;
+    case "failed":
+      return "Påminnelsen misslyckades";
+    case "bounced":
+      return "Påminnelsen studsade";
+    default:
+      return null;
+  }
+}
 
 // "Skriv ut tom blankett": the blank form is generic, so the page has one link.
 export function BlankFormLink({ available }: { available: boolean }) {
@@ -91,6 +109,7 @@ export function StatusTable({
   const [ask, setAsk] = useState<string | null>(null); // the herd whose "Ny länk" awaits its confirmation
   const [sales, setSales] = useState<string | null>(null); // the herd whose "Försäljningar" is open
   const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
   const errorRef = useRef<HTMLParagraphElement>(null);
   useEffect(() => {
     if (error) errorRef.current?.focus();
@@ -101,6 +120,7 @@ export function StatusTable({
   const today = todayStockholm();
   const counts = useMemo(() => countByState(view.rows), [view.rows]);
   const callCount = filterRows(view.rows, "att_ringa", deadline, today).length;
+  const unanswered = filterRows(view.rows, "ej_svarat", deadline, today).length;
   const rows = filterRows(view.rows, filter, deadline, today);
 
   const href = (f: StatusFilter) => {
@@ -110,6 +130,7 @@ export function StatusTable({
   };
   const tabs: [StatusFilter, string, number | null][] = [
     ["att_ringa", "Att ringa", callCount],
+    ["ej_svarat", "Ej svarat", unanswered],
     ...ROW_STATES.filter((s) => counts[s] > 0 || s === filter).map(
       (s): [StatusFilter, string, number] => [
         s,
@@ -124,6 +145,7 @@ export function StatusTable({
     if (busy) return;
     setBusy(true);
     setError(null);
+    setMessage(null);
     try {
       const res = await setOnTime(
         herd,
@@ -153,6 +175,29 @@ export function StatusTable({
     } finally {
       setBusy(false);
       setAsk(null);
+    }
+  }
+
+  async function remind(herd: string) {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const res = await sendReminder(herd, year, env);
+      if (!res.ok) setError(res.problem.detail || res.problem.title);
+      else {
+        setMessage(
+          res.data.queued
+            ? "Påminnelsen ligger i mejlkön."
+            : "En påminnelse finns redan i mejlkön eller har skickats i dag.",
+        );
+        startTransition(() => router.refresh());
+      }
+    } catch {
+      setError("Det gick inte att nå servern. Försök igen.");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -201,13 +246,20 @@ export function StatusTable({
           {error}
         </p>
       )}
+      {message && (
+        <p role="status" className={inkorg.muted}>
+          {message}
+        </p>
+      )}
       {rows.length === 0 ? (
         <p className={inkorg.muted}>
           {filter === "alla"
             ? "Inga besättningar i genbanken."
             : filter === "att_ringa"
               ? "Inga besättningar att ringa."
-              : `Inga besättningar i ${ROW_STATE_FILTER[filter]}.`}
+              : filter === "ej_svarat"
+                ? "Alla besättningar har svarat."
+                : `Inga besättningar i ${ROW_STATE_FILTER[filter]}.`}
         </p>
       ) : (
         <section className="sb-card">
@@ -232,6 +284,7 @@ export function StatusTable({
                   locked={busy || pending}
                   onTime={changeOnTime}
                   onNewLink={setAsk}
+                  onReminder={remind}
                   onSales={setSales}
                 />
               ))}
@@ -250,6 +303,7 @@ function Row({
   locked,
   onTime,
   onNewLink,
+  onReminder,
   onSales,
 }: {
   row: StatusRow;
@@ -258,9 +312,11 @@ function Row({
   locked: boolean;
   onTime: (herd: string, value: string) => void;
   onNewLink: (herd: string) => void;
+  onReminder: (herd: string) => void;
   onSales: (herd: string) => void;
 }) {
   const reported = row.received_at !== null;
+  const reminder = reminderText(row.last_reminder);
   // The state already says "Ingen e-post" when nothing else is going on.
   const flagNoEmail = row.ingen_epost && row.state !== "ingen_epost";
   const override =
@@ -308,6 +364,7 @@ function Row({
         {row.inbjudan && (
           <div className={inkorg.muted}>{INVITATION_TEXT[row.inbjudan]}</div>
         )}
+        {reminder && <div className={inkorg.muted}>{reminder}</div>}
         {row.state === "avslutar" && row.membership_after_end && (
           <div className={inkorg.muted}>
             {MEMBERSHIP_TEXT[row.membership_after_end]}
@@ -400,6 +457,16 @@ function Row({
               onClick={() => onNewLink(row.herd)}
             >
               Ny länk
+            </button>
+          )}
+          {canEdit && row.needs_report && !row.ingen_epost && (
+            <button
+              type="button"
+              className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
+              disabled={locked}
+              onClick={() => onReminder(row.herd)}
+            >
+              Skicka påminnelse
             </button>
           )}
           {canEdit && row.flags.forsaljning_vantar > 0 && (

@@ -1342,6 +1342,13 @@ def _answers_purchase(purchase, history):
     return entry.val == "kvar" or partial_date(when["ar"], when["manad"], when["dag"], today()) >= purchase.sale_date
 
 
+def _reminder_json(row):
+    """The herd's latest reminder that went or may still go; one the queue cancelled as obsolete is left out."""
+    if row is None:
+        return None
+    return {"queued_at": _iso(row.created_at), "sent_at": _iso(row.sent_at), "status": row.status}
+
+
 def status_view(round_, genebank_id, with_phone=False):
     """
     StatusView (5.14): a row per active herd of the genebank, and per herd with any report in the round (a withdrawn
@@ -1349,7 +1356,8 @@ def status_view(round_, genebank_id, with_phone=False):
     A fixed number of queries however many herds there are. `with_phone` adds the main member's phone to each row
     (`telefon`, null without one); without it the key is absent.
     """
-    import utils.purchase_notice as purchase_notice  # pylint: disable=import-outside-toplevel  # it imports this module
+    import utils.arsrapport_remind as remind  # pylint: disable=import-outside-toplevel  # they import this module
+    import utils.purchase_notice as purchase_notice  # pylint: disable=import-outside-toplevel
 
     year, last = round_.report_year, date(round_.report_year, 12, 31)
     in_round = list(
@@ -1374,6 +1382,7 @@ def status_view(round_, genebank_id, with_phone=False):
     )
     items, drafts, emails = _row_states(herds, round_)
     invitations = _invitations(herds, round_)
+    reminded = {row.herd_id: row for row in filter(remind.counts, remind.reminders(round_, [h.id for h in herds]))}
     held, stats, pending = innehav(genebank_id, year), statistik(genebank_id, year), _pending_sales(last)
     data = {herd_id: json.loads(report.data) for herd_id, report in reports.items()}
     unstated = sorted({int(i) for body in data.values() for i in body.get("not_stated") or ()})
@@ -1430,6 +1439,8 @@ def status_view(round_, genebank_id, with_phone=False):
                 "state": state,
                 "inbjudan": invitations.get(herd.id),
                 "ingen_epost": not emails.get(herd.id),
+                "needs_report": herd.is_active and report is None,  # Å5 and "Ej svarat" (P12)
+                "last_reminder": _reminder_json(reminded.get(herd.id)),
                 "source": report.source if report else None,
                 "membership_after_end": body.get("membership_after_end"),
                 "received_at": _iso(report.received_at) if report else None,

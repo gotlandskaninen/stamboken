@@ -1115,7 +1115,14 @@ export interface StatusRow {
   herd: string;
   herd_name: string | null;
   state: RowState;
+  needs_report: boolean; // active herd without a submitted report this round
   inbjudan: Invitation | null;
+  // The herd's latest reminder in the mail queue.
+  last_reminder: {
+    queued_at: string;
+    sent_at: string | null;
+    status: string;
+  } | null;
   ingen_epost: boolean;
   source: "login" | "link" | "paper" | null;
   membership_after_end: Membership | null;
@@ -1236,10 +1243,10 @@ export interface SaleProposalRow {
   kopanmalan_avviker: PurchaseNotice | null; // its notice dated too far off or across 31/12 (M1)
 }
 
-export type StatusFilter = "att_ringa" | "alla" | RowState;
+export type StatusFilter = "att_ringa" | "ej_svarat" | "alla" | RowState;
 
 export const parseFilter = (v: string | undefined): StatusFilter =>
-  v === "att_ringa" || ROW_STATES.includes(v as RowState)
+  v === "att_ringa" || v === "ej_svarat" || ROW_STATES.includes(v as RowState)
     ? (v as StatusFilter)
     : "alla";
 
@@ -1279,6 +1286,7 @@ export function filterRows(
   today: string = todayStockholm(),
 ): StatusRow[] {
   if (filter === "alla") return rows;
+  if (filter === "ej_svarat") return rows.filter((r) => r.needs_report);
   if (filter === "att_ringa")
     return rows.filter((r) => toCall(r, deadline, today));
   return rows.filter((r) => r.state === filter);

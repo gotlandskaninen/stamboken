@@ -16,6 +16,7 @@ from functools import wraps
 import utils.arsrapport as arsrapport
 import utils.arsrapport_invite as invite
 import utils.arsrapport_pdf as arsrapport_pdf
+import utils.arsrapport_remind as remind
 import utils.inbox as inbox
 import utils.purchase_notice as purchase_notice
 import utils.sale_proposal as sale_proposal
@@ -493,6 +494,22 @@ def new_link(herd, year):
         return denied
     invite.new_link(target, _genebank_round(year, target.genebank_id), current_user, now=arsrapport.now())
     return jsonify({"sent": True})
+
+
+# [Next.js] "Skicka påminnelse": a reminder to the herd's main member now; admin or the herd's genebank manager.
+# `queued` is false when one already waits in the mail queue or went today.
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/paminnelse", methods=["POST"])
+@json_login_required
+def send_reminder(herd, year):
+    target = Herd.get_or_none(Herd.herd == herd)
+    if target is None or target.herd in OUTSIDE_GENEBANK_HERDS:
+        raise ArsrapportError(404, "Besättningen finns inte.")
+    denied = check_genebank_access(target.genebank_id)
+    if denied:
+        return denied
+    round_ = _genebank_round(year, target.genebank_id)
+    queued = remind.send_reminder(target, round_, current_user, now=arsrapport.now())
+    return jsonify({"queued": queued is not None})
 
 
 # "Lägg till kanin från intyget" (4b Task 4, spec 5.8): the certificate's photo first, a `kontroll` item held from the

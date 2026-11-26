@@ -292,6 +292,16 @@ export async function newLink(herd: string, year: number, env: Mode) {
   return call<{ sent: boolean }>(env, path(herd, year, "/ny-lank"), "POST", {});
 }
 
+// "Skicka påminnelse" queues a reminder for the herd.
+export async function sendReminder(herd: string, year: number, env: Mode) {
+  return call<{ queued: boolean }>(
+    env,
+    path(herd, year, "/paminnelse"),
+    "POST",
+    {},
+  );
+}
+
 // "Skicka provmejl till mig": the invitation without a link, to the manager's own address.
 export async function sendTestMail(
   year: number,
