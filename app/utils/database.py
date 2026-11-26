@@ -75,7 +75,8 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # the yearly report v2 (51) + organization name and number on membership (52) +
 # notice.individual and buyer_contact.erased_email_hash (53) +
 # acceptance of the account rules (54) + each history year's realised Ne (55) +
-# a paper certificate's copy checked against the registry, inbox_document.saved_certificate, verified_at, _by (56).
+# a paper certificate's copy checked against the registry, inbox_document.saved_certificate and saved_number,
+# verified_at and verified_by (56).
 CURRENT_SCHEMA_VERSION = 56
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
@@ -2481,6 +2482,7 @@ class InboxDocument(BaseModel):
     # The paper certificate number the document was saved as, and whether its handler found the certificate and the
     # registry in agreement when the copy was made (the rabbit's badge, only while the rabbit keeps that number).
     saved_certificate = TextField(null=True)
+    saved_number = TextField(null=True)
     verified_at = TimestampTZField(null=True)
     verified_by = ForeignKeyField(User, null=True, on_delete="SET NULL", backref="+")
 
@@ -4987,6 +4989,7 @@ def migrate_55_to_56():
         # NULL for a certificate saved before: the number it was saved as is not recorded, and its rabbit's may
         # have changed since, so such a copy is never marked checked.
         DATABASE.execute_sql("ALTER TABLE inbox_document ADD COLUMN IF NOT EXISTS saved_certificate TEXT")
+        DATABASE.execute_sql("ALTER TABLE inbox_document ADD COLUMN IF NOT EXISTS saved_number TEXT")
         _create_field_indexes(InboxDocument, "verified_by")
         SchemaHistory.insert(  # pylint: disable=E1120
             version=56, comment="inbox_document: copy checked against the registry", applied=datetime.now()

@@ -892,7 +892,7 @@ def confirm_mask(item, document, user, rotation, rects, no_personal_data=None, m
         raise InboxError(exc.status, exc.detail) from None
     rabbit = Individual.get_by_id(document.individual_id)
     # Redone without holding the item: only by a manager of the rabbit's genebank, or an admin.
-    if not (document.public_path and manages(user, rabbit.current_herd.genebank_id)):
+    if not (document.public_path and manages(user, held_in(rabbit).genebank_id)):
         require_handler(item, user)
     if not may_publish(user, rabbit):
         raise InboxError(403, f"Du får inte lägga kopian på {rabbit.number}.")
@@ -907,12 +907,13 @@ def confirm_mask(item, document, user, rotation, rects, no_personal_data=None, m
         raise InboxError(
             409, "Fotot sparades innan Stamboken sparade intygsnumret, så det kan inte markeras kontrollerat."
         )
-    if matches_registry and (rabbit.certificate != document.saved_certificate or rabbit.digital_certificate):
+    stale = rabbit.certificate != document.saved_certificate or rabbit.number != document.saved_number
+    if matches_registry and (stale or rabbit.digital_certificate):
         # The check is of the certificate the photo was saved as: a number changed since is not the one compared.
         raise InboxError(
             409,
-            f"{rabbit.number} har ett annat intyg i Stamboken än {document.saved_certificate}, som fotot sparades "
-            "med. Kontrollera kaninen igen.",
+            f"{rabbit.number} har ett annat intyg eller individnummer i Stamboken än fotot sparades med "
+            f"({document.saved_certificate}, {document.saved_number}). Kontrollera kaninen igen.",
         )
     document.rotation, document.mask_rects = rotation, rects
     document.verified_at, document.verified_by = (now(), user.id) if matches_registry else (None, None)
@@ -932,7 +933,7 @@ def remove_copy(item, document, user):
     DELETE …/kopia: the masked copy comes off the rabbit (a badly masked one, with the original gone, cannot be
     made again). The caller holds the item's lock, and removes the returned file after the commit.
     """
-    genebank = document.individual.current_herd.genebank_id if document.individual_id else item.genebank_id
+    genebank = held_in(document.individual).genebank_id if document.individual_id else item.genebank_id
     if not manages(user, genebank):  # the rabbit's genebank: an item without one is any manager's
         raise InboxError(403, "Bara genbanksansvarig och admin kan ta bort en kopia.")
     if document.public_path is None:
@@ -944,6 +945,11 @@ def remove_copy(item, document, user):
     return path
 
 
+def held_in(individual):
+    """The rabbit's herd now; its herd of origin when its latest row has none (a migrated legacy row)."""
+    return individual.current_herd or individual.origin_herd
+
+
 def may_publish(user, individual, grant=None):
     """
     May `user` put a copy on `individual`, by linking a photo to it or by making its copy: a manager of its genebank
@@ -951,7 +957,7 @@ def may_publish(user, individual, grant=None):
     handler (`grant`), never in GX1/MX1; making the copy is not, so a rabbit she has just sold to GX1/MX1 through
     the item still gets its copy (confirm_mask has checked the handler already).
     """
-    herd = individual.current_herd
+    herd = held_in(individual)
     if manages(user, herd.genebank_id):
         return True
     return herd.genebank_id in (user.is_helper or []) and (grant is None or grant.allows(user, herd))
@@ -966,7 +972,8 @@ def checked_at(individual):
     # A rabbit with a digital certificate shows that one, even beside an old paper number: not the one checked.
     if copy is None or copy.verified_at is None or not individual.certificate or individual.digital_certificate:
         return None
-    return copy.verified_at if copy.saved_certificate == individual.certificate else None
+    same = copy.saved_certificate == individual.certificate and copy.saved_number == individual.number
+    return copy.verified_at if same else None
 
 
 def paper_certificate(individual):
@@ -997,7 +1004,7 @@ def documents_json(documents, report=False):
     if individual_ids:
         rabbits = {r.id: r for r in Individual.select().where(Individual.id.in_(individual_ids))}
     # The genebank the copy is decided in (confirm_mask, remove_copy): the rabbit's now, not the item's.
-    genebanks = {i: r.current_herd.genebank_id for i, r in rabbits.items()}
+    genebanks = {i: held_in(r).genebank_id for i, r in rabbits.items()}
     same = {}  # the same image (sha256) anywhere in the queue: a duplicate warning
     shas = {d.sha256 for d in documents}
     if shas:
@@ -1359,10 +1366,10 @@ def saved(item, document, user, individual, action):
     through the document records the sale's own seller and buyer instead, and they stay.
     """
     document.individual = individual
-    document.saved_certificate = individual.certificate
+    document.saved_certificate, document.saved_number = individual.certificate, individual.number
     if document.herd_tracking_id is None:
         document.seller_member = herd_holder(individual.origin_herd_id) or document.seller_member
-        now_in = individual.current_herd
+        now_in = held_in(individual)
         if now_in.id != individual.origin_herd_id and now_in.herd not in OUTSIDE_GENEBANK_HERDS:
             document.buyer_member = herd_holder(now_in.id) or document.buyer_member
     document.save()

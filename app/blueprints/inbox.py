@@ -824,6 +824,10 @@ def _assign_certificate(body, user, grant, document):
     if not grant.traced:  # nothing written, so no trace: the document stays unlinked
         raise inbox.InboxError(409, f"Ingen ändring: {individual.number} har redan intyget {certificate.strip()}.")
     individual = Individual.get_by_id(individual.id)
+    # The paper must be this rabbit's, also where the litter check could not tell (no litter number) or the rabbit
+    # was renumbered before the command's lock: the error rolls the certificate back.
+    if not _same_number(paper_number, individual):
+        raise inbox.InboxError(409, f"Intyget gäller {individual.number}, men numret på intyget är {paper_number}.")
     return {"individual": individual.as_dict()}, individual
 
 

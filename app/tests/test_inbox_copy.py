@@ -11,6 +11,7 @@ from unittest import mock
 import utils.database as db  # noqa: E402
 from PIL import Image  # noqa: E402
 
+from tests.ht_helpers import ht_row  # noqa: E402
 from tests.inbox_fixtures import InboxTest, encoded  # noqa: E402
 
 RED, BLUE = (220, 30, 30), (30, 30, 220)
@@ -150,6 +151,21 @@ class TestCopy(CopyTest):
         ).execute()
         self.login("spec")
         self.assertIsNone(self.client.get("/api/v2/individual/G1-2112").get_json()["paper_certificate_checked"])
+
+    def test_a_rabbit_renumbered_since_the_save_is_not_checked(self):
+        item, document = self.saved_document()  # G1-2112, P-1
+        db.Individual.update(number="G1-2118").where(db.Individual.number == "G1-2112").execute()
+        rects = [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+        self.assertEqual(self.mask(item, document, mask_rects=rects, matches_registry=True).status_code, 409)
+
+    def test_a_rabbit_whose_latest_row_has_no_herd_still_has_its_copy_decided(self):
+        item, document = self.saved_document()
+        rabbit = db.Individual.get(db.Individual.number == "G1-2112")
+        ht_row("TRANSFER", individual=rabbit, herd=None, herd_tracking_date=datetime.date.today())
+        rects = [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+        resp = self.mask(item, document, mask_rects=rects, matches_registry=True)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertEqual(resp.get_json()["document"]["individual_genebank_id"], rabbit.origin_herd.genebank_id)
 
     def test_a_photo_saved_before_the_number_was_kept_is_never_checked(self):
         item, document = self.saved_document()

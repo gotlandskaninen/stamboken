@@ -348,6 +348,21 @@ class TestSaveEndpoint(GrantTest):
         self.assertEqual(self.rabbit("G1-2111").certificate, "12")
         self.assertIsNone(db.InboxDocument.get_by_id(document.id).individual_id)
 
+    def test_an_uncertified_rabbit_without_a_litter_number_still_needs_its_own_number(self):
+        db.Breeding.update(litter_number=None).where(db.Breeding.id == self.rabbit("G1-2112").breeding_id).execute()
+        item, document = self.taken(self.helper)
+        self.login("hjalp")
+        body = {
+            "action": "pappersintyg",
+            "individual": "G1-2112",
+            "paper_certificate": "P-9",
+            "paper_number": "G1-2113",
+        }
+        resp = self.save(item, document, **body)
+        self.assertEqual((resp.status_code, resp.get_json().get("field")), (409, "paper_number"), resp.get_json())
+        self.assertIsNone(self.rabbit("G1-2112").certificate)
+        self.assertIsNone(db.InboxDocument.get_by_id(document.id).individual_id)
+
     def test_a_litter_changed_under_the_link_is_a_conflict(self):
         item, document = self.taken(self.helper)
         self.login("hjalp")

@@ -342,8 +342,8 @@ för en post med `ref_type` `sale_proposal`, vars statusvy avgör förslaget, oc
 - `has_copy`: kopian finns.
 - `verified_at`: när handläggaren bekräftade kopian med "stämmer med registret"
   (`matches_registry` i [Maskning](#maskning-och-kopian-på-kaninen)), annars `null`. Dokumentet
-  sparar också intygsnumret det sparades med (`saved_certificate`, inte i svaret); märkningen gäller
-  bara så länge kaninen har kvar det. Ett intyg som sparades före version 56 har inget sådant nummer
+  sparar också intygsnumret och individnumret det sparades med (`saved_certificate`, `saved_number`,
+  inte i svaret); märkningen gäller bara så länge kaninen har kvar båda. Ett intyg som sparades före version 56 har inget sådant nummer
   och kan inte märkas.
 - `individual_genebank_id`: genbanken för kaninen dokumentet är sparat på, där kopian görs om och tas
   bort (se [Maskning](#maskning-och-kopian-på-kaninen)); `null` när dokumentet inte är sparat.
@@ -916,7 +916,7 @@ Bekräftar vridningen och maskningen tillsammans och gör kopian av just det par
 | `rotation` | krävs: 0, 90, 180 eller 270 grader medurs |
 | `mask_rects` | krävs: rektanglarna i bråkdelar av bilden vriden `rotation` grader. Får inte vara `null` |
 | `no_personal_data` | `true` krävs när `mask_rects` är en tom lista: intyget visar ingen säljare eller köpare |
-| `matches_registry` | `true` när handläggaren har jämfört intyget med registret och de stämmer. Ger kaninen märkningen "Intyget kontrollerat" (se nedan). Handläggaren kryssar i det själv varje gång, också när kopian görs om. Gränssnittet visar "Förslag: stämmer" när tolkningen läste kaninens eget nummer och intygsnumret (båda `läst`) och ingen kontroll gick emot, men handläggaren avgör (Jonas 2026-11-26). Utelämnat eller `false`: ingen märkning. Kaninen måste ha kvar det intygsnummer som fotot sparades med (`saved_certificate`), annars 409: kontrollen gäller det intyg handläggaren jämförde |
+| `matches_registry` | `true` när handläggaren har jämfört intyget med registret och de stämmer. Ger kaninen märkningen "Intyget kontrollerat" (se nedan). Handläggaren kryssar i det själv varje gång, också när kopian görs om. Gränssnittet visar "Förslag: stämmer" när tolkningen läste kaninens eget nummer och intygsnumret (båda `läst`) och ingen kontroll gick emot, men handläggaren avgör (Jonas 2026-11-26). Utelämnat eller `false`: ingen märkning. Kaninen måste ha kvar det intygsnummer och individnummer som fotot sparades med (`saved_certificate`, `saved_number`), annars 409: kontrollen gäller det intyg handläggaren jämförde |
 
 Båda värdena sparas på dokumentet i samma transaktion som kopian görs. Det som redan står på
 dokumentet (från `PATCH`) används inte: kopian visar exakt det paret som skickades. Likaså
