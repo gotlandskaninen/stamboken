@@ -113,7 +113,14 @@ from utils.matrikel import (
     set_member_email,
     write_matrikel_audit,
 )
-from utils.members import CONSENT_TEXT_VERSION, consent_from_answer, effective_consent, set_consent, stored_consent
+from utils.members import (
+    CONSENT_TEXT_VERSION,
+    CONSENT_TEXT_VERSIONS,
+    consent_from_answer,
+    effective_consent,
+    set_consent,
+    stored_consent,
+)
 from utils.reference_population import _alive_by_note
 from utils.report_code import actor_key
 
@@ -2522,7 +2529,9 @@ def later_fields(herd, membership, member, signed_on: date, own=frozenset()) -> 
     if any(row.transaction_id not in transactions for row in account):
         fields.add("konto")
     consent = PublicationConsentChange.select(PublicationConsentChange.submission_id).where(
-        PublicationConsentChange.membership == membership.id, PublicationConsentChange.at >= after
+        PublicationConsentChange.membership == membership.id,
+        PublicationConsentChange.at >= after,
+        PublicationConsentChange.text_version.in_(CONSENT_TEXT_VERSIONS),  # an answer to an older text is none (5.11)
     )
     if any(row.submission_id not in own for row in consent):  # a profile row has none
         fields.add("publicering")

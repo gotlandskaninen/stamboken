@@ -98,18 +98,21 @@ class MatrikelTest(PaperTest):
         self.assertEqual(self.contact_audits(), [])  # the consent's log is its own table
 
     def test_paper_answer_to_an_older_text_is_recorded(self):
-        """5.11: the old profile's yes ("profil-2025") is no answer to the list of herds, so the same answer on the
-        form is a new answer: written with this text's version, not skipped as unchanged."""
+        """5.11: the old profile's yes ("profil-2025") is no answer to the list of herds, also when it is dated after
+        the form: the form's Ja or Nej is a new answer, written with this text's version, never skipped."""
         membership = self.member.membership_id
-        db.Membership.update(publication_consent=ALL).where(db.Membership.id == membership).execute()
-        db.PublicationConsentChange.create(
-            membership=membership, at=datetime(2025, 6, 1), value=ALL, text_version="profil-2025", source="profil"
-        )
         self.login("hjalp")
-        receipt = self.answer(self.form(self.helper), JA)
-        self.assertEqual((self.stored(), receipt["matrikel"]), (ALL, ["publicering"]))
-        change = self.changes()[-1]
-        self.assertEqual((change.value, change.source, change.text_version), (ALL, "paper", CONSENT_TEXT_VERSION))
+        for revision, (answer, value) in enumerate(((JA, ALL), (NEJ, NONE))):
+            with self.subTest(answer=answer):
+                db.Membership.update(publication_consent=ALL).where(db.Membership.id == membership).execute()
+                old = {"value": ALL, "text_version": "profil-2025", "source": "profil"}
+                db.PublicationConsentChange.create(membership=membership, at=datetime(2026, 2, 1), **old)
+                extra = {"revision": revision, "reason": "Ny blankett"} if revision else {}
+                receipt = self.answer(self.form(self.helper), answer, **extra)
+                self.assertEqual((receipt["matrikel"], receipt["warnings"]), (["publicering"], []))
+                change = self.changes()[-1]
+                self.assertEqual((self.stored(), change.value, change.source), (value, value, "paper"))
+                self.assertEqual(change.text_version, CONSENT_TEXT_VERSION)
 
     def test_paper_ja_is_written_directly_too(self):
         self.login("hjalp")
