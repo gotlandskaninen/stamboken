@@ -86,6 +86,46 @@ describe("PhotoViewer: the mouse wheel zooms", () => {
     expect(wheel(region, 100, { buttons: 1 }).defaultPrevented).toBe(true);
   });
 
+  it("holds it still from a press in the photo until it ends, as Safari says no button is down", () => {
+    const region = setup();
+    act(() => {
+      region.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    });
+    expect(wheel(region, -100).defaultPrevented).toBe(true);
+    expect(screen.getByText("100 %")).toBeInTheDocument();
+    act(() => {
+      window.dispatchEvent(new Event("pointerup"));
+    });
+    wheel(region, -100);
+    expect(screen.getByText("150 %")).toBeInTheDocument();
+  });
+
+  it("reads the unit first, so Firefox keeps a notch in lines", () => {
+    const region = setup();
+    // Firefox reports pixels (16 a line) when a delta is read before deltaMode, lines otherwise.
+    const event = new WheelEvent("wheel", { bubbles: true, cancelable: true });
+    let unitRead = false;
+    let pixels = false;
+    const delta = (lines: number) => () => {
+      if (!unitRead) pixels = true;
+      return pixels ? lines * 16 : lines;
+    };
+    Object.defineProperties(event, {
+      deltaMode: {
+        get: () => {
+          unitRead = true;
+          return pixels ? 0 : WheelEvent.DOM_DELTA_LINE;
+        },
+      },
+      deltaX: { get: delta(0) },
+      deltaY: { get: delta(-1) },
+    });
+    act(() => {
+      region.dispatchEvent(event);
+    });
+    expect(screen.getByText("150 %")).toBeInTheDocument();
+  });
+
   it("takes a line or a page as a notch", () => {
     const region = setup();
     wheel(region, -1, { deltaMode: WheelEvent.DOM_DELTA_PAGE });

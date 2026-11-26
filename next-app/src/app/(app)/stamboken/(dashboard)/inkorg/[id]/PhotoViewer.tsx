@@ -111,17 +111,22 @@ export function PhotoViewer({
   useEffect(() => {
     const vp = viewportRef.current;
     if (!vp) return;
+    // A press in the photo until it ends anywhere: a masking rectangle or the photo is being dragged, and its
+    // maths needs the photo still. Safari's wheel events say no button is down, and Delete can remove the rectangle.
+    let held = false;
+    const press = () => (held = true);
+    const release = () => (held = false);
     const onWheel = (e: WheelEvent) => {
+      const mode = e.deltaMode; // first: Firefox turns lines into pixels once a delta is read
       if (e.ctrlKey) return;
-      // A button held: a masking rectangle or the photo is being dragged, and its maths needs the photo still.
-      if (e.buttons) return e.preventDefault();
+      if (held || e.buttons) return e.preventDefault();
       const stage = stageRef.current;
       const sideways = Math.abs(e.deltaX) > Math.abs(e.deltaY);
       const last = e.deltaY > 0 ? 0 : ZOOMS.length - 1;
       if (sideways || !stage || shown.current === last) return;
       e.preventDefault();
       // A line or a page (deltaMode 1, 2) is a notch.
-      spun.current += e.deltaMode ? Math.sign(e.deltaY) * WHEEL_STEP : e.deltaY;
+      spun.current += mode ? Math.sign(e.deltaY) * WHEEL_STEP : e.deltaY;
       if (Math.abs(spun.current) < WHEEL_STEP) return;
       // One step per event: a mouse notch is one step whatever its size; a trackpad's flicks add up.
       const step = spun.current < 0 ? 1 : -1;
@@ -137,7 +142,15 @@ export function PhotoViewer({
       setZoom((z) => Math.min(ZOOMS.length - 1, Math.max(0, z + step)));
     };
     vp.addEventListener("wheel", onWheel, { passive: false });
-    return () => vp.removeEventListener("wheel", onWheel);
+    vp.addEventListener("pointerdown", press, true);
+    window.addEventListener("pointerup", release);
+    window.addEventListener("pointercancel", release);
+    return () => {
+      vp.removeEventListener("wheel", onWheel);
+      vp.removeEventListener("pointerdown", press, true);
+      window.removeEventListener("pointerup", release);
+      window.removeEventListener("pointercancel", release);
+    };
   }, [viewer]);
 
   // After the stage is laid out at the new size: the same point of the photo back under the pointer.
