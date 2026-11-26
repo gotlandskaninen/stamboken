@@ -251,6 +251,7 @@ describe("WorkView: masking", () => {
       90,
       [{ x: 0, y: 0, w: 0.3333, h: 1 }],
       false,
+      false,
     );
   });
 
@@ -276,7 +277,14 @@ describe("WorkView: masking", () => {
     );
     expect(confirm).toBeEnabled();
     fireEvent.click(confirm);
-    expect(actions.confirmMask).toHaveBeenCalledWith(12, 31, 0, [], true);
+    expect(actions.confirmMask).toHaveBeenCalledWith(
+      12,
+      31,
+      0,
+      [],
+      true,
+      false,
+    );
   });
 
   it("lets a manager redo the masking of a finished document, from its stored rotation", () => {
@@ -303,7 +311,103 @@ describe("WorkView: masking", () => {
       90,
       [{ x: 0.1, y: 0.1, w: 0.2, h: 0.2 }],
       false,
+      false,
     );
+  });
+
+  it("records the registry check only when the handler ticks it; the reading only proposes it", () => {
+    const box = () =>
+      screen.getByLabelText(
+        "Jag har jämfört intyget med registret och de stämmer",
+      );
+    const confirm = () =>
+      fireEvent.click(
+        screen.getByRole("button", { name: "Bekräfta maskningen och nästa" }),
+      );
+    const read = (
+      fields: NonNullable<InboxDocument["proposal"]>["fields"],
+      checks: { ok: boolean | null; text: string }[] = [
+        { ok: true, text: "Föräldrarna på intyget stämmer med registret." },
+      ],
+    ) =>
+      doc({
+        individual: "G9001-2512",
+        interpretation_status: "klar",
+        proposal: { fields, checks },
+      });
+    const own = {
+      individual: { value: "G9001-2512", source: "läst" as const },
+      paper_certificate: { value: "SYN-1", source: "läst" as const },
+    };
+    const { unmount } = render(view(item({ documents: [read(own)] })));
+    expect(box()).not.toBeChecked();
+    expect(screen.getByText(/Förslag: stämmer/)).toBeInTheDocument();
+    fireEvent.click(box());
+    confirm();
+    expect(actions.confirmMask).toHaveBeenLastCalledWith(
+      12,
+      31,
+      0,
+      expect.any(Array),
+      false,
+      true,
+    );
+    unmount();
+    // No proposal when the reading names another rabbit, only derives it, or a check failed.
+    for (const other of [
+      read({ individual: { value: "G9001-2511", source: "läst" } }),
+      read({ individual: { value: "G9001-2512", source: "härlett" } }),
+      // Read as a rabbit with a digital certificate: no certificate number was compared.
+      read({ individual: { value: "G9001-2512", source: "läst" } }),
+      read({}, [{ ok: true, text: "Intygsnumret är ledigt." }]),
+      read(own, [
+        { ok: true, text: "Föräldrarna på intyget stämmer med registret." },
+        { ok: false, text: "Namnet skiljer sig." },
+      ]),
+    ]) {
+      const { unmount: done } = render(view(item({ documents: [other] })));
+      expect(screen.queryByText(/Förslag: stämmer/)).toBeNull();
+      done();
+    }
+  });
+
+  it("asks for the check again when the masking is redone", () => {
+    const done = doc({
+      status: "klar",
+      has_copy: true,
+      verified_at: "2026-11-26T10:00:00+00:00",
+    });
+    render(
+      view(
+        item({ state: "klar", assigned_to: other, documents: [done] }),
+        boss,
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Gör om maskningen" }));
+    expect(
+      screen.getByLabelText(
+        "Jag har jämfört intyget med registret och de stämmer",
+      ),
+    ).not.toBeChecked();
+  });
+
+  it("offers the redo to a manager of the rabbit's genebank on another genebank's item", () => {
+    const done = doc({
+      status: "klar",
+      has_copy: true,
+      individual_genebank_id: 2,
+    });
+    const mellerud: QueueUser = { id: 4, is_admin: false, is_manager: [2] };
+    render(
+      view(
+        item({ state: "klar", assigned_to: other, documents: [done] }),
+        mellerud,
+        true,
+      ),
+    );
+    expect(
+      screen.getByRole("button", { name: "Gör om maskningen" }),
+    ).toBeInTheDocument();
   });
 
   it("does not offer the redo to a helper once the item is closed", () => {

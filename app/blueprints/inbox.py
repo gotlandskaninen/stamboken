@@ -32,6 +32,7 @@ from utils.database import (
     OUTSIDE_GENEBANK_HERDS,
     Herd,
     HerdTracking,
+    InboxDocument,
     InboxItem,
     Individual,
     User,
@@ -709,7 +710,7 @@ _FIELD_BY_DETAIL = (
         re.compile(r"intygsnumret|Intygsnummer krävs|paper_certificate|certificate already exists", re.I),
         "paper_certificate",
     ),
-    (re.compile(r"som det står på pappersintyget|^Individnumret ska skrivas"), "paper_number"),
+    (re.compile(r"som det står på pappersintyget|^Individnumret ska skrivas|numret på intyget är"), "paper_number"),
     (re.compile(r"färg|color", re.I), "color"),
     (re.compile(r"^Kaninen finns inte"), "individual"),
 )
@@ -775,6 +776,11 @@ def _register_new(body, user, grant):
     return response[0].get_json(), individual
 
 
+def _same_number(paper_number, individual):
+    """The stored number exactly: G1-25012 and G1-2512 parse alike but are different rabbits."""
+    return re.sub(r"\s", "", paper_number).upper() == individual.number.upper()
+
+
 def _assign_certificate(body, user, grant, document):
     """The paper certificate on a rabbit already in Stamboken (AssignPaperCertificate)."""
     individual = _live_individual(body.get("individual"))
@@ -784,6 +790,31 @@ def _assign_certificate(body, user, grant, document):
         raise inbox.InboxError(400, "Ange intygsnumret (paper_certificate), högst 20 tecken.")
     if parse_number(paper_number) is None:
         raise inbox.InboxError(400, PAPER_NUMBER_REQUIRED)
+    if (individual.certificate or individual.digital_certificate) and not _same_number(paper_number, individual):
+        # A certified rabbit's number is never checked by the command (_verify_number): the paper must be its own.
+        raise inbox.InboxError(409, f"Intyget gäller {individual.number}, men numret på intyget är {paper_number}.")
+    if individual.certificate == certificate.strip():
+        # A photo of the certificate the rabbit already has: nothing is written, the document is linked so its copy
+        # can go on the rabbit. A helper may link in her genebank too (Jonas 2026-11-26). Under the rabbit's lock, so
+        # a rename or a new certificate cannot slip in before the link is saved.
+        try:
+            if not lock_individual_for_edit(individual.id):
+                raise inbox.InboxError(404, "Kaninen finns inte i Stamboken.")
+        except HerdTrackingError as exc:  # its litter changed since it was read
+            raise _Refused(_command_problem(exc)) from None
+        individual = Individual.get_or_none((Individual.id == individual.id) & not_voided())
+        if individual is None:
+            raise inbox.InboxError(404, "Kaninen finns inte i Stamboken.")
+        if individual.certificate != certificate.strip():
+            raise inbox.InboxError(409, f"{individual.number} har ändrats. Öppna posten igen och spara på nytt.")
+        if not inbox.may_publish(user, individual, grant):
+            raise inbox.InboxError(403, f"Du får inte lägga intyg på {individual.number}.")
+        if not _same_number(paper_number, individual):
+            raise inbox.InboxError(
+                409,
+                f"Intyget {certificate.strip()} gäller {individual.number}, men numret på intyget är {paper_number}.",
+            )
+        return {"individual": individual.as_dict()}, individual
     try:
         execute(
             user, individual.id, lambda ctx: [AssignPaperCertificate(certificate.strip(), paper_number)], grant=grant
@@ -793,6 +824,10 @@ def _assign_certificate(body, user, grant, document):
     if not grant.traced:  # nothing written, so no trace: the document stays unlinked
         raise inbox.InboxError(409, f"Ingen ändring: {individual.number} har redan intyget {certificate.strip()}.")
     individual = Individual.get_by_id(individual.id)
+    # The paper must be this rabbit's, also where the litter check could not tell (no litter number) or the rabbit
+    # was renumbered before the command's lock: the error rolls the certificate back.
+    if not _same_number(paper_number, individual):
+        raise inbox.InboxError(409, f"Intyget gäller {individual.number}, men numret på intyget är {paper_number}.")
     return {"individual": individual.as_dict()}, individual
 
 
@@ -823,7 +858,7 @@ def save_document(item_id, document_id):
                 result = _assign_certificate(body, user, grant, document)
             else:
                 raise inbox.InboxError(400, 'action är "ny_kanin" eller "pappersintyg".')
-            inbox.saved(item, document, user, result[1], action)
+            inbox.saved(item, document, user, result[1], action, body.get("paper_number"))
             answer = _with_item(result, item, document)
     except _Refused as refused:
         return _placed(refused.response)
@@ -938,15 +973,32 @@ def _private_jpeg(relative):
 @_queue_worker
 def confirm_mask(item_id, document_id):
     body = _body()
+    replaced = []
 
     def action(item):
         document = inbox.document_of(item, document_id)
-        inbox.confirm_mask(
-            item, document, current_user, body.get("rotation"), body.get("mask_rects"), body.get("no_personal_data")
-        )
+        replaced[:] = [
+            inbox.confirm_mask(
+                item,
+                document,
+                current_user,
+                body.get("rotation"),
+                body.get("mask_rects"),
+                body.get("no_personal_data"),
+                body.get("matches_registry"),
+            )
+        ]
         return jsonify({"item": inbox.items_json([item])[0], "document": inbox.documents_json([document])[0]})
 
-    return _locked(item_id, action)
+    answer = _locked(item_id, action)
+    # The copy it replaced, once the new one is committed. The commit decides the answer: a file left behind is
+    # logged and taken by the nightly job.
+    try:
+        if replaced and replaced[0] and InboxDocument.get_by_id(document_id).public_path != replaced[0]:
+            inbox.remove_files(replaced)
+    except Exception:  # pylint: disable=broad-except
+        logger.warning("The replaced copy of document %s was not removed", document_id, exc_info=True)
+    return answer
 
 
 # [Next.js] Erase one document's original on request; only the masked copy, if made, is left. Managers and admins.
