@@ -2994,9 +2994,12 @@ def receipt(submission) -> dict:
 
 def _digital_fields(submission):
     """
-    The PAPER_FIELDS a digital Skicka wrote into the matrikel itself, from the rows that name its id: the logged-in
-    member's kontakt_andrad and either's consent row. A link's change confirmed later names its request, not this.
+    The PAPER_FIELDS a logged-in Skicka wrote into the matrikel itself, from the rows that name its id: its
+    kontakt_andrad and its consent row. None for the link: what its No wrote must not tell a forwarded link what the
+    matrikel held.
     """
+    if submission.access_code_id is not None:
+        return []
     audits = MatrikelAudit.select(MatrikelAudit.payload).where(
         MatrikelAudit.membership == YearlyHerdReport.get_by_id(submission.report_id).herd.membership_id,
         MatrikelAudit.action == "kontakt_andrad",

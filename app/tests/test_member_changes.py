@@ -11,6 +11,7 @@ import dataclasses
 import hashlib
 import hmac
 import json
+import re
 from datetime import date, datetime, timedelta, timezone
 from unittest import mock
 
@@ -61,6 +62,7 @@ class DetailsTest(ArsrapportTest):
             ).where(db.Membership.id == member.membership_id).execute()
         self.rabbits_ = self.rabbits(self.h, 1)
         self.rabbits2 = self.rabbits(self.h2, 1)
+        self.tokens = {}
 
     def link_owner(self):
         db.Member.update(user=self.owner.id).where(db.Member.id == self.member.id).execute()
@@ -88,7 +90,9 @@ class DetailsTest(ArsrapportTest):
     def ok(self, **kwargs):
         response = self.skicka(**kwargs)
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
-        return response.get_json()
+        receipt = response.get_json()
+        self.tokens[receipt["submission_id"]] = self.mail_token(receipt["submission_id"])  # as the mailbox got it
+        return receipt
 
     def view(self, herd="G9001"):
         return self.api("GET", REPORT.format(herd=herd)).get_json()
@@ -105,8 +109,19 @@ class DetailsTest(ArsrapportTest):
     def rendered(self, row):
         return mail.render(row.kind, mail.MAIL_KINDS[row.kind].build(row.params))
 
+    def mail_token(self, submission_id):
+        """The confirmation token in the submission's receipt mail, as it renders now; None without one."""
+        (row,) = db.MailMessage.select().where(
+            db.MailMessage.kind.in_(("arsrapport.kvitto", "arsrapport.andrad")),
+            db.MailMessage.ref_id == submission_id,
+        )
+        variables = mail.MAIL_KINDS[row.kind].build(row.params)
+        found = re.search(r"/rapport/andringar#(\S+)$", mail.render(row.kind, variables)[1], re.M)
+        return found[1] if found else None
+
     def token(self, submission_id):
-        return mail.link_token("andringar", submission_id)
+        """The token the mailbox got when the receipt went, right after Skicka."""
+        return self.tokens.get(submission_id) or self.mail_token(submission_id)
 
     def changes(self, submission_id, route="", **body):
         path = f"/api/v2/rapport/andringar{route}"
@@ -229,7 +244,7 @@ class TestLink(DetailsTest):
             set_consent(self.membership(), ALL, source="profil", text_version=CONSENT_TEXT_VERSION)
         self.submit_changes({"publicering": {**JA, "utom": ["phone"]}})
         self.assertEqual(self.membership().publication_consent, {**ALL, "phone": False})
-        self.assertEqual(self.requests(), [])
+        self.assertEqual([row.kind for row in self.requests()], ["publicering"])  # a Ja always waits (no leak)
         self.ok(matrikel={"publicering": NEJ})
         self.assertEqual(self.membership().publication_consent, NONE)
         self.assertEqual({row.source for row in db.PublicationConsentChange.select()}, {"profil", "link"})
@@ -430,3 +445,31 @@ class TestLoginReceiptAddress(DetailsTest):
         with db.DB_PROXY.atomic():
             set_member_email(db.Member.get_by_id(self.member.id), "ny@example.invalid", self.admin, by="matrikel")
         self.assertEqual(mail.MAIL_KINDS[kvitto.kind].login_address(kvitto.params), "ny@example.invalid")
+
+
+class TestReviewRound1(DetailsTest):
+    """PR #280, review round 1: each test fails without its fix."""
+
+    def submit_changes(self, matrikel, herd="G9001"):
+        self.open_link(herd)
+        return self.ok(herd=herd, matrikel=matrikel)
+
+    # 1. The link never reveals a stored value
+    def test_link_records_every_named_field_and_its_receipt_names_no_write(self):
+        with db.DB_PROXY.atomic():
+            set_consent(self.membership(), ALL, source="profil", text_version=CONSENT_TEXT_VERSION)
+        same = {"telefon": "0709-111 222", "epost": "g9001@example.invalid", "publicering": JA}
+        receipt = self.submit_changes(same)
+        self.assertEqual([row.kind for row in self.requests()], ["kontakt", "epost", "publicering"])
+        self.assertEqual(receipt["matrikel"], [])
+        other = self.ok(matrikel={"publicering": NEJ})  # written at once, but the receipt says nothing of it
+        self.assertEqual(self.membership().publication_consent, NONE)
+        self.assertEqual(other["matrikel"], [])
+        view = self.changes(receipt["submission_id"]).get_json()
+        done = self.changes(receipt["submission_id"], "/bekrafta", version=view["version"], konto=False).get_json()
+        self.assertEqual({c["falt"]: c["state"] for c in done["changes"]}["telefon"], "bekraftad")
+        actions = [
+            a.payload.get("fields")
+            for a in db.MatrikelAudit.select().where(db.MatrikelAudit.action == "kontakt_andrad")
+        ]
+        self.assertEqual(actions, [])  # the same phone and e-mail write nothing

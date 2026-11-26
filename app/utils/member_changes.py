@@ -55,14 +55,15 @@ def _state(row, now):
 
 def record(herd, membership, member, submission, code, matrikel):
     """
-    The link's "Dina uppgifter" at Skicka: only what differs from the matrikel, blank being no change (as on paper).
-    Koharen: a No, or what a Ja takes away from an earlier answer, is written now (source "link"); what it adds, or
-    a Ja on a membership that never answered, waits. Everything else is one waiting row per field (D5). The caller
-    holds the membership's lock and checked that `member` is the code's.
+    The link's "Dina uppgifter" at Skicka: every field it names waits as one row per field (D5), blank being no
+    change (as on paper). Nothing is compared with the matrikel here, so neither the rows nor the receipt tell a
+    forwarded link whether a guess matched a stored value; the confirmation compares. Koharen: a No, or what a Ja
+    takes away from an earlier answer, is written now (source "link"); a Ja always waits. The caller holds the
+    membership's lock and checked that `member` is the code's.
     """
     at = submission.created_at
     expires = at + timedelta(days=CHANGE_DAYS)
-    changes = arsrapport._changes(membership, member, arsrapport._contact(matrikel)[0])
+    changes = arsrapport._contact(matrikel)[0]
 
     def wait(kind, value):
         MemberChangeRequest.create(
@@ -96,7 +97,7 @@ def record(herd, membership, member, submission, code, matrikel):
                 submission=submission.id,
                 at=at,
             )
-        if narrowed != wanted:
+        if answer["ja"]:
             wait("publicering", {"new": wanted, "text_version": CONSENT_TEXT_VERSION})
 
 
@@ -326,7 +327,9 @@ def confirm(token, *, account, version):
                 continue
             field, new = _field(row), row.value["new"]
             payload = {"source": "link", "request_id": row.id, "access_code_id": row.access_code_id}
-            if row.kind == "epost":
+            if row.kind == "epost" and arsrapport._same("email", member.email, new):
+                pass  # the address it asks for is the matrikel's already
+            elif row.kind == "epost":
                 if not arsrapport._same("email", member.email, (row.value["old"] or "").lower()):
                     row.revoked_at, row.revoked_reason = now, "andrad"
                     row.save(only=[MemberChangeRequest.revoked_at, MemberChangeRequest.revoked_reason])
@@ -340,7 +343,7 @@ def confirm(token, *, account, version):
                     continue
                 payload |= {"before": {"email": old}, "after": {"email": member.email}}
                 arsrapport.save_contact(membership, member, {"epost": {"email": new}}, None, payload)
-            elif row.kind == "publicering":
+            elif row.kind == "publicering":  # set_consent writes nothing when it is the stored answer
                 set_consent(
                     membership,
                     new,
@@ -350,8 +353,8 @@ def confirm(token, *, account, version):
                     at=now,
                     revoke_waiting=False,
                 )
-            else:
-                arsrapport.save_contact(membership, member, {field: new}, None, payload)
+            elif written := arsrapport._changes(membership, member, {field: new}):  # only what differs now
+                arsrapport.save_contact(membership, member, written, None, payload)
                 if field == "konto":
                     arsrapport.account_notice(herd, member, f"andring:{row.id}")
             row.confirmed_at = now
