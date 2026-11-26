@@ -37,7 +37,9 @@ export const ADD_FROM_CERTIFICATE =
   "Saknas en kanin? Lägg till den från intyget.";
 export const RABBIT_SAVED =
   "Kaninen är registrerad i Stamboken nu. Den finns kvar även om du drar tillbaka rapporten.";
-export const MAX_BYTES = 25 * 1024 * 1024; // the server's limit, checked before the photo is sent
+// The server's limit, checked before the photo is sent. nginx lets 26 MB through only on the
+// report's pages (/stamboken/arsrapport/…, /rapport): a new page with this form needs a location there.
+export const MAX_BYTES = 25 * 1024 * 1024;
 export const PHOTO_FIRST = "Ladda upp fotot av intyget först.";
 const PHOTO_SENDING = "Fotot laddas upp. Spara när det är klart.";
 const INTRO: Record<Parent, string> = {

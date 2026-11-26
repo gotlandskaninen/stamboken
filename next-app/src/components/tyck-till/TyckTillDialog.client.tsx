@@ -10,7 +10,7 @@ import styles from "./tyck-till.module.css";
 
 const MAX_IMAGES = 4;
 const MAX_FILE = 25 * 1024 * 1024; // a phone need not read in more than this
-const MAX_TOTAL = 9 * 1024 * 1024; // the server takes 9 MB, form fields included
+const MAX_TOTAL = 9 * 1024 * 1024; // the images only; the server's 9 MB also holds the form
 const RETRIES = 5;
 const TOO_LARGE =
   "Bilderna är för stora tillsammans. Ta bort en bild och försök igen.";

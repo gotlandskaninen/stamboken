@@ -53,7 +53,7 @@ export default buildConfig({
   },
   collections: [Users, Media, Pages, Navigation],
   // Payload's own default is 20 MB a file; Stamboken takes 25 MB (MAX_FILE_SIZE
-  // in app/blueprints/uploads.py) and nginx 50 MB a request.
+  // in app/blueprints/uploads.py), and nginx 26 MB on /cms-api/media.
   upload: { limits: { fileSize: 25 * 1024 * 1024 } },
   editor: lexicalEditor(),
   // PAYLOAD_SECRET MUST be set in production. resolvePayloadSecret() throws at

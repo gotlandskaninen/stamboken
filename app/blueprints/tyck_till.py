@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 tyck_till_bp = Blueprint("tyck_till", __name__, url_prefix="/api/v2")
 
-MAX_REQUEST = 9 * 1024 * 1024  # a public form whose body is read before its IP limit: kept small, nginx takes 50 MB
+MAX_REQUEST = 9 * 1024 * 1024  # a public form whose body is read before its IP limit; nginx takes 10 MB on its pages
 IMAGE_SIDE = 2000  # pixels, as shrink() in the dialog (pointing.ts); bounds the size of the mail
 MAX_TEXT = 5000
 MAX_POINTED = 200

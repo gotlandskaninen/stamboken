@@ -13,9 +13,9 @@ const nextConfig = {
   transpilePackages: ["react-easy-crop"],
   experimental: {
     // Intyg uploads go through a Server Action. Next.js only has this limit
-    // globally (no per-action setting), so nginx scopes it: 50 MiB only on the
-    // upload pages (/stamboken/inskick/ny, arsrapport, individ, /rapport), 10 MiB on
-    // everything else. Flask enforces the real limits per endpoint, and the
+    // globally (no per-action setting), so nginx scopes it: 50 MiB on
+    // /stamboken/inskick/ny, 26 MiB on the other upload pages (arsrapport,
+    // individ, /rapport), 10 MiB on everything else. Flask enforces the real limits per endpoint, and the
     // upload form keeps the files to 48 MB.
     serverActions: { bodySizeLimit: "50mb" },
     // The middleware (src/middleware.ts) runs on /stamboken/*, where those

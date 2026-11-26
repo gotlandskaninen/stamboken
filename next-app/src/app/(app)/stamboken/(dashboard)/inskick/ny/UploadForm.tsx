@@ -12,8 +12,8 @@ import { uploadIntyg } from "./actions";
 import { prepare } from "./prepare";
 import styles from "../inskick.module.css";
 
-// nginx cuts the request at 50 MiB, multipart overhead included (docs/inkorg.md),
-// so the files get a little less.
+// nginx cuts the request at 50 MiB on this page only (a location in nginx/production/*.conf),
+// multipart overhead included (docs/inkorg.md), so the files get a little less.
 const MAX_TOTAL = 48 * 1024 * 1024;
 // The server's limit for one file (MAX_FILE_SIZE in app/blueprints/uploads.py).
 const MAX_FILE = 25 * 1024 * 1024;
