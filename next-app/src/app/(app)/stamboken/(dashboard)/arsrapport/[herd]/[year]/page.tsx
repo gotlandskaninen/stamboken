@@ -1,4 +1,4 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { ApiError, fetchApi } from "@/lib/api";
 import { MODE_COOKIE, parseMode } from "@/lib/mode";
@@ -40,6 +40,9 @@ export default async function ReportPage({
       `/v2/arsrapport/besattning/${herd}/${year}${post ? `?post=${post}` : ""}`,
     );
   } catch (e) {
+    // A paper form that is no longer the helper's to enter (sent, or handed back): Back lands on its item.
+    if (post && e instanceof ApiError && e.status === 403)
+      redirect(`/stamboken/inkorg/${post}`);
     if (e instanceof ApiError && (e.status === 403 || e.status === 404))
       notFound();
     throw e;

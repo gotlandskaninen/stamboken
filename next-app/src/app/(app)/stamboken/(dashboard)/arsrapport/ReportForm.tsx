@@ -176,6 +176,8 @@ type LocalCopy = {
   data: DraftData;
   updated_at?: string | null; // missing in a copy from before the stamps
   revision?: number | null;
+  // the form that wrote it: a late answer to another form's save leaves it alone
+  writer?: string;
 };
 const readLocal = (
   env: Mode | "link",
@@ -206,6 +208,64 @@ const writeLocal = (
   } catch {
     /* storage can be blocked: the server draft still works */
   }
+};
+
+// Next shows the same view object again when the user comes Back to the page.
+// This tab counts its writes per report (a draft save from the moment it is
+// sent, a litter, Skicka, Dra tillbaka, a rabbit, a purchase), on any of the
+// report's pages: a view first shown before the latest of them, or while a
+// save is still on its way, is read again once that save has answered.
+// Otherwise the form would start from before those writes, and its next save
+// would meet a conflict (Jonas 2026-11-26).
+const writes = new Map<string, number>();
+const onTheirWay = new Map<string, Set<Promise<unknown>>>();
+const shownAt = new WeakMap<ReportView, number>();
+// the write count when the page was last asked for again: the view that
+// answers holds those writes, not the ones sent while it was on its way
+const askedAt = new Map<string, number>();
+const wrote = (key: string) => writes.set(key, (writes.get(key) ?? 0) + 1);
+const hold = (key: string, call: Promise<unknown>) => {
+  const set = onTheirWay.get(key) ?? new Set();
+  onTheirWay.set(key, set);
+  set.add(call);
+  const done = () => void set.delete(call);
+  call.then(done, done);
+};
+// A write sent for the report: counted now, and held until it answers.
+const track = <T,>(key: string, call: Promise<T>): Promise<T> => {
+  wrote(key);
+  hold(key, call);
+  return call;
+};
+const allAnswered = (key: string) =>
+  Promise.allSettled([...(onTheirWay.get(key) ?? [])]);
+// The draft version this tab last had from the server: a view with another
+// one was read before or after it, and is read again to be sure.
+const lastDraft = new Map<string, string | null>();
+// A hard load starts the tab's memory over; tests do the same between cases.
+export const forgetTabWrites = () => {
+  writes.clear();
+  onTheirWay.clear();
+  askedAt.clear();
+  lastDraft.clear();
+};
+const outdated = (v: ReportView, key: string) =>
+  !!onTheirWay.get(key)?.size ||
+  (shownAt.get(v) ?? Infinity) < (writes.get(key) ?? 0) ||
+  (lastDraft.has(key) && lastDraft.get(key) !== (v.draft?.updated_at ?? null));
+
+// A copy the server never confirmed (closed tab, lost connection) wins while
+// the server is still at the version it was edited from; otherwise the
+// server's version stays and the user chooses.
+const localChoice = (v: ReportView, store: Mode | "link", isPaper: boolean) => {
+  // behind the member-draft gate nothing is adopted: the choice comes first
+  if (gateOf(v, isPaper) === "draft") return null;
+  const local = readLocal(store, v.herd.herd, v.year);
+  if (!local) return null;
+  const current =
+    local.updated_at === (v.draft?.updated_at ?? null) &&
+    local.revision === (v.report?.revision ?? null);
+  return current ? { adopt: fromBody(local.data) } : { older: local.data };
 };
 
 // Focus the first control on a rabbit's row that still needs input.
@@ -296,6 +356,16 @@ export function ReportForm({
   const router = useRouter();
   const { herd, year, round } = view;
   const store = link ? "link" : env;
+  const key = localKey(store, herd.herd, year);
+  // decided once, before the form adopts anything from this view
+  const [staleAtMount] = React.useState(() => outdated(view, key));
+  const [writer] = React.useState(() => newKey());
+  // The local copy is this form's to replace or remove, unless a form mounted
+  // later (Back, another tab) has written its own since.
+  const ownsLocal = () => {
+    const copy = readLocal(store, herd.herd, year);
+    return !copy?.writer || copy.writer === writer;
+  };
   // A link that was revoked or has ended: the page for it, and nothing more is saved.
   const gone = (p: Problem) =>
     !!link && p.status === 403 && p.extensions?.code === "lank_ogiltig";
@@ -413,6 +483,9 @@ export function ReportForm({
   const saving = React.useRef(false);
   const again = React.useRef(false);
   const resync = React.useRef(false);
+  // the view a reload started from, and whether the local copy waits for the new one
+  const reloadFrom = React.useRef<ReportView | null>(null);
+  const keepLocal = React.useRef(false);
   const pendingFocus = React.useRef<number | null>(null);
   const pendingEl = React.useRef<string | null>(null);
   // Skicka against autosave: a submission in flight, how many have started,
@@ -435,59 +508,68 @@ export function ReportForm({
     setVersion((v) => v + 1);
   }, []);
 
-  // A copy the server never confirmed (closed tab, lost connection) wins while
-  // the server is still at the version it was edited from; otherwise the
-  // server's version stays and the user chooses.
+  // The local copy (localChoice), once React has hydrated. An outdated view
+  // waits for the reload below and is compared after it.
   React.useEffect(() => {
-    // behind the member-draft gate nothing is adopted: the choice comes first
-    if (gateOf(viewRef.current, isPaper) === "draft") return;
-    const local = readLocal(store, herd.herd, year);
-    const server = viewRef.current;
-    if (
-      local &&
-      (local.updated_at !== (server.draft?.updated_at ?? null) ||
-        local.revision !== (server.report?.revision ?? null))
-    ) {
-      setOlderCopy(local.data);
-    } else if (local) {
-      const s = fromBody(local.data);
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage exists only after hydration
-      setState(s);
-      setEntered(enteredFrom(viewRef.current.rabbits, s));
+    if (staleAtMount) return;
+    const c = localChoice(viewRef.current, store, isPaper);
+    if (c?.older) setOlderCopy(c.older);
+    else if (c?.adopt) {
+      setState(c.adopt);
+      setEntered(enteredFrom(viewRef.current.rabbits, c.adopt));
       setLocalCopy(true);
       setVersion((v) => v + 1);
     }
-  }, [store, herd.herd, year, isPaper]);
+  }, [store, herd.herd, year, isPaper, staleAtMount]);
 
   // The server's draft replaces the whole editing state: form, mode and key.
   const adoptDraft = (d: ServerDraft) => {
+    wrote(key); // the server is past the view
     const s = fromBody(d.data);
     setState(s);
     setEntered(enteredFrom(view.rabbits, s));
     updatedAt.current = d.updated_at;
+    lastDraft.set(key, d.updated_at);
     // a draft with no key (written by Dra tillbaka) must not revive a spent one
     keyRef.current = d.submission_key ?? newKey();
     setSavedAt(fmtTime(d.updated_at));
-    writeLocal(store, herd.herd, year, null);
+    if (ownsLocal()) writeLocal(store, herd.herd, year, null);
     setLocalCopy(false);
     setMode("form");
     setVersion(0);
   };
   // A conflict with no draft to adopt (a report was submitted meanwhile): load
   // ReportView again and reset everything from it when it arrives.
-  const reload = () => {
-    resync.current = true;
+  const refreshView = React.useCallback(() => {
+    askedAt.set(
+      key,
+      Math.min(askedAt.get(key) ?? Infinity, writes.get(key) ?? 0),
+    );
+    routerRef.current.refresh();
+  }, [key]);
+  // The writes still on their way go first: the new view must hold them.
+  const reload = React.useCallback(() => {
     stopped.current = true;
     setSoldFor(null); // a sale dialog cannot save into a state about to be replaced
     setSyncing(true); // editing and Skicka wait for the answer
-    router.refresh();
-    clearTimeout(syncTimer.current);
-    // No answer after 10 s: stay locked and offer a full reload. A late
-    // answer still syncs the form (the effect below).
-    syncTimer.current = setTimeout(() => setSyncTimeout(true), 10000);
-  };
+    // No answer after 10 s, from the lock and again from the refresh: stay
+    // locked and offer a full reload. A late answer still syncs the form.
+    const clock = () => {
+      clearTimeout(syncTimer.current);
+      syncTimer.current = setTimeout(() => setSyncTimeout(true), 10000);
+    };
+    clock();
+    void allAnswered(key).then(() => {
+      // only the view this refresh brings resets the form, not one another refresh brought meanwhile
+      resync.current = true;
+      reloadFrom.current = viewRef.current;
+      refreshView();
+      clock();
+    });
+  }, [key, refreshView]);
   React.useEffect(() => {
-    if (!resync.current) return;
+    // the reload's own view comes again when React runs effects twice (development)
+    if (!resync.current || view === reloadFrom.current) return;
     resync.current = false;
     stopped.current = false;
     clearTimeout(syncTimer.current);
@@ -504,9 +586,41 @@ export function ReportForm({
     setLocalCopy(false);
     keyRef.current = view.draft?.submission_key ?? newKey();
     updatedAt.current = view.draft?.updated_at ?? null;
+    lastDraft.set(key, updatedAt.current);
+    setSavedAt(view.draft ? fmtTime(view.draft.updated_at) : null);
     frozen.current = null;
-    writeLocal(store, view.herd.herd, view.year, null);
-  }, [view, store, isPaper]);
+    if (!keepLocal.current) {
+      const copy = readLocal(store, view.herd.herd, view.year);
+      if (!copy?.writer || copy.writer === writer)
+        writeLocal(store, view.herd.herd, view.year, null);
+    } else {
+      // a reload on mount: the local copy is compared with the new view
+      keepLocal.current = false;
+      const c = localChoice(view, store, isPaper);
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- the local copy waited for this view
+      if (c?.older) setOlderCopy(c.older);
+      else if (c?.adopt) {
+        setState(c.adopt);
+        setEntered(enteredFrom(view.rabbits, c.adopt));
+        setLocalCopy(true);
+        setVersion(1); // autosave sends it
+      }
+    }
+  }, [view, store, isPaper, writer, key]);
+
+  // Back brought a view from before this tab's own writes: read it again.
+  React.useEffect(() => {
+    if (!staleAtMount) return;
+    keepLocal.current = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Back has no event of its own: the mount is it
+    reload();
+  }, [reload, staleAtMount]);
+  // A view is new when it first shows: from the server, or after a refresh.
+  React.useEffect(() => {
+    if (shownAt.has(view)) return;
+    shownAt.set(view, askedAt.get(key) ?? writes.get(key) ?? 0);
+    askedAt.delete(key);
+  }, [view, key]);
 
   // One save in flight at a time: a change made meanwhile is sent after it
   // has been answered, with the version it returned.
@@ -518,6 +632,8 @@ export function ReportForm({
       return;
     }
     saving.current = true;
+    let loopDone = () => {};
+    hold(key, new Promise<void>((resolve) => (loopDone = resolve)));
     try {
       do {
         again.current = false;
@@ -529,20 +645,27 @@ export function ReportForm({
         const mine = versionRef.current;
         const sentAt = submissions.current;
         const slow = setTimeout(() => setSaveState("saving"), 1000);
+        const sent = toDraft(stateRef.current);
         const res = await safe(
-          actionsRef.current.saveDraft(
-            herd.herd,
-            year,
-            toDraft(stateRef.current),
-            updatedAt.current,
-            keyRef.current!,
-            viewRef.current.report?.revision ?? null,
-            env,
-            post,
+          track(
+            key,
+            actionsRef.current.saveDraft(
+              herd.herd,
+              year,
+              sent,
+              updatedAt.current,
+              keyRef.current!,
+              viewRef.current.report?.revision ?? null,
+              env,
+              post,
+            ),
           ),
         );
         clearTimeout(slow);
-        if (res.ok) updatedAt.current = res.data.updated_at; // the server's truth, whatever came meanwhile
+        if (res.ok) {
+          updatedAt.current = res.data.updated_at; // the server's truth, whatever came meanwhile
+          lastDraft.set(key, updatedAt.current);
+        }
         // Skicka started while this save was on its way: its answer says nothing about the form any more.
         if (!autosaveAnswerKept(sentAt, submissions.current)) {
           setSaveState((s) => (s === "saving" ? "saved" : s));
@@ -551,6 +674,8 @@ export function ReportForm({
         if (res.ok) {
           setSavedAt(fmtTime(res.data.updated_at));
           setSaveState("saved");
+          // a form mounted after this one may have written its own copy: that one stays
+          if (!ownsLocal()) continue;
           if (versionRef.current === mine)
             writeLocal(store, herd.herd, year, null);
           // a newer edit waits: its copy now builds on the version just saved
@@ -559,6 +684,7 @@ export function ReportForm({
               data: toDraft(stateRef.current),
               updated_at: res.data.updated_at,
               revision: viewRef.current.report?.revision ?? null,
+              writer,
             });
           continue;
         }
@@ -583,6 +709,7 @@ export function ReportForm({
       } while (again.current);
     } finally {
       saving.current = false;
+      loopDone();
     }
   };
   const flushRef = React.useRef(flush);
@@ -591,20 +718,30 @@ export function ReportForm({
   });
 
   // Autosave: 2 s after the last change, from the revision the page started from.
+  const copiedVersion = React.useRef(0);
   React.useEffect(() => {
     if (version === 0 || mode !== "form" || !canEdit || stopped.current) return;
-    writeLocal(store, herd.herd, year, {
-      data: toDraft(stateRef.current),
-      updated_at: updatedAt.current,
-      revision: viewRef.current.report?.revision ?? null,
-    });
+    const copy = readLocal(store, herd.herd, year);
+    // a retry (no new edit) leaves alone a copy another form has written since
+    if (
+      version !== copiedVersion.current ||
+      !copy?.writer ||
+      copy.writer === writer
+    )
+      writeLocal(store, herd.herd, year, {
+        data: toDraft(stateRef.current),
+        updated_at: updatedAt.current,
+        revision: viewRef.current.report?.revision ?? null,
+        writer,
+      });
+    copiedVersion.current = version;
     autosavePending.current = true;
     autosaveTimer.current = setTimeout(
       () => void flushRef.current(),
       AUTOSAVE_MS,
     );
     return () => clearTimeout(autosaveTimer.current);
-  }, [version, retry, mode, canEdit, env, store, herd.herd, year]);
+  }, [version, retry, mode, canEdit, env, store, herd.herd, year, writer]);
 
   const rabbits = view.rabbits;
   const lastId = rabbits.length ? rabbits[rabbits.length - 1].id : null;
@@ -894,14 +1031,18 @@ export function ReportForm({
     if (!link && readModeCookieClient() !== env) return fail(ENV_TEXT);
     setPhase("sending");
     const res = await safe(
-      actionsRef.current.submitReport(herd.herd, year, body, env, post),
+      track(
+        key,
+        actionsRef.current.submitReport(herd.herd, year, body, env, post),
+      ),
     );
     if (res.ok) {
       submitOver();
       keyRef.current = keyAfter("ok", keyRef.current!);
       frozen.current = null;
       updatedAt.current = null;
-      writeLocal(store, herd.herd, year, null);
+      lastDraft.set(key, null); // Skicka took the draft
+      if (ownsLocal()) writeLocal(store, herd.herd, year, null);
       setLocalCopy(false);
       setReceipt(res.data);
       setReceiptView(viewRef.current);
@@ -913,7 +1054,7 @@ export function ReportForm({
       if (!isPaper) {
         // a first Skicka replaced nothing: Receipt shows no actions until the view has the report
         setReplaced(body.revision ?? undefined);
-        router.refresh();
+        refreshView();
       } else if (!res.data.warnings.length && !res.data.matrikel.length)
         paper!.leave(summaryLine(herd.herd, res.data));
     } else if (
@@ -925,7 +1066,17 @@ export function ReportForm({
     else handle(res.problem);
   };
 
+  // Skicka is held from the dry run on: a form mounted meanwhile (Back) waits for it.
   const skicka = async () => {
+    let over = () => {};
+    hold(key, new Promise<void>((resolve) => (over = resolve)));
+    try {
+      await checkAndSend();
+    } finally {
+      over();
+    }
+  };
+  const checkAndSend = async () => {
     if (phase !== "idle" || syncing || olderCopy || refreshing) return;
     setRefusals(null);
     if (!link && readModeCookieClient() !== env) return fail(ENV_TEXT);
@@ -975,13 +1126,16 @@ export function ReportForm({
     if (!link && readModeCookieClient() !== env) return ENV_TEXT;
     setWithdrawing(true);
     const res = await safe(
-      actionsRef.current.withdrawReport(
-        herd.herd,
-        year,
-        view.report!.revision,
-        reason,
-        env,
-        post,
+      track(
+        key,
+        actionsRef.current.withdrawReport(
+          herd.herd,
+          year,
+          view.report!.revision,
+          reason,
+          env,
+          post,
+        ),
       ),
     );
     setWithdrawing(false);
@@ -992,12 +1146,13 @@ export function ReportForm({
         setState(fromBody(d.data));
         updatedAt.current = d.updated_at;
       }
+      lastDraft.set(key, d ? d.updated_at : null);
       setWithdrawn(fmtDate(new Date().toISOString()));
       setReceipt(null);
       setMode("form");
       setVersion(0); // so that "Dragen tillbaka" shows until the next edit
       setReplaced(view.report!.revision);
-      router.refresh();
+      refreshView();
       return null;
     }
     const ext = res.problem.extensions ?? {};
@@ -1052,6 +1207,26 @@ export function ReportForm({
                   : saveState === "saving"
                     ? { kind: "saving" }
                     : { kind: "saved", at: savedAt, changing: !!view.report };
+  const timeoutAlert = syncTimeout && (
+    <div role="alert" className={styles.errorBox}>
+      <h2>Det gick inte att hämta senaste versionen</h2>
+      <button
+        type="button"
+        className={`sb-btn ${styles.btn}`}
+        onClick={() => window.location.reload()}
+      >
+        Ladda om sidan
+      </button>
+    </div>
+  );
+  // A reload on its way where the form's status card is not shown (the
+  // receipt, the paper gates): nothing there acts on the old view meanwhile.
+  const syncNote = syncing && (
+    <>
+      <ReportStatus status={{ kind: "syncing" }} />
+      {timeoutAlert}
+    </>
+  );
   // One short line for the sticky bar below 980 px; the card stays the only
   // live region, so this one is hidden from screen readers.
   const shortStatus =
@@ -1171,6 +1346,7 @@ export function ReportForm({
         {editor && (
           <ReportStatus status={{ kind: "editor", herd: herd.herd }} />
         )}
+        {syncNote}
         {olderNotice}
         <Receipt
           view={view}
@@ -1205,7 +1381,9 @@ export function ReportForm({
     return (
       <div className={styles.root} style={root}>
         {heading}
-        {paper!.intygPending ? (
+        {syncing ? (
+          syncNote
+        ) : paper!.intygPending ? (
           <div className={`${styles.status} ${styles.info}`} role="status">
             <p>
               Registrera intygen i ärendet först.{" "}
@@ -1430,18 +1608,7 @@ export function ReportForm({
           <div className={styles.side} ref={trackSideHeight}>
             <div>
               {deadline && <ReportStatus status={deadline} />}
-              {syncTimeout && (
-                <div role="alert" className={styles.errorBox}>
-                  <h2>Det gick inte att hämta senaste versionen</h2>
-                  <button
-                    type="button"
-                    className={`sb-btn ${styles.btn}`}
-                    onClick={() => window.location.reload()}
-                  >
-                    Ladda om sidan
-                  </button>
-                </div>
-              )}
+              {timeoutAlert}
               {refusals && (
                 <div
                   ref={boxRef}
@@ -2196,9 +2363,14 @@ export function ReportForm({
             loadMothers={() => actions.getMothers!(herd.herd, year, env, post)}
             loadFathers={() => actions.getFathers!(herd.herd, year, env, post)}
             litters={litters}
-            add={(body) => actions.addLitter!(herd.herd, year, body, env, post)}
+            add={(body) =>
+              track(key, actions.addLitter!(herd.herd, year, body, env, post))
+            }
             change={(id, body) =>
-              actions.changeLitter!(herd.herd, year, id, body, env, post)
+              track(
+                key,
+                actions.changeLitter!(herd.herd, year, id, body, env, post),
+              )
             }
             onSaved={setLitters}
             onClose={() => setLitterOpen(false)}
@@ -2206,7 +2378,10 @@ export function ReportForm({
           <ConfirmCountDialog
             litter={syncing ? null : confirming}
             change={(id, body) =>
-              actions.changeLitter!(herd.herd, year, id, body, env, post)
+              track(
+                key,
+                actions.changeLitter!(herd.herd, year, id, body, env, post),
+              )
             }
             onSaved={setLitters}
             onClose={() => setConfirming(null)}
@@ -2223,7 +2398,8 @@ export function ReportForm({
             setRabbitOpen(false);
             if (!registered.length) return;
             setRabbitSaved(true);
-            router.refresh(); // the list, with the new rabbits
+            wrote(key); // registered in the dialog, already answered
+            refreshView(); // the list, with the new rabbits
             // "var är kaninen nu" as the row's choice, for those on the list; a sale opens its dialog, as the row's
             // Såld does for every role (a link's or a caretaker's sale is a proposal there)
             for (const [rabbit, where] of registered) {
@@ -2278,14 +2454,16 @@ export function ReportForm({
         genebankId={herd.genebank_id}
         ownHerd={herd.herd}
         loadHerds={actions.getGenebankHerds}
-        send={(body) => actions.reportPurchase(herd.herd, year, body, env)}
+        send={(body) =>
+          track(key, actions.reportPurchase(herd.herd, year, body, env))
+        }
         sendPhotos={(body) =>
           actions.sendPurchasePhotos(herd.herd, year, body, env)
         }
         upload={(data, purpose) =>
           uploadPhoto(herd.herd, year, data, link ? undefined : env, purpose)
         }
-        onSent={() => router.refresh()}
+        onSent={refreshView}
         onClose={() => setBuying(false)}
       />
     </div>
