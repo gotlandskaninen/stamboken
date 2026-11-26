@@ -12,6 +12,7 @@ import hashlib
 import hmac
 import json
 import re
+import threading
 from datetime import date, datetime, timedelta, timezone
 from unittest import mock
 
@@ -221,7 +222,8 @@ class TestLink(DetailsTest):
         )
         rows = self.requests()
         self.assertEqual([row.kind for row in rows], ["kontakt", "kontakt", "konto", "epost", "publicering"])
-        self.assertTrue(all(row.expires_at == row.created_at + timedelta(days=14) for row in rows))
+        last = datetime.combine(DAY0 + timedelta(days=14), datetime.max.time(), arsrapport.STOCKHOLM)
+        self.assertTrue(all(row.expires_at == last for row in rows))  # the end of the day the receipt prints
         ms = self.membership()
         self.assertEqual((ms.address, ms.bank_account_number), before[:2])
         self.assertEqual(db.Member.get_by_id(self.member.id).email, "g9001@example.invalid")
@@ -313,7 +315,7 @@ class TestLink(DetailsTest):
 
     def test_changes_expire_after_fourteen_days(self):
         receipt = self.submit_changes({"telefon": "0709-777 888"})
-        self.at(datetime.combine(DAY0, datetime.min.time(), arsrapport.STOCKHOLM) + timedelta(days=14, hours=12))
+        self.at(datetime.combine(DAY0 + timedelta(days=15), datetime.min.time(), arsrapport.STOCKHOLM))
         view = self.changes(receipt["submission_id"]).get_json()
         self.assertEqual(view["changes"][0]["state"], "forfallen")
         self.changes(receipt["submission_id"], "/bekrafta", version=view["version"], konto=False)
@@ -555,3 +557,52 @@ class TestReviewRound1(DetailsTest):
         (audit,) = db.MatrikelAudit.select().where(db.MatrikelAudit.action == "kontakt_andrad")
         self.assertEqual(audit.payload["fields"], ["email"])
         self.assertNotIn("example.invalid", json.dumps(audit.payload))
+
+    # 8. A change expires at the end of the day the receipt prints
+    def test_a_change_holds_to_the_end_of_its_printed_day(self):
+        receipt = self.submit_changes({"telefon": "0709-777 888"})
+        (kvitto,) = self.mails("arsrapport.kvitto")
+        printed = mail.MAIL_KINDS[kvitto.kind].build(kvitto.params)["andringar_senast"]
+        self.assertEqual(printed, f"{DAY0 + timedelta(days=14):%Y-%m-%d}")
+        token = self.token(receipt["submission_id"])
+        self.at(
+            datetime.combine(DAY0 + timedelta(days=14), datetime.min.time(), arsrapport.STOCKHOLM)
+            + timedelta(hours=23, minutes=59)
+        )
+        view = self.client.post("/api/v2/rapport/andringar", json={"token": token}).get_json()
+        self.assertEqual(view["changes"][0]["state"], "vantar")
+        self.at(datetime.combine(DAY0 + timedelta(days=15), datetime.min.time(), arsrapport.STOCKHOLM))
+        view = self.client.post("/api/v2/rapport/andringar", json={"token": token}).get_json()
+        self.assertEqual(view["changes"][0]["state"], "forfallen")
+
+    # 9. Confirmation never waits for the report row that Dra tillbaka locks
+    def test_confirm_does_not_wait_for_the_report_row(self):
+        with db.DB_PROXY.atomic():
+            set_consent(self.membership(), NONE, source="profil", text_version=CONSENT_TEXT_VERSION)
+        receipt = self.submit_changes({"publicering": JA})
+        token = self.token(receipt["submission_id"])
+        view = self.client.post("/api/v2/rapport/andringar", json={"token": token}).get_json()
+        report_id = db.YearlyHerdReport.get().id
+        locked, release = threading.Event(), threading.Event()
+
+        def hold():  # as withdraw holds it, FOR UPDATE, until released
+            try:
+                with db.DB_PROXY.atomic():
+                    db.YearlyHerdReport.select().where(db.YearlyHerdReport.id == report_id).for_update().get()
+                    locked.set()
+                    release.wait(10)
+            finally:
+                db.DB_PROXY.close()
+
+        holder = threading.Thread(target=hold)
+        holder.start()
+        self.assertTrue(locked.wait(5))
+        try:
+            with APP.app_context():
+                db.DB_PROXY.execute_sql("SET lock_timeout = '2s'")
+                member_changes.confirm(token, account=False, version=view["version"])
+        finally:
+            db.DB_PROXY.execute_sql("SET lock_timeout = 0")
+            release.set()
+            holder.join(10)
+        self.assertEqual(self.membership().publication_consent, ALL)

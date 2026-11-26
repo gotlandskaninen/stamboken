@@ -12,7 +12,7 @@ import hashlib
 import hmac
 import json
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 
 from flask import current_app
 
@@ -65,7 +65,9 @@ def record(herd, membership, member, submission, code, matrikel):
     membership's lock and checked that `member` is the code's.
     """
     at = submission.created_at
-    expires = at + timedelta(days=CHANGE_DAYS)
+    # to the end of the day the receipt prints, in Stockholm
+    last = (at.astimezone(arsrapport.STOCKHOLM) + timedelta(days=CHANGE_DAYS)).date()
+    expires = datetime.combine(last, time.max, arsrapport.STOCKHOLM)
     changes = arsrapport._contact(matrikel)[0]
 
     def wait(kind, value):
@@ -438,8 +440,7 @@ def confirm(token, *, account, version):
                     new,
                     source="link",
                     text_version=row.value.get("text_version", CONSENT_TEXT_VERSION),
-                    report=submission.report_id,
-                    at=now,
+                    at=now,  # no report: its row is Dra tillbaka's lock, taken before these rows (no deadlock)
                     revoke_waiting=False,
                 )
             elif written := arsrapport._changes(membership, member, {field: new}):  # only what differs now
