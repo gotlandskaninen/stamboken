@@ -379,13 +379,14 @@ def _masked_actor_rows():
         else:  # linked before the log began
             pair.append((a.membership_id, None, a.id))
     source = MatrikelAudit.payload["source"]
-    # What the member's own routes write: /members/me (kontakt_andrad, source profil), /my-membership (persons and
-    # grants) and her own link (oauth, matrikel_epost). The rest is a handler's, as are unlinks, also inside a span.
+    # What the member's own routes write: /members/me (kontakt_andrad, source profil), her own herd page's change of
+    # the support account (kontakt_andrad, source herd), /my-membership (persons and grants) and her own link (oauth,
+    # matrikel_epost). The rest is a handler's, as are unlinks, also inside a span.
     # shortcut: the admin routes write person_added, person_removed and grant_* too, without a source; a handler
     # whose account was linked to her in the same span is masked there. Add a source if that ever matters.
     self_service = (
         MatrikelAudit.action.in_(("person_added", "person_removed", "grant_created", "grant_renewed", "grant_revoked"))
-        | ((MatrikelAudit.action == "kontakt_andrad") & (source == "profil"))
+        | ((MatrikelAudit.action == "kontakt_andrad") & source.in_(("profil", "herd")))
         | ((MatrikelAudit.action == "person_user_linked") & source.in_(("oauth", "matrikel_epost")))
     )
     condition = None
