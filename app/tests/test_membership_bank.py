@@ -1,8 +1,9 @@
 """
 Migration 58: the support account moves from the herd to its membership, with a type (Jonas 2026-11-18). The move
 stops on a conflict instead of guessing, empties the herd's columns without an audit copy, and every reader and
-writer uses the membership: whole for admin and matrikel_admin, the last two digits for the genebank's manager and
-the herd's owners, nothing for a caretaker grant (U2). Synthetic data only.
+writer uses the membership: on the herd page the last two digits for admin, matrikel_admin, the genebank's manager
+and the herd's owners, nothing for a caretaker grant (U2); the whole number only in the yearly report list for admin
+and matrikel_admin. Synthetic data only.
 """
 
 import unittest
