@@ -271,9 +271,10 @@ _ADDRESSES = f"""
 """
 
 # Who gets a code: the holders above, and a family member or keeper without an account (#269), but only while no
-# other active person has her address, as contact, Workspace or still-counting previous address. She never takes an
-# address from a holder and needs no reservation: a holder who gets the address later (reserve_login_address) ends
-# hers. Writes of her address take its lock (add_person, set_member_email), so account creation sees them in order.
+# other active person has her address (contact, Workspace or still-counting previous) and no account has it as e-mail
+# or Google address. She never takes an address from a holder and needs no reservation: a holder who gets the address
+# later (reserve_login_address) ends hers. Writes of her address take its lock (add_person, set_member_email), so
+# account creation sees them in order.
 _LOGIN_ADDRESSES = f"""
     SELECT member_id, address FROM ({_ADDRESSES}) h
     UNION
@@ -284,6 +285,10 @@ _LOGIN_ADDRESSES = f"""
             SELECT 1 FROM member o
             WHERE o.member_id <> m.member_id AND o.end_date IS NULL
                 AND lower(btrim(m.email)) IN (lower(btrim(o.email)), lower(btrim(o.workspace_email)))
+        )
+        AND NOT EXISTS (
+            SELECT 1 FROM hbuser u
+            WHERE lower(btrim(m.email)) IN (lower(btrim(u.email)), lower(btrim(u.google_email)))
         )
         AND NOT EXISTS (
             SELECT 1 FROM member_previous_address r JOIN member p ON p.member_id = r.member_id

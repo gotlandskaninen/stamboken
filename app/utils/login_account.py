@@ -79,7 +79,7 @@ def published_rules():
 
 
 def _existing_account(person, address):
-    addresses = {a.strip().lower() for a in (person.email, address) if a}
+    addresses = {a.strip().lower() for a in (person.email, address, person.workspace_email) if a}
     linked_accounts = Member.select(Member.user).where(Member.user.is_null(False))
     if (
         User.select()

@@ -270,6 +270,21 @@ class TestLoginAccount(MatrikelApiTest):
         db.Member.update(workspace_email="Board@Gotlandskaninen.se").where(db.Member.id == self.member.id).execute()
         self.assertIsNone(login_code.login_holder("board@gotlandskaninen.se"))
 
+    def test_an_accounts_address_gives_the_family_member_no_code(self):
+        family = _mk_person(_mk_membership(), "Test", "Family", "anna@gotlandskaninen.se", role="familjemedlem")
+        self.assertEqual(login_code.login_holder("anna@gotlandskaninen.se").id, family.id)
+        other = data_access.register_user("anna-private@example.org", "pass", username="anna")
+        db.User.update(google_email="Anna@Gotlandskaninen.se").where(db.User.id == other.id).execute()
+        self.assertIsNone(login_code.login_holder("anna@gotlandskaninen.se"))
+
+    def test_her_own_workspace_account_refuses_a_second_account(self):
+        family = _mk_person(self.member.membership, "Test", "Family", "family@example.org", role="familjemedlem")
+        self.assertFalse(login_account._existing_account(family, family.email))
+        older = data_access.register_user("old@example.org", "pass", username="old")
+        db.User.update(google_email="family@gotlandskaninen.se").where(db.User.id == older.id).execute()
+        db.Member.update(workspace_email="family@gotlandskaninen.se").where(db.Member.id == family.id).execute()
+        self.assertTrue(login_account._existing_account(db.Member.get_by_id(family.id), family.email))
+
     def test_an_ended_persons_previous_address_does_not_stop_the_family_member(self):
         matrikel.set_member_email(self.member, "ny@example.org", self.admin, by="self")  # the old one counts a week
         family = _mk_person(_mk_membership(), "Test", "Family", "member@example.org", role="familjemedlem")
