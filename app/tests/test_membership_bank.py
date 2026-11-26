@@ -345,11 +345,23 @@ class TestLegacyWriters(SupportAccountTest):
         caretaker_view = self.herd().filtered_dict(self.caretaker)
         self.assertNotIn("bank_account_number", caretaker_view)
         self.assertEqual(self.save(self.caretaker, herd_name="Ny"), {"status": "updated"})  # other fields still save
-        for user in (self.caretaker, self.owner):
-            for fields in ({"bank_account_number": OTHER}, {"bank_name": "Annan bank"}):
-                with self.subTest(user=user.username, fields=fields):
-                    self.assertEqual(self.save(user, **fields), {"status": "error", "message": "Forbidden"})
+        forbidden, updated = {"status": "error", "message": "Forbidden"}, {"status": "updated"}
+        # a right guess and a wrong one get the same answer: it never tells what is stored
+        guesses = ({"bank_account_number": OTHER}, {"bank_name": "Annan bank"}, {"bank_account_number": ACCOUNT})
+        for user, fields, expected in (
+            *((self.caretaker, fields, forbidden) for fields in (*guesses, {"bank_name": "Banken"})),
+            *((self.owner, fields, forbidden) for fields in guesses),
+            (self.owner, {"bank_account_number": "••12", "bank_name": "Banken "}, updated),  # what the owner reads
+        ):
+            with self.subTest(user=user.email, fields=fields):
+                self.assertEqual(self.save(user, **fields), expected)
+        # the old app sends a hidden field back empty: an echo, so the caretaker's other changes still save
+        for empty in ("", None):
+            fields = {"bank_account_number": empty, "bank_name": empty, "herd_name": f"Ny {empty}"}
+            self.assertEqual(self.save(self.caretaker, **fields), {"status": "updated"})
+        self.assertEqual(self.herd().herd_name, "Ny None")
         self.assertEqual(self.stored(), ("bankkonto", ACCOUNT, "Banken"))
+        self.assertEqual(self.audits(), [])
 
     def test_herd_without_membership_has_no_account_to_change(self):
         m3 = self.herds[2]
