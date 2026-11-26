@@ -2065,10 +2065,11 @@ def update_herd(form, user_uuid, *, legacy=False):
                 Membership.update(**account, updated_at=datetime.now()).where(
                     Membership.id == herd.membership_id
                 ).execute()
+                from utils.matrikel import write_matrikel_audit  # pylint: disable=import-outside-toplevel
+
                 payload = {"fields": list(account), "source": "herd", "herd_id": herd.id}
-                MatrikelAudit.create(
-                    actor=user, action="kontakt_andrad", membership=herd.membership_id, payload=payload
-                )
+                # the matrikel's one writer of its log: it also revokes an older account change waiting for the link
+                write_matrikel_audit(user, "kontakt_andrad", herd.membership_id, payload)
         logger.info(f"User:{user.id} Updated herd: {herd.id}")
         return {"status": "updated"}
     except DoesNotExist:

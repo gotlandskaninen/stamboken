@@ -17,6 +17,7 @@ from datetime import date, datetime, timedelta, timezone
 from unittest import mock
 
 import utils.arsrapport as arsrapport
+import utils.data_access as da
 import utils.database as db
 import utils.mail as mail
 import utils.member_changes as member_changes
@@ -615,3 +616,12 @@ class TestReviewRound1(DetailsTest):
             release.set()
             holder.join(10)
         self.assertEqual(self.membership().publication_consent, ALL)
+
+    # Review round 2
+    def test_a_herd_page_account_fix_revokes_a_waiting_link_change(self):
+        sibling = db.Herd.create(genebank=self.gotland, herd="G9003", is_active=True, membership=self.membership())
+        self.submit_changes({"konto": NEW_KONTO})
+        fix = {"id": sibling.id, "bank_account_number": "5555-1234567", "bank_name": "Rätt bank"}
+        self.assertEqual(da.update_herd(fix, self.admin.uuid), {"status": "updated"})  # through the sibling herd
+        (row,) = self.requests()
+        self.assertEqual(row.revoked_reason, "nyare")
