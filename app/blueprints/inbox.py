@@ -776,6 +776,11 @@ def _register_new(body, user, grant):
     return response[0].get_json(), individual
 
 
+def _same_number(paper_number, individual):
+    """The stored number exactly: G1-25012 and G1-2512 parse alike but are different rabbits."""
+    return re.sub(r"\s", "", paper_number).upper() == individual.number.upper()
+
+
 def _assign_certificate(body, user, grant, document):
     """The paper certificate on a rabbit already in Stamboken (AssignPaperCertificate)."""
     individual = _live_individual(body.get("individual"))
@@ -785,6 +790,9 @@ def _assign_certificate(body, user, grant, document):
         raise inbox.InboxError(400, "Ange intygsnumret (paper_certificate), högst 20 tecken.")
     if parse_number(paper_number) is None:
         raise inbox.InboxError(400, PAPER_NUMBER_REQUIRED)
+    if (individual.certificate or individual.digital_certificate) and not _same_number(paper_number, individual):
+        # A certified rabbit's number is never checked by the command (_verify_number): the paper must be its own.
+        raise inbox.InboxError(409, f"Intyget gäller {individual.number}, men numret på intyget är {paper_number}.")
     if individual.certificate == certificate.strip():
         # A photo of the certificate the rabbit already has: nothing is written, the document is linked so its copy
         # can go on the rabbit. A helper may link in her genebank too (Jonas 2026-11-26). Under the rabbit's lock, so
@@ -801,8 +809,7 @@ def _assign_certificate(body, user, grant, document):
             raise inbox.InboxError(409, f"{individual.number} har ändrats. Öppna posten igen och spara på nytt.")
         if not inbox.may_publish(user, individual, grant):
             raise inbox.InboxError(403, f"Du får inte lägga intyg på {individual.number}.")
-        # The stored number exactly: G1-25012 and G1-2512 parse alike but are different rabbits.
-        if re.sub(r"\s", "", paper_number).upper() != individual.number.upper():
+        if not _same_number(paper_number, individual):
             raise inbox.InboxError(
                 409,
                 f"Intyget {certificate.strip()} gäller {individual.number}, men numret på intyget är {paper_number}.",

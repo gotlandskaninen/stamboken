@@ -92,7 +92,9 @@ def get_individual_v2(number):
             individual["updated_at"] = ind.updated_at.isoformat()
         # The badge everyone who sees the rabbit sees: its paper certificate is in Stamboken, checked against the
         # registry. The copy itself only for those who may see its certificate (…/paper-certificate).
-        if checked := checked_at(ind):
+        # Only beside the certificate this answer shows: the rabbit may have been read twice around a change.
+        shown = individual.get("certificate") == ind.certificate and not individual.get("digital_certificate")
+        if shown and (checked := checked_at(ind)):
             individual["paper_certificate_checked"] = checked.isoformat()
     except IndividualModel.DoesNotExist:
         pass

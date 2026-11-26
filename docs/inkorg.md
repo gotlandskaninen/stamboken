@@ -812,7 +812,8 @@ skrevs.
 (`Individual certificate already exists`); 403 när anroparen inte får ändra kaninen eller kaninen
 redan har ett annat intyg och anroparen inte är genbanksansvarig eller admin, och när en kanin med
 just det intyget ligger utanför anroparens genbanker; 404 när kaninen inte finns;
-409 när kaninen redan har just det intyget men `paper_number` är ett annat nummer (inget kopplas);
+409 när kaninen redan har ett intyg (just det, ett annat eller ett digitalt) men `paper_number` inte
+är exakt kaninens nummer (inget sparas eller kopplas);
 409 `number_conflict` när `paper_number` inte är kaninens nummer i Stamboken (eller finns på en annan
 kanin), med samma fält som ovan. `resolution` läses inte här: kaninens nummer är redan satt och
 pappret kan inte rätta det, så ett intyg med ett annat nummer lämnar handläggaren till
