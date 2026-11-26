@@ -80,6 +80,7 @@ from utils.herd_tracking import (
     QueueChanged,
     _buyer_name_key,
     _reject_buyer_name,
+    _same_contact_fields,
     buyer_address_conflicts,
     buyer_contact_fields,
     buyer_items,
@@ -921,7 +922,7 @@ def _keep_buyers(herd, round_, access, user, report, stored, buyers, claims):
     removed_dates = _erased_dates(removed_dates, claims)
     listed = report_list(herd, round_.report_year, report) if buyers else []
     choosing = {str(row["id"]) for row in listed if row["state"] == "att_valja"}  # what Skicka takes (check)
-    typed, replaced, refusals = {}, set(), []
+    typed, replaced, same, refusals = {}, set(), {}, []
     for key, buyer in sorted(buyers.items()):
         entry = rabbits.get(key)
         if key not in choosing or not _sale_outside(entry) or buyer.get("not_recorded"):
@@ -949,23 +950,27 @@ def _keep_buyers(herd, round_, access, user, report, stored, buyers, claims):
             refusals.append(_refusal(int(key), "kopare", str(exc)))
             replaced.add(key)  # a new buyer was typed, if refused: the kept one is not the sale's buyer any more
             continue
+        previous = BuyerContact.get_or_none(BuyerContact.id == claims[key]["kopare_id"]) if key in claims else None
+        if previous is not None and _same_contact_fields(previous, fields):  # the same buyer: told once, as at Skicka
+            same[key] = {"kopare_id": previous.id, "fran_rapport": None, "kopare_datum": sale}
+            continue
         typed[key] = (fields, sale)
     replaced |= set(typed)
-    rest = {key: claim for key, claim in claims.items() if key not in replaced}
+    rest = {key: claim for key, claim in claims.items() if key not in replaced and key not in same}
     stored, gone = _with_kept(stored, rest)
     try:  # the rabbits' locks before the addresses'
         drop_kept_buyers(gone | {claims[key]["kopare_id"] for key in replaced if key in claims}, user, lock=True)
     except QueueChanged as exc:
         raise ArsrapportError(409, QUEUE_CHANGED) from exc
-    if not typed:
-        return stored, {}, refusals
-    lock_buyer_addresses([fields["email"] for fields, _ in typed.values()])
-    new = {}
+    new = dict(same)
+    if typed:
+        lock_buyer_addresses([fields["email"] for fields, _ in typed.values()])
     for key, (fields, sale) in typed.items():
         held = bool(fields["email"] and buyer_address_conflicts(fields["email"], fields["name"]))
         contact = BuyerContact.create(**fields, email_review_pending=held, created_by_user=user.id, purge_at=until)
         new[key] = {"kopare_id": contact.id, "fran_rapport": None, "kopare_datum": sale}
-    stored, _ = _with_kept(stored, rest | new)
+    if new:
+        stored, _ = _with_kept(stored, rest | new)
     kept = {key: {"kopare_id": c["kopare_id"], "kept_buyer_date": _kept_date(c).isoformat()} for key, c in new.items()}
     return stored, kept, refusals
 

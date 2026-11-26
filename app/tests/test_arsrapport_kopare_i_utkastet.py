@@ -413,6 +413,17 @@ class DialogBuyerTest(KeptBuyerBase):
         self.assertEqual(contacts(), {})
         self.assertFalse(db.YearlyReportDraft.select().exists())
 
+    def test_the_same_buyer_typed_again_is_the_same_buyer(self):  # review r1: no new contact, no second mail
+        contact, _ = self.sold_and_withdrawn()  # BUYER, told at the first Skicka
+        answer = self.save(self.sold(), {str(self.a.id): BUYER}, updated_at=self.view["draft"]["updated_at"])
+        self.assertEqual(answer["kopare"][str(self.a.id)]["kopare_id"], contact.id)
+        again = self.save(self.sold(), {str(self.a.id): BUYER}, updated_at=answer["updated_at"])
+        self.assertEqual(again["kopare"][str(self.a.id)]["kopare_id"], contact.id)
+        self.assertEqual(list(contacts()), [contact.id])
+        self.ok(self.sent(contact.id))
+        self.assertEqual([sale.holder_contact_id for sale in sales(self.a, active=True)], [contact.id])
+        self.assertEqual(self.buyer_mails(), [("kopare.information", contact.id)])  # resumed, not queued again
+
     def test_a_reason_may_not_name_the_kept_buyer(self):  # it lives in audit_log; no row holds the buyer yet
         self.login("man")
         _, contact = self.kept()
