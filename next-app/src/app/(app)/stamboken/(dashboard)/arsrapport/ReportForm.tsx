@@ -946,6 +946,7 @@ export function ReportForm({
     if (!res.ok) {
       const refusals = res.problem.extensions?.refusals;
       if (Array.isArray(refusals)) return refusalText(refusals[0] as Refusal);
+      refreshView(); // a lost answer may hide a sale that went through
       return reportError("Försäljningen", "registreras", res.problem);
     }
     edit((st) => {
@@ -953,8 +954,10 @@ export function ReportForm({
       delete rabbits[id];
       return { ...st, rabbits };
     });
+    setEntered((e) => e.filter((x) => x !== id));
     setSoldFor(null);
     refreshView();
+    if (isPaper) focusLater("paper-number"); // the next row
     return null;
   };
   const [undoError, setUndoError] = React.useState<React.ReactNode>(null);

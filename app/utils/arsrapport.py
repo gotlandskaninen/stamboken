@@ -85,9 +85,10 @@ from utils.herd_tracking import (
     drop_kept_buyers,
     latest_death_op,
     reject_contact_details,
+    report_owners,
     report_void_denial,
+    sale_undo_denial,
     sold_on,
-    void_denial,
     void_herd_tracking,
 )
 from utils.individual_commands import (
@@ -1160,17 +1161,18 @@ def report_view(herd, round_, access, user):
 
 def _undoable(user, access, row_ids):
     """
-    The sales among `row_ids` (TRANSFER rows) that the viewer may undo now as the rabbit page's Ångra does: the
-    seller's own, the latest of the rabbit, within SALE_UNDO_WINDOW, or a manager's (void_denial). Never a link's.
+    The sales among `row_ids` (TRANSFER rows) that the viewer may undo now as the seller does on the rabbit page
+    (sale_undo_denial): their own, the rabbit's latest row, within SALE_UNDO_WINDOW. Never a sale a report wrote
+    (REPORT_ROW: Ändra changes it), never a link's, and not a manager's wider right, which the rabbit page keeps.
     """
     if access.code is not None or not row_ids:
         return set()
+    rows = list(HerdTracking.select().where(HerdTracking.id.in_(row_ids)))
+    owned = report_owners([row.operation_id for row in rows])
     undo = set()
-    for row in HerdTracking.select().where(HerdTracking.id.in_(row_ids)):
+    for row in rows:
         active = HerdTracking.select().where(HerdTracking.individual == row.individual_id, ht_not_voided())
-        active = sorted(active, key=ht_sort_key)
-        latest = bool(active) and active[-1].id == row.id
-        if latest and row.transfer_id is None and void_denial(user, row, active, row.individual) is None:
+        if str(row.operation_id) not in owned and sale_undo_denial(user, row, sorted(active, key=ht_sort_key)) is None:
             undo.add(row.id)
     return undo
 
@@ -3360,6 +3362,9 @@ def sell_now(herd, round_, access, user, rabbit_id, sald, *, now=None):
         except (IndividualRefused, HerdTrackingError) as exc:
             raise _cannot([_written(rabbit_id, exc)], "Försäljningen kan inte registreras.") from exc
         drop_kept_buyers(set(kept), user)  # K1: one the sale did not link goes; the rabbit and its items are locked
+        if draft is not None:  # the row lets go of the sale, also before the form's next save; its version stays
+            draft.data = _with_entry(draft.data, str(rabbit_id), {"val": None})
+            draft.save(only=[YearlyReportDraft.data])
         return grant.operation_ids[0]
 
 

@@ -148,6 +148,25 @@ class SellNowTest(ArsrapportTest):
         self.assertEqual(self.skicka(self.kvar(self.b, vikt=2.8)).status_code, 200)
         self.assertEqual(len(sales(self.a)), 1)
 
+    def test_a_sale_the_report_wrote_has_no_angra_here(self):  # REPORT_ROW: Ändra changes it
+        sent = self.skicka(self.sald(self.a, "utanfor", 2025, 10, 10, kopare=BUYER), self.kvar(self.b, vikt=2.8))
+        self.assertEqual(sent.status_code, 200)
+        self.assertIsNone(self.page()["sales"][0]["undo"])
+
+    def test_the_drafts_entry_goes_with_the_sale(self):  # a reload before the form's next save finds no entry
+        sald = {"till": "utanfor", "ar": 2026, "manad": 1, "dag": 5}
+        entries = {str(self.a.id): {"val": "sald", "sald": sald}, str(self.b.id): {"val": "kvar", "vikt": 2.8}}
+        data = {**arsrapport.stored_body(self.body()), "rabbits": entries, "form": {"rabbits": entries}}
+        saved = self.api(
+            "PUT", "/besattning/G9001/2025/utkast", data=data, updated_at=None, submission_key=None, revision=None
+        )
+        self.assertEqual(saved.status_code, 200, saved.get_data(as_text=True))
+        self.sold(ar=2026, manad=1, dag=5, kopare=BUYER)
+        draft = db.YearlyReportDraft.get()
+        self.assertEqual(set(draft.data["rabbits"]), {str(self.b.id)})
+        self.assertEqual(set(draft.data["form"]["rabbits"]), {str(self.b.id)})
+        self.assertEqual(draft.updated_at.isoformat(), saved.get_json()["updated_at"])
+
     def test_a_sale_after_new_year_keeps_the_row_counted_by_its_move(self):
         self.sold(ar=2026, manad=1, dag=5, kopare=BUYER)
         row = next(row for row in self.page()["rabbits"] if row["id"] == self.a.id)
@@ -158,6 +177,9 @@ class SellNowTest(ArsrapportTest):
     def test_the_seller_undoes_it_within_seven_days(self):
         self.sold(kopare=BUYER)
         (sale,) = sales(self.a)
+        self.login("man")  # a manager's wider right stays on the rabbit page
+        self.assertIsNone(self.page()["sales"][0]["undo"])
+        self.login("owner")
         later = datetime.now(timezone.utc) + herd_tracking.SALE_UNDO_WINDOW + timedelta(minutes=1)
         with mock.patch.object(herd_tracking, "_now_utc", return_value=later):
             self.assertIsNone(self.page()["sales"][0]["undo"])
