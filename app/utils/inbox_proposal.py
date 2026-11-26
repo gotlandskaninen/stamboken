@@ -183,8 +183,8 @@ def _littermate_doubt(rabbit, name):
 def _genebank_of_letter(raw):
     """
     The genebank whose herds begin with the letter read before the rabbit's herd number, or None. Only for an item
-    without a genebank (a mail from an address not in the member register), and only to search: the item's own
-    genebank, which decides who may take it, is never set from what the model read.
+    without a genebank (a mail whose sender's genebank is not known from the member register), and only to search:
+    the item's own genebank, which decides who may take it, is never set from what the model read.
     """
     letter = _text(raw.get("genbanksnr"))[:1].upper()
     if not letter.isalpha():

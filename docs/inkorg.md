@@ -909,17 +909,21 @@ Bekräftar vridningen och maskningen tillsammans och gör kopian av just det par
 | `rotation` | krävs: 0, 90, 180 eller 270 grader medurs |
 | `mask_rects` | krävs: rektanglarna i bråkdelar av bilden vriden `rotation` grader. Får inte vara `null` |
 | `no_personal_data` | `true` krävs när `mask_rects` är en tom lista: intyget visar ingen säljare eller köpare |
-| `matches_registry` | `true` när handläggaren har jämfört intyget med registret och de stämmer. Ger kaninen märkningen "Intyget kontrollerat" (se nedan). Gränssnittet förväljer det när alla kontroller i förslaget gick igenom (ingen `ok: false` och minst en `ok: true`), men handläggaren avgör (Jonas 2026-11-26). Utelämnat eller `false`: ingen märkning |
+| `matches_registry` | `true` när handläggaren har jämfört intyget med registret och de stämmer. Ger kaninen märkningen "Intyget kontrollerat" (se nedan). Handläggaren kryssar i det själv varje gång, också när kopian görs om. Gränssnittet visar "Förslag: stämmer" när tolkningen läste kaninens eget nummer (`läst`) och ingen kontroll gick emot, men handläggaren avgör (Jonas 2026-11-26). Utelämnat eller `false`: ingen märkning. Kaninen måste ha ett pappersintyg i Stamboken (409 annars) |
 
 Båda värdena sparas på dokumentet i samma transaktion som kopian görs. Det som redan står på
 dokumentet (från `PATCH`) används inte: kopian visar exakt det paret som skickades. Likaså
-`matches_registry`: varje anrop sätter `verified_at` och den som bekräftade (`verified_by`) på nytt,
-eller tar bort dem. Görs kopian om utan `matches_registry` försvinner märkningen.
+`matches_registry`: varje anrop sätter `verified_at`, den som bekräftade (`verified_by`) och kaninens
+intygsnummer just då (`verified_certificate`) på nytt, eller tar bort dem. Görs kopian om utan
+`matches_registry` försvinner märkningen. En ny kopia sparas under ett nytt filnamn, och den gamla
+filen tas bort när den nya är sparad; blir den kvar tar nattjobbet den.
 
 **Vem:** handläggaren medan posten är öppen. Har dokumentet redan en kopia får också
 genbanksansvarig för postens genbank och admin göra om den, i alla lägen och också när posten är
 stängd eller någon annan har den, så att en felaktig kopia kan rättas. Dokumentet måste vara ett
-sparat intyg (`individual` satt).
+sparat intyg (`individual` satt). Den som gör kopian måste dessutom ha en roll i kaninens genbank:
+genbanksansvarig, admin, eller hjälpare när kaninen inte står i GX1/MX1 (403 annars). Det spelar
+roll för ett mejl utan genbank, som vem som helst i kön kan ta.
 
 Dokumentet blir klart (`status: "klar"`, `has_copy: true`). Är alla dokument i posten klara
 eller avfärdade blir posten `klar`, uppladdaren får notisen `klar` och mejlet `inlasning.klar`, en gång per post: en post som öppnas igen och
@@ -962,10 +966,12 @@ Gränssnittet kan använda 404 för att dölja "Pappersintyg" på kaninens sida,
 samma status (200, 403 eller 404) utan bilden.
 
 **Märkningen.** `GET /api/v2/individual/{nummer}` har `paper_certificate_checked`: tiden då kopian
-som visas (den senaste) bekräftades med `matches_registry`, annars `null`. Alla som ser kaninen ser
-märkningen "Intyget kontrollerat" (Jonas 2026-11-26); själva kopian bara de som får se intyget.
-Märkningen hör till kopian: tas kopian bort (`…/kopia`) eller görs den om utan bekräftelsen
-försvinner märkningen.
+som visas (den senaste) bekräftades med `matches_registry`, så länge kaninen har kvar det
+pappersintyg som jämfördes; annars `null`. Alla som ser kaninen ser märkningen "Intyget
+kontrollerat" (Jonas 2026-11-26); själva kopian bara de som får se intyget. Märkningen hör till
+kopian som visas: tas den bort (`…/kopia`, som också tar bort bekräftelsen) visas nästa kopia med sin
+egen bekräftelse eller ingen, och görs den om utan bekräftelsen försvinner märkningen. Får kaninen
+ett annat intyg, digitalt eller ett annat pappersnummer, försvinner märkningen också.
 
 ## Fråga uppfödaren
 
@@ -1173,8 +1179,9 @@ så hur säkert ett fält är avgörs av kontrollerna mot registret, aldrig av m
 1. Nummer, datum och antal normaliseras: nummer med och utan mellanslag och bokstav, datum som
    ÅÅMMDD, D/M-ÅÅ och ÅÅÅÅ-MM-DD, "st" i antal. En bokstav läst som siffra (S för 5, O för 0, l för
    1) ger aldrig `läst`.
-2. Bara postens genbank söks: kaniner byter aldrig genbank. Ett mejl från en adress som inte finns i
-   matrikeln har ingen genbank; då söks den genbank vars besättningar börjar med bokstaven som
+2. Bara postens genbank söks: kaniner byter aldrig genbank. Ett mejl vars avsändare matrikeln inte
+   ger en genbank (adressen finns inte där, eller medlemskapet har besättningar i båda genbankerna
+   eller ingen) har ingen genbank; då söks den genbank vars besättningar börjar med bokstaven som
    lästes före kaninens besättningsnummer (G eller M). Det gäller bara sökningen: postens genbank,
    som avgör vem som får ta posten, sätts aldrig från det modellen läste.
 3. En förälder är bekräftad när numret finns och förälderns egna föräldrar i registret stämmer

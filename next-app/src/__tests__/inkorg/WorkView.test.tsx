@@ -315,48 +315,60 @@ describe("WorkView: masking", () => {
     );
   });
 
-  it("proposes 'stämmer med registret' only when every check passed, and the handler decides", () => {
-    const checked = (checks: { ok: boolean | null; text: string }[]) =>
+  it("records the registry check only when the handler ticks it; the reading only proposes it", () => {
+    const box = () =>
+      screen.getByLabelText(
+        "Jag har jämfört intyget med registret och de stämmer",
+      );
+    const confirm = () =>
+      fireEvent.click(
+        screen.getByRole("button", { name: "Bekräfta maskningen och nästa" }),
+      );
+    const read = (
+      fields: NonNullable<InboxDocument["proposal"]>["fields"],
+      checks: { ok: boolean | null; text: string }[] = [
+        { ok: true, text: "Föräldrarna på intyget stämmer med registret." },
+      ],
+    ) =>
       doc({
+        individual: "G9001-2512",
         interpretation_status: "klar",
-        proposal: { fields: {}, checks },
+        proposal: { fields, checks },
       });
-    const passing = [
-      { ok: null, text: "G1-2112 finns redan i Stamboken." },
-      { ok: true, text: "Föräldrarna på intyget stämmer med registret." },
-    ];
-    const { unmount } = render(view(item({ documents: [checked(passing)] })));
-    const box = screen.getByLabelText(/Intyget stämmer med registret/);
-    expect(box).toBeChecked();
-    expect(screen.getByText(/alla kontroller gick igenom/)).toBeInTheDocument();
-    fireEvent.click(box);
-    fireEvent.click(
-      screen.getByRole("button", { name: "Bekräfta maskningen och nästa" }),
-    );
+    const own = {
+      individual: { value: "G9001-2512", source: "läst" as const },
+    };
+    const { unmount } = render(view(item({ documents: [read(own)] })));
+    expect(box()).not.toBeChecked();
+    expect(screen.getByText(/Förslag: stämmer/)).toBeInTheDocument();
+    fireEvent.click(box());
+    confirm();
     expect(actions.confirmMask).toHaveBeenLastCalledWith(
       12,
       31,
       0,
       expect.any(Array),
       false,
-      false,
+      true,
     );
     unmount();
-    render(
-      view(
-        item({
-          documents: [
-            checked([...passing, { ok: false, text: "Namnet skiljer sig." }]),
-          ],
-        }),
-      ),
-    );
-    expect(
-      screen.getByLabelText(/Intyget stämmer med registret/),
-    ).not.toBeChecked();
+    // No proposal when the reading names another rabbit, only derives it, or a check failed.
+    for (const other of [
+      read({ individual: { value: "G9001-2511", source: "läst" } }),
+      read({ individual: { value: "G9001-2512", source: "härlett" } }),
+      read({}, [{ ok: true, text: "Intygsnumret är ledigt." }]),
+      read(own, [
+        { ok: true, text: "Föräldrarna på intyget stämmer med registret." },
+        { ok: false, text: "Namnet skiljer sig." },
+      ]),
+    ]) {
+      const { unmount: done } = render(view(item({ documents: [other] })));
+      expect(screen.queryByText(/Förslag: stämmer/)).toBeNull();
+      done();
+    }
   });
 
-  it("redoes the masking from the stored check", () => {
+  it("asks for the check again when the masking is redone", () => {
     const done = doc({
       status: "klar",
       has_copy: true,
@@ -370,8 +382,10 @@ describe("WorkView: masking", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Gör om maskningen" }));
     expect(
-      screen.getByLabelText(/Intyget stämmer med registret/),
-    ).toBeChecked();
+      screen.getByLabelText(
+        "Jag har jämfört intyget med registret och de stämmer",
+      ),
+    ).not.toBeChecked();
   });
 
   it("does not offer the redo to a helper once the item is closed", () => {

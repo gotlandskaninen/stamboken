@@ -32,6 +32,7 @@ from utils.database import (
     OUTSIDE_GENEBANK_HERDS,
     Herd,
     HerdTracking,
+    InboxDocument,
     InboxItem,
     Individual,
     User,
@@ -709,7 +710,7 @@ _FIELD_BY_DETAIL = (
         re.compile(r"intygsnumret|Intygsnummer krävs|paper_certificate|certificate already exists", re.I),
         "paper_certificate",
     ),
-    (re.compile(r"som det står på pappersintyget|^Individnumret ska skrivas"), "paper_number"),
+    (re.compile(r"som det står på pappersintyget|^Individnumret ska skrivas|numret på intyget är"), "paper_number"),
     (re.compile(r"färg|color", re.I), "color"),
     (re.compile(r"^Kaninen finns inte"), "individual"),
 )
@@ -786,11 +787,17 @@ def _assign_certificate(body, user, grant, document):
         raise inbox.InboxError(400, PAPER_NUMBER_REQUIRED)
     if individual.certificate == certificate.strip():
         # A photo of the certificate the rabbit already has: nothing is written, the document is linked so its copy
-        # can go on the rabbit. A helper may link in her genebank too (Jonas 2026-11-26).
-        herd = individual.current_herd
-        if not (inbox.manages(user, herd.genebank_id) or grant.allows(user, herd)):
+        # can go on the rabbit. A helper may link in her genebank too (Jonas 2026-11-26). Under the rabbit's lock, so
+        # a rename or a new certificate cannot slip in before the link is saved.
+        if not lock_individual_for_edit(individual.id):
+            raise inbox.InboxError(404, "Kaninen finns inte i Stamboken.")
+        individual = Individual.get_by_id(individual.id)
+        if individual.certificate != certificate.strip():
+            raise inbox.InboxError(409, f"{individual.number} har ändrats. Öppna posten igen och spara på nytt.")
+        if not inbox.may_publish(user, individual, grant):
             raise inbox.InboxError(403, f"Du får inte lägga intyg på {individual.number}.")
-        if parse_number(paper_number) != parse_number(individual.number):
+        # The stored number exactly: G1-25012 and G1-2512 parse alike but are different rabbits.
+        if re.sub(r"\s", "", paper_number).upper() != individual.number.upper():
             raise inbox.InboxError(
                 409,
                 f"Intyget {certificate.strip()} gäller {individual.number}, men numret på intyget är {paper_number}.",
@@ -950,21 +957,28 @@ def _private_jpeg(relative):
 @_queue_worker
 def confirm_mask(item_id, document_id):
     body = _body()
+    replaced = []
 
     def action(item):
         document = inbox.document_of(item, document_id)
-        inbox.confirm_mask(
-            item,
-            document,
-            current_user,
-            body.get("rotation"),
-            body.get("mask_rects"),
-            body.get("no_personal_data"),
-            body.get("matches_registry"),
-        )
+        replaced[:] = [
+            inbox.confirm_mask(
+                item,
+                document,
+                current_user,
+                body.get("rotation"),
+                body.get("mask_rects"),
+                body.get("no_personal_data"),
+                body.get("matches_registry"),
+            )
+        ]
         return jsonify({"item": inbox.items_json([item])[0], "document": inbox.documents_json([document])[0]})
 
-    return _locked(item_id, action)
+    answer = _locked(item_id, action)
+    # The copy it replaced, once the new one is committed; the nightly job takes what is left behind.
+    if replaced and replaced[0] and InboxDocument.get_by_id(document_id).public_path != replaced[0]:
+        inbox.remove_files(replaced)
+    return answer
 
 
 # [Next.js] Erase one document's original on request; only the masked copy, if made, is left. Managers and admins.

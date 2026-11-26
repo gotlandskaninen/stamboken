@@ -105,12 +105,18 @@ export type InterpretationSummary = {
 export const shownProposal = (doc: InboxDocument): Proposal | null =>
   doc.interpretation_status === "klar" ? doc.proposal : null;
 
-/** The reading passed every check against the registry: "stämmer" is proposed, the handler decides. */
+/**
+ * Stamboken proposes "stämmer med registret": the reading names the rabbit the document is saved on, read and
+ * confirmed by the registry, and no check failed. Only a proposal: the handler ticks the box herself.
+ */
 export const checksPass = (doc: InboxDocument): boolean => {
-  const checks = shownProposal(doc)?.checks ?? [];
-  return (
-    checks.some((c) => c.ok === true) && !checks.some((c) => c.ok === false)
+  const proposal = shownProposal(doc);
+  if (!proposal || !doc.individual) return false;
+  const { individual, paper_number } = proposal.fields;
+  const same = [individual, paper_number].some(
+    (f) => f?.source === "läst" && f.value === doc.individual,
   );
+  return same && !proposal.checks.some((c) => c.ok === false);
 };
 
 export interface InboxEvent {

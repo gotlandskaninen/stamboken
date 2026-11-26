@@ -277,14 +277,29 @@ class TestSaveEndpoint(GrantTest):
         }
         item, document = self.taken(self.helper)
         self.login("hjalp")
-        resp = self.save(item, document, **{**body, "paper_number": "G1-2112"})
-        self.assertEqual(resp.status_code, 409, resp.get_json())
+        for other in ("G1-2112", "G1-21011"):  # another rabbit, and one that parses as G1-2111 but is not it
+            resp = self.save(item, document, **{**body, "paper_number": other})
+            self.assertEqual((resp.status_code, resp.get_json().get("field")), (409, "paper_number"), resp.get_json())
         other, foreign = self.taken(self.mellerud_helper, herd=2)
         self.login("mhjalp")
         self.assertEqual(self.save(other, foreign, **body).status_code, 403)
         for unlinked in (document, foreign):
             self.assertIsNone(db.InboxDocument.get_by_id(unlinked.id).individual_id)
         self.assertFalse(db.InboxEvent.select().where(db.InboxEvent.kind == "sparad").exists())
+
+    def test_only_a_role_in_the_rabbits_genebank_makes_its_copy(self):
+        # A mail without a genebank: any queue worker may take it over, but only the rabbit's genebank masks it.
+        item, document = self.taken(self.helper)
+        db.InboxItem.update(genebank=None).where(db.InboxItem.id == item.id).execute()
+        self.login("hjalp")
+        body = {"action": "pappersintyg", "individual": "G1-2111", "paper_certificate": "12", "paper_number": "G1-2111"}
+        self.assertEqual(self.save(item, document, **body).status_code, 200)
+        self.login("mhjalp")
+        self.assertEqual(self.post(f"/{item.id}/ta-over").status_code, 200)
+        rects = {"rotation": 0, "mask_rects": [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}], "matches_registry": True}
+        resp = self.post(f"/{item.id}/dokument/{document.id}/maskning", **rects)
+        self.assertEqual(resp.status_code, 403, resp.get_json())
+        self.assertIsNone(db.InboxDocument.get_by_id(document.id).verified_at)
 
     def test_a_number_conflict_on_an_existing_rabbit_is_not_resolved_by_resolution(self):
         item, document = self.taken(self.helper)

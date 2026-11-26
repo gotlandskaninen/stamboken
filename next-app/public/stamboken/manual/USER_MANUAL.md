@@ -1271,9 +1271,10 @@ administratörer, genbanksansvariga och genbankshjälpare, och alla tre kan se h
    nästa**. Rutorna och fotots vridning skickas tillsammans, så kopian görs som du ser fotot.
    Visar intyget ingen säljare eller köpare tar du bort rutorna, kryssar i **Fotot visar inga
    säljar- eller köparuppgifter** och klickar **Bekräfta maskningen och nästa**. Har du
-   jämfört intyget med registret och de stämmer, kryssa i **Intyget stämmer med registret**.
-   Rutan är redan ikryssad när alla kontroller i förslaget gick igenom, men det är du som
-   avgör. Kaninen får då märkningen **Intyget kontrollerat**. Kopian läggs
+   jämfört intyget med registret och de stämmer, kryssa i **Jag har jämfört intyget med
+   registret och de stämmer** innan du bekräftar. När tolkningen hittade kaninen och alla
+   kontroller gick igenom står "Förslag: stämmer" under rutan, men det är du som avgör och
+   kryssar. Kaninen får då märkningen **Intyget kontrollerat**. Kopian läggs
    på kaninen som pappersintyg. Därefter går vridning och typ inte att ändra. Blev maskningen
    fel klickar du **Gör om maskningen** på det klara dokumentet: handläggaren kan det medan
    ärendet är öppet, genbanksansvarig och administratör när som helst. Kopian på kaninen

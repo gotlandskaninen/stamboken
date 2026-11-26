@@ -89,22 +89,41 @@ class TestCopy(CopyTest):
     def test_a_copy_checked_against_the_registry_gives_the_rabbit_a_badge_everyone_sees(self):
         item, document = self.saved_document()
         rects = [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
-        self.assertEqual(self.mask(item, document, mask_rects=rects, matches_registry="ja").status_code, 400)
+        for wrong in ("ja", 1):
+            self.assertEqual(self.mask(item, document, mask_rects=rects, matches_registry=wrong).status_code, 400)
         resp = self.mask(item, document, mask_rects=rects, matches_registry=True)
         self.assertEqual(resp.status_code, 200, resp.get_json())
         stored = db.InboxDocument.get_by_id(document.id)
         self.assertEqual(resp.get_json()["document"]["verified_at"], stored.verified_at.isoformat())
-        self.assertEqual(stored.verified_by_id, self.helper.id)
+        self.assertEqual((stored.verified_by_id, stored.verified_certificate), (self.helper.id, "P-1"))
 
         self.login("spec")  # a viewer: sees the badge, not the copy
         rabbit = self.client.get("/api/v2/individual/G1-2112").get_json()
         self.assertEqual(rabbit["paper_certificate_checked"], stored.verified_at.isoformat())
         self.assertEqual(self.client.get("/api/v2/individual/G1-2112/paper-certificate").status_code, 403)
 
-        self.login("man")  # made again without the check: the badge goes with it
-        self.assertEqual(self.mask(item, document, mask_rects=rects).status_code, 200)
-        self.assertIsNone(db.InboxDocument.get_by_id(document.id).verified_at)
+        # Another certificate on the rabbit since: not the one checked.
+        db.Individual.update(certificate="P-2").where(db.Individual.number == "G1-2112").execute()
         self.assertIsNone(self.client.get("/api/v2/individual/G1-2112").get_json()["paper_certificate_checked"])
+        db.Individual.update(certificate="P-1").where(db.Individual.number == "G1-2112").execute()
+
+        self.login("man")  # made again without the check: the badge goes with it, and the old file after the commit
+        old = stored.public_path
+        self.assertEqual(self.mask(item, document, mask_rects=rects).status_code, 200)
+        again = db.InboxDocument.get_by_id(document.id)
+        self.assertIsNone(again.verified_at)
+        self.assertNotEqual(again.public_path, old)
+        self.assertFalse(os.path.exists(os.path.join(self.folder, old)))
+        self.assertIsNone(self.client.get("/api/v2/individual/G1-2112").get_json()["paper_certificate_checked"])
+
+    def test_removing_the_copy_removes_its_check(self):
+        item, document = self.saved_document()
+        self.mask(item, document, mask_rects=[{"x": 0, "y": 0.5, "w": 1, "h": 0.5}], matches_registry=True)
+        self.login("man")
+        resp = self.client.delete(f"/api/v2/inkorg/{item.id}/dokument/{document.id}/kopia")
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        stored = db.InboxDocument.get_by_id(document.id)
+        self.assertEqual((stored.verified_at, stored.verified_by_id, stored.verified_certificate), (None, None, None))
 
     def test_masking_needs_a_saved_certificate_and_a_confirmation(self):
         self.login("owner")

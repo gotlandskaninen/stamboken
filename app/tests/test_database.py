@@ -1690,8 +1690,9 @@ class TestDatabaseMigration(DatabaseTest):
             db.SchemaHistory.get_or_none(db.SchemaHistory.version == 42) is None
         ):  # init() stamps only the latest version
             db.SchemaHistory.insert(version=42, comment="test seed", applied=datetime.now()).execute()  # pylint: disable=E1120
-        db.DATABASE.execute_sql(
+        db.DATABASE.execute_sql(  # and the columns of later migrations, as on a real database at 42
             "ALTER TABLE inbox_document DROP COLUMN seller_member_id, DROP COLUMN buyer_member_id, "
+            "DROP COLUMN verified_at, DROP COLUMN verified_by_id, DROP COLUMN verified_certificate, "
             "ALTER COLUMN original_path SET NOT NULL"
         )
         db.DATABASE.execute_sql("ALTER TABLE inbox_item DROP COLUMN sender_authenticated")
@@ -1720,7 +1721,10 @@ class TestDatabaseMigration(DatabaseTest):
 
         fresh = shape()
         rewind_migrations(56)
-        db.DATABASE.execute_sql("ALTER TABLE inbox_document DROP COLUMN verified_at, DROP COLUMN verified_by_id")
+        db.DATABASE.execute_sql(
+            "ALTER TABLE inbox_document DROP COLUMN verified_at, DROP COLUMN verified_by_id, "
+            "DROP COLUMN verified_certificate"
+        )
 
         db.check_migrations()
 

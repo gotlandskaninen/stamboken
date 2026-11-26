@@ -204,8 +204,8 @@ export function WorkView({
   const mayMask =
     editable || (!noRole && !!doc?.has_copy && manages(user, item.genebank_id));
   const [noPersonalData, setNoPersonalData] = useState(false);
-  // "Stämmer med registret": proposed when the reading passed every check; the handler decides.
-  const [matches, setMatches] = useState(() => !!doc && checksPass(doc));
+  // "Stämmer med registret": the handler's own tick, every time; the reading only proposes it.
+  const [matches, setMatches] = useState(false);
   // Nothing saved from it yet: its type can change and it can be dismissed.
   const fresh = doc?.status === "ny" || doc?.status === "vantar_foralder";
   // A purchase notice's photo is looked at and dismissed only: never read, so no type, format or Tolka igen.
@@ -231,7 +231,7 @@ export function WorkView({
     setCrop(null);
     setRedo(false);
     setNoPersonalData(false);
-    setMatches(!!doc && checksPass(doc));
+    setMatches(false);
   }
 
   const run = <T,>(
@@ -823,7 +823,7 @@ export function WorkView({
                       setRotation(doc.rotation);
                       setRects(initialRects(doc));
                       setSelectedRect(null);
-                      setMatches(!!doc.verified_at);
+                      setMatches(false);
                       setRedo(true);
                     }}
                   >
@@ -890,14 +890,14 @@ export function WorkView({
                         checked={matches}
                         onChange={(e) => setMatches(e.target.checked)}
                       />
-                      Intyget stämmer med registret
-                      {checksPass(doc) && (
-                        <span className={styles.muted}>
-                          {" "}
-                          (alla kontroller gick igenom)
-                        </span>
-                      )}
+                      Jag har jämfört intyget med registret och de stämmer
                     </label>
+                    {checksPass(doc) && (
+                      <p className={styles.muted}>
+                        Förslag: stämmer. Tolkningen hittade {doc.individual}{" "}
+                        och alla kontroller gick igenom.
+                      </p>
+                    )}
                     <div className={styles.row}>
                       <button
                         type="button"

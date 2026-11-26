@@ -853,8 +853,9 @@ def reinterpret(item, document, user):
 def make_copy(document):
     """
     The copy shown on the rabbit, made from the original: turned `rotation` degrees clockwise, its mask_rects
-    (fractions of the turned image) painted black, saved as inkorg/kopia/<document id>.jpg without metadata.
-    Only confirm_mask makes it, from the pair it was given, which needs the original.
+    (fractions of the turned image) painted black, saved without metadata under a new name in inkorg/kopia/, so a
+    transaction rolled back after it leaves the copy it had. Only confirm_mask makes it, from the pair it was given,
+    which needs the original.
     """
     if document.original_path is None:
         raise InboxError(409, "Originalet är raderat, så kopian kan inte göras om.")
@@ -867,37 +868,46 @@ def make_copy(document):
         draw.rectangle(
             [math.floor(box[0]), math.floor(box[1]), math.ceil(box[2]) - 1, math.ceil(box[3]) - 1], fill="black"
         )
-    document.public_path, _ = store_jpeg(image, "kopia", name=str(document.id))
+    document.public_path, _ = store_jpeg(image, "kopia")
 
 
 def confirm_mask(item, document, user, rotation, rects, no_personal_data=None, matches_registry=None):
     """
     POST …/maskning: the rotation and the rectangles covering the seller and the buyer, stored together, and the copy
     made from exactly that pair goes on the rabbit; the document is done. The item's handler, while the item is open;
-    a copy already made can be made again by a manager of the item's genebank or an admin at any time. With
-    matches_registry true the caller found the certificate and the registry in agreement: the rabbit's badge. Each
-    call sets it anew, as it does the pair.
+    a copy already made can be made again by a manager of the item's genebank or an admin at any time. Either way
+    the caller must be allowed to put a copy on the rabbit (may_publish). With matches_registry true the caller
+    found the certificate and the registry in agreement: the rabbit's badge. Each call sets it anew, as it does the
+    pair. Returns the copy it replaced, for the caller to remove after the commit.
     """
     if not (document.public_path and manages(user, item.genebank_id)):
         require_handler(item, user)
     if document.doc_type != "intyg" or document.individual_id is None:
         raise InboxError(409, "Spara kaninen från intyget först.")
+    if not may_publish(user, document.individual):
+        raise InboxError(403, f"Du får inte lägga kopian på {document.individual.number}.")
     rotation, rects = _rotation(rotation), _rects(rects)
     if rects is None:
         raise InboxError(400, "Ange mask_rects: rektanglarna som täcker säljaren och köparen.")
     if not rects and no_personal_data is not True:
         raise InboxError(400, 'En tom mask_rects kräver "no_personal_data": true: intyget visar ingen säljare.')
-    if matches_registry not in (None, True, False):
+    if matches_registry is not None and not isinstance(matches_registry, bool):
         raise InboxError(400, "matches_registry är true eller false.")
+    certificate = document.individual.certificate
+    if matches_registry and not certificate:
+        raise InboxError(409, f"{document.individual.number} har inget pappersintyg i Stamboken att jämföra med.")
     document.rotation, document.mask_rects = rotation, rects
-    document.verified_at, document.verified_by = (now(), user.id) if matches_registry else (None, None)
+    checked = (now(), user.id, certificate) if matches_registry else (None, None, None)
+    document.verified_at, document.verified_by, document.verified_certificate = checked
     document.done_at = document.done_at or now()
+    replaced = document.public_path
     make_copy(document)
     document.save()
     log_event(
         item, user, "kopia", document=document.id, rects=len(rects), rotation=rotation, stammer=bool(matches_registry)
     )
     close_if_done(item, user)
+    return replaced
 
 
 def remove_copy(item, document, user):
@@ -905,14 +915,40 @@ def remove_copy(item, document, user):
     DELETE …/kopia: the masked copy comes off the rabbit (a badly masked one, with the original gone, cannot be
     made again). The caller holds the item's lock, and removes the returned file after the commit.
     """
-    if not manages(user, item.genebank_id):
+    genebank = document.individual.current_herd.genebank_id if document.individual_id else item.genebank_id
+    if not manages(user, genebank):
         raise InboxError(403, "Bara genbanksansvarig och admin kan ta bort en kopia.")
     if document.public_path is None:
         raise InboxError(409, "Dokumentet har ingen kopia.")
     path, document.public_path = document.public_path, None
+    document.verified_at = document.verified_by = document.verified_certificate = None  # the badge goes with it
     document.save()
     log_event(item, user, "kopia_borttagen", document=document.id)
     return path
+
+
+def may_publish(user, individual, grant=None):
+    """
+    May `user` put a copy on `individual`, by linking a photo to it or by making its copy: a manager of its genebank
+    or an admin, or a helper of its genebank while it is in an ordinary herd, never GX1/MX1. Linking through a save
+    also needs the helper to hold the item (`grant`); confirm_mask has checked the handler already.
+    """
+    herd = individual.current_herd
+    if manages(user, herd.genebank_id):
+        return True
+    helper = herd.genebank_id in (user.is_helper or []) and herd.herd not in OUTSIDE_GENEBANK_HERDS
+    return helper and (grant is None or grant.allows(user, herd))
+
+
+def checked_at(individual):
+    """
+    When the copy shown on the rabbit was found to agree with the registry, while the rabbit still has the paper
+    certificate that was checked; None otherwise. The badge everyone who sees the rabbit sees.
+    """
+    copy = paper_certificate(individual)
+    if copy is None or copy.verified_at is None or not individual.certificate:
+        return None
+    return copy.verified_at if copy.verified_certificate == individual.certificate else None
 
 
 def paper_certificate(individual):
