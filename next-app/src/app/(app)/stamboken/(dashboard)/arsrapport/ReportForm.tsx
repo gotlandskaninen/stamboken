@@ -209,10 +209,18 @@ const writeLocal = (
 };
 
 // Next shows the same view object again when the user comes Back to the page.
-// A view this tab has written past (a saved draft, a litter) is read again
-// instead: the form would otherwise start from before those writes, and its
-// next save would meet a conflict (Jonas 2026-11-26).
-const outdated = new WeakSet<ReportView>();
+// This tab counts its writes per report (a draft save from the moment it is
+// sent, a litter, Skicka, Dra tillbaka, a rabbit, a purchase), on any of the
+// report's pages: a view first shown before the latest of them, or while a
+// save is still on its way, is read again once that save has answered.
+// Otherwise the form would start from before those writes, and its next save
+// would meet a conflict (Jonas 2026-11-26).
+const writes = new Map<string, number>();
+const shownAt = new WeakMap<ReportView, number>();
+const inFlight = new Map<string, Promise<unknown>>();
+const wrote = (key: string) => writes.set(key, (writes.get(key) ?? 0) + 1);
+const outdated = (v: ReportView, key: string) =>
+  inFlight.has(key) || (shownAt.get(v) ?? Infinity) < (writes.get(key) ?? 0);
 
 // A copy the server never confirmed (closed tab, lost connection) wins while
 // the server is still at the version it was edited from; otherwise the
@@ -316,6 +324,9 @@ export function ReportForm({
   const router = useRouter();
   const { herd, year, round } = view;
   const store = link ? "link" : env;
+  const key = localKey(store, herd.herd, year);
+  // decided once, before the form adopts anything from this view
+  const [staleAtMount] = React.useState(() => outdated(view, key));
   // A link that was revoked or has ended: the page for it, and nothing more is saved.
   const gone = (p: Problem) =>
     !!link && p.status === 403 && p.extensions?.code === "lank_ogiltig";
@@ -395,7 +406,7 @@ export function ReportForm({
   } | null>(null);
   const litters = saved?.base === view.litters ? saved.list : view.litters;
   const setLitters = (list: Litter[]) => {
-    outdated.add(view);
+    wrote(key);
     setSaved({ base: view.litters, list });
   };
   const [litterOpen, setLitterOpen] = React.useState(false);
@@ -464,7 +475,7 @@ export function ReportForm({
   // The local copy (localChoice), once React has hydrated. An outdated view
   // waits for the reload below and is compared after it.
   React.useEffect(() => {
-    if (outdated.has(viewRef.current)) return;
+    if (staleAtMount) return;
     const c = localChoice(viewRef.current, store, isPaper);
     if (c?.older) setOlderCopy(c.older);
     else if (c?.adopt) {
@@ -473,11 +484,11 @@ export function ReportForm({
       setLocalCopy(true);
       setVersion((v) => v + 1);
     }
-  }, [store, herd.herd, year, isPaper]);
+  }, [store, herd.herd, year, isPaper, staleAtMount]);
 
   // The server's draft replaces the whole editing state: form, mode and key.
   const adoptDraft = (d: ServerDraft) => {
-    outdated.add(view);
+    wrote(key); // the server is past the view
     const s = fromBody(d.data);
     setState(s);
     setEntered(enteredFrom(view.rabbits, s));
@@ -492,13 +503,16 @@ export function ReportForm({
   };
   // A conflict with no draft to adopt (a report was submitted meanwhile): load
   // ReportView again and reset everything from it when it arrives.
-  const reload = React.useCallback(() => {
+  // `after`: a save still on its way, which the new view must include.
+  const reload = React.useCallback((after?: Promise<unknown>) => {
     resync.current = true;
     reloadFrom.current = viewRef.current;
     stopped.current = true;
     setSoldFor(null); // a sale dialog cannot save into a state about to be replaced
     setSyncing(true); // editing and Skicka wait for the answer
-    routerRef.current.refresh();
+    const refresh = () => routerRef.current.refresh();
+    if (after) void after.then(refresh, refresh);
+    else refresh();
     clearTimeout(syncTimer.current);
     // No answer after 10 s: stay locked and offer a full reload. A late
     // answer still syncs the form (the effect below).
@@ -543,10 +557,15 @@ export function ReportForm({
 
   // Back brought a view from before this tab's own writes: read it again.
   React.useEffect(() => {
-    if (!outdated.has(viewRef.current)) return;
+    if (!staleAtMount) return;
     keepLocal.current = true;
-    reload();
-  }, [reload]);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Back has no event of its own: the mount is it
+    reload(inFlight.get(key));
+  }, [reload, staleAtMount, key]);
+  // A view is new when it first shows: from the server, or after a refresh.
+  React.useEffect(() => {
+    if (!shownAt.has(view)) shownAt.set(view, writes.get(key) ?? 0);
+  }, [view, key]);
 
   // One save in flight at a time: a change made meanwhile is sent after it
   // has been answered, with the version it returned.
@@ -569,23 +588,23 @@ export function ReportForm({
         const mine = versionRef.current;
         const sentAt = submissions.current;
         const slow = setTimeout(() => setSaveState("saving"), 1000);
-        const res = await safe(
-          actionsRef.current.saveDraft(
-            herd.herd,
-            year,
-            toDraft(stateRef.current),
-            updatedAt.current,
-            keyRef.current!,
-            viewRef.current.report?.revision ?? null,
-            env,
-            post,
-          ),
+        const sent = toDraft(stateRef.current);
+        wrote(key);
+        const call = actionsRef.current.saveDraft(
+          herd.herd,
+          year,
+          sent,
+          updatedAt.current,
+          keyRef.current!,
+          viewRef.current.report?.revision ?? null,
+          env,
+          post,
         );
+        inFlight.set(key, call);
+        const res = await safe(call);
+        if (inFlight.get(key) === call) inFlight.delete(key);
         clearTimeout(slow);
-        if (res.ok) {
-          updatedAt.current = res.data.updated_at; // the server's truth, whatever came meanwhile
-          outdated.add(viewRef.current);
-        }
+        if (res.ok) updatedAt.current = res.data.updated_at; // the server's truth, whatever came meanwhile
         // Skicka started while this save was on its way: its answer says nothing about the form any more.
         if (!autosaveAnswerKept(sentAt, submissions.current)) {
           setSaveState((s) => (s === "saving" ? "saved" : s));
@@ -594,8 +613,12 @@ export function ReportForm({
         if (res.ok) {
           setSavedAt(fmtTime(res.data.updated_at));
           setSaveState("saved");
-          if (versionRef.current === mine)
-            writeLocal(store, herd.herd, year, null);
+          if (versionRef.current === mine) {
+            // a form mounted after this one (Back, another tab) may have written a newer copy meanwhile
+            const copy = readLocal(store, herd.herd, year);
+            if (!copy || JSON.stringify(copy.data) === JSON.stringify(sent))
+              writeLocal(store, herd.herd, year, null);
+          }
           // a newer edit waits: its copy now builds on the version just saved
           else
             writeLocal(store, herd.herd, year, {
@@ -940,6 +963,7 @@ export function ReportForm({
       actionsRef.current.submitReport(herd.herd, year, body, env, post),
     );
     if (res.ok) {
+      wrote(key);
       submitOver();
       keyRef.current = keyAfter("ok", keyRef.current!);
       frozen.current = null;
@@ -1029,6 +1053,7 @@ export function ReportForm({
     );
     setWithdrawing(false);
     if (res.ok) {
+      wrote(key);
       keyRef.current = keyAfter("withdrawn", keyRef.current!);
       const d = res.data.draft;
       if (d) {
@@ -1095,6 +1120,26 @@ export function ReportForm({
                   : saveState === "saving"
                     ? { kind: "saving" }
                     : { kind: "saved", at: savedAt, changing: !!view.report };
+  const timeoutAlert = syncTimeout && (
+    <div role="alert" className={styles.errorBox}>
+      <h2>Det gick inte att hämta senaste versionen</h2>
+      <button
+        type="button"
+        className={`sb-btn ${styles.btn}`}
+        onClick={() => window.location.reload()}
+      >
+        Ladda om sidan
+      </button>
+    </div>
+  );
+  // A reload on its way where the form's status card is not shown (the
+  // receipt, the paper gates): nothing there acts on the old view meanwhile.
+  const syncNote = syncing && (
+    <>
+      <ReportStatus status={{ kind: "syncing" }} />
+      {timeoutAlert}
+    </>
+  );
   // One short line for the sticky bar below 980 px; the card stays the only
   // live region, so this one is hidden from screen readers.
   const shortStatus =
@@ -1214,6 +1259,7 @@ export function ReportForm({
         {editor && (
           <ReportStatus status={{ kind: "editor", herd: herd.herd }} />
         )}
+        {syncNote}
         {olderNotice}
         <Receipt
           view={view}
@@ -1248,7 +1294,9 @@ export function ReportForm({
     return (
       <div className={styles.root} style={root}>
         {heading}
-        {paper!.intygPending ? (
+        {syncing ? (
+          syncNote
+        ) : paper!.intygPending ? (
           <div className={`${styles.status} ${styles.info}`} role="status">
             <p>
               Registrera intygen i ärendet först.{" "}
@@ -1473,18 +1521,7 @@ export function ReportForm({
           <div className={styles.side} ref={trackSideHeight}>
             <div>
               {deadline && <ReportStatus status={deadline} />}
-              {syncTimeout && (
-                <div role="alert" className={styles.errorBox}>
-                  <h2>Det gick inte att hämta senaste versionen</h2>
-                  <button
-                    type="button"
-                    className={`sb-btn ${styles.btn}`}
-                    onClick={() => window.location.reload()}
-                  >
-                    Ladda om sidan
-                  </button>
-                </div>
-              )}
+              {timeoutAlert}
               {refusals && (
                 <div
                   ref={boxRef}
@@ -2266,6 +2303,7 @@ export function ReportForm({
             setRabbitOpen(false);
             if (!registered.length) return;
             setRabbitSaved(true);
+            wrote(key);
             router.refresh(); // the list, with the new rabbits
             // "var är kaninen nu" as the row's choice, for those on the list; a sale opens its dialog, as the row's
             // Såld does for every role (a link's or a caretaker's sale is a proposal there)
@@ -2328,7 +2366,10 @@ export function ReportForm({
         upload={(data, purpose) =>
           uploadPhoto(herd.herd, year, data, link ? undefined : env, purpose)
         }
-        onSent={() => router.refresh()}
+        onSent={() => {
+          wrote(key);
+          router.refresh();
+        }}
         onClose={() => setBuying(false)}
       />
     </div>

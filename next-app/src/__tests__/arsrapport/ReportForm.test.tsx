@@ -1232,10 +1232,46 @@ describe("ReportForm", () => {
     } as never);
   const checked = (n: number) =>
     (within(row(n)).getByLabelText("Finns kvar") as HTMLInputElement).checked;
+  // saveDraft as the server answers it: a save from an older version gets the 409
+  const server = () => {
+    let at: string | null = null;
+    let stored: unknown = null;
+    return vi.fn(
+      (_h: string, _y: number, data: unknown, seen: string | null) => {
+        if (seen !== at)
+          return fail(409, {
+            draft: {
+              data: stored,
+              updated_at: at,
+              submission_key: null,
+              own: true,
+            },
+          });
+        stored = data;
+        at = "2026-12-31T10:00:00+00:00";
+        return ok({ updated_at: at, submission_key: null });
+      },
+    );
+  };
+  const answerLater = () => {
+    let answer!: () => void;
+    const call = new Promise((resolve) => {
+      answer = () =>
+        resolve({
+          ok: true,
+          data: {
+            updated_at: "2026-12-31T10:00:00+00:00",
+            submission_key: null,
+          },
+        });
+    });
+    return { call, answer };
+  };
 
   it("reads the page again when Back brings a view from before its own save, and saves on without a conflict", async () => {
     vi.useFakeTimers();
     const a = actions();
+    a.saveDraft.mockImplementation(server());
     const before = view();
     const first = render(<ReportForm env="demo" view={before} actions={a} />);
     choose(1, "Finns kvar");
@@ -1308,6 +1344,105 @@ describe("ReportForm", () => {
     expect(a.saveDraft.mock.calls[1][2]).toMatchObject({
       rabbits: { "1": { val: "kvar" }, "2": { val: "kvar" } },
     });
+  });
+
+  it("waits for a save still on its way when Back comes first, then reads the page again", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    const later = answerLater();
+    a.saveDraft.mockImplementationOnce(() => later.call);
+    const before = view();
+    const first = render(<ReportForm env="demo" view={before} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    expect(a.saveDraft).toHaveBeenCalledTimes(1);
+    first.unmount(); // Back before the save has answered
+    const { rerender } = render(
+      <ReportForm env="demo" view={before} actions={a} />,
+    );
+    expect(screen.getAllByText("Hämtar senaste versionen…")).not.toHaveLength(
+      0,
+    );
+    expect(refresh).not.toHaveBeenCalled(); // not before the save is in
+    await act(async () => {
+      later.answer();
+    });
+    expect(refresh).toHaveBeenCalledTimes(1);
+    rerender(
+      <ReportForm
+        env="demo"
+        view={savedDraft({ "1": { val: "kvar" } })}
+        actions={a}
+      />,
+    );
+    expect(checked(1)).toBe(true);
+  });
+
+  it("reads a view again after a save from another page of the same report", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    const ordinary = view();
+    render(<ReportForm env="demo" view={ordinary} actions={a} />).unmount();
+    // the paper page of the same report has its own view and the same draft
+    const other = render(<ReportForm env="demo" view={view()} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    other.unmount();
+    render(<ReportForm env="demo" view={ordinary} actions={a} />);
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the reload on the receipt too, with Ladda om sidan when it does not answer", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    const sent = view({ report: submittedReport() } as never);
+    render(<ReportForm env="demo" view={sent} actions={a} />).unmount();
+    const other = render(<ReportForm env="demo" view={view()} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    other.unmount();
+    render(<ReportForm env="demo" view={sent} actions={a} />);
+    expect(screen.getAllByText("Hämtar senaste versionen…")).not.toHaveLength(
+      0,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(screen.getByRole("button", { name: "Ladda om sidan" })).toBeTruthy();
+  });
+
+  it("leaves a newer local copy alone when an older save answers", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    const later = answerLater();
+    a.saveDraft.mockImplementationOnce(() => later.call);
+    render(<ReportForm env="demo" view={view()} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    // a form mounted later (Back, another tab) wrote its own copy meanwhile
+    const key = Object.keys(window.localStorage).find((k) =>
+      k.startsWith("arsrapport:"),
+    )!;
+    window.localStorage.setItem(
+      key,
+      JSON.stringify({
+        data: { rabbits: { "2": { val: "kvar" } } },
+        updated_at: null,
+        revision: null,
+      }),
+    );
+    await act(async () => {
+      later.answer();
+    });
+    expect(local()).toContain('"2"');
   });
 
   it("does not read the page again on Back when nothing was saved from it", () => {
