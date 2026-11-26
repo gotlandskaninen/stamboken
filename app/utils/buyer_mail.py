@@ -220,7 +220,7 @@ def _membership_mail(params):
 def _same_buyer(contact_id):
     """The linked contact and reviewed or unambiguous matches, also after an e-mail has been purged."""
     contact = BuyerContact.get_or_none(BuyerContact.id == contact_id)
-    if contact is None:
+    if contact is None or contact.email_notice_only:  # its mail promises this sale's details only (#273)
         return {contact_id}
     email = (contact.email or "").strip().lower()
     key = address_hash(email) if email else contact.erased_email_hash
@@ -240,7 +240,8 @@ def _same_buyer(contact_id):
 def _pending_proposals(contact_ids):
     from utils.herd_tracking import _buyer_name_key  # pylint: disable=import-outside-toplevel
 
-    contacts = list(BuyerContact.select().where(BuyerContact.id.in_(contact_ids)))
+    # a buyer without a försäljningsbevis erases this sale only, never a pending one (#273)
+    contacts = list(BuyerContact.select().where(BuyerContact.id.in_(contact_ids), ~BuyerContact.email_notice_only))
     addresses = {address_hash(c.email): c.email.strip().lower() for c in contacts if c.email}
     buyers = {
         (_buyer_name_key(c.name), address_hash(c.email) if c.email else c.erased_email_hash)

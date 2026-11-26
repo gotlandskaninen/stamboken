@@ -2046,7 +2046,7 @@ def _register_refusals(individual_id, remove, add, ops, admin=False, transfer=No
                         kopare,
                         transfer.date,
                         address_required=address_required and not transfer.address_optional,
-                        new_sale=not transfer.address_optional,
+                        new_sale=not transfer.corrects_sale,
                     )
                 except HerdTrackingInvalid as exc:
                     refusals.append(_refusal(individual_id, "kopare", str(exc)))
@@ -2070,7 +2070,9 @@ def _removed_buyers(herd, round_, rabbits, current_ops):
     deleted = AuditLog.select(AuditLog.record_id).where(
         AuditLog.table_name == BuyerContact._meta.table_name,
         AuditLog.operation == "DELETE",
-        AuditLog.new_data["action"].in_(("radering", "invandning", "gallring_fem_ar", "gallring_dod")),
+        AuditLog.new_data["action"].in_(
+            ("radering", "invandning", "gallring_fem_ar", "gallring_dod", "studs", "ej_informerad")
+        ),
     )
     history = AuditLog.select(AuditLog.transaction_id).where(
         AuditLog.table_name == HerdTracking._meta.table_name, AuditLog.record_id == HerdTracking.id.cast("text")
@@ -2187,6 +2189,8 @@ def _report_transfer(herd, round_, entry, current_effects, sale, claim, removed,
     buyer = entry.sald["kopare"]
     if removed:
         return TransferIndividual(target, day, buyer_removed=True)
+    if buyer == NOT_RECORDED:  # såld utanför genbanken (#273): no buyer, not even one kept across Dra tillbaka
+        return TransferIndividual(target, day, buyer=buyer)
     if buyer is None:
         return TransferIndividual(target, day, buyer_contact_id=_kept_contact(herd, round_, entry, claim, sale))
     registered = next((e for e in current_effects if e == sale), None)
@@ -2211,7 +2215,9 @@ def _report_transfer(herd, round_, entry, current_effects, sale, claim, removed,
         )
     ):
         buyer = {**buyer, "postal_address": contact.postal_address}
-    return TransferIndividual(target, day, buyer=buyer, address_optional=contact is not None or paper)
+    return TransferIndividual(
+        target, day, buyer=buyer, address_optional=contact is not None or paper, corrects_sale=True
+    )
 
 
 def _reason_refusals(reason, rabbit_ids, names=()):

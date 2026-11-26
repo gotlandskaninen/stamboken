@@ -276,17 +276,18 @@ def reject(proposal, user, *, reason: str, then: Literal["kvar", "valj_igen"], n
         arsrapport._mail("arsrapport.forsaljning_avvisad", report.herd, user, params, ref)  # pylint: disable=protected-access
 
 
-def clear_buyer(proposal, action, user=None, still=None) -> int:
+def clear_buyer(proposal, action, user=None, still=None, to=None) -> int:
     """
     The pending proposal's buyer goes (spec section 6), under a decision's locks: the report lock and row, the
     report's items (_locked), then the rabbit. `still` rebuilds the rule's SQL condition for the locked rabbit. One
     audit_log row without the buyer, as for a BuyerContact. Returns 1 when it went, else 0. A sale outside the
-    genebank without its buyer can only be rejected (BUYER_GONE).
+    genebank without its buyer can only be rejected (BUYER_GONE). With `to` NOT_RECORDED the buyer becomes "såld
+    utanför genbanken" instead, which can be approved (#273).
     """
     with DB_PROXY.atomic():
         proposal, _, _ = _locked(proposal)
         lock_individuals([proposal.individual_id])  # a death is read under the rabbit's lock
-        query = SaleProposal.update(buyer=None).where(
+        query = SaleProposal.update(buyer=to).where(
             SaleProposal.id == proposal.id, SaleProposal.state == "foreslagen", SaleProposal.buyer.is_null(False)
         )
         changed = (query.where(still([proposal.individual_id])) if still is not None else query).execute()

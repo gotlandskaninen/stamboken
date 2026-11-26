@@ -24,6 +24,7 @@ from utils.herd_tracking import (  # noqa: E402
     record_herd_tracking,
 )
 from utils.individual_commands import record_sale  # noqa: E402
+from utils.mail import SALE_WITHDRAWN  # noqa: E402
 
 from tests.database_test import _USE_POSTGRES, rewind_migrations  # noqa: E402
 from tests.test_buyer_contact import BUYER  # noqa: E402
@@ -44,8 +45,8 @@ class NoticeOnlyTest(BuyerMailTest):
     def contact(self, sale):
         return db.BuyerContact.get_or_none(db.BuyerContact.id == sale.holder_contact_id)
 
-    def notice_status(self, status, created_at=None):
-        changes = {"status": status, **({"created_at": created_at} if created_at else {})}
+    def notice_status(self, status, created_at=None, last_error=None):
+        changes = {"status": status, "last_error": last_error, **({"created_at": created_at} if created_at else {})}
         db.MailMessage.update(**changes).where(db.MailMessage.kind == "kopare.information").execute()
 
     def purge(self):
@@ -188,8 +189,8 @@ class TestPurge(NoticeOnlyTest):
 
     def test_the_e_mail_stays_while_the_notice_can_still_go(self):
         sale = self.sale()
-        for status in ("sending", "failed", "cancelled"):  # retried, or a withdrawn report sent again
-            self.notice_status(status)
+        for status, error in (("sending", None), ("failed", None), ("cancelled", SALE_WITHDRAWN)):
+            self.notice_status(status, last_error=error)  # retried, or a withdrawn report sent again
             self.purge()
             with self.subTest(status=status):
                 self.assertEqual(self.contact(sale).email, EMAIL)

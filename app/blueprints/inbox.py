@@ -44,6 +44,7 @@ from utils.herd_tracking import (
     NOT_RECORDED,
     HerdTrackingError,
     attach_buyer,
+    buyer_contact_fields,
     correct_herd_tracking,
     is_manager_of,
 )
@@ -910,6 +911,10 @@ def transfer(item_id, document_id):
                     raise inbox.InboxError(403, "Du får inte koppla ett bevis till kaninens försäljning.")
                 # A sale registered without its buyer gets the one the proof shows; past its five years, none.
                 if buyer == NOT_RECORDED:  # såld utanför genbanken (#273): nothing is kept, the proof is cleared
+                    if proven.herd.herd not in OUTSIDE_GENEBANK_HERDS or proven.holder_contact_id is not None:
+                        # read under the rabbit's lock: another handler may have added the buyer meanwhile
+                        raise inbox.InboxError(409, "Försäljningen har redan en köpare. Ladda om sidan.")
+                    buyer_contact_fields(buyer, proven.herd_tracking_date)  # only for sales until 2027
                     proven.buyer_removed = True
                 elif buyer is not None and attach_buyer(proven, buyer, user) is None:
                     proven.buyer_removed = True  # so the proof is cleared below

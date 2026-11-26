@@ -469,6 +469,7 @@ def record_herd_tracking(
     holder_contact=None,
     address_optional=False,
     buyer_removed=False,
+    new_sale=True,
 ):
     """
     The central writer. Locks the individual, re-reads its
@@ -498,9 +499,7 @@ def record_herd_tracking(
     if buyer is not None:
         # A new sale needs the address, except from a manager or admin (old paper certificates); corrections never.
         address_required = not address_optional and not is_manager_of(user, target.genebank_id)
-        contact_fields = buyer_contact_fields(
-            buyer, when, address_required=address_required, new_sale=not address_optional
-        )
+        contact_fields = buyer_contact_fields(buyer, when, address_required=address_required, new_sale=new_sale)
     individual_id = individual.id if isinstance(individual, Individual) else int(individual)
     code_id = getattr(user, "access_code_id", None)  # the report link as the signer: no account, no signature
     signer = {"access_code_id": code_id} if code_id is not None else {"signature": user}
@@ -1056,6 +1055,9 @@ def _refuse_buyerless_sales_outside(parsed, pairs):
             continue
         if event["buyer"] is not None and index in pairs and pairs[index].buyer_removed:
             raise HerdTrackingConflict(BUYER_REMOVED)  # never registered again, as in attach_buyer
+        buyer = event["buyer"]
+        if buyer and index not in pairs and not buyer["email_notice_only"] and event["date"] < BEVIS_FROM:
+            raise HerdTrackingInvalid(f"Händelse {index + 1}: {BEVIS_NOT_YET}")  # a sale new to the register
         if event["buyer"] is None and index not in pairs and not event["not_recorded"]:
             hint = "ange köparens namn och ort" if event["kind"] == "TRANSFER" else "välj Flytt, där köparen anges"
             raise HerdTrackingInvalid(f"Händelse {index + 1}: en försäljning utanför föreningen: {hint}.")

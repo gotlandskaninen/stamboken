@@ -27,6 +27,7 @@ from utils.database import (
     lock_individuals,
 )
 from utils.herd_tracking import (
+    NOT_RECORDED,
     QUEUE_CHANGED,
     HerdTrackingConflict,
     HerdTrackingForbidden,
@@ -45,7 +46,7 @@ from utils.herd_tracking import (
 )
 from utils.inbox_purge import remove_originals
 from utils.individual_commands import FREE_TEXT_RETENTION
-from utils.mail import address_hash, forget_recipient, is_address
+from utils.mail import SALE_WITHDRAWN, address_hash, forget_recipient, is_address
 
 logger = logging.getLogger("herdbook.buyer_contact")
 FAILED_NOTICE_KEPT = timedelta(days=30)  # a failed first notice to the buyer can be retried this long
@@ -294,7 +295,11 @@ def purge_proposal_buyers(now):
             _dead_since(individual_ids, now)
         )
 
-    pending = SaleProposal.select().where(SaleProposal.state == "foreslagen", SaleProposal.buyer.is_null(False))
+    pending = SaleProposal.select().where(
+        SaleProposal.state == "foreslagen",
+        SaleProposal.buyer.is_null(False),
+        ~SaleProposal.buyer.contains(NOT_RECORDED),  # såld utanför genbanken holds no buyer (#273)
+    )
     found = list(pending.where(due(pending.select(SaleProposal.individual))).order_by(SaleProposal.id))
     return sum(sale_proposal.clear_buyer(proposal, "gallring_forslag", still=due) for proposal in found)
 
@@ -409,6 +414,8 @@ def purge_undelivered_notice(now):
     undelivered = _notices(
         (MailMessage.status == "bounced")
         | ((MailMessage.status == "failed") & (MailMessage.created_at < now - FAILED_NOTICE_KEPT))
+        # stopped, or not built (the buyer no longer holds the rabbit); a withdrawn report's mail may resume
+        | ((MailMessage.status == "cancelled") & (MailMessage.last_error != SALE_WITHDRAWN))
     )
 
     def due():
@@ -420,6 +427,36 @@ def purge_undelivered_notice(now):
     return count
 
 
+NOTICE_WITHIN = timedelta(days=30)  # art. 14.3: the buyer without a försäljningsbevis is told within a month
+
+
+def purge_uninformed(now):
+    """
+    #273: a buyer without a försäljningsbevis is kept only if the association can tell them within a month. A
+    pending proposal's e-mail buyer becomes "såld utanför genbanken", and a buyer whose address has waited that long
+    for a manager's check goes.
+    """
+    late = now - NOTICE_WITHIN
+
+    def waiting(_individual_ids):
+        return (SaleProposal.created_at < late) & SaleProposal.buyer.contains({"notice_only": True})
+
+    found = SaleProposal.select().where(SaleProposal.state == "foreslagen", waiting(None)).order_by(SaleProposal.id)
+    count = sum(
+        sale_proposal.clear_buyer(proposal, "ej_informerad", still=waiting, to=dict(NOT_RECORDED)) for proposal in found
+    )
+
+    def unchecked():
+        return BuyerContact.email_notice_only & BuyerContact.email_review_pending & (BuyerContact.created_at < late)
+
+    with DB_PROXY.atomic():
+        deleted, paths = _delete_under_locks(
+            BuyerContact.select(BuyerContact.id).where(unchecked()), unchecked, "ej_informerad"
+        )
+    remove_originals(paths)
+    return count + deleted
+
+
 RULES = (
     purge_membership_optin,
     purge_sold_on,
@@ -427,6 +464,7 @@ RULES = (
     purge_expired,
     purge_proposal_buyers,
     purge_undelivered_notice,
+    purge_uninformed,
     purge_notice_email,
 )
 

@@ -719,6 +719,7 @@ class TransferIndividual(PolicyCommand):
     buyer_contact_id: int | None = None
     address_optional: bool = False  # the report corrects its own registered sale, or enters a paper form as written
     buyer_removed: bool = False
+    corrects_sale: bool = False  # the report corrects its own registered sale: no new buyer before 2027 (#273)
     apply_rank = 70
     policy_stage = None  # asked in apply, after the measurements are written (IR-52)
 
@@ -754,6 +755,7 @@ class TransferIndividual(PolicyCommand):
             holder_contact=self.buyer_contact_id,
             address_optional=self.address_optional,
             buyer_removed=self.buyer_removed,
+            new_sale=not self.corrects_sale,
         )
 
 
