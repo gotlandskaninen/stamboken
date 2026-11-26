@@ -448,10 +448,21 @@ class TestLegacyWriters(SupportAccountTest):
         self.assertEqual(refused["status"], "error")
         self.assertIsNone(db.Herd.get_by_id(m3.id).bank_account_number)
 
-    def test_add_herd_never_writes_the_bank_columns(self):
-        form = {"herd": "G77", "genebank": self.genebanks[0].id, "bank_account_number": OTHER, "bank_name": "B"}
-        self.assertEqual(da.add_herd(form, self.admin.uuid), {"status": "success"})
-        herd = db.Herd.get(db.Herd.herd == "G77")
+    def test_add_herd_says_a_typed_account_cannot_be_saved(self):
+        """A new herd has no membership, so no account: a typed one is refused, not dropped with a success."""
+        refused = {
+            "status": "error",
+            "message": "Kontot för stödet sparas på medlemskapet. Koppla besättningen till ett medlemskap först.",
+        }
+        for code, bank in (("G77", {"bank_account_number": OTHER}), ("G78", {"bank_name": "B"})):
+            form = {"herd": code, "genebank": self.genebanks[0].id, **bank}
+            self.assertEqual(da.add_herd(form, self.admin.uuid), refused)
+            self.assertFalse(db.Herd.select().where(db.Herd.herd == code).exists())
+        # the old app's empty form: blanks are no account
+        blank = {"bank_account_number": " \t", "bank_name": None}
+        self.assertEqual(da.add_herd({"herd": "G79", "genebank": self.genebanks[0].id, **blank}, self.admin.uuid),
+                         {"status": "success"})  # fmt: skip
+        herd = db.Herd.get(db.Herd.herd == "G79")
         self.assertEqual((herd.bank_account_number, herd.bank_name), (None, None))
 
 

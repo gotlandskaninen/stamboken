@@ -1785,6 +1785,9 @@ def add_herd(form, user_uuid):
         if "id" in form:
             del form["id"]
         form = {k: v for k, v in form.items() if k not in BANK_PRIVACY_FIELDS}  # fixed 'private', issue #33
+        if any(_account_text(form.get(field)) for field in HERD_BANK_FIELDS):  # blanks: the old app's empty form
+            message = "Kontot för stödet sparas på medlemskapet. Koppla besättningen till ett medlemskap först."
+            return {"status": "error", "message": message}
         bad = invalid_privacy_field(form)
         if bad:
             return {"status": "error", "message": f"Invalid value for {bad}"}
