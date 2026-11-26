@@ -907,7 +907,7 @@ def confirm_mask(item, document, user, rotation, rects, no_personal_data=None, m
         raise InboxError(
             409, "Fotot sparades innan Stamboken sparade intygsnumret, så det kan inte markeras kontrollerat."
         )
-    stale = rabbit.certificate != document.saved_certificate or rabbit.number != document.saved_number
+    stale = rabbit.certificate != document.saved_certificate or rabbit.number.upper() != document.saved_number
     if matches_registry and (stale or rabbit.digital_certificate):
         # The check is of the certificate the photo was saved as: a number changed since is not the one compared.
         raise InboxError(
@@ -972,7 +972,7 @@ def checked_at(individual):
     # A rabbit with a digital certificate shows that one, even beside an old paper number: not the one checked.
     if copy is None or copy.verified_at is None or not individual.certificate or individual.digital_certificate:
         return None
-    same = copy.saved_certificate == individual.certificate and copy.saved_number == individual.number
+    same = copy.saved_certificate == individual.certificate and copy.saved_number == individual.number.upper()
     return copy.verified_at if same else None
 
 
@@ -1358,15 +1358,18 @@ def herd_holder(herd_id):
     )
 
 
-def saved(item, document, user, individual, action):
+def saved(item, document, user, individual, action, paper_number=None):
     """
-    The rabbit a certificate document registered or certified, with the certificate number it was saved as. The
+    The rabbit a certificate document registered or certified, with the certificate number it was saved as and
+    the individual number the paper shows (`paper_number`: a paper Stamboken's number overrode is not this
+    rabbit's, and can never be ticked as matching). The
     paper is the breeder's: its seller is the holder of the rabbit's herd of origin, and its buyer the holder of the
     herd it is in now when that is another of the association's, so an erasure of either finds the photo. A sale
     through the document records the sale's own seller and buyer instead, and they stay.
     """
     document.individual = individual
-    document.saved_certificate, document.saved_number = individual.certificate, individual.number
+    shown = re.sub(r"\s", "", paper_number).upper() if isinstance(paper_number, str) else None
+    document.saved_certificate, document.saved_number = individual.certificate, shown
     if document.herd_tracking_id is None:
         document.seller_member = herd_holder(individual.origin_herd_id) or document.seller_member
         now_in = held_in(individual)

@@ -363,6 +363,26 @@ class TestSaveEndpoint(GrantTest):
         self.assertIsNone(self.rabbit("G1-2112").certificate)
         self.assertIsNone(db.InboxDocument.get_by_id(document.id).individual_id)
 
+    def test_a_paper_overruled_by_stambokens_number_is_never_checked(self):
+        item, document = self.taken(self.manager)
+        self.login("man")
+        first = self.save(item, document, **{**NEW_RABBIT, "paper_number": "G1-2521"})
+        self.assertEqual(first.get_json()["title"], "number_conflict", first.get_json())
+        right = first.get_json()["stamboken_number"]
+        resolution = {"expected_number": right, "choice": "use_stamboken_number"}
+        resp = self.save(item, document, **{**NEW_RABBIT, "paper_number": "G1-2521", "resolution": resolution})
+        self.assertEqual(resp.status_code, 201, resp.get_json())
+        saved = db.InboxDocument.get_by_id(document.id)
+        self.assertEqual((saved.saved_number, saved.individual.number), ("G1-2521", right))
+        with mock.patch("utils.inbox.make_copy"):
+            masked = self.post(
+                f"/{item.id}/dokument/{document.id}/maskning",
+                rotation=0,
+                mask_rects=[{"x": 0, "y": 0.5, "w": 1, "h": 0.5}],
+                matches_registry=True,
+            )
+        self.assertEqual(masked.status_code, 409, masked.get_json())
+
     def test_a_litter_changed_under_the_link_is_a_conflict(self):
         item, document = self.taken(self.helper)
         self.login("hjalp")

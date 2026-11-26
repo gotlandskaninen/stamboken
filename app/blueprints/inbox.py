@@ -858,7 +858,7 @@ def save_document(item_id, document_id):
                 result = _assign_certificate(body, user, grant, document)
             else:
                 raise inbox.InboxError(400, 'action är "ny_kanin" eller "pappersintyg".')
-            inbox.saved(item, document, user, result[1], action)
+            inbox.saved(item, document, user, result[1], action, body.get("paper_number"))
             answer = _with_item(result, item, document)
     except _Refused as refused:
         return _placed(refused.response)
