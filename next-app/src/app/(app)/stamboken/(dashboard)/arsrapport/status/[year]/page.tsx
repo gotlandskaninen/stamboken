@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 import { ApiError, fetchApi } from "@/lib/api";
@@ -22,6 +23,10 @@ import { StatusSwitch } from "./StatusSwitch";
 
 export const dynamic = "force-dynamic";
 
+async function BlankForm({ check }: { check: Promise<boolean> }) {
+  return <BlankFormLink available={await check} />;
+}
+
 export default async function StatusPage({
   params,
   searchParams,
@@ -36,7 +41,7 @@ export default async function StatusPage({
   const env = parseMode((await cookies()).get(MODE_COOKIE)?.value);
 
   // Ops puts the blank form on the server (docs/arsrapport.md); until then the link would open a 404. Only a
-  // confirmed 404 hides the link. Started first and awaited last, so a slow check does not hold up the table.
+  // confirmed 404 hides the link. Awaited inside its own Suspense, so a slow check does not hold up the table.
   const blankFormCheck = fetchApi("/v2/arsrapport/blankett.pdf", {
     method: "HEAD",
     timeout: 3000,
@@ -50,8 +55,10 @@ export default async function StatusPage({
     fetchApi<{ genebanks: { id: number; name: string }[] }>("/genebanks").then(
       (r) => r.genebanks ?? [],
     ),
+    // Only the switch needs the list: without it, the page still shows the year in its address.
     fetchApi<{ rounds: Round[] }>("/v2/arsrapport/rundor").then(
       (r) => r.rounds,
+      () => [] as Round[],
     ),
   ]);
   const mine = queue.my_genebanks ?? [];
@@ -105,7 +112,6 @@ export default async function StatusPage({
           `/v2/arsrapport/rundor/${year}/genbanker/${genebank.id}/mottagare`,
         )
       : null;
-  const blankForm = await blankFormCheck;
 
   return (
     <>
@@ -122,7 +128,9 @@ export default async function StatusPage({
               genebankId={genebank.id}
               genebanks={options}
             />
-            <BlankFormLink available={blankForm} />
+            <Suspense fallback={null}>
+              <BlankForm check={blankFormCheck} />
+            </Suspense>
           </div>
         }
       />

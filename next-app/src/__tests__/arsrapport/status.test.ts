@@ -219,6 +219,7 @@ describe("phoneNumbers", () => {
       "0498 12-34-56",
       "Mobil 070-1234567",
       "+46 70 123 45-67",
+      "+46 70 123 04-56",
     ])
       expect(phoneNumbers(one)).toEqual([one]);
   });

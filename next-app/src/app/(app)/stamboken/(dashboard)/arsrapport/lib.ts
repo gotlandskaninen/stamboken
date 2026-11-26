@@ -1192,12 +1192,14 @@ export function currentRoundYear(rounds: Round[], today: string): number {
 }
 
 // A phone field can hold two numbers, "08 - 510 122 07 0709 - 55 72 08": split before a piece that starts like
-// a number of its own ("0NN - ", "+NN - "), but a piece with too few digits to be one ("Mobil") stays with the next.
+// a number of its own ("0NN - ", "+NN - "), and only where both sides have the seven digits a whole number has
+// ("Mobil 070-…" and "+46 70 123 04-56" stay one).
+const digits = (s: string) => s.replace(/\D/g, "").length;
 export function phoneNumbers(text: string): string[] {
   const numbers: string[] = [];
   for (const piece of text.trim().split(/\s+(?=(?:\+|0)\d*\s*-\s*\d)/)) {
     const prev = numbers.at(-1);
-    if (prev !== undefined && prev.replace(/\D/g, "").length < 7)
+    if (prev !== undefined && (digits(prev) < 7 || digits(piece) < 7))
       numbers[numbers.length - 1] = `${prev} ${piece}`;
     else if (piece) numbers.push(piece);
   }
