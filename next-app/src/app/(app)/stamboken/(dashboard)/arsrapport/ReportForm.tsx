@@ -532,11 +532,6 @@ export function ReportForm({
     writeLocal(store, view.herd.herd, view.year, null);
   }, [view, store, isPaper, initialMode]);
 
-  React.useEffect(() => {
-    if (mode !== "form" && answerSaved && !refreshing)
-      updatedAt.current = view.draft?.updated_at ?? null;
-  }, [mode, answerSaved, refreshing, view]);
-
   // One save in flight at a time: a change made meanwhile is sent after it
   // has been answered, with the version it returned.
   const flush = async () => {
@@ -1110,8 +1105,15 @@ export function ReportForm({
   };
 
   const startChange = () => {
-    if (!localCopy && !keepMissingEdits.current) {
-      setState(fromBody(view.draft?.data ?? view.report?.submitted ?? {}));
+    if (!localCopy) {
+      // the refreshed draft and its version together; answers typed on the focused page and not sent go on top
+      const next = fromBody(view.draft?.data ?? view.report?.submitted ?? {});
+      if (keepMissingEdits.current)
+        for (const id of view.report?.not_stated ?? []) {
+          const e = state.rabbits[id];
+          if (e?.val && e.val !== "ej_angiven") next.rabbits[id] = e;
+        }
+      setState(next);
       updatedAt.current = view.draft?.updated_at ?? null;
     }
     keepMissingEdits.current = false;

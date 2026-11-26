@@ -313,11 +313,61 @@ describe("paper omissions", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2100);
     });
+    // the browser copy keeps the version it was edited from: a newer server draft answers 409 and is adopted,
+    // never overwritten (review 1)
     expect(a.saveDraft.mock.calls[0].slice(3, 6)).toEqual([
-      next.draft!.updated_at,
+      v.draft!.updated_at,
       draftKey,
       5,
     ]);
+  });
+
+  it("takes the refreshed draft back to the full form, with unsent answers on top", async () => {
+    vi.useFakeTimers();
+    const a = completionActions();
+    const { rerender } = render(
+      <ReportForm env="demo" view={missingView()} actions={a} />,
+    );
+    choose(1, "Finns kvar");
+    fireEvent.change(within(row(1)).getByLabelText("Vikt"), {
+      target: { value: "2,8" },
+    });
+    await act(async () => {
+      sendAnswer();
+    });
+    // another tab saved a change before the answer; the server kept it and moved the version on
+    const next = missingView([2, 3], 5);
+    const other = "Ändrad i en annan flik";
+    next.draft = {
+      ...next.draft!,
+      data: {
+        ...next.draft!.data,
+        message: other,
+        form: { ...next.draft!.data.form!, message: other },
+      },
+      updated_at: "2027-01-04T10:05:00+00:00",
+    };
+    rerender(<ReportForm env="demo" view={next} actions={a} />);
+    choose(2, "Död"); // typed here, not sent
+    fireEvent.click(
+      screen.getByRole("button", { name: "Visa hela rapporten" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Fortsätt ändra" }));
+    expect(screen.getByDisplayValue("Ändrad i en annan flik")).toBeTruthy();
+    expect(
+      within(row(2)).getByRole("radio", { name: "Död", checked: true }),
+    ).toBeTruthy();
+    fireEvent.change(screen.getByDisplayValue("Ändrad i en annan flik"), {
+      target: { value: "Ändrad i en annan flik." },
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    const [, , data, updatedAt] = a.saveDraft.mock.calls[0];
+    expect(updatedAt).toBe(next.draft!.updated_at);
+    expect((data as { message: string }).message).toBe(
+      "Ändrad i en annan flik.",
+    );
   });
 
   it("keeps a typed answer on Ändra without a draft or local copy", () => {
