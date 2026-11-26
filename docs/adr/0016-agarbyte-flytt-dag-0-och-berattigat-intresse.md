@@ -300,8 +300,9 @@ sparas aldrig i ett utkast.
   utanför genbanken" sparar ingen köpare.
 * Ingen rad håller köparen medan den sparas. Säljaren ser bara "Köparen finns
   sparad", och genbanksansvarig ser köparen först när rapporten har skickats.
-  En köpare utan bevis (`email_notice_only`) räknar månaden till mejlet från
-  dagen då den sparades.
+  En köpare utan bevis (`email_notice_only`) raderas om mejlet inte har gått
+  inom en månad från dagen då den sparades (`purge_uninformed`), också medan
+  rundan är öppen. Dialogen säger det.
 
 ## Mer information
 

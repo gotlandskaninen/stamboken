@@ -368,9 +368,11 @@ function Body({
             )}
             {!kept && (
               <p className={styles.meta}>
-                {keeps && submitted?.till !== "utanfor"
-                  ? "Köparens uppgifter sparas när du sparar försäljningen. Skickar du inte rapporten raderas de efter sista dagen."
-                  : "Köparens uppgifter sparas när du skickar rapporten, inte innan."}
+                {!keeps || submitted?.till === "utanfor"
+                  ? "Köparens uppgifter sparas när du skickar rapporten, inte innan."
+                  : mode === "epost" // the notice must reach the buyer within a month (#273, purge_uninformed)
+                    ? "Köparens uppgifter sparas när du sparar försäljningen. Skickar du inte rapporten inom 30 dagar raderas de."
+                    : "Köparens uppgifter sparas när du sparar försäljningen. Skickar du inte rapporten raderas de efter sista dagen."}
               </p>
             )}
           </>

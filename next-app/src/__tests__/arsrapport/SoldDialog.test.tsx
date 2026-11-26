@@ -20,6 +20,8 @@ const ON_SEND_TEXT =
   "Köparens uppgifter sparas när du skickar rapporten, inte innan.";
 const ON_SAVE_TEXT =
   "Köparens uppgifter sparas när du sparar försäljningen. Skickar du inte rapporten raderas de efter sista dagen.";
+const ON_SAVE_EPOST_TEXT =
+  "Köparens uppgifter sparas när du sparar försäljningen. Skickar du inte rapporten inom 30 dagar raderas de.";
 
 function dialog(
   existing: SaldState | null,
@@ -382,7 +384,11 @@ describe("SoldDialog", () => {
       dag: null,
       kopare: null,
     };
-    const show = (keeps: boolean, submitted: BodyEntry["sald"] | null) => {
+    const show = (
+      keeps: boolean,
+      submitted: BodyEntry["sald"] | null,
+      epost = false,
+    ) => {
       render(
         <SoldDialog
           open
@@ -400,11 +406,18 @@ describe("SoldDialog", () => {
           onClose={vi.fn()}
         />,
       );
-      const text = screen.queryByText(ON_SAVE_TEXT) ? "spara" : "skicka";
+      if (epost) fireEvent.click(screen.getByRole("radio", { name: "Ja" }));
+      const text = screen.queryByText(ON_SAVE_TEXT)
+        ? "spara"
+        : screen.queryByText(ON_SAVE_EPOST_TEXT)
+          ? "30 dagar"
+          : screen.queryByText(ON_SEND_TEXT) && "skicka";
       cleanup();
       return text;
     };
     expect(show(true, null)).toBe("spara");
+    // an e-mail buyer goes unless the notice reaches it within a month (#273)
+    expect(show(true, null, true)).toBe("30 dagar");
     expect(show(false, null)).toBe("skicka"); // a proposal, or after the last day
     const held = { till: "utanfor", ar: 2025, manad: 1, dag: null };
     expect(show(true, held)).toBe("skicka"); // a sale the report holds is corrected at Skicka
