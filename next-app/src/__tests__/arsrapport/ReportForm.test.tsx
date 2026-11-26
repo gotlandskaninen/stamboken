@@ -16,6 +16,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
 import {
   ReportForm,
   type ReportActions,
+  forgetTabWrites,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/ReportForm";
 import {
   PENDING_SALE_TEXT,
@@ -75,6 +76,7 @@ const actions = (): {
   }) as never;
 
 beforeEach(() => {
+  forgetTabWrites(); // module memory of the tab, as after a hard load
   window.scrollTo = vi.fn(); // jsdom does not implement it
   window.localStorage.clear();
   refresh.mockReset();
@@ -1255,6 +1257,7 @@ describe("ReportForm", () => {
     expect(a.saveDraft.mock.calls[0][2].rabbits["1"].val).toBe("kvar");
     expect(a.saveDraft.mock.calls[0][3]).toBe(draft.updated_at);
     cleanup();
+    forgetTabWrites(); // a new page load: the mock's answer above is not this view's history
 
     copy("2026-12-31T10:00:00+00:00");
     render(
@@ -1386,6 +1389,440 @@ describe("ReportForm", () => {
     expect(
       (within(row(1)).getByLabelText("Finns kvar") as HTMLInputElement).checked,
     ).toBe(false); // reset from the reloaded view
+  });
+
+  // Next shows the view object from before the save again when the user comes Back (Jonas 2026-11-26).
+  const savedDraft = (rabbits: Record<string, { val: string }>) =>
+    view({
+      draft: {
+        data: { rabbits },
+        updated_at: "2026-12-31T10:00:00+00:00",
+        submission_key: null,
+        own: true,
+      },
+    } as never);
+  const checked = (n: number) =>
+    (within(row(n)).getByLabelText("Finns kvar") as HTMLInputElement).checked;
+  // saveDraft as the server answers it: a save from an older version gets the 409
+  const server = () => {
+    let at: string | null = null;
+    let stored: unknown = null;
+    return vi.fn(
+      (_h: string, _y: number, data: unknown, seen: string | null) => {
+        if (seen !== at)
+          return fail(409, {
+            draft: {
+              data: stored,
+              updated_at: at,
+              submission_key: null,
+              own: true,
+            },
+          });
+        stored = data;
+        at = "2026-12-31T10:00:00+00:00";
+        return ok({ updated_at: at, submission_key: null });
+      },
+    );
+  };
+  const answerLater = () => {
+    let answer!: () => void;
+    const call = new Promise((resolve) => {
+      answer = () =>
+        resolve({
+          ok: true,
+          data: {
+            updated_at: "2026-12-31T10:00:00+00:00",
+            submission_key: null,
+          },
+        });
+    });
+    return { call, answer };
+  };
+
+  it("reads the page again when Back brings a view from before its own save, and saves on without a conflict", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    a.saveDraft.mockImplementation(server());
+    const before = view();
+    const first = render(<ReportForm env="demo" view={before} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    expect(a.saveDraft).toHaveBeenCalledTimes(1);
+    first.unmount(); // to the profile, and Back
+    const { rerender } = render(
+      <ReportForm env="demo" view={before} actions={a} />,
+    );
+    await act(async () => {}); // the reload asks for the page once the writes on their way have answered
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(screen.getAllByText("Hämtar senaste versionen…")).not.toHaveLength(
+      0,
+    );
+    expect(
+      within(row(2)).getByLabelText("Finns kvar").matches(":disabled"),
+    ).toBe(true);
+    rerender(
+      <ReportForm
+        env="demo"
+        view={savedDraft({ "1": { val: "kvar" } })}
+        actions={a}
+      />,
+    );
+    expect(checked(1)).toBe(true);
+    expect(screen.getAllByText(/sparat \(senast 11\.00\)/)).not.toHaveLength(0);
+    choose(2, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    expect(a.saveDraft).toHaveBeenCalledTimes(2);
+    expect(a.saveDraft.mock.calls[1][3]).toBe("2026-12-31T10:00:00+00:00");
+    expect(screen.queryByText(/annan enhet/)).toBeNull();
+  });
+
+  it("keeps a change made just before leaving, when Back reads the page again", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    const before = view();
+    const first = render(<ReportForm env="demo" view={before} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    choose(2, "Finns kvar"); // left before its autosave: only the local copy has it
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    first.unmount();
+    const { rerender } = render(
+      <ReportForm env="demo" view={before} actions={a} />,
+    );
+    await act(async () => {}); // the reload asks for the page once the writes on their way have answered
+    expect(refresh).toHaveBeenCalledTimes(1);
+    rerender(
+      <ReportForm
+        env="demo"
+        view={savedDraft({ "1": { val: "kvar" } })}
+        actions={a}
+      />,
+    );
+    expect([checked(1), checked(2)]).toEqual([true, true]);
+    expect(
+      screen.queryByText("Osparade ändringar på den här enheten"),
+    ).toBeNull();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    expect(a.saveDraft).toHaveBeenCalledTimes(2);
+    expect(a.saveDraft.mock.calls[1][2]).toMatchObject({
+      rabbits: { "1": { val: "kvar" }, "2": { val: "kvar" } },
+    });
+  });
+
+  it("waits for a save still on its way when Back comes first, then reads the page again", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    const later = answerLater();
+    a.saveDraft.mockImplementationOnce(() => later.call);
+    const before = view();
+    const first = render(<ReportForm env="demo" view={before} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    expect(a.saveDraft).toHaveBeenCalledTimes(1);
+    first.unmount(); // Back before the save has answered
+    const { rerender } = render(
+      <ReportForm env="demo" view={before} actions={a} />,
+    );
+    expect(screen.getAllByText("Hämtar senaste versionen…")).not.toHaveLength(
+      0,
+    );
+    expect(refresh).not.toHaveBeenCalled(); // not before the save is in
+    await act(async () => {
+      later.answer();
+    });
+    await act(async () => {}); // the reload asks for the page once the writes on their way have answered
+    expect(refresh).toHaveBeenCalledTimes(1);
+    rerender(
+      <ReportForm
+        env="demo"
+        view={savedDraft({ "1": { val: "kvar" } })}
+        actions={a}
+      />,
+    );
+    expect(checked(1)).toBe(true);
+  });
+
+  it("reads a view again after a save from another page of the same report", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    const ordinary = view();
+    render(<ReportForm env="demo" view={ordinary} actions={a} />).unmount();
+    // the paper page of the same report has its own view and the same draft
+    const other = render(<ReportForm env="demo" view={view()} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    other.unmount();
+    render(<ReportForm env="demo" view={ordinary} actions={a} />);
+    await act(async () => {}); // the reload asks for the page once the writes on their way have answered
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the reload on the receipt too, with Ladda om sidan when it does not answer", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    const sent = view({ report: submittedReport() } as never);
+    render(<ReportForm env="demo" view={sent} actions={a} />).unmount();
+    const other = render(<ReportForm env="demo" view={view()} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    other.unmount();
+    render(<ReportForm env="demo" view={sent} actions={a} />);
+    expect(screen.getAllByText("Hämtar senaste versionen…")).not.toHaveLength(
+      0,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(screen.getByRole("button", { name: "Ladda om sidan" })).toBeTruthy();
+  });
+
+  it("leaves a newer local copy alone when an older save answers", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    const later = answerLater();
+    a.saveDraft.mockImplementationOnce(() => later.call);
+    render(<ReportForm env="demo" view={view()} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    // a form mounted later (Back, another tab) wrote its own copy meanwhile
+    const key = Object.keys(window.localStorage).find((k) =>
+      k.startsWith("arsrapport:"),
+    )!;
+    window.localStorage.setItem(
+      key,
+      JSON.stringify({
+        data: { rabbits: { "2": { val: "kvar" } } },
+        updated_at: null,
+        revision: null,
+        writer: "a form mounted later",
+      }),
+    );
+    await act(async () => {
+      later.answer();
+    });
+    expect(local()).toContain('"2"');
+  });
+
+  it("waits for every save the old form still has queued before it reads the page again", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    const first = answerLater();
+    const second = answerLater();
+    a.saveDraft
+      .mockImplementationOnce(() => first.call)
+      .mockImplementationOnce(() => second.call);
+    const before = view();
+    const old = render(<ReportForm env="demo" view={before} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    choose(2, "Finns kvar"); // its autosave waits behind the first save
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    expect(a.saveDraft).toHaveBeenCalledTimes(1);
+    old.unmount();
+    render(<ReportForm env="demo" view={before} actions={a} />);
+    await act(async () => {
+      first.answer();
+    });
+    expect(a.saveDraft).toHaveBeenCalledTimes(2); // the old form sends the queued one
+    expect(refresh).not.toHaveBeenCalled();
+    await act(async () => {
+      second.answer();
+    });
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves another form's local copy alone when a late save meets a conflict", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    let answer!: (v: unknown) => void;
+    a.saveDraft.mockImplementationOnce(
+      () => new Promise((resolve) => (answer = resolve)),
+    );
+    render(<ReportForm env="demo" view={view()} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    const key = Object.keys(window.localStorage).find((k) =>
+      k.startsWith("arsrapport:"),
+    )!;
+    window.localStorage.setItem(
+      key,
+      JSON.stringify({
+        data: { rabbits: { "2": { val: "kvar" } } },
+        updated_at: null,
+        revision: null,
+        writer: "a form mounted later",
+      }),
+    );
+    await act(async () => {
+      answer({
+        ok: false,
+        problem: {
+          status: 409,
+          title: "t",
+          detail: "x",
+          extensions: {
+            draft: {
+              data: { rabbits: {} },
+              updated_at: "2026-12-31T11:00:00+00:00",
+              submission_key: null,
+              own: true,
+            },
+          },
+        },
+      });
+    });
+    expect(local()).toContain('"2"');
+  });
+
+  it("waits for a Skicka still being checked when Back comes first", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    let checked!: (v: unknown) => void;
+    a.dryRun.mockImplementationOnce(
+      () => new Promise((resolve) => (checked = resolve)),
+    );
+    const before = view();
+    const old = render(<ReportForm env="demo" view={before} actions={a} />);
+    fillAll();
+    send();
+    old.unmount(); // Back while the dry run is on its way
+    render(<ReportForm env="demo" view={before} actions={a} />);
+    expect(screen.getAllByText("Hämtar senaste versionen…")).not.toHaveLength(
+      0,
+    );
+    await act(async () => {});
+    expect(refresh).not.toHaveBeenCalled();
+    await act(async () => {
+      checked({ ok: true, data: { ok: true, refusals: [], warnings: [] } });
+    });
+    expect(a.submitReport).toHaveBeenCalledTimes(1);
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it("reads a view again that holds another draft version than the last one this tab saved", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    const first = render(<ReportForm env="demo" view={view()} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    first.unmount();
+    // a page read before that save answered, shown for the first time
+    render(<ReportForm env="demo" view={view()} actions={a} />);
+    await act(async () => {});
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not let a retry overwrite the copy another form wrote since", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    a.saveDraft.mockImplementation(() => fail(502)); // offline
+    render(<ReportForm env="demo" view={view()} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    const key = Object.keys(window.localStorage).find((k) =>
+      k.startsWith("arsrapport:"),
+    )!;
+    window.localStorage.setItem(
+      key,
+      JSON.stringify({
+        data: { rabbits: { "2": { val: "kvar" } } },
+        updated_at: null,
+        revision: null,
+        writer: "a form mounted later",
+      }),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5100); // the retry
+    });
+    expect(local()).toContain('"2"');
+  });
+
+  it("offers Ladda om sidan when a write on its way does not answer", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    a.saveDraft.mockImplementationOnce(() => new Promise(() => {}));
+    const before = view();
+    const old = render(<ReportForm env="demo" view={before} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    old.unmount();
+    render(<ReportForm env="demo" view={before} actions={a} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(screen.getByRole("button", { name: "Ladda om sidan" })).toBeTruthy();
+  });
+
+  it("takes only the view its own reload brings, not one another refresh brought meanwhile", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    const later = answerLater();
+    a.saveDraft.mockImplementationOnce(() => later.call);
+    const before = view();
+    const old = render(<ReportForm env="demo" view={before} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    old.unmount();
+    const { rerender } = render(
+      <ReportForm env="demo" view={before} actions={a} />,
+    );
+    rerender(<ReportForm env="demo" view={view()} actions={a} />); // read before the save
+    expect(screen.getAllByText("Hämtar senaste versionen…")).not.toHaveLength(
+      0,
+    );
+    await act(async () => {
+      later.answer();
+    });
+    rerender(
+      <ReportForm
+        env="demo"
+        view={savedDraft({ "1": { val: "kvar" } })}
+        actions={a}
+      />,
+    );
+    expect(screen.queryByText("Hämtar senaste versionen…")).toBeNull();
+    expect(checked(1)).toBe(true);
+  });
+
+  it("does not read the page again on Back when nothing was saved from it", async () => {
+    const a = actions();
+    const before = view();
+    render(<ReportForm env="demo" view={before} actions={a} />).unmount();
+    render(<ReportForm env="demo" view={before} actions={a} />);
+    await act(async () => {});
+    expect(refresh).not.toHaveBeenCalled();
   });
 
   it("an error link clears the search and filter and focuses the control that needs input", async () => {
@@ -1595,13 +2032,8 @@ describe("ReportForm", () => {
       getMothers: vi.fn(() => ok({ honor: [] })) as never,
       changeLitter: changeLitter as never,
     };
-    render(
-      <ReportForm
-        env="demo"
-        view={view({ litters: [preliminary] })}
-        actions={withLitters}
-      />,
-    );
+    const shown = view({ litters: [preliminary] });
+    render(<ReportForm env="demo" view={shown} actions={withLitters} />);
     expect(screen.getAllByText(/\(preliminärt\)/).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "Lägg till kull" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Bekräfta antalet" }));
@@ -1624,6 +2056,11 @@ describe("ReportForm", () => {
     await waitFor(() =>
       expect(screen.queryAllByText(/\(preliminärt\)/)).toHaveLength(0),
     );
+    // the litter is written, the view is not: Back reads the page again
+    cleanup();
+    render(<ReportForm env="demo" view={shown} actions={withLitters} />);
+    await act(async () => {}); // the reload asks for the page once the writes on their way have answered
+    expect(refresh).toHaveBeenCalledTimes(1);
   });
 
   it("lists litters as a table with a summary line", () => {
