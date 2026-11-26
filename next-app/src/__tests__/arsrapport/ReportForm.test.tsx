@@ -376,6 +376,7 @@ describe("ReportForm", () => {
         email: "g9001@example.invalid",
       },
       publicering: { ja: false, utom: [] },
+      publicering_version: 7,
       konto: "••••5512",
     };
     render(
@@ -403,6 +404,7 @@ describe("ReportForm", () => {
       publicering: {
         ja: true,
         utom: ["phone", "email", "address"],
+        version: 7,
         text_version: "2026-11-20",
       },
     });
@@ -425,6 +427,7 @@ describe("ReportForm", () => {
         email: "",
       },
       publicering: null,
+      publicering_version: null,
       konto: null,
     };
     render(

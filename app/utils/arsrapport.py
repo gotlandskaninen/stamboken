@@ -1047,6 +1047,7 @@ def member_details(herd, report, access, user):
         "publicering": {"ja": consent.get("name") is True, "utom": [k for k in UTOM if consent.get(k) is not True]}
         if consent
         else None,
+        "publicering_version": consent_version(membership.id),
         "konto": shown_account(membership.bank_account_number),
     }
 
@@ -1765,7 +1766,8 @@ def _matrikel(body, *, digital=False):
     if any(text is not None and not isinstance(text, str) for text in texts):
         raise _bad("matrikel", "Fältet ska vara text.")
     if (answer := value.get("publicering")) is not None:  # Ja or Nej, and at Ja what may not be listed
-        utom = _keys(answer, ("ja", "utom", "text_version") if digital else ("ja", "utom"), "matrikel").get("utom")
+        allowed = ("ja", "utom", "text_version", "version") if digital else ("ja", "utom")
+        utom = _keys(answer, allowed, "matrikel").get("utom")
         if not isinstance(answer.get("ja"), bool) or not isinstance(utom, list) or not all(k in UTOM for k in utom):
             raise _bad("matrikel", "Svara Ja eller Nej om Koharen, och vid Ja vad som inte får stå med.")
     return value
@@ -2041,6 +2043,7 @@ REFUSALS = {  # the copy the client shows (P44)
     "epost_ogiltig": "Kontrollera e-postadressen.",
     "epost_kan_inte_anvandas": "E-postadressen kan inte användas. Kontrollera den med medlemmen.",
     "koharen_ny_fraga": "Frågan om Koharen har ändrats. Ladda om sidan och svara igen.",
+    "koharen_andrad": "Svaret om Koharen har ändrats sedan sidan visades. Ladda om sidan och svara igen.",
     "epost_via_kod": "Den nya e-postadressen bekräftar du med en kod. Byt den under Dina uppgifter.",
     "konto_ogiltigt": (
         "Ett bankkonto har clearingnummer med 4–5 siffror och kontonummer med 5–12 siffror. "
@@ -2479,7 +2482,7 @@ def check(
     if access.source == "paper":
         refusals += _matrikel_refusals(herd, sub.paper, submissions, check_email=check_email)
     elif sub.matrikel is not None:
-        refusals += _details_refusals(access, sub.matrikel)
+        refusals += _details_refusals(herd, access, sub.matrikel)
     return refusals, warnings
 
 
@@ -2561,14 +2564,27 @@ def _contact_cleared(matrikel) -> tuple[dict, list[Refusal]]:
     return contact, refusals
 
 
-def _details_refusals(access, matrikel):
-    """check's refusals of a digital "Dina uppgifter": bad values, and an e-mail outside the link (D1, 5.11)."""
+def consent_version(membership_id):
+    """The stored Koharen answer's version: its latest publication_consent_change row, None before any."""
+    change = PublicationConsentChange
+    return change.select(fn.MAX(change.id)).where(change.membership == membership_id).scalar()
+
+
+def _details_refusals(herd, access, matrikel):
+    """
+    check's refusals of a digital "Dina uppgifter": bad values, an e-mail outside the link (D1, 5.11), and logged in
+    a Koharen answer to another version than the stored one: the page sends the whole answer, so one changed
+    elsewhere since (a withdrawal in the profile) would come back. Skicka reads it under the membership's lock.
+    """
     contact, refusals = (_contact if access.code is not None else _contact_cleared)(matrikel)
     if access.code is None and "epost" in contact:  # logged in, the new address gets a code (the profile's flow)
         refusals.append(_refusal(None, "epost_via_kod"))
     answer = matrikel.get("publicering")
     if answer is not None and answer.get("text_version") != CONSENT_TEXT_VERSION:
         refusals.append(_refusal(None, "koharen_ny_fraga"))
+    elif answer is not None and access.code is None and herd.membership_id is not None:
+        if "version" not in answer or answer["version"] != consent_version(herd.membership_id):
+            refusals.append(_refusal(None, "koharen_andrad"))
     return refusals
 
 

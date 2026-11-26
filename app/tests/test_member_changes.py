@@ -159,7 +159,14 @@ class TestLoggedIn(DetailsTest):
     def test_main_member_changes_are_written_at_skicka(self):
         self.link_owner()
         self.login("owner")
-        receipt = self.ok(matrikel={"telefon": "", "adress": {"city": "Visby"}, "konto": NEW_KONTO, "publicering": JA})
+        receipt = self.ok(
+            matrikel={
+                "telefon": "",
+                "adress": {"city": "Visby"},
+                "konto": NEW_KONTO,
+                "publicering": {**JA, "version": None},  # never answered
+            }
+        )
         member, ms = db.Member.get_by_id(self.member.id), self.membership()
         self.assertEqual((member.phone, ms.city, ms.address), (None, "Visby", "Gamla vägen 1"))  # "" clears (U9)
         self.assertEqual((ms.bank_account_type, ms.bank_account_number), ("bankkonto", "9420-46180377"))
@@ -673,3 +680,20 @@ class TestReviewRound1(DetailsTest):
         row = db.MailMessage.get_by_id(kvitto.id)
         self.assertEqual(row.params, {**old, "member_id": self.member.id})
         self.assertEqual(mail.MAIL_KINDS[row.kind].login_address(row.params), "g9001@example.invalid")
+
+    def test_the_report_never_restores_a_withdrawal_made_in_the_profile(self):
+        with db.DB_PROXY.atomic():
+            set_consent(self.membership(), ALL, source="profil", text_version=CONSENT_TEXT_VERSION)
+        self.link_owner()
+        self.login("owner")
+        self.view()  # the report's tab shows Ja with e-mail
+        withdrawn = {"email": False, "text_version": CONSENT_TEXT_VERSION}
+        self.assertEqual(self.client.patch("/api/v2/members/me/consent", json=withdrawn).status_code, 200)
+        old_tab = {"ja": True, "utom": ["phone"], "text_version": CONSENT_TEXT_VERSION}  # only phone unticked
+        response = self.skicka(matrikel={"publicering": old_tab})
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(codes(response), {"koharen_andrad"})
+        self.assertFalse(self.membership().publication_consent["email"])
+        fresh = self.view()["member_details"]["publicering_version"]  # read again, the answer goes
+        self.ok(matrikel={"publicering": {**old_tab, "utom": ["phone", "email"], "version": fresh}})
+        self.assertEqual(self.membership().publication_consent, {**ALL, "phone": False, "email": False})

@@ -185,7 +185,13 @@ export interface Matrikel {
   epost?: string;
   konto?: { typ?: KontoTyp; clearing?: string; konto?: string; bank?: string };
   // A digital answer names the text it answers (CONSENT_TEXT_VERSION), as the profile's does.
-  publicering?: { ja: boolean; utom: Utom[]; text_version?: string };
+  // Logged in, `version` is the answer the page showed: a change made elsewhere since is a refusal, not overwritten.
+  publicering?: {
+    ja: boolean;
+    utom: Utom[];
+    text_version?: string;
+    version?: number | null;
+  };
 }
 
 // ReportView.member_details (5.11, D1): the main member's own details logged in, the link's changes without any
@@ -206,6 +212,7 @@ export type MemberDetailsView =
         email: string;
       };
       publicering: { ja: boolean; utom: Utom[] } | null;
+      publicering_version: number | null; // the stored answer's version
       konto: string | null; // "••••4567"
     }
   | { mode: "link"; changes: DetailsChange[] }
@@ -1065,6 +1072,7 @@ export function detailsBody(
       body.publicering = {
         ja: f.consent === "ja",
         utom: f.consent === "ja" ? f.utom : [],
+        version: d.publicering_version,
       };
   }
   if (body.publicering)

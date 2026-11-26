@@ -32,6 +32,7 @@ const main: MemberDetailsView = {
     email: "g9001@example.invalid",
   },
   publicering: null,
+  publicering_version: null,
   konto: null,
 };
 
