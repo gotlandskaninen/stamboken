@@ -114,6 +114,50 @@ class RundorTest(ArsrapportTest):
         r = self.api("POST", f"/rundor/2026/genbanker/{self.gotland.id}/aktivera")
         self.assertEqual(r.status_code, 403)
 
+    def test_activation_waits_for_the_running_round(self):
+        """#264: a genebank activates next year's round only once its running round has closed."""
+        self.round(2026)  # activated for Gotland, open 2026-12-31 to 2027-03-30
+        self.at(date(2027, 1, 15))
+        self.round(2027, activate=())
+        self.login("admin")
+        r = self.api("POST", f"/rundor/2027/genbanker/{self.gotland.id}/aktivera")
+        self.assertEqual(r.status_code, 409, r.get_data(as_text=True))
+        self.assertIn("Rundan 2026 är aktiverad för genbanken och stänger 30 mars 2027", r.json["detail"])
+        # The running round itself again, and another genebank, are not refused.
+        self.assertEqual(self.api("POST", f"/rundor/2026/genbanker/{self.gotland.id}/aktivera").status_code, 200)
+        self.assertEqual(self.api("POST", f"/rundor/2027/genbanker/{self.mellerud.id}/aktivera").status_code, 200)
+
+        self.at(date(2027, 3, 30))  # its last day
+        self.assertEqual(self.api("POST", f"/rundor/2027/genbanker/{self.gotland.id}/aktivera").status_code, 409)
+        self.at(date(2027, 3, 31))
+        self.assertEqual(self.api("POST", f"/rundor/2027/genbanker/{self.gotland.id}/aktivera").status_code, 200)
+
+    def test_activation_ignores_a_round_without_dates(self):
+        legacy = db.YearlyReportRound.create(report_year=2025, created_by=self.admin)  # never open
+        arsrapport.activate(legacy, self.gotland.id, self.admin)
+        arsrapport.activate(self.round(2026, activate=()), self.gotland.id, self.admin)
+        self.assertEqual(db.YearlyReportRoundGenebank.select().count(), 2)
+
+    def test_rounds_cannot_overlap(self):
+        """#264: the dates of a round and its neighbours never share a day."""
+        db.YearlyReportRound.create(
+            report_year=2025,
+            start_date=date(2025, 12, 31),
+            deadline=date(2026, 1, 31),
+            end_date=date(2027, 1, 10),  # moved past the next round's default start
+            created_by=self.admin,
+        )
+        self.login("man")
+        r = self.api("PUT", "/rundor/2026")
+        self.assertEqual(r.status_code, 400, r.get_data(as_text=True))
+        self.assertIn("rundan 2025, som är öppen 31 december 2025 till 10 januari 2027", r.json["detail"])
+        self.assertIsNone(arsrapport.get_round(2026))
+
+        self.assertEqual(self.api("PUT", "/rundor/2026", start_date="2027-01-11").status_code, 200)
+        r = self.api("PUT", "/rundor/2025", end_date="2027-01-11")  # back into the round now after it
+        self.assertEqual(r.status_code, 400, r.get_data(as_text=True))
+        self.assertEqual(self.api("PUT", "/rundor/2025", end_date="2027-01-10").status_code, 200)
+
     def test_activate_send_at_and_unknown(self):
         self.round(2026, activate=())
         self.login("admin")

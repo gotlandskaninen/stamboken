@@ -31,10 +31,19 @@ class ArsrapportTest(InboxTest):
         self._number = 0
 
     def round(self, year=2025, activate=("Gotlandskanin",)):
-        """The year's round with the default dates, activated by the admin for the genebanks named."""
+        """
+        The year's round with the default dates, activated by the admin for the genebanks named. The rows are
+        written as arsrapport.activate writes them, but without its #264 check, so a test can hold two rounds.
+        """
         round_ = db.YearlyReportRound.create(report_year=year, created_by=self.admin, **arsrapport.default_dates(year))
         for name in activate:
-            arsrapport.activate(round_, self.genebanks[GENEBANKS.index(name)].id, self.admin)
+            db.YearlyReportRoundGenebank.create(
+                round=round_,
+                genebank=self.genebanks[GENEBANKS.index(name)],
+                activated_by=self.admin,
+                activated_at=arsrapport.now(),
+                send_at=round_.start_date,
+            )
         return round_
 
     def rabbits(self, herd, n, born=date(2024, 5, 1), sexes=("female", "male")):
