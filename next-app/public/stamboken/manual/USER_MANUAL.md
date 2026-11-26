@@ -1,7 +1,7 @@
 # Användarmanual – Stamboken Online
 
 > **Gäller:** nya Stamboken på föreningens webbplats.
-> **Senast kontrollerad mot gränssnittet:** 2026-10-29.
+> **Senast kontrollerad mot gränssnittet:** 2026-11-25.
 > Skärmbilderna är tagna i en lokal testmiljö med påhittade kaniner och besättningar.
 
 Är du ny i Stamboken, börja med sidan [Kom igång](https://gotlandskaninen.se/stamboken-online/kom-igang).
@@ -13,7 +13,7 @@ på skärmen) och slutar med **Skärmarna** (vad varje sida innehåller).
 
 - [Del 0 – Komma igång](#del-0--komma-igång)
   - [Logga in](#logga-in)
-  - [Hitta i Stamboken](#hitta-i-stamboken)
+  - [Hitta i Stamboken](#hitta-i-stamboken), [Tyck till](#tyck-till)
   - [Testmiljön och riktiga stamboken](#testmiljön-och-riktiga-stamboken)
   - [Ordlista](#ordlista)
 - [Del 1 – Uppfödare](#del-1--uppfödare)
@@ -26,7 +26,10 @@ på skärmen) och slutar med **Skärmarna** (vad varje sida innehåller).
     [besättningsuppgifter](#uppdatera-besättningsuppgifter), [profil](#uppdatera-din-profil)
   - Skärmarna: [Min besättning](#min-besättning), [Kaninens sida](#kaninens-sida),
     [Alla kaniner](#alla-kaniner), [Provparning](#provparning), [Min profil](#min-profil),
-    [Mina inskick](#mina-inskick), [Ladda upp intyg](#ladda-upp-intyg-skärmen), [Notiser](#notiser),
+    [Mina inskick](#mina-inskick), [Ladda upp intyg](#ladda-upp-intyg-skärmen),
+    [Årsrapport](#årsrapport), [Årsrapport för en besättning](#årsrapport-för-en-besättning),
+    [Status för årsrapporten](#status-för-årsrapporten), [Notiser](#notiser),
+    [Kontrollera köparens e-postadress](#kontrollera-köparens-e-postadress),
     [Verifiera intyg](#verifiera-intyg), [Ta bort köparens uppgifter](#ta-bort-köparens-uppgifter)
 - [Del 2 – Genbanksansvarig](#del-2--genbanksansvarig)
   - Så gör du: [rätta en kanin](#rätta-en-kanin-i-en-annan-besättning),
@@ -38,7 +41,8 @@ på skärmen) och slutar med **Skärmarna** (vad varje sida innehåller).
 - [Del 3 – Administratör](#del-3--administratör)
   - Så gör du: [hitta användare](#hitta-en-användare), [roller](#ge-eller-ta-bort-en-roll),
     [lösenord](#återställa-ett-lösenord), [åtkomst](#ge-tillgång-till-riktiga-stamboken),
-    [inaktivera](#inaktivera-eller-aktivera-ett-konto), [ny besättning](#skapa-en-besättning),
+    [inaktivera](#inaktivera-eller-aktivera-ett-konto), [radera](#radera-kontots-uppgifter),
+    [ny besättning](#skapa-en-besättning),
     [ägare](#byta-ägare-på-en-besättning), [genbanksansvarig](#utse-genbanksansvarig),
     [aktivitetslogg](#söka-i-aktivitetsloggen), [massutloggning](#logga-ut-alla-användare)
   - Skärmarna: [Adminpanel](#adminpanel), [Användare](#användare), [Användare – redigera](#användare--redigera),
@@ -59,59 +63,152 @@ på skärmen) och slutar med **Skärmarna** (vad varje sida innehåller).
 
 Klicka på **Stamboken** uppe till höger på föreningens webbplats och sedan på
 **Logga in i Stamboken**. Är du inte inloggad kommer du till inloggningssidan.
+Där finns tre sätt att logga in:
 
-Har du ett föreningskonto (en adress som slutar på @gotlandskaninen.se) loggar du in med Google:
+- **Med en kod i ett mejl.** Du skriver den e-postadress som står i föreningens
+  matrikel och får en kod dit. Det fungerar för huvudmedlemmen i ett
+  medlemskap och för den vars konto är kopplat till sin rad i matrikeln.
+- **Med föreningskontot (Google)**, om du har en adress som slutar på
+  @gotlandskaninen.se.
+- **Med användarnamn och lösenord**, samma uppgifter som i gamla Stamboken.
 
-1. Klicka **Logga in med ditt föreningskonto (Google)**.
-2. Välj ditt föreningskonto i Googles kontoväljare. Ett privat Gmail-konto fungerar inte.
-3. Du hamnar på Min besättning.
+Är du genbanksansvarig, genbankshjälpare, matrikeladministratör eller
+administratör loggar du in med föreningskontot. Kod och lösenord fungerar inte
+för de kontona.
 
-Har du inget föreningskonto loggar du in med användarnamn och lösenord:
+Du hamnar på Min besättning i riktiga stamboken. Saknar ditt konto tillgång
+till riktiga stamboken hamnar du i [testmiljön](#testmiljön-och-riktiga-stamboken):
+mejla då <admin@gotlandskaninen.se>.
 
-1. Skriv ditt **Användarnamn** och **Lösenord**. Det är samma uppgifter som i gamla Stamboken.
-2. Klicka **Logga in**. Du hamnar på Min besättning.
+![Inloggningssidan](logga-in-desktop.png)
 
-Har du inte fått tillgång till riktiga stamboken än hamnar du i
-[testmiljön](#testmiljön-och-riktiga-stamboken). Där kan du öva tills administratören
-ger dig tillgång.
+#### Logga in med kod
+
+1. Skriv din adress i fältet **E-postadress i matrikeln** och klicka **Skicka kod**.
+2. Finns adressen i matrikeln får du ett mejl med en kod på åtta siffror. Det
+   brukar komma inom en minut. Sidan visar samma besked vare sig adressen finns
+   eller inte.
+3. Skriv koden i fältet **Engångskod** och klicka **Logga in med kod**. Koden
+   gäller i tio minuter och bara i webbläsaren där du bad om den.
+
+Är du inte huvudmedlem och har inget konto, eller saknar matrikeln din adress,
+kommer inget mejl. Mejla då <admin@gotlandskaninen.se>.
+
+![Fältet för engångskoden](logga-in-kod-desktop.png)
+
+Kom inget mejl? Titta i skräpposten. Klicka sedan **Begär en ny kod** och
+kontrollera att adressen är rätt stavad. Du kan få fem koder per dygn. Är ett
+annat konto redan inloggat i webbläsaren frågar sidan om du vill byta konto:
+klicka **Byt konto och logga in**.
+
+#### Logga in med länken i mejlet
+
+<!-- route: /auth/kod -->
+
+Mejlet med koden har också en länk. Öppna den i samma webbläsare som du bad om
+koden i. Sidan **Logga in med länk** visar vem du loggar in som, och du klickar
+**Logga in här**. I en annan webbläsare eller på en annan dator fungerar länken
+inte. Skriv då koden på inloggningssidan i stället.
+
+![Sidan Logga in med länk](logga-in-lank-desktop.png)
+
+#### Skapa ditt konto första gången
+
+<!-- route: /auth/skapa-konto -->
+
+Är du huvudmedlem och har inget konto i Stamboken kommer du efter koden till
+sidan **Skapa mitt konto**:
+
+1. Läs **Regler för ditt konto** på sidan.
+2. Kryssa i rutan **Jag har läst reglerna och följer dem.**
+3. Klicka **Skapa mitt konto**. Du hamnar på Min besättning.
+
+Du har 15 minuter på dig efter koden. Har tiden gått ut går du till
+inloggningen och ber om en ny kod. Reglerna kan du läsa igen när du vill på
+sidan [Regler för ditt konto](https://gotlandskaninen.se/kontoregler).
+
+![Sidan Skapa mitt konto](skapa-konto-desktop.png)
+
+#### Med föreningskontot eller lösenord
+
+1. Klicka **Logga in med ditt föreningskonto (Google)** och välj föreningskontot
+   i Googles kontoväljare. Ett privat Gmail-konto fungerar inte.
+2. Eller skriv ditt **Användarnamn** och **Lösenord** och klicka **Logga in**.
 
 Glömt lösenordet till föreningskontot? Använd Googles återställning, och mejla
-administratören om den inte fungerar. Glömt lösenordet till Stamboken? Klicka på länken
-**administratören** under lösenordsfältet. Den öppnar ett mejl till
-<admin@gotlandskaninen.se>, och du får ett nytt tillfälligt lösenord.
+administratören om den inte fungerar. Glömt lösenordet till Stamboken? Logga in
+med en kod i stället, eller klicka på länken **administratören** under
+lösenordsfältet. Den öppnar ett mejl till <admin@gotlandskaninen.se>, och du
+får ett nytt tillfälligt lösenord.
 
 Under formuläret leder länken **Kom igång** till introduktionen för nya användare och
 **Bli medlem** till ansökan om medlemskap.
 
-Felmeddelanden på sidan:
+#### Felmeddelanden vid inloggning
 
 | Text | Betyder |
 | --- | --- |
-| Felaktigt användarnamn eller lösenord | Kontrollera stavning och versaler. |
+| Koden kunde inte godkännas. … | Fel siffror, koden är äldre än tio minuter, eller du använder en annan webbläsare än den där du bad om koden. |
+| Länken fungerar bara i webbläsaren där du bad om koden. … | Skriv koden på inloggningssidan i stället, eller be om en ny. |
+| Ett annat konto är inloggat i den här webbläsaren. Vill du byta konto? | Klicka **Byt konto och logga in**, eller gå tillbaka med **Till inloggningen**. |
+| Tiden för att skapa kontot har gått ut. … | Mer än 15 minuter har gått sedan koden. Be om en ny kod. |
+| Reglerna har uppdaterats. … | Reglerna ändrades medan du läste. Läs dem igen och kryssa i rutan. |
+| Det finns redan ett konto som kan vara ditt. … | Logga in med det kontot, eller mejla <admin@gotlandskaninen.se>. |
+| Tjänsten är tillfälligt otillgänglig. Försök igen senare. | Tillfälligt fel i tjänsten. |
+| Felaktigt användarnamn eller lösenord | Kontrollera stavning och versaler. Är du genbanksansvarig, genbankshjälpare, matrikeladministratör eller administratör fungerar bara föreningskontot. |
 | För många inloggningsförsök. Vänta en minut och försök igen. | Fem försök per minut är gränsen. |
 | Inloggning misslyckades. Försök igen senare. | Tillfälligt fel i tjänsten. |
 | Endast @gotlandskaninen.se-konton kan användas för Google-inloggning. … | Du valde ett privat Google-konto. Välj föreningskontot. |
 | Ditt föreningskonto är inte kopplat till Stamboken än. Kontakta administratören. | Föreningskontot finns men har inget konto i Stamboken. Mejla <admin@gotlandskaninen.se>. |
 
-![Inloggningssidan](logga-in-desktop.png)
-
 ### Hitta i Stamboken
 
-Högst upp finns ett fält med fem länkar: **Min besättning**, **Alla kaniner**,
-**Genetik**, **Provparning** och **Profil**. På mobilen ligger de bakom
-menyknappen (tre streck) längst till vänster. Logotypen **Stamboken** tar dig alltid
-till Min besättning.
+Högst upp finns menyn med länkarna **Min besättning**, **Alla kaniner**, **Genetik**,
+**Provparning**, **Profil**, **Mina inskick** och **Årsrapport**. Arbetar du med
+inläsningen av intyg finns också **Inkorg**. På mobilen ligger länkarna bakom
+menyknappen (tre streck) längst till vänster, och där finns också **Tyck till**.
+Logotypen **Stamboken** tar dig alltid till Min besättning.
 
 Till höger finns:
 
 - **SV / EN** – byter språk.
-- Klockan **Notiser** – meddelanden från systemet, till exempel bekräftelser och fel.
-- Din avatar (initialer eller bild) – menyn med **Profil**, **Manual** (den här manualen), **Adminpanel** (om du har
-  rollen), **Medlemsansökningar**, **Matrikel** och **Statistik** (om du hanterar
-  medlemsregistret), **Byt till testmiljön** / **Byt till riktiga stamboken** och **Logga ut**.
+- Klockan **Notiser** – meddelanden från systemet medan du arbetar, till exempel
+  bekräftelser och fel.
+- Din avatar (initialer eller bild) – menyn med **Profil**, **Notiser** (sidan med dina
+  notiser, se [Notiser](#notiser)), **Manual** (den här manualen), **Tyck till**,
+  **Adminpanel** (om du har rollen), **Medlemsansökningar**, **Matrikel** och **Statistik**
+  (om du hanterar medlemsregistret), **Byt till testmiljön** / **Byt till riktiga
+  stamboken** och **Logga ut**.
+
+Har du olästa notiser står antalet vid **Notiser** i avatarmenyn och vid **Mina inskick**
+(eller **Inkorg**) i menyn.
 
 Den blå rutan "Detta är nya Stamboken (beta)" stänger du med **Stäng**. Valet sparas
 i webbläsaren.
+
+#### Tyck till
+
+Fungerar något inte, eller saknar du något? Klicka **Tyck till**. Fliken **Tyck till**
+sitter på högra kanten av varje sida. Samma val finns i avatarmenyn, i mobilens meny,
+i den blå rutan och längst ned på sidan.
+
+1. Välj under **Vad gäller det?**: **Något fungerar inte** eller **Jag önskar något**.
+2. Skriv i rutan **Beskriv med egna ord**.
+3. Vill du visa vad du menar: klicka **Peka på sidan**, tryck på det som är fel och
+   klicka **Använd**. Då tar Stamboken en bild av sidan. Med **Bifoga bild** lägger du
+   till en egen bild. Du kan skicka högst fyra bilder. Bilderna mejlas bara till
+   föreningen och läggs aldrig ut öppet.
+4. Välj under **Vem får läsa det du skriver?**:
+   - **Bara föreningen** – de som utvecklar Stamboken läser den.
+   - **Alla** – texten läggs ut öppet på GitHub, utan ditt namn. Skriv inte andras
+     namn eller individnummer.
+5. Vill du ha svar: kryssa i **Skicka med mina kontaktuppgifter, jag vill ha svar**.
+   Föreningen svarar då till adressen på ditt konto.
+6. Klicka **Skicka**. Rutan "Tack! Vi har fått din synpunkt." visas. Valde du **Alla**
+   finns där en länk till texten på GitHub.
+
+Är du inte inloggad finns inget val om vem som får läsa. Det du skriver går bara till
+föreningen. Skriv **Din e-postadress**, så att föreningen kan svara dig.
 
 ### Testmiljön och riktiga stamboken
 
@@ -122,9 +219,16 @@ Stamboken finns i två utgåvor med samma utseende:
   stambokens innehåll, så inget du gör där finns kvar nästa dag. En gul rad högst upp,
   "TESTMILJÖ – här kan du öva fritt. Allt återställs varje natt.", visar att du är där.
 
-Nya användare startar i testmiljön. När administratören gett dig tillgång till riktiga
-stamboken byter du via avatarmenyn: **Byt till riktiga stamboken**, bekräfta med
-**Ja, byt till riktiga stamboken**. Samma väg tillbaka: **Byt till testmiljön**.
+När du loggar in hamnar du i riktiga stamboken. Vill du prova något utan att
+ändra på riktigt byter du till testmiljön i avatarmenyn: **Byt till testmiljön**,
+bekräfta med **Ja, byt till testmiljön**. Där kan du klicka runt fritt. Samma väg
+tillbaka: **Byt till riktiga stamboken**.
+
+Ett konto som skapats i dag finns i testmiljön först efter nattens kopia.
+
+Intyg som du laddar upp i testmiljön stannar där och läses inte in i Stamboken, och
+**Mina inskick** i testmiljön visar inte det du har skickat in i riktiga stamboken. Båda
+sidorna säger det överst.
 
 Adminpanelen finns bara i riktiga stamboken. Öppnar du den från testmiljön får du
 knappen **Byt till riktiga stamboken**.
@@ -163,9 +267,14 @@ till någon som håller kanin som sällskapsdjur. GX1 för gotlandskanin, MX1 f�
 **Aktiv kanin** – registrerad, levande och årsrapporterad de senaste 13 månaderna i en
 aktiv besättning. **Inaktiv** – allt annat som inte är dött.
 
-**Årsrapport** – den årliga bekräftelsen att kaninen finns kvar hos dig. Årsrapporten
-i nya Stamboken är inte klar än; knappen **Årsrapportera** visar "Kommer snart".
-Tills dess rapporterar du som tidigare.
+**Årsrapport** – den årliga bekräftelsen att kaninen finns kvar hos dig. När föreningen
+öppnar en runda gör du den under **Årsrapport** i menyn, se [Årsrapport](#årsrapport),
+eller på pappersblanketten.
+Menyvalet **Årsrapportera** på kaninens sida är grått och visar "Kommer snart".
+
+**Päls** – **Normal** eller **Rex**. Du väljer päls när du registrerar en kanin, och
+**Normal** är förvalt. **Hårlag** (i registreringen **Avvikande hårlag**) är ett eget
+fritextfält och används inte för valet.
 
 **Uppfödare** (besättningsägare), **genbanksansvarig** och **administratör** – rollerna
 som manualens tre delar handlar om. Dessutom kan ett konto ha **läsrätt** till en genbank
@@ -282,11 +391,16 @@ kan inte utfärda digitala intyg.
    med **Detaljer**.
 2. I kullistan: klicka **Registrera** på ungens rad. Dialogen **Registrera kanin —
    G1274-2531** öppnas med ungens föreslagna individnummer i rubriken.
-3. Välj **Kön** (Hona eller Hane) och **Färg** ur genbankens färglista. Saknas färgen
-   i listan kontaktar du genbanksansvarig. Fyll gärna i **Namn**; **Färganteckning**,
+3. Välj **Kön** (Hona eller Hane) och **Färg** ur genbankens färglista. I listan står
+   färgens nummer före namnet, och under namnet ibland en kommentar, till exempel andra
+   namn på färgen. Sökningen träffar också kommentaren. Saknas färgen i listan kontaktar du genbanksansvarig. Välj **Päls**:
+   **Normal** (förvalt) eller **Rex**. Fyll gärna i **Namn**; **Färganteckning**,
    **Ögonfärg**, **Klofärg**, **Bukfärg** och **Avvikande hårlag** är frivilliga.
 4. Välj **Intyg**. Intyg krävs; **Digitalt** är förvalt.
-   - **Digitalt** – Stamboken utfärdar en signerad PDF direkt.
+   - **Digitalt** – Stamboken utfärdar en signerad PDF direkt. Under fältet står "Ditt
+     namn står som intygare på intyget." Har du inte valt om ditt namn ska stå på
+     intygets kontrollsida står det också, med länken **Välj under Min profil**, se
+     [Uppdatera din profil](#uppdatera-din-profil).
    - **Papper** – skriv numret från det tryckta intyget i **Intygsnummer** och
      individnumret som står på pappret i **Individnummer på pappret**. Först då visar
      rubriken Stambokens individnummer. Är de olika, se
@@ -331,7 +445,8 @@ utfärdas det direkt.
    visar sedan kaninens individnummer, till exempel **Registrera kanin — G1274-2531**.
    Finns kullen redan, med samma mor, far och födelsedatum, står det "Kullen finns redan
    (kull N)" och kaninen läggs till i den.
-4. Välj **Kön** och **Färg**. Fyll gärna i **Namn**; övriga fält är frivilliga.
+4. Välj **Kön** och **Färg**, och **Päls** om kaninen är rex. Fyll gärna i **Namn**;
+   övriga fält är frivilliga.
 5. Välj **Intyg**. **Digitalt** är förvalt och utfärdas direkt. Väljer du **Papper**
    skriver du numret från det tryckta intyget i **Intygsnummer** och individnumret som
    står på pappret i **Individnummer på pappret**.
@@ -409,7 +524,8 @@ Har du pappersintyg som ska in i Stamboken kan du fotografera dem och skicka in
 fotona. De som arbetar med inläsningen lägger in kaninerna åt dig.
 
 1. Välj **Mina inskick** i menyn och klicka **Ladda upp intyg**.
-2. Välj **Besättning**. Har du bara en är den redan vald.
+2. Välj **Besättning**. Har du bara en är den redan vald. Arbetar du med inläsningen
+   är **Besättning** ett sökfält där du kan välja vilken besättning som helst.
 3. Klicka **Ta foto eller välj filer**. På telefonen kan du välja kameran eller
    bildbiblioteket. Du kan också välja en PDF. Högst 10 bilder och 9 MB tillsammans per
    inskick; en PDF räknas sida för sida.
@@ -430,8 +546,8 @@ Du kan ändra färguppgifterna och anteckningarna på dina kaniner. Nummer, kön
 föräldrar och födelsedatum rättas av genbanksansvarig.
 
 1. Öppna kaninens sida och klicka **Redigera**.
-2. Ändra i **Färg**, **Ögonfärg**, **Klofärg**, **Bukfärg**, **Hårlag**,
-   **Färganteckning** och **Anteckningar**.
+2. Ändra i **Färg**, **Ögonfärg**, **Klofärg**, **Bukfärg**, **Päls** (**Normal** eller
+   **Rex**), **Hårlag**, **Färganteckning** och **Anteckningar**.
 3. Klicka **Spara** i fältet "Osparade ändringar" längst ned. Bekräftelsen
    "G1274-2117 har uppdaterats." visas.
 
@@ -451,7 +567,8 @@ nästa gång du besöker sidan.
    död." visas och kaninens status blir Död eller Slaktad.
 
 Blev det fel: **Fler åtgärder** → **Ångra dödsrapportering**. Kaninen blir levande
-igen direkt, utan fråga.
+igen direkt, utan fråga. Kom dödsfallet från en årsrapport står i stället **Ändra i
+årsrapporten** i menyn. Det öppnar årsrapporten där dödsfallet står.
 
 ![Rapportera död](rapportera-dod-mobil.png)
 
@@ -468,18 +585,27 @@ flyttar utan att säljas.
    Har du sålt kaninen till någon utanför genbanken väljer du **GX1** (gotlandskanin)
    eller **MX1** (mellerudskanin), som ligger först i listan under "Utanför genbanken".
    En kanin utan intyg kan bara säljas utanför genbanken, till GX1/MX1.
+   Väljer du GX1 eller MX1 frågar dialogen efter köparen:
+   - Skriv **Köparens namn**, **Ort** och **Postadress**. Alla tre måste fyllas i.
+   - Kryssa i **Köparen har kryssat ja: föreningen får spara e-post och telefon så länge
+     köparen har kaninen** och **Köparen har kryssat ja: föreningen får kontakta köparen
+     om medlemskap** bara om köparen har sagt ja. Först då visas **E-post** och
+     **Telefon**. De är frivilliga.
+   - Ge köparen försäljningsbeviset. Där står föreningens information till köparen.
 3. Kontrollera **Säljdatum**. Dagens datum är förvalt. Datumet får inte ligga
    i framtiden och inte före "Tidigast …" som står under fältet (43 dagar efter
    födseln, eller dagen efter senaste försäljningen).
 4. Läs rutan **Från / Till / Datum** och kryssa i **Jag har tagit del av informationen
    och vill ta bort kaninen från min besättning.**
-5. Klicka **Bekräfta försäljning**. Bekräftelsen "Namn är såld till G1398 – …" visas.
+5. Klicka **Bekräfta försäljning**. Knappen är grå tills allt ovan är ifyllt.
+   Bekräftelsen "Namn är såld till G1398 – …" visas.
 
 **Ångra en försäljning.** Blev det fel kan du själv ångra inom sju dagar, så länge
 inget annat registrerats på kaninen efteråt. Direkt efter försäljningen finns knappen
 **Ångra försäljning** i rutan högst upp på sidan; senare hittar du den under
 **Fler åtgärder**. Skriv en **Anledning** (inte köparens namn eller kontaktuppgifter)
-och klicka **Ångra försäljning**. Bekräftelsen "Försäljningen är ångrad." visas.
+och klicka **Ångra försäljning**. Har kaninen sålts till en köpare utanför föreningen
+frågar dialogen inte efter någon anledning. Bekräftelsen "Försäljningen är ångrad." visas.
 Efter sju dagar hjälper genbanksansvarig dig.
 
 Menyvalet **Sälj individ** är grått när du inte får sälja: kaninen är död, du är
@@ -554,8 +680,8 @@ Under **Profil** finns ditt konto och, om ditt konto är kopplat till en medlems
 medlemskapets uppgifter.
 
 - **Profilbild**: klicka **Ladda upp bild**, välj en bild (minst 128 × 128 pixlar,
-  högst 5 MB) och klicka **Spara**. Har du Google-konto kan du i stället slå på
-  **Använd Google-profilbild**.
+  högst 5 MB) och klicka **Spara**. Loggar du in med föreningskontot (Google) kan du i
+  stället slå på **Använd Google-profilbild**.
 - **Kontaktuppgifter**: fyll i **Telefon**, **E-post**, **Gatuadress**, **Postnummer**
   och **Postort**, klicka **Spara**. Uppgifterna används i medlemsmatrikeln och för
   föreningens utskick. Byter du e-postadress får den nya adressen en kod. Skriv koden
@@ -594,9 +720,15 @@ under rubriken. Sidan har fyra flikar.
 **Översikt**
 
 - **Kom igång med din besättning** – visas för ägaren av en aktiv besättning som ännu
-  inte har någon parning: tre steg (ta emot startdjuren, ladda upp ett foto, registrera
-  den första parningen) som bockas av när de är gjorda. Startdjuren räknas som klara när
-  besättningen har en levande, okastrerad hane och hona. Knappen **Ny parning** visas
+  inte har någon parning: fyra steg (ta emot startdjuren, ladda upp ett foto, registrera
+  den första parningen och **Prova i testmiljön**) som bockas av när de är gjorda.
+  Startdjuren räknas som klara när besättningen har en levande, okastrerad hane och
+  hona. Steget **Prova i testmiljön** säger "Vill du prova utan att ändra något på
+  riktigt? Byt till testmiljön i menyn under din bild. Där kan du klicka runt fritt, och
+  allt återställs varje natt." Länken **Om testmiljön** leder till
+  [Testmiljön och riktiga stamboken](#testmiljön-och-riktiga-stamboken). Steget visas
+  för konton med tillgång till riktiga stamboken, och det bockas av när du har bytt till
+  testmiljön i menyn under din bild i den här webbläsaren. Knappen **Ny parning** visas
   när besättningen har en levande hona; hanen kan vara lånad. **Stäng** döljer rutan i
   den här webbläsaren, för testmiljön och riktiga stamboken var för sig.
 - Fyra siffror: **Aktiva kaniner**, **Avelsdjur** (aktiva, okastrerade honor och
@@ -605,8 +737,10 @@ under rubriken. Sidan har fyra flikar.
   "dag N av 31" och beräknat datum. **Alla parningar →** öppnar fliken Kullar och parningar.
 - **Senaste kaninerna** – de fem senast registrerade. **Alla kaniner →** öppnar fliken
   Kaniner.
-- **Att göra** – påminnelser: kullar som passerat sex veckor (märke **Kullista**) och
-  parningar som gått mer än 35 dagar utan födsel (märke **Parning**).
+- **Att göra** – påminnelser: årsrapporten när en runda är öppen och du inte har skickat
+  den (märke **Årsrapport**, med året och sista dagen; raden öppnar rapporten), kullar
+  som passerat sex veckor (märke **Kullista**) och parningar som gått mer än 35 dagar utan
+  födsel (märke **Parning**).
 - **Snabbåtgärder** – **+ Registrera kull**, **Ny parning**, **Skapa genbanksintyg**
   (inte klar än) och **Registrera ny kanin** (leder till kullistan).
 - **Din besättning** – namn, ort, hemsida och fast telefon. **Kontakt för besättningen**
@@ -640,6 +774,10 @@ ut kortet med avkommor, kullistan och knapparna **Registrera födsel** (bara par
 **Registrera kanin**, **Redigera** och **Ta bort**. Ta bort går bara när inga kaniner
 registrerats i kullen; annars står det "Kan inte ta bort — N registrerade individer".
 
+En kull som lagts till i årsrapporten utan antal vid sex veckor har antalet födda som
+gissning: märket visar "(preliminärt)" efter "vid 6 v". Stämmer antalet klickar du
+**Bekräfta antalet** i det utfällda kortet, annars rättar du det med **Redigera**.
+
 ![Kullar och parningar](min-besattning-kullar-mobil.png)
 
 **Släktträd**
@@ -658,21 +796,24 @@ Allt om en kanin. Adressen är /stamboken/individ/ följt av individnumret.
 
 - **Kortet** till vänster (överst på mobilen): foto med kameraknappen **Ladda upp
   foto**, nummer och namn, knappen **Redigera**, menyn **Fler åtgärder** (**Redigera**,
-  **Provpara**, **Rapportera död** / **Ångra dödsrapportering**, **Sälj individ**,
-  **Årsrapportera** – kommer snart), märken för kön, ålder, status, intyg, kastrering
+  **Provpara**, **Rapportera död** / **Ångra dödsrapportering** eller **Ändra i
+  årsrapporten**, **Sälj individ**, **Årsrapportera** – kommer snart), märken för kön, ålder, status, intyg, kastrering
   och **Köpt**, genetikbandet A–E med **F** (inavelsgrad) och knappen **Om genetiken**,
   samt föräldrarnas nummer (M och F).
 - **Intyget** – under märkena i kortet, när kaninen har ett digitalt intyg. Kaninens
   ägare, uppfödaren och genbanksansvarig klickar **Visa intyg** för att öppna PDF:en i
   en ny flik. Andra ser vem som kan hämta intyget. **Kontrollera intyget** leder till
   [Verifiera intyg](#verifiera-intyg) för intyg som utfärdats i nya Stamboken.
-- **Identitet** – färg, ögonfärg, klofärg, bukfärg, hårlag och färganteckning.
+- **Identitet** – färg, ögonfärg, klofärg, bukfärg, päls, hårlag och färganteckning.
 - **Släktträd** – tre generationer med länkar till varje förfader; okända visas som
   "Okänd". Under trädet "Kullstorlek: N (vid 6v: M)".
 - **Hälsa & Mått** – senaste vikt och hull om sådana registrerats.
 - **Besättningshistorik** – var kaninen funnits, med **Född här**, **Flyttad hit** och
   antal årsrapporter. **Visa allt** listar varje händelse med datum; där finns också
-  **Ångra** på händelser du själv får ångra.
+  **Ångra** på händelser du själv får ångra. En händelse som kom från en årsrapport har i
+  stället **Ändra i årsrapporten**. Vid en försäljning utanför föreningen ser
+  genbanksansvarig, genbankshjälpare och administratör "Köpare:" med köparens namn och
+  ort.
 - **Pappersintyg** – en kopia av pappersintyget som lästs in, med säljarens och
   köparens uppgifter överstrukna. Klicka bilden för full storlek. Blocket visas bara
   om kaninen har en kopia och du får se den.
@@ -694,7 +835,8 @@ Sök bland alla kaniner i genbankerna du har tillgång till. Listan öppnas med
 **Gotlandskanin** och status **Aktiv**, och den nyast födda kaninen står först. Föder du
 upp mellerudskaniner, klicka **Mellerudskanin**. Välj ras med **Gotlandskanin**,
 **Mellerudskanin** eller **Alla**, sök i sökfältet och filtrera på **Status** (Alla,
-Aktiv, Inaktiv, Död, Slaktad, Avlivad, Försvunnen) och **Kön**. Sökningen gäller bara
+Aktiv, Inaktiv, Död, Slaktad, Avlivad, Försvunnen), **Kön** och **Päls** (**Alla** eller
+**Rex**). Sökningen gäller bara
 den ras och status du har valt. Välj **Alla** under **Status** för att hitta en kanin
 som är såld, död eller inaktiv. På datorn visas en
 tabell med kolumnerna **Individnummer**, **Namn**, **Kön**, **Födelsedatum**, **Status**,
@@ -719,10 +861,13 @@ avkomman F: bra upp till N %, utred närmare upp till M %, över det hög inavel
 
 <!-- route: /stamboken/profil -->
 
-Korten **Konto** (bild, namn, inloggning, roller),
+Korten **Konto** (bild, namn, e-post, märken för dina roller, **Fullständigt namn**,
+**Inloggning** och länken **Regler för ditt konto**),
 **Medlemskap** (medlemsnummer, medlem sedan, huvudmedlem, din roll, besättningar),
-**Kontaktuppgifter**, **Publicering i Koharen** och **Personer i medlemskapet**.
-Saknar kontot medlemspost visas bara **Konto** och texten "Du har ingen medlemspost
+**Kontaktuppgifter**, **Publicering i Koharen**, **Personer i medlemskapet**, **Notiser**
+och **Intygens kontrollsida**. **Intygens kontrollsida** visas för den som äger en
+besättning, är genbanksansvarig eller administratör, eller redan visar sitt namn.
+Saknar kontot medlemspost visas **Konto** och texten "Du har ingen medlemspost
 kopplad till ditt konto." Se [Uppdatera din profil](#uppdatera-din-profil).
 
 ![Min profil](profil-desktop.png)
@@ -761,17 +906,43 @@ kommer du direkt till rapporten. Är ingen runda öppen säger sidan det.
 <!-- route: /stamboken/arsrapport/[herd]/[year] -->
 
 Rapporten för ett avelsår. Dina kaniner står redan i listan; för varje kanin väljer du
-**Finns kvar** (med vikt och hull: mager, normal eller fet), **Död** (med månad,
-och om kaninen slaktades) eller **Såld** (till en besättning i genbanken, eller köparens namn och
-ort utanför genbanken). Har du 15 kaniner eller fler kan du söka med **Hitta en kanin**. Filtrera listan och se
-hur många som är klara. Under **Hälsa** svarar du **Inga sjukdomsfall eller defekter**
-eller **Ja, fyll i**. Avslutar du besättningen kryssar du **Jag avslutar min besättning** och
-väljer vad som händer med medlemskapet; då behöver kaninerna inget val.
+**Finns kvar** (med vikt eller **Ej vägd**, och hull: mager, normal eller fet), **Död**
+(med månad, och om kaninen slaktades) eller **Såld** (till en besättning i genbanken,
+eller köparens namn och ort utanför genbanken). Har du 15 kaniner eller fler kan du söka
+med **Hitta en kanin**. Knapparna **Inte klara** (med antal), **Finns kvar**, **Döda**,
+**Sålda**, **Köpta** och **Alla** visar en del av listan. Har du fler än 30 kaniner finns
+**Markera resten som finns kvar** när du har kommit till slutet av listan; vuxna kaniner
+behöver ändå vikt eller **Ej vägd**. Under **Hälsa** svarar du **Inga sjukdomsfall eller
+defekter** eller **Ja, fyll i**. Avslutar du besättningen kryssar du **Jag avslutar min
+besättning** och väljer vad som händer med medlemskapet; då behöver kaninerna inget val.
+
+Under listan:
+
+- **Lägg till kanin från intyget** – för en kanin som saknas i listan. Ta foto av
+  intyget och fyll i uppgifterna. Kaninen registreras i Stamboken direkt och finns kvar
+  även om du drar tillbaka rapporten.
+- **Saknas ett köp?** – klicka **Anmäl köpet**. I dialogen **Anmäl ett köp** skriver du
+  **Kaninens nummer**, väljer **Säljarens besättning** (**Besättning i genbanken** eller
+  **Utanför genbanken**) och **Datum för köpet**, och klickar **Skicka anmälan**.
+  Anmälan går till genbanksansvarig, och kaninen kommer in i din besättning när köpet
+  är registrerat.
+- **Ärenden hos genbanksansvarig** – det som ligger i inkorgen för besättningen.
+- **Kullar under** året – kullarna med **Kull**, **Född**, **Mor**, **Far**, **Födda** och
+  **Levande vid 6 veckor**. **Lägg till kull** lägger till en kull. En kull som lagts
+  till utan antal vid sex veckor står som "(preliminärt)" med knappen **Bekräfta
+  antalet**. Minst en kull krävs för stödet.
+- **Sålda under** året – försäljningarna som finns i Stamboken.
+
+Säljer en skötare en kanin, eller den som rapporterar via länken i inbjudan, väntar
+försäljningen på genbanksansvarig. Raden visar "Försäljningen väntar på genbanksansvarig.
+Kaninen står kvar hos dig tills den är godkänd."
 
 Det du fyller i sparas medan du skriver. **Skicka årsrapporten** visar ett kvitto.
-Därefter kan du **Ändra** och skicka ändringarna, eller **Dra tillbaka rapporten**
-inom sju dagar. En skötare kan inte registrera en försäljning. Säger rutan **Rapporten
-kan inte skickas** listar den vad som saknas, med länkar till kaninerna.
+Därefter kan du **Ändra** och skicka ändringarna, eller klicka **Dra tillbaka** (det
+går till och med det datum som står bredvid knappen). Rutan **Dra tillbaka rapporten**
+säger vad som händer: kaninerna räknas inte som levande 31 december förrän du skickar
+igen, försäljningar som väntar tas bort, och det du fyllt i finns kvar. Säger rutan
+**Rapporten kan inte skickas** listar den vad som saknas, med länkar till kaninerna.
 
 **Från blankett.** Genbanksansvarig och genbankshjälpare matar in en pappersblankett
 från ett ärende i inkorgen (**Mata in årsrapporten**). Sidan heter då **Från blankett**,
@@ -811,19 +982,32 @@ genbanksansvarig och administratör; hjälpare ser bara listan och antalen.
 den utan att logga in, och länken gäller bara den besättningen till rundans sista dag. Koden
 står efter `#`, så den finns inte i adressen som webbläsaren ber servern om. Sidan tar
 bort koden ur adressfältet och skickar den sedan för att öppna rapporten. Skriv
-aldrig ut en riktig länk i ett ärende eller en rapport.
+aldrig ut en riktig länk i ett ärende eller en rapport. Har medlemmen öppnat länkar för
+flera besättningar visar sidan **Välj besättning**. En länk som inte gäller längre ger
+sidan "Länken gäller inte längre. Har du fått ett nyare mejl från Stamboken? Använd
+länken i det.", och under den, när de finns inlagda, namn och telefonnummer att ringa
+för varje ras.
 
-Under det står ett filter per läge med antal (**Att ringa**, **Påbörjade**, **Alla** och de
-andra lägena); valet ligger i adressen. **Att ringa** är påbörjade rapporter
-från två dagar före sista dag för stödet, och besättningar vars blankett lämnade ut
-kaniner som avgör stödet. Varje rad visar besättningen (koden öppnar rapporten), läget,
-villkoren för stöd (**Hane**, **Hona**, **Kull**, **I tid**, med bock eller kryss), flaggor som
-**3 ej angivna** eller **Ingen e-post**, när rapporten togs emot och åtgärder. Under läget står
+Under det står filtren med antal: **Att ringa**, ett filter för varje läge som har
+besättningar (**Påbörjade**, **Ej rapporterade**, **Ingen e-post**, **Blankett inkommen**,
+**Blankett väntar på svar**, **Inskickade**, **Avslutar**) och **Alla**. Valet ligger i
+adressen. **Att ringa** är påbörjade rapporter från två dagar före sista dag för stödet,
+besättningar vars blankett lämnade ut kaniner som avgör stödet, och besättningar där en
+avvisad försäljning lämnade en sådan kanin för medlemmen att välja igen. Varje rad visar
+besättningen (koden öppnar rapporten), läget, villkoren för stöd (**Hane**, **Hona**,
+**Kull**, **I tid**, med bock eller kryss), flaggor, när rapporten togs emot och åtgärder.
+Flaggorna är **Ingen e-post**, **Preliminärt antal**, till exempel **3 ej angivna** (med
+"(påverkar stödet)" när det gäller), **Försäljning väntar**, **Försäljning avvisad,
+medlemmen väljer igen**, **Köpt efter inskick** och **Köp anmält**. Under läget står
 inbjudans läge: **Inbjudan skickad**, **Inbjudan studsade**, **Inbjudan misslyckades** eller
 **Länken öppnad**. Studsade och misslyckade inbjudningar kommer också under **Att ringa** tills
 besättningen har rapporterat. **Mata in blankett** öppnar inkorgen
 för besättningen, och genbanksansvarig kan välja **I tid** (**Räknas**, **Ja** eller **Nej**)
-på en rad med rapport. **Ny länk** på en besättning med e-post frågar
+på en rad med rapport. Väntar en försäljning från en skötare eller från länken finns
+**Försäljningar**. Det öppnar **Försäljningar från** besättningen, där genbanksansvarig
+klickar **Godkänn** eller **Avvisa …**. Avvisar du skriver du en **Orsak** (medlemmen får
+den i ett mejl; skriv inte köparens namn) och väljer om kaninen **Finns kvar 31
+december** eller **Låt medlemmen välja igen**. **Ny länk** på en besättning med e-post frågar
 **Den gamla länken slutar gälla. Skicka en ny länk till huvudmedlemmen?**; svarar du ja
 får huvudmedlemmen ett mejl med en ny länk, och den gamla slutar fungera. Det du eller
 medlemmen redan fyllt i finns kvar, och en medlem som redan rapporterat behöver den nya
@@ -834,9 +1018,16 @@ hjälpare ser det inte.
 
 <!-- route: /stamboken/notiser -->
 
-Dina notiser om inskick, nyast först; olästa står med fet stil. Varje notis länkar till
-sitt ärende, och en notis blir läst när du klickar på den. **Markera alla som lästa**
-läser alla. Antalet olästa visas i menyn, vid **Mina inskick** (eller **Inkorg**) och
+Dina notiser, nyast först; olästa står med fet stil. En notis blir läst när du klickar
+på den. Vart den leder beror på vad den gäller:
+
+- en notis om en kanin leder till kaninens sida;
+- en notis om köparens e-postadress leder till
+  [Kontrollera köparens e-postadress](#kontrollera-köparens-e-postadress);
+- en notis om att ditt inskick är klart leder till **Mina inskick**;
+- övriga notiser leder till ärendet i inkorgen.
+
+**Markera alla som lästa** läser alla. Antalet olästa visas i menyn, vid **Mina inskick** (eller **Inkorg**) och
 vid **Notiser** under kontomenyn.
 
 #### Kontrollera köparens e-postadress
@@ -882,17 +1073,20 @@ ett mejl från föreningen. Det säger vad föreningen sparar om köparen och ha
 intyg som bilaga, om kaninen har ett digitalt intyg. Mejlet har en länk till den här
 sidan, som inte kräver inloggning.
 
-Sidan visar vad som tas bort, köparens namn, ort och kontaktuppgifter, och knappen
-**Ta bort mina uppgifter**. Inget tas bort förrän köparen trycker på knappen.
-Försäljningen står kvar i kaninens historik, utan köparen. Sedan visar sidan ett av tre
-besked:
+Sidan säger "Vi tar bort ditt namn, din postadress eller ort och dina övriga
+kontaktuppgifter. Det går inte att ångra." och har knappen **Ta bort mina uppgifter**.
+Inget tas bort förrän köparen trycker på knappen. Försäljningen står kvar i kaninens
+historik, utan köparen. Sedan visar sidan ett av tre besked:
 
 - **Dina uppgifter är borttagna.**
-- **Länken har redan använts eller ersatts.** – köparen hänvisas till länken i ett nyare mejl,
-  om det finns ett, och annars till `dataskydd@gotlandskaninen.se`.
+- **Köparuppgifterna för den här försäljningen är redan borttagna.** – har köparen köpt
+  fler kaniner använder hen länken i mejlet om den kaninen, eller skriver till
+  `dataskydd@gotlandskaninen.se`.
 - **Länken gäller inte längre.** – länken är fel eller ofullständig, eller sidan har
   laddats om. Köparen kan klicka på länken i mejlet igen eller skriva till
   `dataskydd@gotlandskaninen.se`.
+
+Blir det fel på vägen står det "Något gick fel. Försök igen om en stund."
 
 ---
 
@@ -908,7 +1102,10 @@ rättelser, ändringshistorik, genetiksidan och delar av adminpanelen.
 2. Klicka **Redigera**, ändra och klicka **Spara**.
 
 Samma knappar som uppfödaren har: **Fler åtgärder** ger dig **Rapportera död** och
-**Sälj individ** för alla kaniner i din genbank, även de i GX1/MX1.
+**Sälj individ** för alla kaniner i din genbank, även de i GX1/MX1. En kanin i GX1/MX1
+kan du också sälja vidare till GX1/MX1, när en köpare utanför föreningen säljer den till
+en annan. När du säljer till GX1/MX1 är **Postadress** frivillig, till exempel för
+gamla papper utan adress.
 
 ### Korrigera besättningshistorik
 
@@ -924,6 +1121,10 @@ När en flytt registrerats fel eller saknas rättar du historiken på kaninens s
    **Lägg till händelse** (**Datum**, **Besättning**, **Typ**: Flytt, Korrigering,
    Årsrapport, Född, och **Anteckning**), skriv **Anledning** om något ångras och
    klicka **Spara korrigering**. Bekräftelsen "Historiken är korrigerad." visas.
+   En ny händelse av typen Flytt till GX1 eller MX1 frågar efter köparen med samma fält
+   som när du säljer (**Köparens namn**, **Ort**, **Postadress** och de två rutorna).
+   Ångrar du samtidigt en försäljning till samma besättning följer köparen med, och då
+   frågar dialogen inte.
 
 Skriv aldrig köparens namn eller kontaktuppgifter i anledningen; Stamboken stoppar
 text som innehåller e-postadress eller telefonnummer.
@@ -1015,17 +1216,24 @@ Via avatarmenyn **Adminpanel** når du **Besättningar i Gotlandskanin** (eller 
 genbank) och **Genbanker**. Här skapar du nya besättningar och rättar
 kontaktuppgifter; stegen är samma som för administratör, se
 [Skapa en besättning](#skapa-en-besättning) och [Besättning – redigera](#besättning--redigera).
-Ägare kopplas av administratör.
+En besättning kan ha flera ägare: huvudmedlemmen i medlemskapet som besättningen hör
+till, och konton med rollen Besättningsägare. Administratören eller
+matrikeladministratören kopplar besättningen till ett medlemskap i matrikeln med
+**Koppla besättning**. Rollen ger administratören, se
+[Byta ägare på en besättning](#byta-ägare-på-en-besättning).
 
 ### Arbeta i inkorgen
 
 Medlemmarna fotograferar sina pappersintyg och bevis och laddar upp fotona eller mejlar
 dem till föreningens Stamboken-adress. Varje uppladdning och varje mejl blir ett ärende i
-**Inkorg**, typen **Mejl** med bilagor och **Meddelande** utan. Inkorgen är för
-administratörer, genbanksansvariga och genbankshjälpare, och alla tre ser hela kön.
+**Inkorg**: typen **Uppladdning**, **Mejl** med bilagor och **Meddelande** utan. Ärenden av
+typen **Kontroll** kommer från årsrapporten, till exempel ett anmält köp. Inkorgen är för
+administratörer, genbanksansvariga och genbankshjälpare, och alla tre kan se hela kön.
 
-1. Öppna **Inkorg** i menyn. Klicka **Jag tar den** på ett ärende som ingen har tagit,
-   eller öppna ärendet och ta det där. Har någon annan ärendet klickar du **Ta över**.
+1. Öppna **Inkorg** i menyn och klicka på ett ärende i listan. Ärendet visas bredvid
+   listan. Klicka **Börja registrera**: då tar du ärendet och kommer till registreringen.
+   Har någon annan ärendet står det **Ta över från** och personens förnamn; klicka det
+   om du ska ta över. I registreringen heter knapparna **Jag tar den** och **Ta över**.
 2. Välj ett dokument i listan till vänster. Vrid fotot med **Vrid vänster** eller
    **Vrid höger** tills intyget står rätt. Vridningen sparas bara medan du har ärendet och
    innan kopian finns; den följer också med när du bekräftar maskningen, och kopian görs
@@ -1065,6 +1273,8 @@ administratörer, genbanksansvariga och genbankshjälpare, och alla tre ser hela
 5. Visar intyget en försäljning registrerar du den innan du bekräftar maskningen: öppna
    **Visar intyget en försäljning?** och fyll i **Individnummer**, **Köparens besättning**
    eller **Köparen är utanför föreningen** (sparas på GX1 eller MX1) och **Säljdatum**.
+   Är köparen utanför föreningen fyller du i köparen med samma fält som när du säljer,
+   se [Sälja eller flytta en kanin](#sälja-eller-flytta-en-kanin).
    Utan bevis märks ärendet "bevis saknas".
 6. Ett bevis: välj typen **Bevis** och fyll i försäljningen. Beviset blir klart med den.
 7. Ett foto som inte ska sparas: **Avfärda**. **Hoppa över** går till nästa dokument utan
@@ -1086,8 +1296,24 @@ Går ärendet inte att avsluta väljer du **Väntar på förälder** (ange för�
 individnummer; ärendet blir taget igen när föräldern läggs in), **Ofullständig** (skriv
 vad som saknas), **Lämna till genbanksansvarig** (för en korrigering eller ett beslut),
 **Dubblett** (ange numret på det andra ärendet) eller **Skräp**. **Arbeta vidare** tar
-upp ett väntande ärende igen. Genbanksansvarig och administratör kan också tilldela
-ärenden och **Öppna igen** ett stängt ärende.
+upp ett väntande ärende igen. I ärendet bredvid listan lämnar **Lägg tillbaka** ett
+ärende du har tagit, så att någon annan kan ta det. Genbanksansvarig och administratör kan också **Öppna igen** ett
+stängt ärende och tilldela ärenden:
+
+- ett ärende: i registreringen, under **Tilldela ärende** och numret, välj person och
+  klicka **Tilldela**;
+- alla öppna ärenden i en besättning: i inkorgen, under **Ge en hel besättning till en
+  person**, skriv **Besättning**, välj **Till** och klicka knappen med antalet, till
+  exempel **Tilldela 3 ärenden**.
+
+När du har tagit, tagit över, lagt tillbaka eller tilldelat ett ärende visas en rad längst
+ned med knappen **Ångra**. Klickar du den står det "Ändringen har ångrats."
+
+Sparades en bild i ett mejl inte, till exempel för att filen var för stor, kan du klicka
+**Be avsändaren bifoga bilden** i ärendet bredvid listan och skriva ett **Meddelande till
+avsändaren**. Det går när ärendet är ditt och avsändaren är känd. När du
+klickar **Skicka** blir ärendet Ofullständig, och avsändaren kan svara på mejlet med
+bilden.
 
 En genbankshjälpare sparar bara det en uppfödare får spara: en ny kanin, pappersintyget
 på en kanin som saknar intyg och en försäljning med datum efter kaninens senaste
@@ -1113,8 +1339,9 @@ sidan men får ingen genbank att välja. Se [Använda genetiksidan](#använda-ge
 
 Samma panel som administratörens men med färre flikar: **Översikt**, **Besättningar i
 din genbank**, **Genbanker** och **Utskick**. Rollraden lyder "Inloggad som genbanksansvarig ·
-Gotlandskanin". Besättningslistan visar bara din genbank och saknar filter; på
-genbankssidan kan du bara ändra **Namn**. Flikarna **Användare** och **System** finns
+Gotlandskanin". Besättningslistan visar bara besättningarna i dina genbanker. Den har
+sökfältet "Sök besättningsnummer eller namn…" och filtren **Status** och **Ägare**, och
+**Genbank** om du ansvarar för fler än en. På genbankssidan kan du bara ändra **Namn**. Flikarna **Användare** och **System** finns
 bara för administratör.
 
 ![Adminpanelen för genbanksansvarig](manager-admin-desktop.png)
@@ -1125,22 +1352,40 @@ bara för administratör.
 
 <!-- route: /stamboken/inkorg -->
 
-Överst väljer du **Mina genbanker** (ärenden i genbanker där du är genbanksansvarig eller
-hjälpare, och ärenden utan genbank) eller **Alla genbanker**. Utan val visas **Mina genbanker**
-för genbanksansvariga och hjälpare och **Alla genbanker** för administratörer; valet ligger i
-adressen. Därunder antalet ärenden per läge: **Öppna**, varje läge som har ärenden och **Alla**.
-Filtren **Mina**, **Otagna**, **Handläggare**, **Genbank**, **Besättning** och **Typ**
-ligger i adressen, så en filtrerad lista går att länka; **Rensa** tar bort dem. Tabellen
-visar **Ärende** (med hur många dokument som är klara och märkena "bevis saknas" och
-"står still"), **Besättning**, **Inskickat av**, **Typ**, **Läge**, **Handläggare** och
-**Väntat**, äldst först. **Jag tar den** finns på ärenden som ingen har tagit.
-Genbanksansvarig och administratör väljer en person och klickar **Tilldela**, eller
-tilldelar alla öppna ärenden i en besättning under **Tilldela en hel besättning**.
-Alla som arbetar i kön ser listan över handläggare, inte bara administratören; genbanksansvarig
-och administratör väljer ur den när de tilldelar. På en telefon blir varje rad ett kort. Den som
-inte arbetar i kön får "sidan finns inte". När bildtolkningen är på står det under lägena hur
-många foton som väntar på tolkning och när det senaste förslaget blev klart, och en röd ruta
-visas om tre foton i rad inte gick att tolka. Se [Arbeta i inkorgen](#arbeta-i-inkorgen).
+På en bred skärm har sidan tre delar: lägena, listan och det valda ärendet. På en mindre
+skärm ser du listan eller ärendet, och **Tillbaka till listan** går tillbaka. Den som inte
+arbetar i kön får "sidan finns inte".
+
+**Lägena** till vänster, med antal: **Nya** (ingen har tagit ärendet), **Mina** (ärenden
+du har tagit, också de som väntar på svar), **Alla öppna** (allt som inte är klart) och
+**Klara**. **Vad betyder lägena?** förklarar dem. Utan val visas **Alla öppna**. Där
+finns också **Ge en hel besättning till en person** för genbanksansvarig och
+administratör.
+
+**Listan** i mitten. Överst väljer du **Mina genbanker** (ärenden i genbanker där du är
+genbanksansvarig eller hjälpare, och ärenden utan genbank) eller **Alla**. Utan val visas
+**Mina genbanker** för genbanksansvariga och hjälpare och **Alla** för administratörer.
+Sedan **Sök besättning**, **Ordning** (**Äldst först** eller **Nyast först**) och antalet
+ärenden. Valen ligger i adressen, så en lista går att länka. Varje rad visar numret och
+ämnet, avsändaren, besättningen, typen, antalet foton och vem som har ärendet ("Hos" och
+namnet, eller "Ingen har tagit det"). Till höger står läget (till exempel **Ny**,
+**Taget**, **Ditt** eller **Väntar på svar**) och hur länge ärendet har väntat. Märkena
+"kan vara oskarp", "bevis saknas", "står still", "bilden sparades inte" och "har väntat
+länge" visar vad som behöver ses över. Upp- och nedpil flyttar markeringen, och Enter
+öppnar ärendet. Är listan tom står det "Inga ärenden här." med länken **Visa alla öppna**.
+
+**Det valda ärendet** till höger ("Välj ett ärende i listan." tills du väljer): ämnet,
+läget, vem som har det, besättningen och hur länge sedan det kom in. Knapparna
+**Börja registrera**, **Ta över från** och ett namn, **Lägg tillbaka** och **Nästa
+ärende**. Sedan fotona, mejlet, **Nämnda kaniner** (länkar till kaninerna som mejlet
+nämner) och **Om ärendet** med **Skickat av**, **Typ** och **Inkommet**. Länken **Visa
+registrering och historik** öppnar [Inkorg – ärende](#inkorg--ärende). En administratör
+kan klicka på kontonamnen och kommer då till kontot i adminpanelen.
+
+När bildtolkningen är på står det överst hur många foton som väntar på tolkning och när
+den senaste blev klar, och en röd ruta visas om tre foton i rad inte gick att tolka. Har
+mejlen till inkorgen inte lästs in på länge visas också en röd rad, till exempel "Mejlen
+har inte lästs in sedan" och en tid. Se [Arbeta i inkorgen](#arbeta-i-inkorgen).
 
 #### Inkorg – ärende
 
@@ -1168,12 +1413,30 @@ och taget, se [Arbeta i inkorgen](#arbeta-i-inkorgen).
 På ett dokument av typen Årsblankett finns **Mata in årsrapporten**, som öppnar blanketten
 bredvid rapportformuläret, se [Årsrapport för en besättning](#årsrapport-för-en-besättning).
 
+Ärenden av typen Kontroll ser lite annorlunda ut:
+
+- **Anmält köp** – en medlem har anmält ett köp i årsrapporten. Kortet visar **Kanin**,
+  **Säljare**, **Köpare** och **Datum**. **Registrera försäljningen** öppnar kaninens sida
+  med säljdialogen ifylld. Väntar säljarens egen försäljning står det i stället att du
+  godkänner den i årsrapportens statusvy, med länken **Öppna statusvyn**.
+- **Intyget mot registreringen** – uppfödaren har registrerat en kanin från ett foto i
+  årsrapporten. Jämför fotot och tolkningen med det som registrerades och klicka
+  **Stämmer**, eller **Rättat** när du har ändrat kaninen så att den stämmer med intyget.
+  Båda stänger ärendet.
+- En försäljning från en skötare eller från länken i inbjudan – ärendet säger "Avgörs i
+  årsrapportens statusvy." med länken **Öppna statusvyn**, där du godkänner eller
+  avvisar den, se [Status för årsrapporten](#status-för-årsrapporten).
+
+En administratör kan klicka på kontonamnen i ärendet och kommer då till kontot i
+adminpanelen.
+
 ---
 
 ## Del 3 – Administratör
 
 Adminpanelen öppnas från avatarmenyn **Adminpanel** och finns bara i riktiga stamboken.
-Flikarna är **Översikt**, **Användare**, **Besättningar**, **Genbanker** och **System**.
+Flikarna är **Översikt**, **Användare**, **Besättningar**, **Genbanker**, **Utskick** och
+**System**.
 Ändringar sparas när du klickar **Spara** eller slår om ett reglage. Det kommer inget
 bekräftelsemeddelande, utan listan visas igen. Fel visas som en röd ruta högst
 upp på sidan.
@@ -1187,7 +1450,7 @@ upp på sidan.
 3. Klicka användarnamnet för att öppna kontot.
 
 Kolumnen **Status och åtkomst** visar märkena **Webbkurs** (validerad),
-**Riktiga stamboken**, **Google** och **Inaktiv**.
+**Riktiga stamboken**, **Google** (kontot har en Google-inloggning) och **Inaktiv**.
 
 ### Ge eller ta bort en roll
 
@@ -1198,6 +1461,15 @@ Kolumnen **Status och åtkomst** visar märkena **Webbkurs** (validerad),
    för Besättningsägare söker du besättningen i **Besättning**.
 3. Klicka **Lägg till roll**.
 4. Ta bort en roll med **Ta bort** på raden.
+
+Administratör, Matrikeladministratör, Genbanksansvarig och Genbankshjälpare kan bara ges
+till ett konto som loggar in med föreningskontot (Google, en adress som slutar på
+@gotlandskaninen.se). Annars står det "En roll kan bara ges till ett konto som loggar in
+med föreningens Google-konto. Kontot kopplar sitt Google-konto först." Kontot loggar
+sedan bara in med föreningskontot; kod och lösenord fungerar inte för det. Läsrätt och
+Besättningsägare kräver inget föreningskonto. Besättningsägare kräver i stället att
+kontot är kopplat till en person i besättningens medlemskap, se
+[Byta ägare på en besättning](#byta-ägare-på-en-besättning).
 
 Tar du bort din egen administratörsroll frågar Stamboken "Ta bort din
 administratörsroll?" och loggar ut dig ur panelen. Den sista administratörsrollen går
@@ -1212,12 +1484,21 @@ inte att ta bort.
 
 Högst tio återställningar per timme och administratör.
 
+En medlem kan också logga in med en kod i stället för lösenord, se
+[Logga in med kod](#logga-in-med-kod). Ett konto med en roll loggar bara in med
+föreningskontot, så där hjälper ett nytt lösenord inte för inloggningen. Lösenordet
+behövs däremot när Google-inloggningen ska bytas, se
+[Användare – redigera](#användare--redigera).
+
 ### Ge tillgång till riktiga stamboken
 
 I kortet **Status och åtkomst** på användarens sida:
 
-- **Tillgång till den riktiga stamboken i den nya versionen** – slå på när medlemmen
-  ska lämna testmiljön. Användaren byter sedan själv via avatarmenyn.
+- **Tillgång till den riktiga stamboken i den nya versionen** – är på för alla aktiva
+  konton, och ett konto som en medlem skapar själv får den direkt. Med tillgång hamnar
+  användaren i riktiga stamboken vid inloggningen och byter till testmiljön i
+  avatarmenyn. Utan tillgång hamnar kontot i testmiljön och har inget val **Byt till
+  riktiga stamboken**.
 - **Webbkurs genomförd (validerad)** – i produktion frågar nya Stamboken inte efter den.
   Gamla Stamboken kräver den, både vid Google-inloggning och för att visa kaninerna
   efter en lösenordsinloggning, och en redaktör behöver den för hemsidans redigering
@@ -1232,7 +1513,20 @@ Reglagen sparas direkt.
 2. Bekräfta "Inaktivera kontot?" med **Inaktivera**. Alla användarens sessioner
    avslutas.
 
-Aktivera igen med samma reglage och **Aktivera**. Ett konto kan inte raderas härifrån.
+Aktivera igen med samma reglage och **Aktivera**.
+
+### Radera kontots uppgifter
+
+Gäller ett konto som inte har någon annan roll än läsrätt och inte är kopplat till
+någon person i matrikeln. En person i matrikeln anonymiseras i stället där, och då töms
+kontot också. Ditt eget konto kan du inte radera.
+
+1. Öppna användaren och klicka **Radera kontots uppgifter** i kortet med samma namn.
+2. Bekräfta "Radera kontots uppgifter?" med **Radera**.
+
+Namn, e-post, inloggningar och profilbild raderas, och kontot maskeras i
+ändringsloggen. Det går inte att ångra. Raden finns kvar som raderad-*nummer*, eftersom
+andra uppgifter pekar på den, och sidan visar en gul ruta om det.
 
 ### Skapa en besättning
 
@@ -1250,7 +1544,10 @@ Koppla sedan ägaren, se nästa avsnitt.
 
 ### Byta ägare på en besättning
 
-Ägarskap är rollen Besättningsägare på användaren, inte en inställning på besättningen.
+En besättning kan ha flera ägare: huvudmedlemmen i medlemskapet som besättningen hör
+till, och konton med rollen Besättningsägare. Huvudmedlemmen ändras i matrikeln, och där
+kopplar du också besättningen till ett medlemskap med **Koppla besättning**. Rollen
+Besättningsägare byter du så här:
 
 1. Öppna besättningen under **Besättningar**. Under **Ägare** står nuvarande ägare som
    länkar.
@@ -1259,7 +1556,12 @@ Koppla sedan ägaren, se nästa avsnitt.
 3. Öppna den nya ägaren under **Användare**, välj **Roll** Besättningsägare, sök
    besättningen i **Besättning** och klicka **Lägg till roll**.
 
-En besättning kan ha flera ägare.
+Rollen går bara att ge när besättningen är kopplad till ett aktivt medlemskap och kontot
+är kopplat till en person i det (huvudmedlem, familjemedlem eller skötare). Annars
+står det "Besättningen är inte kopplad till något medlemskap. Koppla den i matrikeln
+innan du ger rollen besättningsägare." eller att kontot först ska kopplas till en
+person i medlemskapet. Båda kopplingarna görs i matrikeln. Roller som redan finns
+ligger kvar.
 
 ### Utse genbanksansvarig
 
@@ -1267,7 +1569,9 @@ En besättning kan ha flera ägare.
 2. Sök användaren i **Ny genbanksansvarig** och klicka **Lägg till genbanksansvarig**.
 3. Ta bort ansvar med **Ta bort ansvar** på raden.
 
-Samma sak går att göra från användarens sida med rollen Genbanksansvarig.
+Samma sak går att göra från användarens sida med rollen Genbanksansvarig. Rollen kan
+bara ges till ett konto som loggar in med föreningskontot, se
+[Ge eller ta bort en roll](#ge-eller-ta-bort-en-roll).
 
 ### Söka i aktivitetsloggen
 
@@ -1299,7 +1603,8 @@ Använd detta om du misstänker att någon obehörig kommit åt ett konto.
 <!-- route: /stamboken/admin -->
 
 Startsidan med ett kort per avsnitt och antal: **Användare**, **Besättningar**,
-**Genbanker**, **Medlemsregister** (leder till matrikeln under /medlem) och **System**.
+**Genbanker**, **Utskick** ("Status för utgående e-post, med omförsök och stopp."),
+**Medlemsregister** (leder till matrikeln under /medlem) och **System**.
 Rollraden visar "Inloggad som administratör". Uppfödare som skriver adressen själva
 får "Sidan kunde inte hittas".
 
@@ -1310,9 +1615,13 @@ får "Sidan kunde inte hittas".
 <!-- route: /stamboken/admin/anvandare -->
 
 Sökfält, filtren **Roll**, **Konto**, **Riktiga stamboken** och **Webbkurs**, knappen
-**Filtrera** och tabellen **Användarnamn**, **Namn**, **E-post**, **Roller**, **Status
-och åtkomst** och **Senast aktiv**. Sidstorlek väljs längst ned. Nya konton skapas inte
-här; de kommer från medlemsansökningarna.
+**Filtrera** och tabellen **Nr** (kontonumret), **Användarnamn**, **Namn**, **E-post**,
+**Roller**, **Status och åtkomst** och **Senast aktiv**. Saknar ett konto med en roll
+namn står det "Namn saknas". Sidstorlek väljs längst ned.
+
+Nya konton skapas inte här. En huvudmedlem skapar sitt konto själv med en kod, se
+[Skapa ditt konto första gången](#skapa-ditt-konto-första-gången). En godkänd
+medlemsansökan lägger in medlemmen i matrikeln men skapar inget konto.
 
 ![Användare](admin-anvandare-desktop.png)
 
@@ -1320,10 +1629,23 @@ här; de kommer från medlemsansökningarna.
 
 <!-- route: /stamboken/admin/anvandare/[userId] -->
 
-Korten **Profil** (**Användarnamn** låst, **Fullständigt namn**, **E-post**, **Spara**),
-**Roller**, **Lösenord**, **Status och åtkomst**, **Google-konto länkat** (om det finns)
-och **Senaste aktivitet** (de tio senaste ändringarna användaren gjort). En gul ruta
-varnar om en annan administratör ändrat kontot de senaste fem minuterna.
+Överst användarnamnet och raden "Konto" med kontonumret, namnet och e-posten. Korten
+**Profil** (**Användarnamn** låst, **Fullständigt namn**, **E-post**, **Spara**),
+**Roller**, **Lösenord**, **Sessioner**, **Status och åtkomst**, **Google-konto länkat**
+(om det finns), **Radera kontots uppgifter** och **Senaste aktivitet** (de tio senaste
+ändringarna användaren gjort). En gul ruta varnar om en annan administratör ändrat kontot
+de senaste fem minuterna. På ett raderat konto visas bara **Status och åtkomst** och
+**Senaste aktivitet**, se [Radera kontots uppgifter](#radera-kontots-uppgifter).
+
+Under **Roller** länkar en Besättningsägare-roll till besättningen och visar **Aktiv**
+eller **Inaktiv**. Kortet **Sessioner** har två knappar:
+
+- **Logga ut överallt** – avslutar kontots alla sessioner, i riktiga stamboken och i
+  testmiljön. Bekräfta i rutan "Logga ut överallt?". Användaren kan logga in igen direkt.
+- **Ta bort Google-inloggningen** – bekräfta i rutan "Ta bort Google-inloggningen?".
+  Kontot loggas ut överallt och kan inte logga in med Google förrän en ny
+  Google-inloggning har kopplats. Har kontot inget lösenord behöver det ett först
+  (**Återställ lösenord**). Har kontot en roll går Google-inloggningen inte att ta bort.
 
 ![Användare, redigera](admin-anvandare-detalj-desktop.png)
 
@@ -1341,9 +1663,13 @@ besättningsnumret för att redigera.
 
 <!-- route: /stamboken/admin/besattningar/[herdId] -->
 
-Kontaktpersonens **Namn**, **E-post**, **Mobiltelefon**, **Fast telefonnummer**,
-**Gatuadress**, **Postnummer**, **Postort**, **Hemsida**, reglaget **Besättningen är
-aktiv** och **Spara**. Under **Ägare** länkar till ägarnas användarsidor.
+Kortet **Kontakt för besättningen** med **Redigera**: samma kontaktuppgifter och samma
+redigering som på Min besättning, se
+[Uppdatera besättningsuppgifter](#uppdatera-besättningsuppgifter). Under det
+**Fast telefonnummer**, **Hemsida**, reglaget **Besättningen är aktiv** och **Spara**.
+Under **Ägare** länkar till ägarnas användarsidor, och texten "En besättning kan ha flera
+ägare: huvudmedlemmen i medlemskapet som besättningen hör till, och konton med rollen
+Ägare för besättningen. Huvudmedlemmen ändras i matrikeln."
 Besättningsnummer och namn kan inte ändras; en inaktiverad besättning behåller sin
 historik och kan inte tas bort.
 
@@ -1386,7 +1712,8 @@ Studsade, Spärrad, Loggad, Stoppad), **Typ**, **Från** och **Till** ligger i a
 så en filtrerad lista går att länka. Tabellen visar **Skapad**, **Typ**, **Mottagare**
 (namn, aldrig adress), **Status**, **Försök** och **Senaste fel**, med **Föregående** och
 **Nästa** för fler rader. På en telefon blir varje rad ett kort. **Försök igen** finns
-på misslyckade och studsade utskick och **Stoppa** på köade. Har utskicket hunnit
+på misslyckade, studsade och loggade utskick (ett loggat utskick skickades aldrig) och
+**Stoppa** på köade. Har utskicket hunnit
 ändra status visas felet från servern. Genbanksansvariga ser bara sin genbanks utskick.
 
 #### System
@@ -1460,7 +1787,7 @@ funktion (inloggning, lösenordsåterställning, redigera kanin med flera). Bara
 
 ### Kontakt
 
-Frågor om stamboken, roller och lösenord: <admin@gotlandskaninen.se>.
+Frågor om ditt konto, inloggning och roller: <admin@gotlandskaninen.se>.
 Frågor om registrering, färger och intyg: din genbanksansvarig.
 
 ### Vad är på gång?
@@ -1470,9 +1797,12 @@ Vad föreningen arbetar med i Stamboken syns på
 **Att göra**, **Pågår** och **Klart**. Kort med ett hänglås hör till föreningens interna
 arbete och går inte att öppna.
 
-Önskemål mejlar du till <admin@gotlandskaninen.se>, eller lämnar som ett ärende (issue) i
-[gotlandskaninen/stamboken](https://github.com/gotlandskaninen/stamboken/issues) på GitHub. Allt på GitHub är
-offentligt, så skriv inga personuppgifter: inga namn, adresser eller besättningsnummer.
+Fel och önskemål lämnar du med **Tyck till** i Stamboken, se [Tyck till](#tyck-till).
+Väljer du **Alla** läggs texten ut öppet som ett ärende (issue) i
+[gotlandskaninen/stamboken](https://github.com/gotlandskaninen/stamboken/issues) på GitHub,
+och då syns den på projekttavlan. Väljer du **Bara föreningen** läser bara föreningen den.
+Du kan också mejla <admin@gotlandskaninen.se>. Allt på GitHub är offentligt, så skriv
+inga personuppgifter där: inga namn, adresser eller besättningsnummer.
 
 ### Om manualen
 
@@ -1481,6 +1811,8 @@ ett avsnitt här, och ett skript i kodrepot stoppar ändringar som lägger till 
 utan avsnitt. Stegen i [Registrera en kull](#registrera-en-kull), [Registrera en unge
 och utfärda intyg](#registrera-en-unge-och-utfärda-intyg) och [Sälja eller flytta en
 kanin](#sälja-eller-flytta-en-kanin) körs som automatiska tester mot en testdatabas.
+Längst ned på varje sida i Stamboken står **Version** och numret på den version du
+använder; länken leder till versionens beskrivning på GitHub.
 Hur skärmbilder och tester uppdateras står i
 [docs/manual/README.md](https://github.com/gotlandskaninen/stamboken/blob/main/docs/manual/README.md)
 i kodrepot på GitHub.

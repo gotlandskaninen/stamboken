@@ -21,7 +21,10 @@ const FATHER = { name: "Visby Storm", number: "G1274-2116" };
 // Vid retry (serial: hela filen körs om) flyttas slotten ett steg.
 let BIRTH_DATE = "";
 function pickBirthDate(retry: number) {
-  const minutes = Math.floor(Date.now() / 60000);
+  // MANUAL_FLOW_SLOT fixes the slot, so the screenshots show the same litter.
+  const minutes = Number(
+    process.env.MANUAL_FLOW_SLOT ?? Math.floor(Date.now() / 60000),
+  );
   const birthMonth = String(((minutes + retry) % 6) * 2 + 1).padStart(2, "0");
   BIRTH_DATE = `2025-${birthMonth}-01`;
 }
