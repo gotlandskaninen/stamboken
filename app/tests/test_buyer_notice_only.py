@@ -16,6 +16,7 @@ from utils import buyer_contact, herd_tracking, sale_proposal  # noqa: E402
 from utils.herd_tracking import (  # noqa: E402
     BEVIS_NOT_YET,
     NOT_RECORDED,
+    REPORT_BEVIS_NOT_YET,
     TRANSITION_OVER,
     HerdTrackingInvalid,
     attach_buyer,
@@ -33,7 +34,8 @@ from tests.test_buyer_mail import BuyerMailTest  # noqa: E402
 DAY = "2025-06-01"  # a sale in 2025, before the bevis; its five years last until 2030
 EMAIL = "notis@example.org"
 NOTICE = {**BUYER, "email": EMAIL, "notice_only": True}
-REAL_BEVIS_FROM = herd_tracking.BEVIS_FROM  # read at import: DatabaseTest.setUp patches it
+REAL_BEVIS_FROM = herd_tracking.BEVIS_FROM  # read at import: DatabaseTest.setUp patches them
+REAL_REPORT_BEVIS_FROM = herd_tracking.REPORT_BEVIS_FROM
 
 
 class NoticeOnlyTest(BuyerMailTest):
@@ -76,6 +78,19 @@ class TestFields(NoticeOnlyTest):
         self.assertIsNone(buyer_contact_fields(NOT_RECORDED, DAY))
         with self.assertRaises(HerdTrackingInvalid):
             buyer_contact_fields({**NOT_RECORDED, "name": "Någon"}, DAY)
+
+    def test_the_yearly_report_takes_the_bevis_from_2027_only(self):  # Jonas 2026-11-26
+        at = datetime.now(timezone.utc)
+        with (
+            mock.patch.object(herd_tracking, "BEVIS_FROM", REAL_BEVIS_FROM),
+            mock.patch.object(herd_tracking, "REPORT_BEVIS_FROM", REAL_REPORT_BEVIS_FROM),
+        ):
+            buyer_contact_fields(BUYER, "2026-06-01", new_sale=True)  # Sälj
+            with self.assertRaisesRegex(HerdTrackingInvalid, REPORT_BEVIS_NOT_YET):
+                buyer_contact_fields(BUYER, "2026-06-01", new_sale=True, report=True)
+            with self.assertRaisesRegex(HerdTrackingInvalid, REPORT_BEVIS_NOT_YET):  # the report's proposals
+                sale_proposal._stored_buyer(BUYER, at, "2026-06-01")  # pylint: disable=protected-access
+            buyer_contact_fields(BUYER, "2027-01-01", new_sale=True, report=True)
 
     def test_the_transition_ends_with_2027(self):
         buyer_contact_fields(NOTICE, "2027-12-31")

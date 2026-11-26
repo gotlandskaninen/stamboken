@@ -51,7 +51,7 @@ def _stored_buyer(buyer, at, sale_date):
     was ticked (`at`, the submission's time). A sale without a försäljningsbevis (#273): NOT_RECORDED, or the
     e-mail with notice_only.
     """
-    fields = buyer_contact_fields(buyer, sale_date, address_required=True, new_sale=True)
+    fields = buyer_contact_fields(buyer, sale_date, address_required=True, new_sale=True, report=True)
     if fields is None:
         return dict(NOT_RECORDED)
     return {

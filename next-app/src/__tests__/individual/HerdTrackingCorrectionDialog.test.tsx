@@ -23,7 +23,7 @@ beforeAll(async () => {
 });
 afterEach(cleanup);
 
-// before 2027 the buyer is recorded by e-mail: the notice the association sends
+// a 2025 sale had no bevis: the buyer is recorded by e-mail, for the notice the association sends
 const typeBuyer = () => {
   fireEvent.click(screen.getByRole("radio", { name: "Ja" }));
   fireEvent.change(screen.getByLabelText(/Köparens namn/), {

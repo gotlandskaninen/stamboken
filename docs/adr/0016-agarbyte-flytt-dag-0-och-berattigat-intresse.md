@@ -238,8 +238,10 @@ köparen igen för att skicka rapporten på nytt. Köparen sparas därför kvar
 
 ## Tillägg 2026-11-26: försäljning utan försäljningsbevis (#273)
 
-Beviset används från 1 januari 2027, och köparen informeras enligt art. 14 på
-beviset. En försäljning utan bevis kan därför inte spara köparen som ovan.
+Beviset gäller vid alla försäljningar från 1 januari 2027, och köparen
+informeras enligt art. 14 på beviset. Det kan ha kommit med enstaka
+försäljningar redan 2026. En försäljning utan bevis kan inte spara köparen
+som ovan.
 Jonas beslutade 2026-11-26, efter arbetsgruppens förslag 5 b och 6, en
 övergång för försäljningar till och med 2027 (`TRANSITION_UNTIL`):
 
@@ -255,7 +257,8 @@ Jonas beslutade 2026-11-26, efter arbetsgruppens förslag 5 b och 6, en
 * Har köparen ingen e-post registreras försäljningen utan köpare ("såld
   utanför genbanken"), och inget sparas om köparen.
 * Före 2026 tar en ny försäljning inte emot en köpare som beviset skulle ha
-  informerat, eftersom beviset inte fanns (`BEVIS_FROM`). Rättelser av en
+  informerat, eftersom beviset inte fanns (`BEVIS_FROM`). Årsrapporten och
+  dess försäljningsförslag gör det inte före 2027 (`REPORT_BEVIS_FROM`). Rättelser av en
   köpare som registrerats så berörs inte. Gamla intyg följer samma regel
   (5 b).
 * För en försäljning 2026 eller 2027 väljer säljaren i Sälj, inkorgen och

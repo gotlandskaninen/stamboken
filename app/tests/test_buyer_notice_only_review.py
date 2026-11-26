@@ -6,14 +6,21 @@ from unittest import mock
 
 import utils.database as db
 from utils import buyer_contact, buyer_mail, herd_tracking, inbox, mail, settings
-from utils.herd_tracking import BEVIS_NOT_YET, BUYER_REMOVED, NOT_RECORDED, HerdTrackingInvalid, record_herd_tracking
+from utils.herd_tracking import (
+    BEVIS_NOT_YET,
+    BUYER_REMOVED,
+    NOT_RECORDED,
+    REPORT_BEVIS_NOT_YET,
+    HerdTrackingInvalid,
+    record_herd_tracking,
+)
 from utils.mail import SALE_WITHDRAWN
 
 from tests.arsrapport_fixtures import ArsrapportTest
 from tests.inbox_fixtures import QUALITY
 from tests.test_arsrapport_proposal_api import rows
 from tests.test_buyer_contact import BUYER
-from tests.test_buyer_notice_only import DAY, NOTICE, REAL_BEVIS_FROM, NoticeOnlyTest
+from tests.test_buyer_notice_only import DAY, NOTICE, REAL_BEVIS_FROM, REAL_REPORT_BEVIS_FROM, NoticeOnlyTest
 from tests.test_inbox_grant import GrantTest
 
 
@@ -93,11 +100,11 @@ class TestReportReview(ArsrapportTest):
         self.assertEqual((new.herd_id, new.holder_contact_id), (self.gx1.id, None))
         self.assertIsNone(db.BuyerContact.get_or_none(db.BuyerContact.id == contact_id))
 
-    def test_a_sale_sent_without_a_buyer_takes_no_buyer_the_old_way_before_2027(self):
+    def test_a_report_sale_sent_without_a_buyer_takes_no_buyer_the_old_way_before_2027(self):
         self.login("owner")
         self.ok(self.submit(self.sale_body(NOT_RECORDED)))
-        with mock.patch.object(herd_tracking, "BEVIS_FROM", REAL_BEVIS_FROM):
-            self.assert_buyer_refusal(self.submit(self.sale_body(BUYER, revision=1)), BEVIS_NOT_YET)
+        with mock.patch.object(herd_tracking, "REPORT_BEVIS_FROM", REAL_REPORT_BEVIS_FROM):
+            self.assert_buyer_refusal(self.submit(self.sale_body(BUYER, revision=1)), REPORT_BEVIS_NOT_YET)
         (sale,) = rows(self.rabbit, "TRANSFER")
         self.assertIsNone(sale.holder_contact_id)
 
@@ -149,9 +156,9 @@ class TestReportReview(ArsrapportTest):
         inbox.take(item, self.manager, over=False)
         self.login("man")
         body = self.sale_body(BUYER, inbox_item_id=item.id, received_on="2026-01-10", health=None)
-        with mock.patch.object(herd_tracking, "BEVIS_FROM", REAL_BEVIS_FROM):
+        with mock.patch.object(herd_tracking, "REPORT_BEVIS_FROM", REAL_REPORT_BEVIS_FROM):
             response = self.api("POST", f"{self.report_path}/skicka?post={item.id}", **body)
-        self.assert_buyer_refusal(response, BEVIS_NOT_YET)
+        self.assert_buyer_refusal(response, REPORT_BEVIS_NOT_YET)
         self.assertEqual(rows(self.rabbit, "TRANSFER"), [])
 
     def test_resubmitting_a_bounced_buyer_refuses_to_register_them_again(self):
@@ -214,7 +221,7 @@ class TestReportReview(ArsrapportTest):
 
 
 class TestSaleReview(NoticeOnlyTest):
-    def test_before_2027_only_a_buyer_registered_the_old_way_is_corrected_the_old_way(self):
+    def test_before_the_bevis_only_a_buyer_registered_the_old_way_is_corrected_the_old_way(self):
         event = {"kind": "TRANSFER", "date": DAY, "herd": "GX1", "buyer": BUYER}
         with (
             mock.patch.object(herd_tracking, "BEVIS_FROM", REAL_BEVIS_FROM),

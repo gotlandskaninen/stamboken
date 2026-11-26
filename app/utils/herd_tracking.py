@@ -1059,7 +1059,7 @@ def _refuse_buyerless_sales_outside(parsed, pairs):
             raise HerdTrackingConflict(BUYER_REMOVED)  # never registered again, as in attach_buyer
         buyer = event["buyer"]
         if buyer and not buyer["email_notice_only"] and event["date"] < BEVIS_FROM:
-            # only a buyer registered the old way may be corrected the old way before 2027 (#273)
+            # before BEVIS_FROM only a buyer registered the old way may be corrected the old way (#273)
             replaced = pairs[index].holder_contact_id if index in pairs else None
             old_way = BuyerContact.select().where(BuyerContact.id == replaced, ~BuyerContact.email_notice_only)
             if replaced is None or not old_way.exists():
@@ -1437,22 +1437,27 @@ CONTACT_OR_MEMBERSHIP_NEEDED = (
 # yearly report asks of it from 2027 only). A sale without one, until the end of 2027 for now (#273), keeps its
 # buyer only with an e-mail the notice goes to, or nothing about the buyer.
 BEVIS_FROM = datetime(2026, 1, 1).date()
+REPORT_BEVIS_FROM = datetime(2027, 1, 1).date()  # the yearly report and its proposals
 TRANSITION_UNTIL = datetime(2027, 12, 31).date()
 NOT_RECORDED = {"not_recorded": True}  # "såld utanför genbanken": nothing about the buyer is kept
 BEVIS_NOT_YET = (
     "Före 2026 fanns inget försäljningsbevis. Skriv köparens e-post, så mejlar föreningen köparen, "
     "eller välj såld utanför genbanken."
 )
+REPORT_BEVIS_NOT_YET = (
+    "Årsrapporten tar emot köparen från ett försäljningsbevis för försäljningar från 2027. Skriv köparens e-post, "
+    "så mejlar föreningen köparen, eller välj såld utanför genbanken."
+)
 TRANSITION_OVER = "Från 2028 får köparen försäljningsbeviset. Skriv köparens uppgifter från beviset."
 
 
-def buyer_contact_fields(buyer, sale_date, address_required=False, new_sale=False):
+def buyer_contact_fields(buyer, sale_date, address_required=False, new_sale=False, report=False):
     """
     The BuyerContact columns from a sale's `buyer` object: name and town required, postal_address too when
     `address_required`; email and phone only with contact_consent or membership_optin (ADR-0016). Swedish 400s.
     Without a försäljningsbevis (#273): `notice_only` needs name, town, postal address and e-mail, and takes no
     phone or yes; NOT_RECORDED gives None. Both only for a sale until TRANSITION_UNTIL, and a `new_sale` before
-    BEVIS_FROM takes nothing else.
+    BEVIS_FROM (REPORT_BEVIS_FROM for the yearly `report` and its proposals) takes nothing else.
     """
     if not isinstance(buyer, dict):
         raise HerdTrackingInvalid("Köparens uppgifter ska skickas som ett objekt.")
@@ -1462,8 +1467,8 @@ def buyer_contact_fields(buyer, sale_date, address_required=False, new_sale=Fals
     day = coerce_date(sale_date)
     if (notice_only or not_recorded) and day > TRANSITION_UNTIL:
         raise HerdTrackingInvalid(TRANSITION_OVER)
-    if new_sale and not (notice_only or not_recorded) and day < BEVIS_FROM:
-        raise HerdTrackingInvalid(BEVIS_NOT_YET)
+    if new_sale and not (notice_only or not_recorded) and day < (REPORT_BEVIS_FROM if report else BEVIS_FROM):
+        raise HerdTrackingInvalid(REPORT_BEVIS_NOT_YET if report else BEVIS_NOT_YET)
     if not_recorded:
         if buyer != NOT_RECORDED:
             raise HerdTrackingInvalid("Skicka inga uppgifter om köparen när kaninen är såld utanför genbanken.")

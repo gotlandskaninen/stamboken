@@ -6,12 +6,12 @@ from unittest import mock
 
 import utils.database as db
 from utils import buyer_contact, buyer_mail, herd_tracking
-from utils.herd_tracking import BEVIS_NOT_YET, NOT_RECORDED, record_herd_tracking
+from utils.herd_tracking import NOT_RECORDED, REPORT_BEVIS_NOT_YET, record_herd_tracking
 
 from tests.arsrapport_fixtures import ArsrapportTest
 from tests.test_arsrapport_proposal_api import rows
 from tests.test_buyer_contact import BUYER
-from tests.test_buyer_notice_only import DAY, NOTICE, REAL_BEVIS_FROM, NoticeOnlyTest
+from tests.test_buyer_notice_only import DAY, NOTICE, REAL_REPORT_BEVIS_FROM, NoticeOnlyTest
 
 
 class TestNoticeOnlyMailFlows(NoticeOnlyTest):
@@ -82,12 +82,12 @@ class TestNoticeOnlyReportFlows(ArsrapportTest):
     def test_report_accepts_both_modes_and_refuses_a_2025_sale_in_the_old_format(self):
         self.owner.add_role("owner", self.herd.id)
         self.login("owner")
-        with mock.patch.object(herd_tracking, "BEVIS_FROM", REAL_BEVIS_FROM):
+        with mock.patch.object(herd_tracking, "REPORT_BEVIS_FROM", REAL_REPORT_BEVIS_FROM):
             refused = self.submit_sales(BUYER, NOT_RECORDED)
             self.assertEqual(refused.status_code, 422, refused.get_data(as_text=True))
             self.assertEqual(
                 refused.get_json()["refusals"],
-                [{"individual_id": self.first.id, "code": "kopare", "message": BEVIS_NOT_YET}],
+                [{"individual_id": self.first.id, "code": "kopare", "message": REPORT_BEVIS_NOT_YET}],
             )
             sent = self.submit_sales(NOTICE, NOT_RECORDED)
             self.assertEqual(sent.status_code, 200, sent.get_data(as_text=True))

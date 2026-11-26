@@ -184,6 +184,8 @@ describe("SellRabbitDialog", () => {
     });
 
     it("offers the bevis in 2026, with three options", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-10-01T12:00:00Z"));
       render(dialog());
       const options = await openHerdOptions();
       fireEvent.click(options[0]); // GX1

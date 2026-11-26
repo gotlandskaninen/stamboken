@@ -2047,6 +2047,7 @@ def _register_refusals(individual_id, remove, add, ops, admin=False, transfer=No
                         transfer.date,
                         address_required=address_required and not transfer.address_optional,
                         new_sale=not transfer.corrects_sale,
+                        report=True,  # the report asks of the bevis from 2027 (Jonas 2026-11-26)
                     )
                 except HerdTrackingInvalid as exc:
                     refusals.append(_refusal(individual_id, "kopare", str(exc)))
@@ -2217,7 +2218,7 @@ def _report_transfer(herd, round_, entry, current_effects, sale, claim, removed,
         )
     ):
         buyer = {**buyer, "postal_address": contact.postal_address}
-    # only a buyer registered the old way may be corrected the old way before 2027 (#273)
+    # before the report's bevis year only a buyer registered the old way may be corrected so (#273)
     corrects = contact is not None and not contact.email_notice_only
     return TransferIndividual(
         target, day, buyer=buyer, address_optional=contact is not None or paper, corrects_sale=corrects

@@ -152,9 +152,10 @@ class DatabaseTest(unittest.TestCase):
         ps.reset_for_tests()  # genebank ids repeat after RESTART IDENTITY
         # The tests' sales are dated from today and test the försäljningsbevis flow, so they run as if the bevis
         # were in use already (#273); test_buyer_notice_only tests the real date.
-        patcher = mock.patch.object(herd_tracking, "BEVIS_FROM", date.min)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        for name in ("BEVIS_FROM", "REPORT_BEVIS_FROM"):
+            patcher = mock.patch.object(herd_tracking, name, date.min)
+            patcher.start()
+            self.addCleanup(patcher.stop)
         if _USE_POSTGRES:
             self._batch_truncate_tables()
         else:
