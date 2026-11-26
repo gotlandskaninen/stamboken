@@ -535,3 +535,23 @@ class TestReviewRound1(DetailsTest):
             r["flags"] for r in arsrapport.status_view(self.round_, self.gotland.id)["rows"] if r["herd"] == "G9001"
         )
         self.assertEqual((flags["kontobyte_forfoll"], flags["inte_jag"]), (True, False))
+
+    # 5. The version covers the whole account
+    def test_an_account_correction_with_the_same_last_digits_is_a_409(self):
+        receipt = self.submit_changes({"konto": NEW_KONTO})
+        view = self.changes(receipt["submission_id"]).get_json()
+        db.Membership.update(bank_account_number="9999-4471 5512").where(
+            db.Membership.id == self.member.membership_id
+        ).execute()
+        response = self.changes(receipt["submission_id"], "/bekrafta", version=view["version"], konto=True)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(self.membership().bank_account_number, "9999-4471 5512")
+
+    # 6. The confirmation's audit names fields only
+    def test_confirmed_email_leaves_no_address_in_the_audit(self):
+        receipt = self.submit_changes({"epost": "ny@example.invalid"})
+        view = self.changes(receipt["submission_id"]).get_json()
+        self.changes(receipt["submission_id"], "/bekrafta", version=view["version"], konto=False)
+        (audit,) = db.MatrikelAudit.select().where(db.MatrikelAudit.action == "kontakt_andrad")
+        self.assertEqual(audit.payload["fields"], ["email"])
+        self.assertNotIn("example.invalid", json.dumps(audit.payload))

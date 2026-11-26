@@ -333,6 +333,18 @@ def _shown(row, membership, member):
     return _consent(stored_consent(membership)), _consent(new)
 
 
+def _stored(row, membership, member):
+    """What the matrikel holds of the row's field, whole and unmasked: for the version only, never sent (U5)."""
+    field = _field(row)
+    if field == "adress":
+        return [membership.address, membership.postal_code, membership.city]
+    if field in ("telefon", "epost"):
+        return member.phone if field == "telefon" else member.email
+    if field == "konto":
+        return [membership.bank_account_type, membership.bank_account_number, membership.bank_name]
+    return stored_consent(membership)
+
+
 def _entries(membership, member, rows, now):
     entries = []
     for row in rows:
@@ -345,20 +357,28 @@ def _entries(membership, member, rows, now):
     return entries
 
 
-def _version(entries):
-    """D6, U5: what the page showed, as an HMAC, so a POST after any other change is a 409 and no value is sent."""
-    canonical = json.dumps(entries, sort_keys=True, ensure_ascii=False)
+def _version(entries, membership, member, rows):
+    """
+    D6, U5: an HMAC of what the page showed and of the whole stored value behind each waiting change (the account
+    with its type, clearing number and bank, not only the four digits shown), so a POST after any change is a 409.
+    Nothing private leaves the server.
+    """
+    stored = [
+        _stored(row, membership, member) for row, entry in zip(rows, entries, strict=True) if entry["state"] == "vantar"
+    ]
+    canonical = json.dumps([entries, stored], sort_keys=True, ensure_ascii=False, default=str)
     return hmac.new(current_app.secret_key.encode(), canonical.encode(), hashlib.sha256).hexdigest()[:32]
 
 
-def _view(herd, entries):
-    return {"herd": herd.herd, "changes": entries, "version": _version(entries)}
+def _view(herd, membership, member, rows, now):
+    entries = _entries(membership, member, rows, now)
+    return {"herd": herd.herd, "changes": entries, "version": _version(entries, membership, member, rows)}
 
 
 def view(token):
     """GET's answer: never writes."""
     herd, membership, member, rows = _context(_submission(token), lock=False)
-    return _view(herd, _entries(membership, member, rows, arsrapport.now()))
+    return _view(herd, membership, member, rows, arsrapport.now())
 
 
 def confirm(token, *, account, version):
@@ -373,7 +393,8 @@ def confirm(token, *, account, version):
         submission = _submission(token)
         herd, membership, member, rows = _context(submission, lock=True)
         now = arsrapport.now()
-        if not hmac.compare_digest(version or "", _version(_entries(membership, member, rows, now))):
+        shown = _entries(membership, member, rows, now)
+        if not hmac.compare_digest(version or "", _version(shown, membership, member, rows)):
             raise ArsrapportError(409, CHANGED)
         for row in rows:
             if _state(row, now) != "vantar" or (row.kind == "konto" and not account):
@@ -394,8 +415,8 @@ def confirm(token, *, account, version):
                     row.revoked_at, row.revoked_reason = now, "andrad"  # the page says it no longer applies
                     row.save(only=[MemberChangeRequest.revoked_at, MemberChangeRequest.revoked_reason])
                     continue
-                payload |= {"before": {"email": old}, "after": {"email": member.email}}
-                arsrapport.save_contact(membership, member, {"epost": {"email": new}}, None, payload)
+                if member.email != old:  # the field's name only: the addresses stay in the request, which is purged
+                    arsrapport.save_contact(membership, member, {"epost": {"email": new}}, None, payload)
             elif row.kind == "publicering":  # set_consent writes nothing when it is the stored answer
                 set_consent(
                     membership,
@@ -413,7 +434,7 @@ def confirm(token, *, account, version):
             row.confirmed_at = now
             row.save(only=[MemberChangeRequest.confirmed_at])
             _revoke_older(row, field, now)
-        return _view(herd, _entries(membership, member, rows, now))
+        return _view(herd, membership, member, rows, now)
 
 
 def _revoke_older(row, field, now):
@@ -440,4 +461,4 @@ def not_me(token):
             if _state(row, now) == "vantar":  # an expired change keeps "kontobyte förföll"
                 row.revoked_at, row.revoked_reason = now, "inte_jag"
                 row.save(only=[MemberChangeRequest.revoked_at, MemberChangeRequest.revoked_reason])
-        return _view(herd, _entries(membership, member, rows, now))
+        return _view(herd, membership, member, rows, now)
