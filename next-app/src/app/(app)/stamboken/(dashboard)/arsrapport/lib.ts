@@ -177,11 +177,13 @@ export interface DraftData {
 export type Utom = "phone" | "email" | "address";
 // The API takes what is left out; the form asks what may appear, none ticked at first.
 export const UTOM_ALL: Utom[] = ["phone", "email", "address"];
+// The form's boxes Bankkonto, Bankgiro and Plusgiro; only a bankkonto has a clearing number.
+export type KontoTyp = "bankkonto" | "bankgiro" | "plusgiro";
 export interface Matrikel {
   adress?: { address?: string; postal_code?: string; city?: string };
   telefon?: string;
   epost?: string;
-  konto?: { clearing?: string; konto?: string; bank?: string };
+  konto?: { typ?: KontoTyp; clearing?: string; konto?: string; bank?: string };
   publicering?: { ja: boolean; utom: Utom[] };
 }
 
@@ -952,7 +954,7 @@ export interface PaperFields {
   adress: { address: string; postal_code: string; city: string };
   telefon: string;
   epost: string;
-  konto: { clearing: string; konto: string; bank: string };
+  konto: { typ: "" | KontoTyp; clearing: string; konto: string; bank: string };
   consent: "" | "ja" | "nej";
   utom: Utom[];
 }
@@ -961,7 +963,7 @@ export const emptyPaperFields = (): PaperFields => ({
   adress: { address: "", postal_code: "", city: "" },
   telefon: "",
   epost: "",
-  konto: { clearing: "", konto: "", bank: "" },
+  konto: { typ: "", clearing: "", konto: "", bank: "" },
   consent: "",
   utom: [],
 });
@@ -981,7 +983,8 @@ export function matrikelBody(f: PaperFields): Submission["matrikel"] | null {
   if (f.telefon.trim()) body.telefon = f.telefon.trim();
   if (f.epost.trim()) body.epost = f.epost.trim();
   const konto = filled(f.konto);
-  if (Object.keys(konto).length) body.konto = konto;
+  // A ticked box alone changes nothing: then the server takes no lock either.
+  if (konto.clearing || konto.konto || konto.bank) body.konto = konto;
   if (f.consent)
     body.publicering = {
       ja: f.consent === "ja",

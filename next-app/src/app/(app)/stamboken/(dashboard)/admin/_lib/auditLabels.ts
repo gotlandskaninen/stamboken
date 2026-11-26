@@ -117,6 +117,7 @@ export const FIELD_LABELS: Record<string, string> = {
   wire_phone: "Fast telefon",
   latitude: "Latitud",
   longitude: "Longitud",
+  bank_account_type: "Kontotyp",
   bank_account_number: "Kontonummer",
   bank_name: "Bank",
   // individual

@@ -47,7 +47,8 @@ from utils.database import next_individual_number  # isort: skip
 from utils.database import ACTIVE_WINDOW_DAYS  # isort: skip
 from utils.database import AUDIT_LOG_NO_UPDATE_RULE  # isort: skip
 from utils.database import OUTSIDE_GENEBANK_HERDS  # isort: skip
-from utils.database import ACCOUNT_MASK, BANK_PRIVACY_FIELDS, PRIVACY_LEVELS, account_end  # isort: skip
+from utils.database import ACCOUNT_MASK, BANK_PRIVACY_FIELDS, HERD_BANK_FIELDS, PRIVACY_LEVELS, account_end  # isort: skip
+from utils.database import MatrikelAudit  # isort: skip
 from utils.database import HERD_CONTACT_COLUMNS  # isort: skip
 from utils.database import ht_not_voided  # isort: skip
 from utils.database import ht_order_desc  # isort: skip
@@ -1789,7 +1790,8 @@ def add_herd(form, user_uuid):
             return {"status": "error", "message": f"Invalid value for {bad}"}
         # Real columns only: Herd(**form) also took _pk, genebank_id and __data__, which let a
         # manager overwrite another genebank's herd. membership and the contact columns have their own paths (#117).
-        locked = {"id", "contact_member", "contact_pending", "membership"}
+        # The bank columns stay empty: the account is the membership's (migration 58), and a new herd has none.
+        locked = {"id", "contact_member", "contact_pending", "membership", *HERD_BANK_FIELDS}
         herd = Herd(**{k: v for k, v in form.items() if k in Herd._meta.fields and k not in locked})
         try:
             herd.save(force_insert=True)
@@ -1919,6 +1921,59 @@ def save_yearly_report(herd_id, form_data, user):
         return {"status": "error", "message": "Failed to save report"}
 
 
+def _account_text(value):
+    return None if value is None else str(value).strip() or None
+
+
+def _herd_account_change(herd, sent, user):
+    """
+    The herd PATCH's bank fields `sent` as a change to the herd's membership (migration 58): (columns to write, None)
+    or (None, the error answer). Call it under lock_herd, which locks the membership first. Only admin,
+    matrikel_admin, the genebank's manager and the membership's main member change the account (U2). Anyone else
+    sends back what they read, or an empty field the old app sends for a hidden one; anything else gets the same
+    refusal, decided without the stored account, so it never tells whether a guess was right (as legacy_contact_form).
+    For a writer an echo is no change: the mask ('••45', a partly edited one is refused) or the stored value, the
+    number by its digits. A new number clears the type, which the legacy form does not have. Who sees only the end may
+    enter a new one, not blank it or replace it with something that is no account (at least four digits). A herd
+    without a membership has no account to change.
+    """
+    if not sent:
+        return None, None
+    invalid = {"status": "error", "message": "Invalid value for bank_account_number"}
+    membership = Membership.get_by_id(herd.membership_id) if herd.membership_id else None
+    full = user.is_admin or user.is_matrikel_admin
+    main = Member.select().where(
+        Member.user == user.id,
+        Member.membership == herd.membership_id,
+        Member.role == "huvudmedlem",
+        Member.end_date.is_null(True),
+    )
+    if not (full or herd.genebank_id in (user.is_manager or ()) or (membership and main.exists())):
+        shown = herd.filtered_dict(user, with_contact=False)
+        if any(_account_text(value) != _account_text(shown.get(field)) for field, value in sent.items()):
+            return None, {"status": "error", "message": "Forbidden"}
+        return None, None
+    stored = {f: getattr(membership, f) if membership else None for f in HERD_BANK_FIELDS}
+    number = sent.get("bank_account_number")
+    changes = {}
+    if number is not None and ACCOUNT_MASK[0] in str(number):
+        if number != account_end(stored["bank_account_number"]):
+            return None, invalid
+    elif "bank_account_number" in sent and re.sub(r"\D", "", str(number or "")) != re.sub(
+        r"\D", "", stored["bank_account_number"] or ""
+    ):
+        changes = {"bank_account_number": _account_text(number), "bank_account_type": None}
+    if "bank_name" in sent and _account_text(sent["bank_name"]) != _account_text(stored["bank_name"]):
+        changes["bank_name"] = _account_text(sent["bank_name"])
+    if not changes:
+        return None, None
+    if membership is None:
+        return None, invalid
+    if not full and "bank_account_number" in changes and len(re.sub(r"\D", "", str(number or ""))) < 4:
+        return None, invalid
+    return changes, None
+
+
 def update_herd(form, user_uuid, *, legacy=False):
     """
     Updates a herd, identified by `form.id`, by the values in `form`, if the
@@ -1943,20 +1998,10 @@ def update_herd(form, user_uuid, *, legacy=False):
             # Bank privacy is fixed at 'private' (issue #33): dropped before validation, so a bad
             # stored value echoed by the legacy SPA cannot block the save. Response unchanged.
             form = {k: v for k, v in form.items() if k not in BANK_PRIVACY_FIELDS}
-            # A manager reads the account as '••45' and the legacy SPA echoes the herd back: a masked
-            # value is never an account number, so it must not overwrite the stored one.
-            account = form.get("bank_account_number")
-            if account is not None and ACCOUNT_MASK[0] in str(account):
-                if account != account_end(herd.bank_account_number):
-                    return {"status": "error", "message": "Invalid value for bank_account_number"}
-                del form["bank_account_number"]  # the unchanged echo
-            elif account is not None and not (
-                user.is_admin or user.is_matrikel_admin or herd.id in user.effective_herd_ids()
-            ):
-                # A writer who sees only the end of the account may enter a new one, not blank it or
-                # replace it with something that is no account (at least four digits).
-                if sum(c.isdigit() for c in str(account)) < 4:
-                    return {"status": "error", "message": "Invalid value for bank_account_number"}
+            # The account is the membership's (migration 58): decided here, written with the herd below.
+            account, refusal = _herd_account_change(herd, {f: form[f] for f in HERD_BANK_FIELDS if f in form}, user)
+            if refusal:
+                return refusal
             bad = invalid_privacy_field(form)
             if bad:
                 return {"status": "error", "message": f"Invalid value for {bad}"}
@@ -1973,7 +2018,7 @@ def update_herd(form, user_uuid, *, legacy=False):
             # methods such as save). Identity columns are admin-only; the legacy SPA
             # echoes the whole herd object, so locked keys are dropped, not refused.
             # The contact and membership columns are written only by their own paths, never by a general call.
-            locked = {"id", "contact_member", "contact_pending", "membership"} | (
+            locked = {"id", "contact_member", "contact_pending", "membership", *HERD_BANK_FIELDS} | (
                 set() if user.is_admin else {"herd", "genebank"}
             )
             written = [key for key in form if key in Herd._meta.fields and key not in locked]
@@ -1983,6 +2028,14 @@ def update_herd(form, user_uuid, *, legacy=False):
                 # only= : a full-row save would write the stale ownership columns back
                 # over a membership/genebank change committed since the row was loaded.
                 herd.save(only=written)
+            if account:  # lock_herd holds the membership's lock; the log names the fields, never a value
+                Membership.update(**account, updated_at=datetime.now()).where(
+                    Membership.id == herd.membership_id
+                ).execute()
+                payload = {"fields": list(account), "source": "herd", "herd_id": herd.id}
+                MatrikelAudit.create(
+                    actor=user, action="kontakt_andrad", membership=herd.membership_id, payload=payload
+                )
         logger.info(f"User:{user.id} Updated herd: {herd.id}")
         return {"status": "updated"}
     except DoesNotExist:
@@ -3767,19 +3820,18 @@ def get_yearly_report_by_round(herd_id, round_id):
         return None
 
 
-def get_yearly_reports(
-    round_id: int, genebank_id: int, full_account: bool = False, own_herds: frozenset | set = frozenset()
-) -> list[dict]:
+def get_yearly_reports(round_id: int, genebank_id: int, full_account: bool = False) -> list[dict]:
     """
-    Get all yearly reports for a specific round and genebank. The bank account number is
-    cut to its last two digits unless `full_account` (admin, matrikel_admin) or the herd is one of
-    `own_herds` (the reader's own herds, judged per row).
+    Get all yearly reports for a specific round and genebank. The bank account is the herd's membership's
+    (migration 58), its number cut to the last two digits unless `full_account` (admin, matrikel_admin; U2).
     """
     try:
         with DATABASE.atomic():
+            account = (Membership.id, Membership.bank_account_number, Membership.bank_name)
             reports = (
-                YearlyHerdReport.select(YearlyHerdReport, Herd)
+                YearlyHerdReport.select(YearlyHerdReport, Herd, *account)
                 .join(Herd)
+                .join(Membership, JOIN.LEFT_OUTER)
                 .where(
                     (YearlyHerdReport.round == round_id)
                     & (Herd.genebank == genebank_id)
@@ -3841,6 +3893,8 @@ def get_yearly_reports(
                         # No tick is no answer: a legacy answer is never consent (GDPR session, Jonas 2026-11-23)
                         publish_info = "Ej angivet"
 
+                membership = r.herd.membership if r.herd.membership_id else None
+                number = membership and membership.bank_account_number
                 report = {
                     "herd": r.herd.herd,  # Changed from genebank_number to herd
                     "name": r.herd.herd_name,
@@ -3859,12 +3913,8 @@ def get_yearly_reports(
                     "email": (r.herd.email if "noEmail" not in allow_publication else None),
                     "phone": (r.herd.mobile_phone if "noPhone" not in allow_publication else None),
                     "address": (r.herd.physical_address if "noAddress" not in allow_publication else None),
-                    "bank_account": (
-                        r.herd.bank_account_number
-                        if full_account or r.herd.id in own_herds
-                        else account_end(r.herd.bank_account_number)
-                    ),
-                    "bank_name": r.herd.bank_name,
+                    "bank_account": (number if full_account else account_end(number)),
+                    "bank_name": membership and membership.bank_name,
                     # Additional fields
                     "eligible_for_support": form_data.get("eligibleForSupport", False),
                     "defects_malformations": form_data.get("defectsMalformations", ""),
@@ -3893,12 +3943,10 @@ def format_disease_cases(diseases: dict) -> str:
     return "; ".join(cases) if cases else "Inga rapporterade sjukdomsfall"
 
 
-def export_yearly_reports_csv(
-    round_id: int, genebank_id: int, full_account: bool = False, own_herds: frozenset | set = frozenset()
-) -> str:
+def export_yearly_reports_csv(round_id: int, genebank_id: int, full_account: bool = False) -> str:
     """Export yearly reports as CSV data."""
     try:
-        reports = get_yearly_reports(round_id, genebank_id, full_account, own_herds)
+        reports = get_yearly_reports(round_id, genebank_id, full_account)
 
         # CSV Headers in Swedish - exactly matching the table view
         headers = [
@@ -4396,6 +4444,8 @@ _AUDIT_HERD_CONTACT_COLUMNS = {
     "contact_pending",
     *(f"{column}_privacy" for column in HERD_CONTACT_COLUMNS),
 }
+# Migration 58: the support account is the membership's, and old herd snapshots never write it back to the herd.
+_AUDIT_HERD_BANK_COLUMNS = set(HERD_BANK_FIELDS)
 _AUDIT_PRIVACY_LEVELS = ("public", "authenticated", "private")
 
 
@@ -4410,7 +4460,8 @@ def _audit_undo_locked(table_name, is_admin):
     """The columns of `table_name` that an audit revert/restore by this user must not write."""
     locked = _AUDIT_UNDO_SKIP.get(table_name, set())
     if table_name == "herd":
-        return locked | _AUDIT_HERD_CONTACT_COLUMNS | (set() if is_admin else _AUDIT_HERD_ADMIN_COLUMNS)
+        locked = locked | _AUDIT_HERD_CONTACT_COLUMNS | _AUDIT_HERD_BANK_COLUMNS
+        return locked | (set() if is_admin else _AUDIT_HERD_ADMIN_COLUMNS)
     return locked
 
 
@@ -4422,6 +4473,8 @@ def _audit_undo_refusal(table_name, values, is_admin):
     held = set(values) & _audit_undo_locked(table_name, is_admin)
     if contact := ", ".join(sorted(held & _AUDIT_HERD_CONTACT_COLUMNS)):  # only a herd's locked set holds them
         return f"{contact} kan inte ångras eller återställas här. Ändra besättningens kontakt i stället."
+    if held & _AUDIT_HERD_BANK_COLUMNS:
+        return "Kontot för stödet finns nu på medlemskapet och kan inte ångras eller återställas här."
     held = ", ".join(sorted(held))
     if held and table_name == "herd":
         return f"Bara admin kan ändra {held} på en besättning."

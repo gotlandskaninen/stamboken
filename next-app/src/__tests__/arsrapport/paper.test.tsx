@@ -606,6 +606,20 @@ describe("ReportForm on paper", () => {
     ).toBeTruthy();
   });
 
+  it("asks for a clearing number for a bankkonto only", () => {
+    renderPaper();
+    fireEvent.change(screen.getByLabelText("Clearingnummer"), {
+      target: { value: "8327" },
+    });
+    fireEvent.click(screen.getByLabelText("Plusgiro"));
+    expect(screen.queryByLabelText("Clearingnummer")).toBeNull();
+    fireEvent.click(screen.getByLabelText("Bankkonto"));
+    // the clearing number typed for the other box is gone, not sent with a plusgiro
+    expect(
+      (screen.getByLabelText("Clearingnummer") as HTMLInputElement).value,
+    ).toBe("");
+  });
+
   it("says there is no account when the matrikel has none", () => {
     renderPaper(
       paperView({

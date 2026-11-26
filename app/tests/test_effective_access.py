@@ -29,6 +29,12 @@ class EffectiveAccessTest(DatabaseTest):
     def _user(self, email):
         return da.register_user(email, "pass", username=email)
 
+    def _account(self, number="1234-5", name="Bank"):
+        """The support account of self.membership, which owns G1 (migration 58)."""
+        db.Membership.update(bank_account_number=number, bank_name=name).where(
+            db.Membership.id == self.membership.id
+        ).execute()
+
     def _person(self, user=None, role="huvudmedlem", end_date=None, membership=None):
         return db.Member.create(
             first_name="Test",
@@ -167,8 +173,7 @@ class TestEffectiveAccessConsumers(EffectiveAccessTest):
 
     def test_filtered_dict_viewer_gets_authenticated_level(self):
         """A plain viewer (the default role of every new account) is not 'private'."""
-        self.herds[1].bank_account_number = "1234-5"  # bank_account_number_privacy="private"
-        self.herds[1].save()
+        db.Membership.update(bank_account_number="1234-5").where(db.Membership.id == self.membership.id).execute()
         for herd in self.herds[:2]:  # both in the viewer's genebank
             data = herd.filtered_dict(self.viewer)
             self.assertNotIn("bank_account_number", data)
@@ -179,29 +184,30 @@ class TestEffectiveAccessConsumers(EffectiveAccessTest):
 
     def test_bank_fields_never_shown_to_other_members(self):
         """Issue #33: stored 'authenticated'/'public' must not expose the bank details."""
-        herd = self.herds[1]
+        herd = self.herds[0]
+        self._account()
         for level in ("authenticated", "public"):
-            herd.bank_account_number, herd.bank_name = "1234-5", "Bank"
             herd.bank_account_number_privacy = herd.bank_name_privacy = level
             herd.save()
             for user in (self.viewer, None):
-                data = herd.filtered_dict(user)
+                data = db.Herd.get_by_id(herd.id).filtered_dict(user)
                 self.assertNotIn("bank_account_number", data)
                 self.assertNotIn("bank_name", data)
-            data = herd.filtered_dict(self.admin)
+            data = db.Herd.get_by_id(herd.id).filtered_dict(self.admin)  # a row as the API reads it, every column
             self.assertEqual(data.get("bank_account_number"), "1234-5")
             self.assertEqual(data.get("bank_name"), "Bank")
-            data = herd.filtered_dict(self.manager)
+            data = db.Herd.get_by_id(herd.id).filtered_dict(self.manager)
             self.assertEqual(data.get("bank_account_number"), "••45")
             self.assertEqual(data.get("bank_name"), "Bank")
 
-    def test_bank_fields_still_shown_to_herd_user(self):
-        user = self._caretaker_with_grant("bank-caretaker@example.com", self.herds[1])
-        self.herds[1].bank_account_number, self.herds[1].bank_name = "1234-5", "Bank"
-        self.herds[1].bank_account_number_privacy = self.herds[1].bank_name_privacy = "public"
-        self.herds[1].save()
-        self.assertEqual(self.herds[1].filtered_dict(user).get("bank_account_number"), "1234-5")
-        self.assertEqual(self.herds[1].filtered_dict(user).get("bank_name"), "Bank")
+    def test_bank_fields_never_shown_to_a_caretaker(self):
+        """U2: a grant gives the herd, not the membership's support account."""
+        user = self._caretaker_with_grant("bank-caretaker@example.com", self.herds[0])
+        self._account()
+        self.herds[0].bank_account_number_privacy = self.herds[0].bank_name_privacy = "public"
+        self.herds[0].save()
+        self.assertNotIn("bank_account_number", self.herds[0].filtered_dict(user))
+        self.assertNotIn("bank_name", self.herds[0].filtered_dict(user))
 
     def test_update_herd_ignores_bank_privacy(self):
         herd = self.herds[0]
@@ -238,50 +244,53 @@ class TestEffectiveAccessConsumers(EffectiveAccessTest):
 
     def test_manager_echoing_the_masked_account_does_not_overwrite_it(self):
         """The legacy SPA PATCHes back what it read: '••45' must not replace the stored account."""
-        herd = self.herds[1]
-        herd.bank_account_number = "1234-5"
-        herd.save()
-        echoed = herd.filtered_dict(self.manager)
+        herd = self.herds[0]
+        self._account()
+        echoed = db.Herd.get_by_id(herd.id).filtered_dict(self.manager)
         self.assertEqual(echoed["bank_account_number"], "••45")
-        echoed.update(www="new-www", id=herd.id)
+        echoed.update(id=herd.id, herd_name="Nytt namn")
         self.assertEqual(da.update_herd(echoed, self.manager.uuid, legacy=True), {"status": "updated"})
         herd = db.Herd.get_by_id(herd.id)
-        self.assertEqual((herd.bank_account_number, herd.www), ("1234-5", "new-www"))
+        account = db.Membership.get_by_id(self.membership.id).bank_account_number
+        self.assertEqual((account, herd.herd_name), ("1234-5", "Nytt namn"))
 
     def test_partly_edited_mask_is_refused_and_the_account_kept(self):
-        herd = self.herds[1]
-        herd.bank_account_number = "1234-5"
-        herd.save()
+        herd = self.herds[0]
+        self._account()
         for value in ("•45", "••8327-9", "••4"):
             with self.subTest(value=value):
-                place = {"www": {"value": herd.www, "privacy": herd.www_privacy}}
-                form = {"id": herd.id, "www": "w", "place_shown": place, "bank_account_number": value}
+                form = {"id": herd.id, "herd_name": "w", "bank_account_number": value}
                 result = da.update_herd(form, self.manager.uuid)
                 self.assertEqual(result["status"], "error")
-                self.assertEqual(db.Herd.get_by_id(herd.id).bank_account_number, "1234-5")
+                self.assertEqual(db.Membership.get_by_id(self.membership.id).bank_account_number, "1234-5")
+                self.assertNotEqual(db.Herd.get_by_id(herd.id).herd_name, "w")
 
     def test_manager_may_enter_a_new_account_but_not_blank_it(self):
-        herd = self.herds[1]
-        herd.bank_account_number = "1234-5"
-        herd.save()
-        for value in ("", "45", "abc"):
+        herd = self.herds[0]
+        self._account()
+
+        def stored():
+            return db.Membership.get_by_id(self.membership.id).bank_account_number
+
+        for value in ("", None, "45", "abc"):
             with self.subTest(value=value):
                 result = da.update_herd({"id": herd.id, "bank_account_number": value}, self.manager.uuid)
                 self.assertEqual(result["status"], "error")
-                self.assertEqual(db.Herd.get_by_id(herd.id).bank_account_number, "1234-5")
+                self.assertEqual(stored(), "1234-5")
         result = da.update_herd({"id": herd.id, "bank_account_number": "9876-54"}, self.manager.uuid)
         self.assertEqual(result, {"status": "updated"})
-        self.assertEqual(db.Herd.get_by_id(herd.id).bank_account_number, "9876-54")
+        self.assertEqual(stored(), "9876-54")
         # An admin sees the whole account and may clear it.
         self.assertEqual(
             da.update_herd({"id": herd.id, "bank_account_number": ""}, self.admin.uuid)["status"], "updated"
         )
+        self.assertIsNone(stored())
 
-    def test_yearly_report_shows_the_whole_account_for_the_readers_own_herd_only(self):
+    def test_yearly_report_cuts_the_readers_own_herd_too(self):
+        """U2: owning the herd is no right to the whole account; only full_account (admin, matrikel_admin) is."""
         a, b = self.herds[0], self.herds[1]
-        for herd in (a, b):
-            herd.bank_account_number = "1234-5"
-            herd.save()
+        self._account()
+        db.Herd.update(membership=self.membership).where(db.Herd.id == b.id).execute()
         rnd = db.YearlyReportRound.create(
             report_year=2025, start_date=date(2025, 12, 31), end_date=date(2026, 3, 30), created_by=self.admin
         )
@@ -290,9 +299,9 @@ class TestEffectiveAccessConsumers(EffectiveAccessTest):
                 herd=herd, report_date=date(2026, 1, 1), generated_by=self.manager, name="2025", data="{}",
                 publish=False, publish_tel=False, publish_email=False, publish_address=False, round=rnd,
             )  # fmt: skip
-        reports = da.get_yearly_reports(rnd.id, a.genebank_id, False, {a.id})
+        reports = da.get_yearly_reports(rnd.id, a.genebank_id, False)
         accounts = {r["herd"]: r["bank_account"] for r in reports}
-        self.assertEqual(accounts, {a.herd: "1234-5", b.herd: "••45"})
+        self.assertEqual(accounts, {a.herd: "••45", b.herd: "••45"})
 
     def test_account_end(self):
         for value, expected in (
@@ -316,16 +325,14 @@ class TestEffectiveAccessConsumers(EffectiveAccessTest):
         self.assertEqual(herd.bank_name_privacy, "private")
 
     def test_matrikel_admin_sees_the_whole_account(self):
-        self.herds[1].bank_account_number = "1234-5"
-        self.herds[1].save()
+        self._account()
         user = self._user("matrikel@example.com")
         user.add_role("matrikel_admin", None)
-        self.assertEqual(self.herds[1].filtered_dict(user).get("bank_account_number"), "1234-5")
+        self.assertEqual(db.Herd.get_by_id(self.herds[0].id).filtered_dict(user).get("bank_account_number"), "1234-5")
 
     def test_yearly_report_cuts_the_account_unless_full_account(self):
         herd = self.herds[0]
-        herd.bank_account_number = "1234-5"
-        herd.save()
+        self._account()
         rnd = db.YearlyReportRound.create(
             report_year=2025, start_date=date(2025, 12, 31), end_date=date(2026, 3, 30), created_by=self.admin
         )
@@ -340,9 +347,9 @@ class TestEffectiveAccessConsumers(EffectiveAccessTest):
         self.assertNotIn("1234-5", da.export_yearly_reports_csv(rnd.id, gb))
 
     def test_filtered_dict_manager_of_genebank_gets_private_level(self):
-        self.herds[1].bank_account_number = "1234-5"  # bank_account_number_privacy="private"
-        self.herds[1].save()
-        data = self.herds[1].filtered_dict(self.manager)
+        self._account()
+        db.Herd.update(membership=self.membership).where(db.Herd.id == self.herds[1].id).execute()
+        data = db.Herd.get_by_id(self.herds[1].id).filtered_dict(self.manager)
         self.assertEqual(data.get("www"), "www2")  # www_privacy="private"
         self.assertEqual(data.get("bank_account_number"), "••45")
 

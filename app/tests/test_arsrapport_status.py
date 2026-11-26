@@ -281,7 +281,8 @@ class StatusTest(ArsrapportTest):
         self.assertTrue(all("telefon" not in row for row in rows))
 
     def test_status_row_does_not_expose_the_account(self):
-        db.Herd.update(bank_account_number="12345678901").where(db.Herd.id == self.h.id).execute()
+        membership = db.Membership.create(bank_account_number="12345678901")  # the account is the membership's
+        db.Herd.update(membership=membership).where(db.Herd.id == self.h.id).execute()
         self.reported(self.h)
         self.assertNotIn("12345678901", self.status().get_data(as_text=True))
 

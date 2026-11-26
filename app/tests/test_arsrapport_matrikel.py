@@ -249,7 +249,7 @@ class MatrikelTest(PaperTest):
         for line in ("Ditt konto för genbanksstödet har ändrats.", "Ditt telefonnummer har ändrats.", LINE):
             self.assertIn(line, text)
         (audit,) = self.contact_audits()  # the contact columns only; the consent has its own row
-        self.assertEqual(audit.payload["fields"], ["bank_account_number", "bank_name", "phone"])
+        self.assertEqual(audit.payload["fields"], ["bank_account_type", "bank_account_number", "bank_name", "phone"])
         (change,) = self.changes()
         self.assertEqual(change.value, {"name": True, "phone": False, "email": True, "address": True})
 

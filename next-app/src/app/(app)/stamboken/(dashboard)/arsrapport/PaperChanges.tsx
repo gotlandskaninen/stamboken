@@ -3,8 +3,14 @@
 import React from "react";
 import { PublicationFields } from "@/components/member/PublicationFields";
 import { MbCard } from "../min-besattning/min-besattning-ui";
-import type { PaperFields } from "./lib";
+import { type KontoTyp, type PaperFields } from "./lib";
 import styles from "./arsrapport.module.css";
+
+const KONTO_TYP: [KontoTyp, string][] = [
+  ["bankkonto", "Bankkonto"],
+  ["bankgiro", "Bankgiro"],
+  ["plusgiro", "Plusgiro"],
+];
 
 // The form's contact part. The page never reads the stored values: it shows
 // only the last two digits of the account (`accountEnd`), and what is typed
@@ -92,12 +98,38 @@ export function PaperChanges({
             ? `Nuvarande konto slutar på ••${accountEnd}`
             : "Inget konto i matrikeln"}
         </p>
-        {text(
-          "Clearingnummer",
-          fields.konto.clearing,
-          (v) => set({ konto: { ...fields.konto, clearing: v } }),
-          { inputMode: "numeric", maxLength: 12 },
-        )}
+        <div role="radiogroup" aria-label="Typ av konto">
+          <div className={styles.choices}>
+            {KONTO_TYP.map(([v, label]) => (
+              <label key={v} className={styles.choice}>
+                <input
+                  type="radio"
+                  name="kontotyp"
+                  checked={fields.konto.typ === v}
+                  onChange={() =>
+                    set({
+                      konto: {
+                        ...fields.konto,
+                        typ: v,
+                        // only a bankkonto has a clearing number
+                        clearing:
+                          v === "bankkonto" ? fields.konto.clearing : "",
+                      },
+                    })
+                  }
+                />
+                <span>{label}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+        {(fields.konto.typ === "" || fields.konto.typ === "bankkonto") &&
+          text(
+            "Clearingnummer",
+            fields.konto.clearing,
+            (v) => set({ konto: { ...fields.konto, clearing: v } }),
+            { inputMode: "numeric", maxLength: 12 },
+          )}
         {text(
           "Kontonummer",
           fields.konto.konto,
