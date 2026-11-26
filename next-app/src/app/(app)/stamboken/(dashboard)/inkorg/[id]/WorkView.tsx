@@ -364,7 +364,8 @@ export function WorkView({
           {notice} <Link href="/stamboken/inkorg">Till kön</Link>
         </p>
       )}
-      <div className={styles.work} data-documents={!!doc}>
+      {/* A purchase notice has no form: its photo takes the room of both. */}
+      <div className={styles.work} data-documents={!!doc && !purchase}>
         <MailThread item={item} />
         {/* Left: documents, the item and its actions */}
         <aside className={`sb-card ${styles.card}`} aria-label="Ärendet">
