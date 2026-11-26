@@ -900,6 +900,7 @@ export function ReportForm({
       // On paper the submit has closed the item: ReportView is not read again
       // (with ?post= it would be refused), and the Receipt is the answer.
       if (!isPaper) {
+        setFields(detailsFields(view.member_details)); // sent: the private fields leave memory (U15)
         // a first Skicka replaced nothing: Receipt shows no actions until the view has the report
         setReplaced(body.revision ?? undefined);
         router.refresh();

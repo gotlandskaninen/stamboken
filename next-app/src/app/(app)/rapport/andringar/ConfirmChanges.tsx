@@ -11,6 +11,7 @@ const labels = {
   epost: "E-post",
   konto: "Konto för stödet",
   publicering: "Svar om Koharen",
+  kontakt: "Kontaktuppgifter", // a purged address or phone change says only its kind
 };
 
 type Change = {
