@@ -1433,13 +1433,14 @@ CONTACT_OR_MEMBERSHIP_NEEDED = (
 )
 
 
-# The försäljningsbevis informs the buyer from 2027 (ADR-0016). A sale without one, until the end of 2027 for now
-# (Jonas 2026-11-26, #273), keeps its buyer only with an e-mail the notice goes to, or nothing about the buyer.
-BEVIS_FROM = datetime(2027, 1, 1).date()
+# The försäljningsbevis informs the buyer (ADR-0016): it may have come with a sale from 2026 (Jonas 2026-11-26; the
+# yearly report asks of it from 2027 only). A sale without one, until the end of 2027 for now (#273), keeps its
+# buyer only with an e-mail the notice goes to, or nothing about the buyer.
+BEVIS_FROM = datetime(2026, 1, 1).date()
 TRANSITION_UNTIL = datetime(2027, 12, 31).date()
 NOT_RECORDED = {"not_recorded": True}  # "såld utanför genbanken": nothing about the buyer is kept
 BEVIS_NOT_YET = (
-    "Försäljningsbeviset används från 2027. Skriv köparens e-post, så mejlar föreningen köparen, "
+    "Före 2026 fanns inget försäljningsbevis. Skriv köparens e-post, så mejlar föreningen köparen, "
     "eller välj såld utanför genbanken."
 )
 TRANSITION_OVER = "Från 2028 får köparen försäljningsbeviset. Skriv köparens uppgifter från beviset."

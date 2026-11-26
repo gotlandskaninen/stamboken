@@ -254,11 +254,16 @@ Jonas beslutade 2026-11-26, efter arbetsgruppens förslag 5 b och 6, en
   (`buyer_removed`).
 * Har köparen ingen e-post registreras försäljningen utan köpare ("såld
   utanför genbanken"), och inget sparas om köparen.
-* Före 2027 tar en ny försäljning inte emot en köpare som beviset skulle ha
-  informerat, eftersom beviset inte fanns. Rättelser av registrerade
-  försäljningar berörs inte. Gamla intyg följer samma regel (5 b).
-* 2027 väljer säljaren om köparen fick beviset. Från 2028 gäller bara beviset,
-  tills ett nytt beslut flyttar `TRANSITION_UNTIL`.
+* Före 2026 tar en ny försäljning inte emot en köpare som beviset skulle ha
+  informerat, eftersom beviset inte fanns (`BEVIS_FROM`). Rättelser av en
+  köpare som registrerats så berörs inte. Gamla intyg följer samma regel
+  (5 b).
+* För en försäljning 2026 eller 2027 väljer säljaren i Sälj, inkorgen och
+  rättelser om köparen fick beviset. Valet följer försäljningsdatumet, inte
+  dagen då försäljningen matas in. Årsrapporten frågar om beviset först för
+  försäljningar 2027, eftersom nästan ingen sålde med bevis 2026. Den som gjorde
+  det registrerar försäljningen under Sälj (Jonas 2026-11-26). Från 2028
+  gäller bara beviset, tills ett nytt beslut flyttar `TRANSITION_UNTIL`.
 * Raderingslänken i mejlet tar bort köparen för det köpet. Utan avtryck
   hittar länken inte köparens andra köp när deras e-post är gallrad, så
   mejlet hänvisar den som köpt flera kaniner till dataskyddsadressen (Jonas

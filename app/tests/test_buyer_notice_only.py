@@ -30,10 +30,10 @@ from tests.database_test import _USE_POSTGRES, rewind_migrations  # noqa: E402
 from tests.test_buyer_contact import BUYER  # noqa: E402
 from tests.test_buyer_mail import BuyerMailTest  # noqa: E402
 
-DAY = "2026-06-01"  # a sale in 2026, before the bevis; its five years last until 2031
+DAY = "2025-06-01"  # a sale in 2025, before the bevis; its five years last until 2030
 EMAIL = "notis@example.org"
 NOTICE = {**BUYER, "email": EMAIL, "notice_only": True}
-REAL_BEVIS_FROM = datetime(2027, 1, 1).date()
+REAL_BEVIS_FROM = herd_tracking.BEVIS_FROM  # read at import: DatabaseTest.setUp patches it
 
 
 class NoticeOnlyTest(BuyerMailTest):
@@ -83,12 +83,12 @@ class TestFields(NoticeOnlyTest):
             with self.subTest(buyer=buyer), self.assertRaisesRegex(HerdTrackingInvalid, TRANSITION_OVER):
                 buyer_contact_fields(buyer, "2028-01-01")
 
-    def test_before_2027_a_new_sale_takes_no_buyer_the_bevis_would_inform(self):
+    def test_before_2026_a_new_sale_takes_no_buyer_the_bevis_would_inform(self):
         with mock.patch.object(herd_tracking, "BEVIS_FROM", REAL_BEVIS_FROM):
             with self.assertRaisesRegex(HerdTrackingInvalid, BEVIS_NOT_YET):
-                buyer_contact_fields(BUYER, "2026-12-31", new_sale=True)
-            buyer_contact_fields(BUYER, "2027-01-01", new_sale=True)
-            buyer_contact_fields(BUYER, "2026-12-31")  # a correction of a sale already registered
+                buyer_contact_fields(BUYER, "2025-12-31", new_sale=True)
+            buyer_contact_fields(BUYER, "2026-01-01", new_sale=True)  # Sälj may take the bevis from 2026
+            buyer_contact_fields(BUYER, "2025-12-31")  # a correction of a sale already registered
             response = self._sell(buyer=BUYER, date=DAY)
             self.assertEqual(response.status_code, 400, response.get_data(as_text=True))
             self.assertIn(BEVIS_NOT_YET, response.get_json()["detail"])
