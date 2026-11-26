@@ -794,7 +794,9 @@ def _assign_certificate(body, user, grant, document):
                 raise inbox.InboxError(404, "Kaninen finns inte i Stamboken.")
         except HerdTrackingError as exc:  # its litter changed since it was read
             raise _Refused(_command_problem(exc)) from None
-        individual = Individual.get_by_id(individual.id)
+        individual = Individual.get_or_none((Individual.id == individual.id) & not_voided())
+        if individual is None:
+            raise inbox.InboxError(404, "Kaninen finns inte i Stamboken.")
         if individual.certificate != certificate.strip():
             raise inbox.InboxError(409, f"{individual.number} har ändrats. Öppna posten igen och spara på nytt.")
         if not inbox.may_publish(user, individual, grant):

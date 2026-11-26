@@ -915,7 +915,7 @@ Bekräftar vridningen och maskningen tillsammans och gör kopian av just det par
 | `rotation` | krävs: 0, 90, 180 eller 270 grader medurs |
 | `mask_rects` | krävs: rektanglarna i bråkdelar av bilden vriden `rotation` grader. Får inte vara `null` |
 | `no_personal_data` | `true` krävs när `mask_rects` är en tom lista: intyget visar ingen säljare eller köpare |
-| `matches_registry` | `true` när handläggaren har jämfört intyget med registret och de stämmer. Ger kaninen märkningen "Intyget kontrollerat" (se nedan). Handläggaren kryssar i det själv varje gång, också när kopian görs om. Gränssnittet visar "Förslag: stämmer" när tolkningen läste kaninens eget nummer (`läst`) och ingen kontroll gick emot, men handläggaren avgör (Jonas 2026-11-26). Utelämnat eller `false`: ingen märkning. Kaninen måste ha kvar det intygsnummer som fotot sparades med (`saved_certificate`), annars 409: kontrollen gäller det intyg handläggaren jämförde |
+| `matches_registry` | `true` när handläggaren har jämfört intyget med registret och de stämmer. Ger kaninen märkningen "Intyget kontrollerat" (se nedan). Handläggaren kryssar i det själv varje gång, också när kopian görs om. Gränssnittet visar "Förslag: stämmer" när tolkningen läste kaninens eget nummer och intygsnumret (båda `läst`) och ingen kontroll gick emot, men handläggaren avgör (Jonas 2026-11-26). Utelämnat eller `false`: ingen märkning. Kaninen måste ha kvar det intygsnummer som fotot sparades med (`saved_certificate`), annars 409: kontrollen gäller det intyg handläggaren jämförde |
 
 Båda värdena sparas på dokumentet i samma transaktion som kopian görs. Det som redan står på
 dokumentet (från `PATCH`) används inte: kopian visar exakt det paret som skickades. Likaså

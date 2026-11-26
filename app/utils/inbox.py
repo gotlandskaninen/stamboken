@@ -910,7 +910,9 @@ def confirm_mask(item, document, user, rotation, rects, no_personal_data=None, m
     if matches_registry and (rabbit.certificate != document.saved_certificate or rabbit.digital_certificate):
         # The check is of the certificate the photo was saved as: a number changed since is not the one compared.
         raise InboxError(
-            409, f"{rabbit.number} har inte längre intyget {document.saved_certificate}. Kontrollera kaninen igen."
+            409,
+            f"{rabbit.number} har ett annat intyg i Stamboken än {document.saved_certificate}, som fotot sparades "
+            "med. Kontrollera kaninen igen.",
         )
     document.rotation, document.mask_rects = rotation, rects
     document.verified_at, document.verified_by = (now(), user.id) if matches_registry else (None, None)
