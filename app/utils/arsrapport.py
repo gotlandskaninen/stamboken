@@ -2487,12 +2487,12 @@ def later_fields(herd, membership, member, signed_on: date, own=frozenset()) -> 
     """
     D19: the PAPER_FIELDS the matrikel changed after the form's date, that is from the next day in Stockholm: the
     consent by publication_consent_change, and the rest by matrikel_audit, whose created_at is naive server time, the
-    account also by the herd's audit_log from before migration 58 moved it to the membership. Phone and e-mail count
-    only from rows about `member`, and every swap of the main member counts for them (I2). The paper writes of the
-    submissions in `own`, the herd's report for the round, do not count, so that Ändra from paper can correct its own
-    typo (I1): their kontakt_andrad rows, the herd's audit rows of the same transactions, and their paper consent rows.
-    That holds only for a form not withdrawn and signed on or before `signed_on`: a newer signed form's write still
-    wins over an older form entered after it.
+    account also by the audit_log of the membership's herds from before migration 58 moved it there. Phone and
+    e-mail count only from rows about `member`, and every swap of the main member counts for them (I2). The paper
+    writes of the submissions in `own`, the herd's report for the round, do not count, so that Ändra from paper can
+    correct its own typo (I1): their kontakt_andrad rows, the herd's audit rows of the same transactions, and their
+    paper consent rows. That holds only for a form not withdrawn and signed on or before `signed_on`: a newer signed
+    form's write still wins over an older form entered after it.
     """
     # shortcut: the matrikel importer in cli/members.py leaves no trace, so this misses its changes; log them if it
     # ever runs during a round.
@@ -2525,9 +2525,10 @@ def later_fields(herd, membership, member, signed_on: date, own=frozenset()) -> 
         for column in payload.get("fields") or payload.get("after") or ():
             if column in COLUMN_FIELDS and (mine or COLUMN_FIELDS[column] in ("adress", "konto")):
                 fields.add(COLUMN_FIELDS[column])
+    herds = Herd.select(Herd.id).where(Herd.membership == membership.id)  # any of them may have held its account
     account = AuditLog.select(AuditLog.transaction_id).where(
         AuditLog.table_name == "herd",
-        AuditLog.record_id == str(herd.id),
+        AuditLog.record_id.in_({str(herd.id)} | {str(row.id) for row in herds}),
         AuditLog.operation == "UPDATE",  # an INSERT lists every column it filled
         AuditLog.changed_at >= after,
         AuditLog.changed_fields.contains_any("bank_account_number", "bank_name"),

@@ -1928,50 +1928,46 @@ def _account_text(value):
 def _herd_account_change(herd, sent, user):
     """
     The herd PATCH's bank fields `sent` as a change to the herd's membership (migration 58): (columns to write, None)
-    or (None, the error answer). Call it under lock_herd, which locks the membership first. Only admin,
-    matrikel_admin, the genebank's manager and the membership's main member change the account (U2). Anyone else
-    sends back what they read, or an empty field the old app sends for a hidden one; anything else gets the same
-    refusal, decided without the stored account, so it never tells whether a guess was right (as legacy_contact_form).
-    For a writer an echo is no change: the mask ('••45', a partly edited one is refused) or the stored value, the
-    number by its digits. A new number clears the type, which the legacy form does not have. Who sees only the end may
-    enter a new one, not blank it or replace it with something that is no account (at least four digits). A herd
-    without a membership has no account to change.
+    or (None, the error answer). Call it under lock_herd, which locks the membership first.
+
+    What the user is shown now (filtered_dict: the end and the bank, or nothing) sent back unchanged, or blank for
+    what is not shown, is no change. Only admin, matrikel_admin, the genebank's manager and the main member of an
+    active membership change the account (U2), and only by typing the whole number (at least four digits): a new one
+    takes the bank sent with it and clears the type, which the legacy form does not have; the same digits change at
+    most the bank. Anything else is refused: a blank never clears, a bank alone never changes, and a mask that is not
+    the stored account's any more is a stale form, which must not write an old account back. A non-writer gets the
+    same Forbidden for every value, so it never tells whether a guess was right (as legacy_contact_form). A herd
+    without a membership has no account.
     """
     if not sent:
         return None, None
-    invalid = {"status": "error", "message": "Invalid value for bank_account_number"}
-    membership = Membership.get_by_id(herd.membership_id) if herd.membership_id else None
-    full = user.is_admin or user.is_matrikel_admin
-    main = Member.select().where(
-        Member.user == user.id,
-        Member.membership == herd.membership_id,
-        Member.role == "huvudmedlem",
-        Member.end_date.is_null(True),
+    shown = herd.filtered_dict(user, with_contact=False)
+    if all(_account_text(value) == _account_text(shown.get(field)) for field, value in sent.items()):
+        return None, None
+    main = (
+        Member.select()
+        .join(Membership)
+        .where(
+            Member.user == user.id,
+            Member.membership == herd.membership_id,
+            Member.role == "huvudmedlem",
+            Member.end_date.is_null(True),
+            Membership.membership_status == "active",
+        )
     )
-    if not (full or herd.genebank_id in (user.is_manager or ()) or (membership and main.exists())):
-        shown = herd.filtered_dict(user, with_contact=False)
-        if any(_account_text(value) != _account_text(shown.get(field)) for field, value in sent.items()):
-            return None, {"status": "error", "message": "Forbidden"}
-        return None, None
-    stored = {f: getattr(membership, f) if membership else None for f in HERD_BANK_FIELDS}
-    number = sent.get("bank_account_number")
-    changes = {}
-    if number is not None and ACCOUNT_MASK[0] in str(number):
-        if number != account_end(stored["bank_account_number"]):
-            return None, invalid
-    elif "bank_account_number" in sent and re.sub(r"\D", "", str(number or "")) != re.sub(
-        r"\D", "", stored["bank_account_number"] or ""
-    ):
-        changes = {"bank_account_number": _account_text(number), "bank_account_type": None}
-    if "bank_name" in sent and _account_text(sent["bank_name"]) != _account_text(stored["bank_name"]):
-        changes["bank_name"] = _account_text(sent["bank_name"])
-    if not changes:
-        return None, None
-    if membership is None:
-        return None, invalid
-    if not full and "bank_account_number" in changes and len(re.sub(r"\D", "", str(number or ""))) < 4:
-        return None, invalid
-    return changes, None
+    manager = herd.genebank_id in (user.is_manager or ())
+    if not (user.is_admin or user.is_matrikel_admin or manager or (herd.membership_id and main.exists())):
+        return None, {"status": "error", "message": "Forbidden"}
+    number = _account_text(sent.get("bank_account_number"))
+    digits = re.sub(r"\D", "", number or "")
+    if herd.membership_id is None or ACCOUNT_MASK[0] in (number or "") or len(digits) < 4:
+        return None, {"status": "error", "message": "Invalid value for bank_account_number"}
+    stored = Membership.get_by_id(herd.membership_id)
+    changes = {"bank_name": _account_text(sent["bank_name"])} if "bank_name" in sent else {}
+    if digits != re.sub(r"\D", "", stored.bank_account_number or ""):
+        changes |= {"bank_account_number": number, "bank_account_type": None}
+    changes = {column: value for column, value in changes.items() if value != _account_text(getattr(stored, column))}
+    return changes or None, None
 
 
 def update_herd(form, user_uuid, *, legacy=False):

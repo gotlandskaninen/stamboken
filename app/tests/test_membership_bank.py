@@ -243,10 +243,11 @@ class SupportAccountTest(InboxTest):
 
 class TestReaders(SupportAccountTest):
     def test_bank_visibility_by_actor(self):
-        """U2: the whole account only for admin and matrikel_admin; a caretaker grant reads none of it."""
+        """U2: the herd page shows only the end, to admin and matrikel_admin too (the old app sends back what it read,
+        so a whole number there could come back stale); a caretaker grant reads none of it."""
         expected = {
-            "admin": (ACCOUNT, "Banken"),
-            "kassor": (ACCOUNT, "Banken"),
+            "admin": ("••12", "Banken"),
+            "kassor": ("••12", "Banken"),
             "man": ("••12", "Banken"),
             "main": ("••12", "Banken"),
             "owner": ("••12", "Banken"),  # a legacy owner privilege on G1
@@ -345,8 +346,7 @@ class TestLegacyWriters(SupportAccountTest):
         payload = {"fields": ["bank_account_number", "bank_account_type"], "source": "herd", "herd_id": herd.id}
         self.assertEqual(self.audits(), [("kontakt_andrad", payload)])
         # the other herd of the membership reads the same account
-        self.assertEqual(self.herd(1).filtered_dict(db.User.get_by_id(self.admin.id))["bank_account_number"],
-                         "1234-567 890")  # fmt: skip
+        self.assertEqual(self.herd(1).filtered_dict(db.User.get_by_id(self.admin.id))["bank_account_number"], "••90")
 
     def test_same_digits_and_echoes_change_nothing(self):
         admin = db.User.get_by_id(self.admin.id)
@@ -356,13 +356,41 @@ class TestLegacyWriters(SupportAccountTest):
         self.assertEqual(self.stored(), ("bankkonto", ACCOUNT, "Banken"))
         self.assertEqual(self.audits(), [])
 
-    def test_who_sees_only_the_end_may_not_blank_it(self):
-        for value in ("", None, "45", "abc"):
-            with self.subTest(value=value):
-                self.assertEqual(self.save(self.manager, bank_account_number=value)["status"], "error")
+    def test_no_one_blanks_it_on_the_herd_page(self):
+        """Everyone reads the mask there, so a blank is never what was shown: it could be a stale form's."""
+        values = {"bank_account_number": ("", None, "45", "abc"), "bank_name": ("", None)}
+        for user in (self.manager, self.main, self.admin):
+            for field, value in ((field, value) for field, sent in values.items() for value in sent):
+                fields = {field: value}
+                with self.subTest(user=user.email, fields=fields):
+                    self.assertEqual(self.save(user, **fields)["status"], "error")
         self.assertEqual(self.stored(), ("bankkonto", ACCOUNT, "Banken"))
-        self.assertEqual(self.save(self.admin, bank_account_number=""), {"status": "updated"})
-        self.assertEqual(self.stored(), (None, None, "Banken"))
+
+    def test_a_stale_form_never_replaces_a_newer_account(self):
+        """The old app sends back the whole herd it read. Meanwhile the account changed through the other herd."""
+        admin, manager = db.User.get_by_id(self.admin.id), db.User.get_by_id(self.manager.id)
+        db.Membership.update(bank_account_number=None, bank_name=None).where(db.Membership.id == self.ms.id).execute()
+        empty_form = self.herd().filtered_dict(admin)  # read while there is no account
+        self.assertEqual(da.update_herd({"id": self.herds[1].id, "bank_account_number": ACCOUNT, "bank_name": "Banken"},
+                                        manager.uuid, legacy=True), {"status": "updated"})  # fmt: skip
+        forms = {"admin": self.herd().filtered_dict(admin), "manager": self.herd().filtered_dict(manager)}
+        # then the account changes again, to one ending like the first, with another bank
+        self.assertEqual(da.update_herd({"id": self.herds[1].id, "bank_account_number": "9999-112", "bank_name": "Nya"},
+                                        manager.uuid, legacy=True), {"status": "updated"})  # fmt: skip
+        for name, form in (("empty", empty_form), *forms.items()):
+            with self.subTest(name):
+                user = manager if name == "manager" else admin
+                result = da.update_herd({**form, "herd_name": "Gammal"}, user.uuid, legacy=True)
+                self.assertEqual(result["status"], "error", result)
+                self.assertEqual(self.stored(), (None, "9999-112", "Nya"))
+        self.assertNotEqual(self.herd().herd_name, "Gammal")
+
+    def test_a_paused_main_member_with_a_legacy_owner_role_writes_no_account(self):
+        db.Membership.update(membership_status="inactive").where(db.Membership.id == self.ms.id).execute()
+        self.main.add_role("owner", self.herds[0].id)
+        result = self.save(db.User.get_by_id(self.main.id), bank_account_number=OTHER)
+        self.assertEqual(result, {"status": "error", "message": "Forbidden"})
+        self.assertEqual(self.stored(), ("bankkonto", ACCOUNT, "Banken"))
 
     def test_caretaker_and_legacy_owner_change_nothing(self):
         """U2: a grant or a legacy owner privilege is no right to the membership's shared account."""

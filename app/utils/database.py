@@ -497,20 +497,24 @@ class Herd(BaseModel):
                     data[field] = value
                 else:
                     data.pop(field, None)
-        # The support account is the membership's (migration 58), under the herd's legacy field names: whole for
-        # admin and matrikel_admin (who has no genebank role, so only these fields are added, not the other private
-        # ones), the last two digits for the genebank's manager and the herd's owners, nothing for a caretaker grant
-        # (U2) or another member.
+        # The support account is the membership's (migration 58), under the herd's legacy field names: its end and
+        # bank for admin, matrikel_admin (who has no genebank role, so only these fields are added, not the other
+        # private ones), the genebank's manager and the herd's owners; nothing for a caretaker grant (U2) or another
+        # member. Never the whole number: the old app sends back what it read, and update_herd takes only a mask that
+        # is still the stored account's as an unchanged account, so a stale form cannot write an old one back.
         for field in HERD_BANK_FIELDS:
             data.pop(field, None)
-        full = bool(user and (user.is_admin or user.is_matrikel_admin))
-        if full or (
-            access_level == "private"
-            and (self.genebank_id in (user.is_manager or ()) or self.id in user.transfer_herd_ids())
+        if user and (
+            user.is_admin
+            or user.is_matrikel_admin
+            or (
+                access_level == "private"
+                and (self.genebank_id in (user.is_manager or ()) or self.id in user.transfer_herd_ids())
+            )
         ):
             membership = self.membership if self.membership_id else None
             number, name = (membership.bank_account_number, membership.bank_name) if membership else (None, None)
-            account = {"bank_account_number": number if full else account_end(number), "bank_name": name}
+            account = {"bank_account_number": account_end(number), "bank_name": name}
             data.update({field: value for field, value in account.items() if field in raw})  # the row's keys, as before
         if with_contact and user:
             field = contact_field(user, self, contact, reader=reader, private_access=access_level == "private")

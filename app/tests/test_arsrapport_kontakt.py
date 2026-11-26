@@ -453,10 +453,12 @@ class KontaktTest(PaperTest):
         return da.update_herd({"id": self.h.id, "bank_account_number": "1111-2222333"}, self.admin.uuid, legacy=True)
 
     def test_later_herd_audit_from_before_migration_58_still_counts(self):  # D19
-        """An account change in the herd's audit_log, from before the account moved to the membership."""
+        """An account change in a herd's audit_log, from before the account moved to the membership: on any herd of
+        the membership, since the account a sibling herd held may be the one the membership got."""
         today = self.real_clock()
+        sibling = db.Herd.create(genebank=self.gotland, herd="G9005", membership=self.member.membership_id)
         db.AuditLog.create(
-            table_name="herd", record_id=str(self.h.id), operation="UPDATE", changed_fields=["bank_account_number"],
+            table_name="herd", record_id=str(sibling.id), operation="UPDATE", changed_fields=["bank_account_number"],
             old_data={}, new_data={},
         )  # fmt: skip
         item = self.form(self.manager)

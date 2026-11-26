@@ -194,7 +194,7 @@ class TestEffectiveAccessConsumers(EffectiveAccessTest):
                 self.assertNotIn("bank_account_number", data)
                 self.assertNotIn("bank_name", data)
             data = db.Herd.get_by_id(herd.id).filtered_dict(self.admin)  # a row as the API reads it, every column
-            self.assertEqual(data.get("bank_account_number"), "1234-5")
+            self.assertEqual(data.get("bank_account_number"), "••45")  # the herd page shows no one the whole account
             self.assertEqual(data.get("bank_name"), "Bank")
             data = db.Herd.get_by_id(herd.id).filtered_dict(self.manager)
             self.assertEqual(data.get("bank_account_number"), "••45")
@@ -280,11 +280,9 @@ class TestEffectiveAccessConsumers(EffectiveAccessTest):
         result = da.update_herd({"id": herd.id, "bank_account_number": "9876-54"}, self.manager.uuid)
         self.assertEqual(result, {"status": "updated"})
         self.assertEqual(stored(), "9876-54")
-        # An admin sees the whole account and may clear it.
-        self.assertEqual(
-            da.update_herd({"id": herd.id, "bank_account_number": ""}, self.admin.uuid)["status"], "updated"
-        )
-        self.assertIsNone(stored())
+        # Not an admin either: on the herd page a blank may be a stale form's (migration 58).
+        self.assertEqual(da.update_herd({"id": herd.id, "bank_account_number": ""}, self.admin.uuid)["status"], "error")
+        self.assertEqual(stored(), "9876-54")
 
     def test_yearly_report_cuts_the_readers_own_herd_too(self):
         """U2: owning the herd is no right to the whole account; only full_account (admin, matrikel_admin) is."""
@@ -324,11 +322,11 @@ class TestEffectiveAccessConsumers(EffectiveAccessTest):
         herd = db.Herd.get(db.Herd.herd == "ZZ99")
         self.assertEqual(herd.bank_name_privacy, "private")
 
-    def test_matrikel_admin_sees_the_whole_account(self):
+    def test_matrikel_admin_reads_the_account_end_without_a_genebank_role(self):
         self._account()
         user = self._user("matrikel@example.com")
         user.add_role("matrikel_admin", None)
-        self.assertEqual(db.Herd.get_by_id(self.herds[0].id).filtered_dict(user).get("bank_account_number"), "1234-5")
+        self.assertEqual(db.Herd.get_by_id(self.herds[0].id).filtered_dict(user).get("bank_account_number"), "••45")
 
     def test_yearly_report_cuts_the_account_unless_full_account(self):
         herd = self.herds[0]
