@@ -501,8 +501,10 @@ describe("ReportForm", () => {
     "Jag har tagit del av informationen och vill ta bort kaninen från min besättning.";
   const sellingActions = () => ({
     ...actions(),
-    sellNow: vi.fn(() => ok({ operation_id: "op" })),
-    undoSale: vi.fn(() => ok(null)),
+    sellNow: vi.fn<(...args: unknown[]) => Promise<unknown>>(() =>
+      ok({ operation_id: "op" }),
+    ),
+    undoSale: vi.fn<(...args: unknown[]) => Promise<unknown>>(() => ok(null)),
   });
   const typeSaleOutside = () => {
     choose(1, "Såld");
@@ -527,7 +529,7 @@ describe("ReportForm", () => {
   it("registers a sale at once once the box is ticked, then lets go of the row and reads the view again", async () => {
     vi.useFakeTimers();
     const a = sellingActions();
-    render(<ReportForm env="demo" view={view()} actions={a} />);
+    render(<ReportForm env="demo" view={view()} actions={a as never} />);
     typeSaleOutside();
     expect(
       screen.getByText(
@@ -581,7 +583,7 @@ describe("ReportForm", () => {
         ],
       }),
     );
-    render(<ReportForm env="demo" view={view()} actions={a} />);
+    render(<ReportForm env="demo" view={view()} actions={a as never} />);
     typeSaleOutside();
     fireEvent.click(screen.getByLabelText(ACK));
     await act(async () => spara());
@@ -612,7 +614,7 @@ describe("ReportForm", () => {
       <ReportForm
         env="demo"
         view={view({ sales, rabbits: [rabbit(1), moved] })}
-        actions={a}
+        actions={a as never}
       />,
     );
     const buttons = screen.getAllByRole("button", { name: "Ångra" });
