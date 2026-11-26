@@ -11,7 +11,6 @@ membership's lock and then the request rows, never a report lock.
 import hashlib
 import hmac
 import json
-import re
 from datetime import datetime, time, timedelta, timezone
 
 from flask import current_app
@@ -323,8 +322,7 @@ def _address(parts):
 
 
 def _account(columns):
-    digits = re.sub(r"\D", "", columns.get("bank_account_number") or "")
-    return f"••••{digits[-4:]}" if digits else None
+    return arsrapport.shown_account(columns.get("bank_account_number"))
 
 
 def _consent(value):

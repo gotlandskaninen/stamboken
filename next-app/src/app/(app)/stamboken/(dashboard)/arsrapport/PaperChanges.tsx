@@ -97,7 +97,8 @@ export function AccountFields({
 }
 
 // The form's contact part. The page never reads the stored values: it shows
-// only the last two digits of the account (`accountEnd`), and what is typed
+// only the last two digits of the account (`accountEnd`, "" when the number
+// is too short to show any, null when there is none), and what is typed
 // here goes to the matrikel when the form is sent. Its state is the caller's,
 // outside FormState, so it never reaches a draft or localStorage.
 export function PaperChanges({
@@ -157,9 +158,11 @@ export function PaperChanges({
         })}
 
         <p className={styles.label} style={{ margin: 0 }}>
-          {accountEnd
-            ? `Nuvarande konto slutar på ••${accountEnd}`
-            : "Inget konto i matrikeln"}
+          {accountEnd === null
+            ? "Inget konto i matrikeln"
+            : accountEnd
+              ? `Nuvarande konto slutar på ••${accountEnd}`
+              : "Det finns ett konto i matrikeln"}
         </p>
         <AccountFields
           konto={fields.konto}

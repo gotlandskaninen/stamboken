@@ -18,7 +18,7 @@ from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 from flask import current_app
-from peewee import JOIN, IntegrityError, OperationalError, fn
+from peewee import JOIN, SQL, IntegrityError, OperationalError, fn
 
 import utils.inbox as inbox
 import utils.report_code as report_code
@@ -65,6 +65,7 @@ from utils.database import (
     lock_breedings,
     lock_individuals,
     not_voided,
+    same_destination,
 )
 from utils.database import (
     account_end as masked_account,
@@ -989,9 +990,10 @@ def _report_json(report, round_, access, is_open):
 def account_end(herd):
     """
     The herd's membership's account's last two digits ("12"): the only account data paper entry reads (fråga 34).
+    "" is an account whose end is not shown (database.account_end), None no account.
     """
     number = herd.membership.bank_account_number if herd.membership_id else None
-    return (masked_account(number) or "").removeprefix("••") or None
+    return masked_account(number).removeprefix("••") if number else None
 
 
 NOT_MAIN = "Huvudmedlemmen ändrar kontaktuppgifterna, kontot för stödet och svaret om Koharen."
@@ -1033,7 +1035,6 @@ def member_details(herd, report, access, user):
         return {"mode": mode}
     membership, member = herd.membership, _main_member(herd)
     consent = stored_consent(membership)
-    digits = re.sub(r"\D", "", membership.bank_account_number or "")
     return {
         "mode": mode,
         "contact": {
@@ -1046,8 +1047,19 @@ def member_details(herd, report, access, user):
         "publicering": {"ja": consent.get("name") is True, "utom": [k for k in UTOM if consent.get(k) is not True]}
         if consent
         else None,
-        "konto": f"••••{digits[-4:]}" if digits else None,
+        "konto": shown_account(membership.bank_account_number),
     }
+
+
+def shown_account(number):
+    """
+    The main member's own account as the report and the confirmation page show it (5.11): the last four digits,
+    fewer for a short number, as database.account_end does (a plusgiro may have two). None without one.
+    """
+    digits = re.sub(r"\D", "", number or "")
+    if not digits:
+        return None
+    return f"••••{digits[-4:]}" if len(digits) >= 8 else masked_account(number)
 
 
 def report_litters(herd, year):
@@ -2588,16 +2600,19 @@ def _matrikel_refusals(herd, paper, submissions, *, check_email):
     return refusals
 
 
+_INSERTED_ACCOUNT = r"(new_data->>'bank_account_number' ~ '[^\s\u00a0]' OR new_data->>'bank_name' ~ '[^\s\u00a0]')"
+
+
 def later_fields(herd, membership, member, signed_on: date, own=frozenset()) -> set[str]:
     """
     D19: the PAPER_FIELDS the matrikel changed after the form's date, that is from the next day in Stockholm: the
     consent by publication_consent_change, and the rest by matrikel_audit, whose created_at is naive server time, the
-    account also by the herd's audit_log from before migration 58 moved it to the membership. Phone and e-mail count
-    only from rows about `member`, and every swap of the main member counts for them (I2). The paper writes of the
-    submissions in `own`, the herd's report for the round, do not count, so that Ändra from paper can correct its own
-    typo (I1): their kontakt_andrad rows, the herd's audit rows of the same transactions, and their paper consent rows.
-    That holds only for a form not withdrawn and signed on or before `signed_on`: a newer signed form's write still
-    wins over an older form entered after it.
+    account also by the audit_log of the membership's herds from before migration 58 moved it there. Phone and
+    e-mail count only from rows about `member`, and every swap of the main member counts for them (I2). The paper
+    writes of the submissions in `own`, the herd's report for the round, do not count, so that Ändra from paper can
+    correct its own typo (I1): their kontakt_andrad rows, the herd's audit rows of the same transactions, and their
+    paper consent rows. That holds only for a form not withdrawn and signed on or before `signed_on`: a newer signed
+    form's write still wins over an older form entered after it.
     """
     # shortcut: the matrikel importer in cli/members.py leaves no trace, so this misses its changes; log them if it
     # ever runs during a round.
@@ -2630,12 +2645,14 @@ def later_fields(herd, membership, member, signed_on: date, own=frozenset()) -> 
         for column in payload.get("fields") or payload.get("after") or ():
             if column in COLUMN_FIELDS and (mine or COLUMN_FIELDS[column] in ("adress", "konto")):
                 fields.add(COLUMN_FIELDS[column])
+    herds = Herd.select(Herd.id).where(Herd.membership == membership.id)  # any of them may have held its account
     account = AuditLog.select(AuditLog.transaction_id).where(
         AuditLog.table_name == "herd",
-        AuditLog.record_id == str(herd.id),
-        AuditLog.operation == "UPDATE",  # an INSERT lists every column it filled
+        AuditLog.record_id.in_({str(herd.id)} | {str(row.id) for row in herds}),
         AuditLog.changed_at >= after,
-        AuditLog.changed_fields.contains_any("bank_account_number", "bank_name"),
+        ((AuditLog.operation == "UPDATE") & AuditLog.changed_fields.contains_any("bank_account_number", "bank_name"))
+        # an INSERT lists every column it filled: it counts when it filled the account (add_herd before 58)
+        | ((AuditLog.operation == "INSERT") & SQL(_INSERTED_ACCOUNT)),
     )
     if any(row.transaction_id not in transactions for row in account):
         fields.add("konto")
@@ -2671,7 +2688,8 @@ def apply_paper_matrikel(herd, membership, member, submission, item, user, matri
     report = YearlyHerdReport.get_by_id(submission.report_id)
     same = (YearlyHerdReport.herd == report.herd_id) & (YearlyHerdReport.round == report.round_id)
     own = YearlyReportSubmission.select(YearlyReportSubmission.id).join(YearlyHerdReport).where(same)
-    changes = _changes(membership, member, _contact(matrikel)[0])
+    typed = bool((matrikel.get("konto") or {}).get("typ"))
+    changes = _changes(membership, member, _contact(matrikel)[0], typed=typed)
     answer = (matrikel or {}).get("publicering")
     if answer is not None and not answer["ja"]:  # a No stands over a waiting Ja, also when it is the stored answer
         revoke_waiting_consent(membership)
@@ -2710,16 +2728,21 @@ def apply_paper_matrikel(herd, membership, member, submission, item, user, matri
     return list(written) + (["publicering"] if consented else []), skipped
 
 
-def _changes(membership, member, contact):
+def _changes(membership, member, contact, *, typed=False):
     """`contact` ({field: {column: value}}) without what the matrikel already holds: the address and the account on
-    `membership`, phone and e-mail on its main `member`."""
+    `membership`, phone and e-mail on its main `member`. `typed`: the form ticked the account's type."""
     rows = {"adress": membership, "telefon": member, "epost": member, "konto": membership}
     changes = {}
     for name, columns in contact.items():
         row = rows[name]
-        if name == "konto":  # the same digits are the same account, unless the stored type says otherwise
-            moved = not _same("bank_account_number", row.bank_account_number, columns["bank_account_number"])
-            differ = columns if moved or row.bank_account_type not in (None, columns["bank_account_type"]) else {}
+        if name == "konto":  # another destination replaces type, number and bank together
+            kind, number = columns["bank_account_type"], columns["bank_account_number"]
+            if not same_destination(row.bank_account_number, row.bank_account_type, number, kind):
+                differ = columns
+            elif row.bank_account_type is None and typed:
+                differ = {"bank_account_type": kind}  # a ticked box types a migrated account, written as it was
+            else:
+                differ = {}
         else:
             differ = {
                 column: value for column, value in columns.items() if not _same(column, getattr(row, column), value)
@@ -2755,7 +2778,8 @@ def apply_login_matrikel(herd, membership, member, submission, user, matrikel):
     differs. The caller holds the membership's lock and checked D1 under it. A new account is told to the matrikel's
     e-mail (account_notice). The e-mail is not here: it goes through the profile's code flow.
     """
-    changes = _changes(membership, member, _contact_cleared(matrikel)[0])
+    typed = bool((matrikel.get("konto") or {}).get("typ"))
+    changes = _changes(membership, member, _contact_cleared(matrikel)[0], typed=typed)
     answer = matrikel.get("publicering")
     if answer is not None:
         set_consent(
@@ -3837,7 +3861,7 @@ def _konto_andrat(params):
     """The account notice (5.11): the account's last two digits as they are when the mail goes, so it says "nu"."""
     membership = Membership.get_or_none(Membership.id == params["membership_id"])
     number = membership.bank_account_number if membership is not None else None
-    return {"account_end": (masked_account(number) or "").removeprefix("••") or None} if number else None
+    return {"account_end": masked_account(number).removeprefix("••")} if number else None  # "" for a short number
 
 
 @mail_kind(A23, priority=0, category="T")

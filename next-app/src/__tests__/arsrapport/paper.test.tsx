@@ -636,6 +636,20 @@ describe("ReportForm on paper", () => {
     expect(screen.getByText("Inget konto i matrikeln")).toBeTruthy();
   });
 
+  it("says there is an account when its end is too short to show", () => {
+    renderPaper(
+      paperView({
+        item: {
+          id: 5,
+          received_at: "2027-01-03T10:00:00+00:00",
+          state: "tagen",
+          account_end: "",
+        },
+      }),
+    );
+    expect(screen.getByText("Det finns ett konto i matrikeln")).toBeTruthy();
+  });
+
   it("asks nothing of the form first when the intyg are not done", () => {
     renderPaper(paperView(), actions(), paperProps({ intygPending: true }));
     expect(screen.getByText(/Registrera intygen i ärendet först/)).toBeTruthy();

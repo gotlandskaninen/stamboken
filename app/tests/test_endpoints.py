@@ -1560,7 +1560,7 @@ class TestHerdPrivacyLevels(FlaskTest):
 
     def test_manager_and_admin_still_read_private_fields(self):
         g2 = self._g2_with_private_fields()
-        for user, account in ((self.manager, "••45"), (self.admin, "1234-5")):  # manager: last two digits
+        for user, account in ((self.manager, "••45"), (self.admin, "••45")):  # the herd page: the end only
             client = self.app.application.test_client(use_cookies=True)
             client.post("/api/login", json={"username": user.email, "password": "pass"})
             data = client.get(f"/api/herd/{g2.herd}").get_json()

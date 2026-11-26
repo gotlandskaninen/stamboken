@@ -17,6 +17,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from peewee import (
     JOIN,
+    SQL,
     Case,
     DatabaseError,
     DataError,
@@ -48,7 +49,7 @@ from utils.database import ACTIVE_WINDOW_DAYS  # isort: skip
 from utils.database import AUDIT_LOG_NO_UPDATE_RULE  # isort: skip
 from utils.database import OUTSIDE_GENEBANK_HERDS  # isort: skip
 from utils.database import ACCOUNT_MASK, BANK_PRIVACY_FIELDS, HERD_BANK_FIELDS, PRIVACY_LEVELS, account_end  # isort: skip
-from utils.database import MatrikelAudit  # isort: skip
+from utils.database import MatrikelAudit, same_destination  # isort: skip
 from utils.database import HERD_CONTACT_COLUMNS  # isort: skip
 from utils.database import ht_not_voided  # isort: skip
 from utils.database import ht_order_desc  # isort: skip
@@ -1680,6 +1681,8 @@ def get_herd(herd_id, user_uuid=None):
                 return None
             herd = Herd.get(Herd.herd == herd_id)
             data = herd.filtered_dict(user)
+            if "bank_account_number" in data:  # the account's revision, which the old app sends back with the herd
+                data["bank_account_revision"] = support_account_revision(herd.membership_id)
             data["individuals"] = []
             if data["genebank"] not in user.accessible_genebanks:
                 return None
@@ -1785,6 +1788,9 @@ def add_herd(form, user_uuid):
         if "id" in form:
             del form["id"]
         form = {k: v for k, v in form.items() if k not in BANK_PRIVACY_FIELDS}  # fixed 'private', issue #33
+        if any(_account_text(form.get(field)) for field in HERD_BANK_FIELDS):  # blanks: the old app's empty form
+            message = "Kontot för stödet sparas på medlemskapet. Koppla besättningen till ett medlemskap först."
+            return {"status": "error", "message": message}
         bad = invalid_privacy_field(form)
         if bad:
             return {"status": "error", "message": f"Invalid value for {bad}"}
@@ -1925,53 +1931,79 @@ def _account_text(value):
     return None if value is None else str(value).strip() or None
 
 
-def _herd_account_change(herd, sent, user):
+STALE_ACCOUNT = "Kontot för stödet har ändrats sedan sidan lästes in. Ladda om sidan och försök igen."
+
+
+def support_account_revision(membership_id):
+    """
+    The id of the membership's latest logged change of its support account, 0 before the first (migration 58 logs
+    none): every writer logs one kontakt_andrad row naming the columns. A herd form read before the upgrade carries
+    none, so it counts as 0, which holds only while the account is the migrated one.
+    """
+    if membership_id is None:
+        return 0
+    latest = MatrikelAudit.select(fn.MAX(MatrikelAudit.id)).where(
+        MatrikelAudit.membership == membership_id,
+        MatrikelAudit.action == "kontakt_andrad",
+        SQL("payload->'fields' ?| %s", (["bank_account_type", "bank_account_number", "bank_name"],)),
+    )
+    return latest.scalar() or 0
+
+
+def _herd_account_change(herd, sent, user, revision=None):
     """
     The herd PATCH's bank fields `sent` as a change to the herd's membership (migration 58): (columns to write, None)
-    or (None, the error answer). Call it under lock_herd, which locks the membership first. Only admin,
-    matrikel_admin, the genebank's manager and the membership's main member change the account (U2). Anyone else
-    sends back what they read, or an empty field the old app sends for a hidden one; anything else gets the same
-    refusal, decided without the stored account, so it never tells whether a guess was right (as legacy_contact_form).
-    For a writer an echo is no change: the mask ('••45', a partly edited one is refused) or the stored value, the
-    number by its digits. A new number clears the type, which the legacy form does not have. Who sees only the end may
-    enter a new one, not blank it or replace it with something that is no account (at least four digits). A herd
-    without a membership has no account to change.
+    or (None, the error answer). Call it under lock_herd, which locks the membership first.
+
+    What the user is shown now (filtered_dict: the end and the bank, or nothing) sent back unchanged, or blank for
+    what is not shown, is no change. Only admin, matrikel_admin, the genebank's manager and the main member of an
+    active membership change the account (U2), and only by typing the whole number (at least four digits): another
+    destination (same_destination) replaces the type, which the legacy form does not have, the number and the bank
+    together; the same account written otherwise changes at most the bank. Anything else is refused: a blank never
+    clears, a bank alone never changes, and a mask that is not the stored account's any more is a stale form, which
+    must not write an old account back. A non-writer gets the same Forbidden for every value, so it never tells
+    whether a guess was right (as legacy_contact_form). A herd without a membership has no account. A change needs
+    `revision`, the support_account_revision the form read (none: a form from before the upgrade, 0), to be the
+    current one: a form read before another change, or before migration 58 when the herd page showed the whole number,
+    gets a reload message instead of writing back what it read.
     """
     if not sent:
         return None, None
-    invalid = {"status": "error", "message": "Invalid value for bank_account_number"}
-    membership = Membership.get_by_id(herd.membership_id) if herd.membership_id else None
-    full = user.is_admin or user.is_matrikel_admin
-    main = Member.select().where(
-        Member.user == user.id,
-        Member.membership == herd.membership_id,
-        Member.role == "huvudmedlem",
-        Member.end_date.is_null(True),
+    shown = herd.filtered_dict(user, with_contact=False)
+    if all(_account_text(value) == _account_text(shown.get(field)) for field, value in sent.items()):
+        return None, None
+    main = (
+        Member.select()
+        .join(Membership)
+        .where(
+            Member.user == user.id,
+            Member.membership == herd.membership_id,
+            Member.role == "huvudmedlem",
+            Member.end_date.is_null(True),
+            Membership.membership_status == "active",
+        )
     )
-    if not (full or herd.genebank_id in (user.is_manager or ()) or (membership and main.exists())):
-        shown = herd.filtered_dict(user, with_contact=False)
-        if any(_account_text(value) != _account_text(shown.get(field)) for field, value in sent.items()):
-            return None, {"status": "error", "message": "Forbidden"}
-        return None, None
-    stored = {f: getattr(membership, f) if membership else None for f in HERD_BANK_FIELDS}
-    number = sent.get("bank_account_number")
-    changes = {}
-    if number is not None and ACCOUNT_MASK[0] in str(number):
-        if number != account_end(stored["bank_account_number"]):
-            return None, invalid
-    elif "bank_account_number" in sent and re.sub(r"\D", "", str(number or "")) != re.sub(
-        r"\D", "", stored["bank_account_number"] or ""
-    ):
-        changes = {"bank_account_number": _account_text(number), "bank_account_type": None}
-    if "bank_name" in sent and _account_text(sent["bank_name"]) != _account_text(stored["bank_name"]):
-        changes["bank_name"] = _account_text(sent["bank_name"])
-    if not changes:
-        return None, None
-    if membership is None:
-        return None, invalid
-    if not full and "bank_account_number" in changes and len(re.sub(r"\D", "", str(number or ""))) < 4:
-        return None, invalid
-    return changes, None
+    manager = herd.genebank_id in (user.is_manager or ())
+    if not (user.is_admin or user.is_matrikel_admin or manager or (herd.membership_id and main.exists())):
+        return None, {"status": "error", "message": "Forbidden"}
+    number = _account_text(sent.get("bank_account_number"))
+    digits = re.sub(r"\D", "", number or "")
+    if herd.membership_id is None or ACCOUNT_MASK[0] in (number or "") or len(digits) < 4:
+        return None, {"status": "error", "message": "Invalid value for bank_account_number"}
+    stored = Membership.get_by_id(herd.membership_id)
+    if same_destination(stored.bank_account_number, stored.bank_account_type, number):
+        changes = {"bank_name": _account_text(sent["bank_name"])} if "bank_name" in sent else {}
+    else:  # another destination: type, number and bank together
+        bank = _account_text(sent.get("bank_name"))
+        changes = {"bank_account_type": None, "bank_account_number": number, "bank_name": bank}
+    changes = {column: value for column, value in changes.items() if value != _account_text(getattr(stored, column))}
+    try:
+        read = int(revision or 0)
+    except (TypeError, ValueError):
+        read = -1
+    if changes and read != support_account_revision(herd.membership_id):
+        return None, {"status": "error", "message": STALE_ACCOUNT}
+    return changes or None, None
 
 
 def update_herd(form, user_uuid, *, legacy=False):
@@ -1999,7 +2031,8 @@ def update_herd(form, user_uuid, *, legacy=False):
             # stored value echoed by the legacy SPA cannot block the save. Response unchanged.
             form = {k: v for k, v in form.items() if k not in BANK_PRIVACY_FIELDS}
             # The account is the membership's (migration 58): decided here, written with the herd below.
-            account, refusal = _herd_account_change(herd, {f: form[f] for f in HERD_BANK_FIELDS if f in form}, user)
+            sent = {f: form[f] for f in HERD_BANK_FIELDS if f in form}
+            account, refusal = _herd_account_change(herd, sent, user, form.get("bank_account_revision"))
             if refusal:
                 return refusal
             bad = invalid_privacy_field(form)

@@ -248,6 +248,36 @@ class KontaktTest(PaperTest):
                 self.assertEqual(codes(dry), {"konto_ogiltigt"})
         self.assertEqual(self.account(), (None, OLD_ACCOUNT, "Gamla banken"))
 
+    def test_a_ticked_box_types_a_migrated_account(self):
+        """Migration 58 left the type NULL; a form with the same account and a ticked box stores the type, and a form
+        without a ticked box changes nothing (test_no_change_no_event_and_no_mail)."""
+        self.login("man")
+        cases = (
+            ("8327-4471 5512", {"typ": "bankkonto", "clearing": "8327", "konto": "4471 5512"}, "bankkonto"),
+            ("123-4567", {"typ": "bankgiro", "konto": "1234567"}, "bankgiro"),
+        )
+        for revision, (number, konto, typ) in enumerate(cases):
+            with self.subTest(typ):
+                db.Membership.update(bank_account_type=None, bank_account_number=number).where(
+                    db.Membership.id == self.member.membership_id
+                ).execute()
+                item = self.form(self.manager)
+                extra = {"revision": revision, "reason": "Ny blankett"} if revision else {}
+                receipt = self.ok(item, self.paper(item, matrikel(konto=konto), **extra))
+                self.assertEqual(receipt["matrikel"], ["konto"])
+                self.assertEqual(self.account()[:2], (typ, number))  # the number stays as it was written
+
+    def test_a_ticked_box_for_another_destination_replaces_the_whole_account(self):
+        """Same digits, but BG and a plusgiro's dash: another destination, so type, number and bank go together."""
+        db.Membership.update(bank_account_type=None, bank_account_number="BG 123-4566", bank_name="Gamla").where(
+            db.Membership.id == self.member.membership_id
+        ).execute()
+        item = self.form(self.manager)
+        self.login("man")
+        konto = {"typ": "plusgiro", "konto": "123456-6"}
+        self.assertEqual(self.ok(item, self.paper(item, matrikel(konto=konto)))["matrikel"], ["konto"])
+        self.assertEqual(self.account(), ("plusgiro", "123456-6", None))
+
     def test_same_digits_as_another_type_is_a_new_account(self):
         """A stored type keeps a bankgiro and a plusgiro of the same digits apart; a stored NULL type does not."""
         db.Membership.update(bank_account_type="plusgiro", bank_account_number="1234567-8").where(
@@ -450,13 +480,17 @@ class KontaktTest(PaperTest):
 
     def later_account(self):
         """An account written on the herd page (the legacy herd PATCH), which lands on the membership and its log."""
-        return da.update_herd({"id": self.h.id, "bank_account_number": "1111-2222333"}, self.admin.uuid, legacy=True)
+        revision = da.support_account_revision(self.member.membership_id)  # the form was read just now
+        form = {"id": self.h.id, "bank_account_number": "1111-2222333", "bank_account_revision": revision}
+        return da.update_herd(form, self.admin.uuid, legacy=True)
 
     def test_later_herd_audit_from_before_migration_58_still_counts(self):  # D19
-        """An account change in the herd's audit_log, from before the account moved to the membership."""
+        """An account change in a herd's audit_log, from before the account moved to the membership: on any herd of
+        the membership, since the account a sibling herd held may be the one the membership got."""
         today = self.real_clock()
+        sibling = db.Herd.create(genebank=self.gotland, herd="G9005", membership=self.member.membership_id)
         db.AuditLog.create(
-            table_name="herd", record_id=str(self.h.id), operation="UPDATE", changed_fields=["bank_account_number"],
+            table_name="herd", record_id=str(sibling.id), operation="UPDATE", changed_fields=["bank_account_number"],
             old_data={}, new_data={},
         )  # fmt: skip
         item = self.form(self.manager)
@@ -466,6 +500,28 @@ class KontaktTest(PaperTest):
         receipt = self.ok(item, body)
         self.assertEqual((receipt["matrikel"], receipt["warnings"]), ([], [later("konto")]))
         self.assertEqual(self.account()[1], OLD_ACCOUNT)
+
+    def test_a_sibling_herd_inserted_with_an_account_after_the_form_counts(self):  # Codex #278 r2
+        """Before 58 add_herd could insert a herd with an account; linked later, its account may be the one the
+        membership got. Its INSERT row counts as an account change; one without an account does not."""
+        today = self.real_clock()
+        sibling = db.Herd.create(genebank=self.gotland, herd="G9006", membership=self.member.membership_id)
+        new_data = {"herd_id": sibling.id, "herd": "G9006", "bank_account_number": "5555-12345", "bank_name": None}
+        signed = (today - timedelta(days=10)).isoformat()
+        self.login("man")
+        item = self.form(self.manager)
+        body = self.paper(item, matrikel(konto=NEW_KONTO), received_on=today.isoformat(), signed_on=signed)
+        self.assertEqual(self.ok(item, body)["matrikel"], ["konto"])  # the sibling's own INSERT had no account
+        db.AuditLog.create(
+            table_name="herd", record_id=str(sibling.id), operation="INSERT",
+            changed_fields=list(new_data), old_data=None, new_data=new_data,
+        )  # fmt: skip
+        again = self.form(self.manager)
+        retyped = matrikel(konto={**NEW_KONTO, "konto": "4618 0378"})
+        body = self.paper(again, retyped, received_on=today.isoformat(), signed_on=signed, revision=1, reason="Ny")
+        receipt = self.ok(again, body)
+        self.assertEqual((receipt["matrikel"], receipt["warnings"]), ([], [later("konto")]))
+        self.assertEqual(self.account()[1], "9420-46180377")
 
     def test_later_matrikel_change_wins(self):  # Review Focus 5, D19
         today = self.real_clock()  # audit_log cannot be backdated

@@ -141,6 +141,15 @@ class TestLoggedIn(DetailsTest):
         db.Member.update(user=None).where(db.Member.id == self.member.id).execute()  # an owner who is someone else
         self.assertEqual(self.view()["member_details"], {"mode": "none"})
 
+    def test_a_short_account_shows_fewer_digits(self):  # database.account_end's rule (#278)
+        self.link_owner()
+        self.login("owner")
+        for number, shown in (("1234-5678 90", "••••7890"), ("12345-6", "••56"), ("12-3", "••")):
+            db.Membership.update(bank_account_number=number).where(
+                db.Membership.id == self.member.membership_id
+            ).execute()
+            self.assertEqual(self.view()["member_details"]["konto"], shown)
+
     def test_link_view_holds_no_value(self):
         self.open_link()
         details = self.view()["member_details"]
