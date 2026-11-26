@@ -107,12 +107,7 @@ def set_consent(
     whether it wrote.
     """
     if revoke_waiting:
-        MemberChangeRequest.update(revoked_at=datetime.now(timezone.utc), revoked_reason="nyare").where(
-            MemberChangeRequest.kind == "publicering",
-            MemberChangeRequest.member.in_(Member.select(Member.id).where(Member.membership == membership.id)),
-            MemberChangeRequest.confirmed_at.is_null(),
-            MemberChangeRequest.revoked_at.is_null(),
-        ).execute()
+        revoke_waiting_consent(membership)
     if value == stored_consent(membership):
         return False
     membership.publication_consent = value
@@ -128,6 +123,16 @@ def set_consent(
         submission_id=submission,
     )
     return True
+
+
+def revoke_waiting_consent(membership):
+    """A direct Koharen answer stands over a Ja that waits for the report link's receipt mail (5.11)."""
+    MemberChangeRequest.update(revoked_at=datetime.now(timezone.utc), revoked_reason="nyare").where(
+        MemberChangeRequest.kind == "publicering",
+        MemberChangeRequest.member.in_(Member.select(Member.id).where(Member.membership == membership.id)),
+        MemberChangeRequest.confirmed_at.is_null(),
+        MemberChangeRequest.revoked_at.is_null(),
+    ).execute()
 
 
 def try_auto_link_member(member: Member, user: User) -> bool:

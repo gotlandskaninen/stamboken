@@ -253,7 +253,17 @@ def raise_counter_to(value: int) -> None:
 
 
 def write_matrikel_audit(actor: User | None, action: str, membership: Membership, payload: dict) -> MatrikelAudit:
-    """Append one matrikel audit row. Payloads carry before/after values. No actor: the nightly job wrote it."""
+    """
+    Append one matrikel audit row. Payloads carry before/after values. No actor: the nightly job wrote it. Every
+    write logs here, so a write that names contact columns (profile, logged-in report, paper, matrikel staff) also
+    revokes the older changes of those fields that wait for the report link's receipt mail (5.11), except the
+    link's own confirmation, which revokes only older ones.
+    """
+    if payload.get("source") != "link":
+        import utils.member_changes as member_changes  # pylint: disable=import-outside-toplevel  # it imports this
+
+        columns = payload.get("fields") or list(payload.get("after") or ())
+        member_changes.revoke_for_direct_write(getattr(membership, "id", membership), payload.get("person_id"), columns)
     return MatrikelAudit.create(actor=actor, action=action, membership=membership, payload=payload)
 
 

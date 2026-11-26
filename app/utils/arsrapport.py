@@ -118,6 +118,7 @@ from utils.members import (
     CONSENT_TEXT_VERSIONS,
     consent_from_answer,
     effective_consent,
+    revoke_waiting_consent,
     set_consent,
     stored_consent,
 )
@@ -2672,6 +2673,8 @@ def apply_paper_matrikel(herd, membership, member, submission, item, user, matri
     own = YearlyReportSubmission.select(YearlyReportSubmission.id).join(YearlyHerdReport).where(same)
     changes = _changes(membership, member, _contact(matrikel)[0])
     answer = (matrikel or {}).get("publicering")
+    if answer is not None and not answer["ja"]:  # a No stands over a waiting Ja, also when it is the stored answer
+        revoke_waiting_consent(membership)
     consent = consent_from_answer(answer["ja"], answer["utom"]) if answer is not None else None
     consent = None if consent == stored_consent(membership) else consent
     asked = changes or consent is not None

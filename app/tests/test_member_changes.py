@@ -18,6 +18,7 @@ from unittest import mock
 import utils.arsrapport as arsrapport
 import utils.database as db
 import utils.mail as mail
+import utils.member_changes as member_changes
 import utils.report_code as report_code
 import utils.settings as settings
 from herdbook import APP
@@ -508,3 +509,29 @@ class TestReviewRound1(DetailsTest):
         self.assertEqual(resolve(params), "g9001@example.invalid")
         db.MemberPreviousAddress.delete().execute()  # no address counts now: the notice is cancelled
         self.assertIsNone(resolve(params))
+
+    # 3. A direct write revokes an older waiting change of its field; "Det var inte jag" only while waiting
+    def test_direct_writes_revoke_older_waiting_link_changes(self):
+        self.submit_changes({"telefon": "0709-777 888", "konto": NEW_KONTO, "adress": {"city": "Visby"}})
+        self.client.get("/api/logout")
+        self.link_owner()
+        self.login("owner")
+        response = self.client.patch("/api/v2/members/me/contact", json={"phone": "0709-333 444"})
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.ok(matrikel={"konto": {**NEW_KONTO, "konto": "1111 2222"}})  # logged in, written at once
+        states = {member_changes._field(row): (row.revoked_reason, row.confirmed_at) for row in self.requests()}
+        self.assertEqual(states["telefon"], ("nyare", None))
+        self.assertEqual(states["konto"], ("nyare", None))
+        self.assertEqual(states["adress"], (None, None))  # no one wrote the address: it still waits
+
+    def test_not_me_after_expiry_keeps_the_expired_account_status(self):
+        receipt = self.submit_changes({"konto": NEW_KONTO})
+        token = self.token(receipt["submission_id"])
+        self.at(DAY0 + timedelta(days=16))
+        self.client.post("/api/v2/rapport/andringar/inte-jag", json={"token": token})
+        (row,) = self.requests()
+        self.assertIsNone(row.revoked_at)
+        flags = next(
+            r["flags"] for r in arsrapport.status_view(self.round_, self.gotland.id)["rows"] if r["herd"] == "G9001"
+        )
+        self.assertEqual((flags["kontobyte_forfoll"], flags["inte_jag"]), (True, False))

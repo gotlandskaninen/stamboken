@@ -203,6 +203,51 @@ def self_made_links(herds, since):
     return links
 
 
+# The columns a matrikel write names, as the fields of a change through the link: the address and the account are
+# the membership's, phone and e-mail a person's.
+DIRECT_FIELDS = {
+    "address": "adress",
+    "postal_code": "adress",
+    "city": "adress",
+    "phone": "telefon",
+    "email": "epost",
+    "bank_account_type": "konto",
+    "bank_account_number": "konto",
+    "bank_name": "konto",
+}
+
+
+def revoke_for_direct_write(membership_id, person_id, columns):
+    """
+    5.11: a direct write of a field stands over an older change of it from the link that still waits, which can then
+    no longer be confirmed. Phone and e-mail only for the person written (`person_id`, or anyone when unnamed). An
+    expired change keeps its status. Called from write_matrikel_audit, in the writer's transaction and lock.
+    """
+    fields = {DIRECT_FIELDS[column] for column in columns if column in DIRECT_FIELDS}
+    if not fields:
+        return
+    now = arsrapport.now()
+    waiting = (
+        MemberChangeRequest.select()
+        .join(Member, on=(MemberChangeRequest.member == Member.id))
+        .where(
+            Member.membership == membership_id,
+            MemberChangeRequest.confirmed_at.is_null(),
+            MemberChangeRequest.revoked_at.is_null(),
+            MemberChangeRequest.expires_at > now,
+        )
+    )
+    ids = [
+        row.id
+        for row in waiting
+        if (field := _field(row)) in fields and (field in ("adress", "konto") or person_id in (None, row.member_id))
+    ]
+    if ids:
+        MemberChangeRequest.update(revoked_at=now, revoked_reason="nyare").where(
+            MemberChangeRequest.id.in_(ids)
+        ).execute()
+
+
 def revoke_withdrawn(report, now):
     """Dra tillbaka (D7): the report's waiting changes go; what was written or confirmed stays."""
     submissions = YearlyReportSubmission.select(YearlyReportSubmission.id).where(
@@ -387,12 +432,12 @@ def _revoke_older(row, field, now):
 
 
 def not_me(token):
-    """ "Det var inte jag": the submission's changes not yet written are revoked, and the status view says so."""
+    """ "Det var inte jag": the submission's waiting changes are revoked, and the status view says so."""
     with DB_PROXY.atomic():
         herd, membership, member, rows = _context(_submission(token), lock=True)
         now = arsrapport.now()
         for row in rows:
-            if row.confirmed_at is None and row.revoked_at is None:
+            if _state(row, now) == "vantar":  # an expired change keeps "kontobyte förföll"
                 row.revoked_at, row.revoked_reason = now, "inte_jag"
                 row.save(only=[MemberChangeRequest.revoked_at, MemberChangeRequest.revoked_reason])
         return _view(herd, _entries(membership, member, rows, now))
