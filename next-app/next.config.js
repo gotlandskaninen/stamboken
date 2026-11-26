@@ -14,7 +14,7 @@ const nextConfig = {
   experimental: {
     // Intyg uploads go through a Server Action. Next.js only has this limit
     // globally (no per-action setting), so nginx scopes it: 50 MiB only on the
-    // upload pages (/stamboken/inskick/ny, arsrapport, individ), 10 MiB on
+    // upload pages (/stamboken/inskick/ny, arsrapport, individ, /rapport), 10 MiB on
     // everything else. Flask enforces the real limits per endpoint, and the
     // upload form keeps the files to 48 MB.
     serverActions: { bodySizeLimit: "50mb" },
