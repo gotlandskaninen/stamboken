@@ -12,7 +12,7 @@ REFUSED = {
     "status": "error",
     "message": "Kontaktuppgifterna ändras i nya Stamboken. Har du inte tillgång där, kontakta genbanksansvarig.",
 }
-COLUMNS = (*STATE, "herd_name", "bank_account_number")
+COLUMNS = (*STATE, "herd_name")
 
 
 class HerdContactLegacyTest(HerdContactWriteTest):
@@ -27,19 +27,27 @@ class HerdContactLegacyTest(HerdContactWriteTest):
         return response.get_json()
 
     def _columns(self, herd=None):
+        """The herd's columns, and its membership's account, which the old app still sends as the herd's."""
         row = db.Herd.get_by_id((herd or self.herd).id)
-        return {column: getattr(row, column) for column in COLUMNS}
+        account = db.Membership.get_by_id(row.membership_id).bank_account_number if row.membership_id else None
+        return {**{column: getattr(row, column) for column in COLUMNS}, "bank_account_number": account}
 
 
 class TestLegacyWrites(HerdContactLegacyTest):
     def test_legacy_echo_accepted(self):
-        """An echo of what the user read, derived rows included, saves the bank account and makes no own copies."""
-        for user in (self._main_user(), self._legacy_owner(), self.admin):
+        """An echo of what the user read, derived rows included, saves the bank account and makes no own copies.
+        The account is the membership's: a legacy owner privilege does not change it (U2)."""
+        for user in (self._main_user(), self.admin):
             with self.subTest(user=user.username):
                 before = self._columns()
                 account = f"1234-{user.id:07d}"
                 self.assertEqual(self._legacy_save(user, bank_account_number=account), {"status": "updated"})
                 self.assertEqual(self._columns(), {**before, "bank_account_number": account})
+        before, legacy = self._columns(), self._legacy_owner()
+        self.assertEqual(self._legacy_save(legacy, herd_name="Ny"), {"status": "updated"})
+        forbidden = {"status": "error", "message": "Forbidden"}
+        self.assertEqual(self._legacy_save(legacy, bank_account_number="1234-5678901"), forbidden)
+        self.assertEqual(self._columns(), {**before, "herd_name": "Ny"})
 
     def test_legacy_hidden_address_echo_forms(self):
         """Granskningsfokus 4: the household's address is hidden from the old owner role; the old app sends it back

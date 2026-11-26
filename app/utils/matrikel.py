@@ -94,6 +94,10 @@ HOUSEHOLD_PII_FIELDS = (
     "organization_name",
     "organization_number",
     *BILLING_FIELDS,
+    # the support account (migration 58): no payout without a person (U14)
+    "bank_account_type",
+    "bank_account_number",
+    "bank_name",
 )
 # postal_address is the pre-v29 spelling, still present in old payloads.
 HOUSEHOLD_PII_KEYS = frozenset((*HOUSEHOLD_PII_FIELDS, "postal_address"))

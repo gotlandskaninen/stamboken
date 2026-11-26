@@ -2,8 +2,20 @@
 
 import React from "react";
 import { MbCard } from "../min-besattning/min-besattning-ui";
-import { CONSENT_TEXT, UTOM_ALL, type PaperFields, type Utom } from "./lib";
+import {
+  CONSENT_TEXT,
+  UTOM_ALL,
+  type KontoTyp,
+  type PaperFields,
+  type Utom,
+} from "./lib";
 import styles from "./arsrapport.module.css";
+
+const KONTO_TYP: [KontoTyp, string][] = [
+  ["bankkonto", "Bankkonto"],
+  ["bankgiro", "Bankgiro"],
+  ["plusgiro", "Plusgiro"],
+];
 
 const UTOM_LABEL: Record<Utom, string> = {
   phone: "telefonnummer",
@@ -132,12 +144,38 @@ export function PaperChanges({
             ? `Nuvarande konto slutar på ••${accountEnd}`
             : "Inget konto i matrikeln"}
         </p>
-        {text(
-          "Clearingnummer",
-          fields.konto.clearing,
-          (v) => set({ konto: { ...fields.konto, clearing: v } }),
-          { inputMode: "numeric", maxLength: 12 },
-        )}
+        <div role="radiogroup" aria-label="Typ av konto">
+          <div className={styles.choices}>
+            {KONTO_TYP.map(([v, label]) => (
+              <label key={v} className={styles.choice}>
+                <input
+                  type="radio"
+                  name="kontotyp"
+                  checked={fields.konto.typ === v}
+                  onChange={() =>
+                    set({
+                      konto: {
+                        ...fields.konto,
+                        typ: v,
+                        // only a bankkonto has a clearing number
+                        clearing:
+                          v === "bankkonto" ? fields.konto.clearing : "",
+                      },
+                    })
+                  }
+                />
+                <span>{label}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+        {(fields.konto.typ === "" || fields.konto.typ === "bankkonto") &&
+          text(
+            "Clearingnummer",
+            fields.konto.clearing,
+            (v) => set({ konto: { ...fields.konto, clearing: v } }),
+            { inputMode: "numeric", maxLength: 12 },
+          )}
         {text(
           "Kontonummer",
           fields.konto.konto,

@@ -979,8 +979,11 @@ def _report_json(report, round_, access, is_open):
 
 
 def account_end(herd):
-    """The stored account's last two digits ("12"): the only account data paper entry reads (fråga 34)."""
-    return (masked_account(herd.bank_account_number) or "").removeprefix("••") or None
+    """
+    The herd's membership's account's last two digits ("12"): the only account data paper entry reads (fråga 34).
+    """
+    number = herd.membership.bank_account_number if herd.membership_id else None
+    return (masked_account(number) or "").removeprefix("••") or None
 
 
 def report_litters(herd, year):
@@ -1483,7 +1486,7 @@ BODY_KEYS = (
 )
 PAPER_KEYS = ("inbox_item_id", "received_on", "signed_on", "matrikel")
 PAPER_FIELDS = ("konto", "adress", "telefon", "epost", "publicering")  # the form's "Dina uppgifter"
-MATRIKEL_PARTS = {"adress": ("address", "postal_code", "city"), "konto": ("clearing", "konto", "bank")}
+MATRIKEL_PARTS = {"adress": ("address", "postal_code", "city"), "konto": ("typ", "clearing", "konto", "bank")}
 UTOM = ("phone", "email", "address")  # the consent keys a Ja may leave out; the name never
 CONSENT_LABELS = {"phone": "telefonnummer", "email": "e-postadress", "address": "postnummer och ort"}
 ENTRY_KEYS = ("val", "vikt", "ej_vagd", "hull", "dod", "sald")
@@ -1950,7 +1953,10 @@ REFUSALS = {  # the copy the client shows (P44)
     "telefon_ogiltig": "Telefonnumret får vara högst 50 tecken.",
     "epost_ogiltig": "Kontrollera e-postadressen.",
     "epost_kan_inte_anvandas": "E-postadressen kan inte användas. Kontrollera den med medlemmen.",
-    "konto_ogiltigt": "Clearingnumret har 4–5 siffror och kontonumret 5–12 siffror.",
+    "konto_ogiltigt": (
+        "Ett bankkonto har clearingnummer med 4–5 siffror och kontonummer med 5–12 siffror. "
+        "Ett bankgironummer har 7–8 siffror och ett plusgironummer 2–8, utan clearingnummer."
+    ),
 }
 # _validate_sale's user: the report never sells into another genebank, since TransferIndividual needs a reason there.
 _NOT_ADMIN = SimpleNamespace(is_admin=False)
@@ -2397,9 +2403,12 @@ COLUMN_FIELDS = {
     "city": "adress",
     "phone": "telefon",
     "email": "epost",
+    "bank_account_type": "konto",
     "bank_account_number": "konto",
     "bank_name": "konto",
 }
+# The form's boxes Bankkonto, Bankgiro and Plusgiro (drift #53): how many digits the number has (5.5, D8)
+ACCOUNT_DIGITS = {"bankkonto": "[0-9]{5,12}", "bankgiro": "[0-9]{7,8}", "plusgiro": "[0-9]{2,8}"}
 
 
 def _contact(matrikel) -> tuple[dict, list[Refusal]]:
@@ -2432,14 +2441,17 @@ def _contact(matrikel) -> tuple[dict, list[Refusal]]:
     elif epost:
         contact["epost"] = {"email": epost}
     konto = given.get("konto") or {}
+    typ = konto.get("typ") or "bankkonto"  # a form without a ticked box, as before the boxes
     clearing, number = (re.sub(r"[\s.-]", "", konto.get(part) or "") for part in ("clearing", "konto"))
     bank = (konto.get("bank") or "").strip() or None
-    if clearing or number:  # D8: digits only, the clearing 4–5 and the account 5–12
-        if not (re.fullmatch("[0-9]{4,5}", clearing) and re.fullmatch("[0-9]{5,12}", number)) or len(bank or "") > 100:
+    if clearing or number:  # D8: digits only; a clearing (4–5 digits) for a bankkonto alone
+        valid = typ in ACCOUNT_DIGITS and re.fullmatch(ACCOUNT_DIGITS[typ], number) and len(bank or "") <= 100
+        if not valid or not (re.fullmatch("[0-9]{4,5}", clearing) if typ == "bankkonto" else clearing == ""):
             refusals.append(_refusal(None, "konto_ogiltigt"))
-        else:
-            # shortcut: the account lives on the herd, migration 44 moves it to the membership; write it there then
-            contact["konto"] = {"bank_account_number": f"{clearing}-{number}", "bank_name": bank}
+        else:  # as written: clearing-account, a bankgiro 123-4567, a plusgiro 12345-6
+            cut = {"bankkonto": 0, "bankgiro": -4, "plusgiro": -1}[typ]
+            written = f"{clearing}-{number}" if cut == 0 else f"{number[:cut]}-{number[cut:]}"
+            contact["konto"] = {"bank_account_type": typ, "bank_account_number": written, "bank_name": bank}
     return contact, refusals
 
 
@@ -2474,12 +2486,13 @@ def _matrikel_refusals(herd, paper, submissions, *, check_email):
 def later_fields(herd, membership, member, signed_on: date, own=frozenset()) -> set[str]:
     """
     D19: the PAPER_FIELDS the matrikel changed after the form's date, that is from the next day in Stockholm: the
-    account by the herd's audit_log, the consent by publication_consent_change, and the rest by matrikel_audit, whose
-    created_at is naive server time. Phone and e-mail count only from rows about `member`, and every swap of the main
-    member counts for them (I2). The paper writes of the submissions in `own`, the herd's report for the round, do not
-    count, so that Ändra from paper can correct its own typo (I1): their kontakt_andrad rows, the herd's audit rows
-    of the same transactions, and their paper consent rows. That holds only for a form not withdrawn and signed on or
-    before `signed_on`: a newer signed form's write still wins over an older form entered after it.
+    consent by publication_consent_change, and the rest by matrikel_audit, whose created_at is naive server time, the
+    account also by the herd's audit_log from before migration 58 moved it to the membership. Phone and e-mail count
+    only from rows about `member`, and every swap of the main member counts for them (I2). The paper writes of the
+    submissions in `own`, the herd's report for the round, do not count, so that Ändra from paper can correct its own
+    typo (I1): their kontakt_andrad rows, the herd's audit rows of the same transactions, and their paper consent rows.
+    That holds only for a form not withdrawn and signed on or before `signed_on`: a newer signed form's write still
+    wins over an older form entered after it.
     """
     # shortcut: the matrikel importer in cli/members.py leaves no trace, so this misses its changes; log them if it
     # ever runs during a round.
@@ -2510,7 +2523,7 @@ def later_fields(herd, membership, member, signed_on: date, own=frozenset()) -> 
             fields |= {"telefon", "epost"}
         mine = payload.get("person_id", member.id) == member.id  # membership_updated names no person
         for column in payload.get("fields") or payload.get("after") or ():
-            if column in COLUMN_FIELDS and (mine or COLUMN_FIELDS[column] == "adress"):
+            if column in COLUMN_FIELDS and (mine or COLUMN_FIELDS[column] in ("adress", "konto")):
                 fields.add(COLUMN_FIELDS[column])
     account = AuditLog.select(AuditLog.transaction_id).where(
         AuditLog.table_name == "herd",
@@ -2540,26 +2553,24 @@ def _same(column, stored, value):
 def apply_paper_matrikel(herd, membership, member, submission, item, user, matrikel, signed_on):
     """
     5.5: the form's consent and contact changes written into the matrikel and never read back: the consent first and
-    the address to `membership`, phone and e-mail to its main `member`, the account to the herd (D8). The caller holds
-    the membership's lock and read both under it. Only a value that differs counts, the bank going with a new account,
+    the address and the account to `membership`, phone and e-mail to its main `member` (D8). The caller holds the
+    membership's lock and read both under it. Only a value that differs counts, the bank going with a new account,
     and a field the matrikel changed after `signed_on` is skipped (D19), unless the herd's report for the round wrote
     it from paper itself (I1). For the consent only what it adds is skipped: a No or fewer details go at once (fråga
     27). Each write is save(only=…): a whole row would write back a stale user_id. The consent's log is its
     publication_consent_change row; every contact write gets one kontakt_andrad row with the column names and
-    `submission_id`, and with the transaction for the account, which ties the herd's audit row to it. Returns
-    (written, skipped) as PAPER_FIELDS.
+    `submission_id`. Returns (written, skipped) as PAPER_FIELDS.
     """
-    stored = Herd.get_by_id(herd.id)  # the account as it is now, not as the route read it
     report = YearlyHerdReport.get_by_id(submission.report_id)
     same = (YearlyHerdReport.herd == report.herd_id) & (YearlyHerdReport.round == report.round_id)
     own = YearlyReportSubmission.select(YearlyReportSubmission.id).join(YearlyHerdReport).where(same)
-    rows = {"adress": membership, "telefon": member, "epost": member, "konto": stored}
+    rows = {"adress": membership, "telefon": member, "epost": member, "konto": membership}
     changes = {}
     for name, columns in _contact(matrikel)[0].items():
         row = rows[name]
-        if name == "konto":
+        if name == "konto":  # the same digits are the same account, unless the stored type says otherwise
             moved = not _same("bank_account_number", row.bank_account_number, columns["bank_account_number"])
-            differ = columns if moved else {}
+            differ = columns if moved or row.bank_account_type not in (None, columns["bank_account_type"]) else {}
         else:
             differ = {
                 column: value for column, value in columns.items() if not _same(column, getattr(row, column), value)
@@ -2570,7 +2581,7 @@ def apply_paper_matrikel(herd, membership, member, submission, item, user, matri
     consent = consent_from_answer(answer["ja"], answer["utom"]) if answer is not None else None
     consent = None if consent == stored_consent(membership) else consent
     asked = changes or consent is not None
-    later = later_fields(stored, membership, member, signed_on, {row.id for row in own}) if asked else set()
+    later = later_fields(herd, membership, member, signed_on, {row.id for row in own}) if asked else set()
     skipped = [name for name in PAPER_FIELDS if name in changes and name in later]
     written = {name: changes[name] for name in PAPER_FIELDS if name in changes and name not in later}
     if consent is not None and "publicering" in later:  # only what the form adds waits for the member
@@ -2596,9 +2607,8 @@ def apply_paper_matrikel(herd, membership, member, submission, item, user, matri
             code = "epost_kan_inte_anvandas"
             raise ArsrapportError(409, REFUSALS[code], code=code, field="epost") from exc
     for model, row, names, stamp in (
-        (Membership, membership, ("adress",), [Membership.updated_at]),
+        (Membership, membership, ("adress", "konto"), [Membership.updated_at]),
         (Member, member, ("telefon",), [Member.updated_at]),
-        (Herd, stored, ("konto",), []),
     ):
         columns = {column: value for name in names for column, value in written.get(name, {}).items()}
         for column, value in columns.items():
@@ -2613,8 +2623,6 @@ def apply_paper_matrikel(herd, membership, member, submission, item, user, matri
             "inbox_item_id": item.id,
             "submission_id": submission.id,
         }
-        if "konto" in written:  # the herd's audit row has the same transaction_id (txid_current() by default)
-            payload["transaction_id"] = DB_PROXY.execute_sql("SELECT txid_current()").fetchone()[0]
         if "epost" in written:  # same audit shape as person_updated
             payload |= {"before": {"email": old_email}, "after": {"email": member.email}}
         write_matrikel_audit(user, "kontakt_andrad", membership, payload)
@@ -2681,9 +2689,9 @@ def _contact_event(submission):
 
 def _lock_matrikel(herd):
     """
-    The herd's membership FOR UPDATE, which the matrikel's own writers take first, then the herd's row, whose account
-    apply_paper_matrikel checks and writes (Opus 5): an account change on the herd page waits, or comes before
-    later_fields reads it. FOR NO KEY UPDATE, as lock_individuals, so rows that refer to the herd are not held up.
+    The herd's membership FOR UPDATE, which the matrikel's own writers take first, then the herd's row (Opus 5): an
+    account change on the herd page (update_herd, under the same two locks) waits, or comes before later_fields reads
+    it. FOR NO KEY UPDATE, as lock_individuals, so rows that refer to the herd are not held up.
     The main member is read under them: (membership, member), each None when missing. A herd moved to another
     membership meanwhile is a 409.
     """

@@ -611,10 +611,20 @@ class TestAuditBlueprint(DatabaseTest):
         self.assertIsInstance(data["data"], list)
         self.assertGreater(len(data["data"]), 0)
 
+    def _old_bank_audit(self, herd, old, new):
+        """A herd audit row from before migration 58, when the herd held the account."""
+        db.AuditLog.create(
+            table_name="herd",
+            record_id=str(herd.id),
+            operation="UPDATE",
+            changed_fields=["bank_account_number"],
+            old_data={"bank_account_number": old},
+            new_data={"bank_account_number": new},
+        )
+
     def test_herd_audit_history_cuts_the_bank_account_for_a_manager(self):
         herd = self.herds[0]
-        herd.bank_account_number = "1234-5"
-        herd.save()
+        self._old_bank_audit(herd, None, "1234-5")
         for username, expected in (("admin", "1234-5"), ("man", "••45")):
             self.client.get("/api/logout")
             self.login(username)
@@ -628,12 +638,10 @@ class TestAuditBlueprint(DatabaseTest):
                     for snapshot in (entry["old_data"], entry["new_data"]):
                         self.assertNotEqual((snapshot or {}).get("bank_account_number"), "1234-5")
 
-    def test_herd_audit_history_masks_old_data_and_spares_the_owner_manager(self):
+    def test_herd_audit_history_masks_old_data_also_for_the_owner_manager(self):
         herd = self.herds[0]
-        herd.bank_account_number = "1234-5"
-        herd.save()
-        herd.bank_account_number = "9876-5"
-        herd.save()  # the second UPDATE puts the first account in old_data
+        self._old_bank_audit(herd, None, "1234-5")
+        self._old_bank_audit(herd, "1234-5", "9876-5")  # the second puts the first account in old_data
         self.login("man")
         data = self.client.get(f"/api/audit-log/herd/{herd.id}").get_json()["data"]
         seen = [e[k].get("bank_account_number") for e in data for k in ("old_data", "new_data") if e[k]]
@@ -641,11 +649,12 @@ class TestAuditBlueprint(DatabaseTest):
         self.assertNotIn("1234-5", seen)
         self.assertNotIn("9876-5", seen)
         self.client.get("/api/logout")
-        self.manager.add_role("owner", herd.id)  # a manager who also owns the herd sees it whole
+        self.manager.add_role("owner", herd.id)  # owning the herd is no right to the whole account (U2)
         self.login("man")
         data = self.client.get(f"/api/audit-log/herd/{herd.id}").get_json()["data"]
         seen = [e[k].get("bank_account_number") for e in data for k in ("old_data", "new_data") if e[k]]
-        self.assertIn("1234-5", seen)
+        self.assertNotIn("1234-5", seen)
+        self.assertIn("••45", seen)
 
     def test_get_audit_history_omits_editor_ip_address(self):
         """The editor's IP is PII (purge_user_audit_pii NULLs it, the admin reader

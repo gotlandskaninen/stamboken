@@ -1532,7 +1532,7 @@ class TestHerdPrivacyLevels(FlaskTest):
 
     def _g2_with_private_fields(self):
         g2 = self.herds[1]
-        g2.bank_account_number = "1234-5"
+        g2.membership = db.Membership.create(bank_account_number="1234-5")  # the account is the membership's (58)
         g2.physical_address = "Gatan 1"
         g2.physical_address_privacy = "private"
         g2.save()
@@ -1569,11 +1569,12 @@ class TestHerdPrivacyLevels(FlaskTest):
 
     def test_owner_reads_own_private_fields_but_not_other_herds(self):
         g1, g2 = self.herds[0], self._g2_with_private_fields()
-        g1.bank_account_number = "9999-9"
+        g1.membership = db.Membership.create(bank_account_number="9999-9")
         g1.save()
         client = self.app.application.test_client(use_cookies=True)
         client.post("/api/login", json={"username": self.owner.email, "password": "pass"})
-        self.assertEqual(client.get(f"/api/herd/{g1.herd}").get_json().get("bank_account_number"), "9999-9")
+        # the owner reads the account's end only: the whole is for admin and matrikel_admin (U2)
+        self.assertEqual(client.get(f"/api/herd/{g1.herd}").get_json().get("bank_account_number"), "••99")
         self.assertNotIn("bank_account_number", client.get(f"/api/herd/{g2.herd}").get_json())
 
 
