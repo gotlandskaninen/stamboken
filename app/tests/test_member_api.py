@@ -1070,6 +1070,32 @@ class TestKoharenExport(MatrikelApiTest):
                 _answer(ms, EVERYTHING, version)
         self.assertEqual([r[0] for r in self._rows()[1:]], ["G9001", "G9002", "G9013", "G9014", "M9201"])
 
+    def test_a_new_holder_must_answer_again(self):
+        """The answer is the holder's: a swap of huvudmedlem clears it, with history, before the next export."""
+        self.login("matrikel")
+        frida = db.Member.get(db.Member.email == "frida@example.com")
+        resp = self.client.post(f"/api/v2/memberships/{self.full.id}/main-member", json={"person_id": frida.id})
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual([r[0] for r in self._rows()[1:]], ["G9002"])
+        change = db.PublicationConsentChange.select().order_by(db.PublicationConsentChange.id.desc()).first()
+        self.assertEqual(
+            (change.membership_id, change.value, change.source, change.user_id),
+            (self.full.id, {}, "admin", self.matrikel_user.id),
+        )
+
+    def test_a_reactivated_or_added_holder_must_answer_again(self):
+        """Also a huvudmedlem reactivated or added to a membership without one (an organization's new contact)."""
+        db.Member.update(end_date=date.today()).where(
+            db.Member.email.in_(("anna@example.com", "bo@example.com"))
+        ).execute()
+        matrikel.reactivate_person(db.Member.get(db.Member.email == "bo@example.com"), self.matrikel_user)
+        new = {"first_name": "Ny", "last_name": "Kontakt", "role": "huvudmedlem"}
+        matrikel.add_person(self.full, new, self.matrikel_user)
+        for membership in (self.full, self.partial):
+            with self.subTest(membership=membership.member_number):
+                self.assertEqual(db.Membership.get_by_id(membership.id).publication_consent, {})
+        self.assertEqual(self._rows()[1:], [])
+
     def test_family_member_never_stands_in_for_the_holder(self):
         db.Member.update(end_date=date.today()).where(db.Member.email == "anna@example.com").execute()
         self.assertEqual([r[0] for r in self._rows()[1:]], ["G9002"])
