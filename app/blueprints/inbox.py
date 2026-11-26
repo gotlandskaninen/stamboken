@@ -784,6 +784,18 @@ def _assign_certificate(body, user, grant, document):
         raise inbox.InboxError(400, "Ange intygsnumret (paper_certificate), högst 20 tecken.")
     if parse_number(paper_number) is None:
         raise inbox.InboxError(400, PAPER_NUMBER_REQUIRED)
+    if individual.certificate == certificate.strip():
+        # A photo of the certificate the rabbit already has: nothing is written, the document is linked so its copy
+        # can go on the rabbit. A helper may link in her genebank too (Jonas 2026-11-26).
+        herd = individual.current_herd
+        if not (inbox.manages(user, herd.genebank_id) or grant.allows(user, herd)):
+            raise inbox.InboxError(403, f"Du får inte lägga intyg på {individual.number}.")
+        if parse_number(paper_number) != parse_number(individual.number):
+            raise inbox.InboxError(
+                409,
+                f"Intyget {certificate.strip()} gäller {individual.number}, men numret på intyget är {paper_number}.",
+            )
+        return {"individual": individual.as_dict()}, individual
     try:
         execute(
             user, individual.id, lambda ctx: [AssignPaperCertificate(certificate.strip(), paper_number)], grant=grant
@@ -942,7 +954,13 @@ def confirm_mask(item_id, document_id):
     def action(item):
         document = inbox.document_of(item, document_id)
         inbox.confirm_mask(
-            item, document, current_user, body.get("rotation"), body.get("mask_rects"), body.get("no_personal_data")
+            item,
+            document,
+            current_user,
+            body.get("rotation"),
+            body.get("mask_rects"),
+            body.get("no_personal_data"),
+            body.get("matches_registry"),
         )
         return jsonify({"item": inbox.items_json([item])[0], "document": inbox.documents_json([document])[0]})
 

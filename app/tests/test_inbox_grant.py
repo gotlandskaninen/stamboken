@@ -247,21 +247,44 @@ class TestSaveEndpoint(GrantTest):
         certified = {**body, "individual": "G1-2111", "paper_certificate": "P-10", "paper_number": "G1-2111"}
         self.assertEqual(self.save(item2, document2, **certified).status_code, 403)
 
-    def test_a_save_that_changes_nothing_is_refused_and_links_nothing(self):
-        held = self.rabbit("G1-2111")
-        item, document = self.taken(self.manager)
-        self.login("man")
+    def test_a_photo_of_the_certificate_the_rabbit_has_is_linked_and_writes_nothing(self):
+        held = self.rabbit("G1-2111")  # certificate "12" in the fixture
         body = {
             "action": "pappersintyg",
             "individual": held.number,
             "paper_certificate": held.certificate,
             "paper_number": held.number,
         }
-        resp = self.save(item, document, **body)
-        self.assertEqual((resp.status_code, resp.get_json()["detail"][:13]), (409, "Ingen ändring"))
-        self.assertIsNone(db.InboxDocument.get_by_id(document.id).individual_id)
-        self.assertFalse(db.InboxEvent.select().where(db.InboxEvent.kind == "sparad").exists())
+        for user, name in ((self.helper, "hjalp"), (self.manager, "man")):  # a helper too (Jonas 2026-11-26)
+            with self.subTest(name):
+                item, document = self.taken(user)
+                self.login(name)
+                resp = self.save(item, document, **body)
+                self.assertEqual(resp.status_code, 200, resp.get_json())
+                self.assertEqual(resp.get_json()["document"]["status"], "sparad")
+                self.assertEqual(db.InboxDocument.get_by_id(document.id).individual_id, held.id)
+        self.assertEqual(self.rabbit("G1-2111").certificate, "12")
+        self.assertFalse(db.IndividualCommand.select().exists())
         self.assertFalse(db.InboxOperation.select().exists())
+
+    def test_linking_needs_the_rabbits_own_number_and_a_role_in_its_genebank(self):
+        held = self.rabbit("G1-2111")
+        body = {
+            "action": "pappersintyg",
+            "individual": held.number,
+            "paper_certificate": "12",
+            "paper_number": "G1-2111",
+        }
+        item, document = self.taken(self.helper)
+        self.login("hjalp")
+        resp = self.save(item, document, **{**body, "paper_number": "G1-2112"})
+        self.assertEqual(resp.status_code, 409, resp.get_json())
+        other, foreign = self.taken(self.mellerud_helper, herd=2)
+        self.login("mhjalp")
+        self.assertEqual(self.save(other, foreign, **body).status_code, 403)
+        for unlinked in (document, foreign):
+            self.assertIsNone(db.InboxDocument.get_by_id(unlinked.id).individual_id)
+        self.assertFalse(db.InboxEvent.select().where(db.InboxEvent.kind == "sparad").exists())
 
     def test_a_number_conflict_on_an_existing_rabbit_is_not_resolved_by_resolution(self):
         item, document = self.taken(self.helper)

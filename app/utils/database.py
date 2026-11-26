@@ -74,8 +74,9 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # the herd's contact from the member register, herd.contact_member and herd.contact_pending (50) +
 # the yearly report v2 (51) + organization name and number on membership (52) +
 # notice.individual and buyer_contact.erased_email_hash (53) +
-# acceptance of the account rules (54) + each history year's realised Ne (55).
-CURRENT_SCHEMA_VERSION = 55
+# acceptance of the account rules (54) + each history year's realised Ne (55) +
+# a paper certificate's copy checked against the registry, inbox_document.verified_at and verified_by (56).
+CURRENT_SCHEMA_VERSION = 56
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -2477,6 +2478,9 @@ class InboxDocument(BaseModel):
     # The members the photo shows, recorded when it is saved through the queue, so an erasure finds it.
     seller_member = ForeignKeyField(Member, null=True, on_delete="SET NULL", backref="+")
     buyer_member = ForeignKeyField(Member, null=True, on_delete="SET NULL", backref="+")
+    # The handler found the certificate and the registry in agreement when the copy was made (the rabbit's badge).
+    verified_at = TimestampTZField(null=True)
+    verified_by = ForeignKeyField(User, null=True, on_delete="SET NULL", backref="+")
 
     class Meta:
         table_name = "inbox_document"
@@ -4960,6 +4964,20 @@ def migrate_54_to_55():
         ).execute()
 
 
+def migrate_55_to_56():
+    """A paper certificate's copy records whether its handler found it in agreement with the registry."""
+    with DATABASE.atomic():
+        DATABASE.execute_sql("ALTER TABLE inbox_document ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ")
+        DATABASE.execute_sql(
+            "ALTER TABLE inbox_document ADD COLUMN IF NOT EXISTS verified_by_id INTEGER "
+            'REFERENCES "hbuser" ("user_id") ON DELETE SET NULL'
+        )
+        InboxDocument._schema.create_indexes(safe=True)  # the foreign key's index, named as a fresh bootstrap
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=56, comment="inbox_document: copy checked against the registry", applied=datetime.now()
+        ).execute()
+
+
 def migrate_21_to_22():
     """Add litter_number to Breeding table and backfill from minted numbers."""
     with DATABASE.atomic():
@@ -5452,6 +5470,7 @@ MIGRATIONS = {
     (52, 53): migrate_52_to_53,  # notice.individual, buyer_contact.erased_email_hash
     (53, 54): migrate_53_to_54,  # account rules acceptance
     (54, 55): migrate_54_to_55,  # realised Ne per history year
+    (55, 56): migrate_55_to_56,  # inbox_document.verified_at, verified_by
 }
 
 

@@ -251,6 +251,7 @@ describe("WorkView: masking", () => {
       90,
       [{ x: 0, y: 0, w: 0.3333, h: 1 }],
       false,
+      false,
     );
   });
 
@@ -276,7 +277,14 @@ describe("WorkView: masking", () => {
     );
     expect(confirm).toBeEnabled();
     fireEvent.click(confirm);
-    expect(actions.confirmMask).toHaveBeenCalledWith(12, 31, 0, [], true);
+    expect(actions.confirmMask).toHaveBeenCalledWith(
+      12,
+      31,
+      0,
+      [],
+      true,
+      false,
+    );
   });
 
   it("lets a manager redo the masking of a finished document, from its stored rotation", () => {
@@ -303,7 +311,67 @@ describe("WorkView: masking", () => {
       90,
       [{ x: 0.1, y: 0.1, w: 0.2, h: 0.2 }],
       false,
+      false,
     );
+  });
+
+  it("proposes 'stämmer med registret' only when every check passed, and the handler decides", () => {
+    const checked = (checks: { ok: boolean | null; text: string }[]) =>
+      doc({
+        interpretation_status: "klar",
+        proposal: { fields: {}, checks },
+      });
+    const passing = [
+      { ok: null, text: "G1-2112 finns redan i Stamboken." },
+      { ok: true, text: "Föräldrarna på intyget stämmer med registret." },
+    ];
+    const { unmount } = render(view(item({ documents: [checked(passing)] })));
+    const box = screen.getByLabelText(/Intyget stämmer med registret/);
+    expect(box).toBeChecked();
+    expect(screen.getByText(/alla kontroller gick igenom/)).toBeInTheDocument();
+    fireEvent.click(box);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Bekräfta maskningen och nästa" }),
+    );
+    expect(actions.confirmMask).toHaveBeenLastCalledWith(
+      12,
+      31,
+      0,
+      expect.any(Array),
+      false,
+      false,
+    );
+    unmount();
+    render(
+      view(
+        item({
+          documents: [
+            checked([...passing, { ok: false, text: "Namnet skiljer sig." }]),
+          ],
+        }),
+      ),
+    );
+    expect(
+      screen.getByLabelText(/Intyget stämmer med registret/),
+    ).not.toBeChecked();
+  });
+
+  it("redoes the masking from the stored check", () => {
+    const done = doc({
+      status: "klar",
+      has_copy: true,
+      verified_at: "2026-11-26T10:00:00+00:00",
+    });
+    render(
+      view(
+        item({ state: "klar", assigned_to: other, documents: [done] }),
+        boss,
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Gör om maskningen" }));
+    expect(
+      screen.getByLabelText(/Intyget stämmer med registret/),
+    ).toBeChecked();
   });
 
   it("does not offer the redo to a helper once the item is closed", () => {

@@ -28,6 +28,7 @@ import {
   canEditDocuments,
   canSave,
   CERT_FORMAT_LABEL,
+  checksPass,
   CLOSED_STATES,
   DOC_STATUS_LABEL,
   DOC_TYPE_LABEL,
@@ -203,6 +204,8 @@ export function WorkView({
   const mayMask =
     editable || (!noRole && !!doc?.has_copy && manages(user, item.genebank_id));
   const [noPersonalData, setNoPersonalData] = useState(false);
+  // "Stämmer med registret": proposed when the reading passed every check; the handler decides.
+  const [matches, setMatches] = useState(() => !!doc && checksPass(doc));
   // Nothing saved from it yet: its type can change and it can be dismissed.
   const fresh = doc?.status === "ny" || doc?.status === "vantar_foralder";
   // A purchase notice's photo is looked at and dismissed only: never read, so no type, format or Tolka igen.
@@ -228,6 +231,7 @@ export function WorkView({
     setCrop(null);
     setRedo(false);
     setNoPersonalData(false);
+    setMatches(!!doc && checksPass(doc));
   }
 
   const run = <T,>(
@@ -819,6 +823,7 @@ export function WorkView({
                       setRotation(doc.rotation);
                       setRects(initialRects(doc));
                       setSelectedRect(null);
+                      setMatches(!!doc.verified_at);
                       setRedo(true);
                     }}
                   >
@@ -879,6 +884,20 @@ export function WorkView({
                         Fotot visar inga säljar- eller köparuppgifter
                       </label>
                     )}
+                    <label className={styles.row}>
+                      <input
+                        type="checkbox"
+                        checked={matches}
+                        onChange={(e) => setMatches(e.target.checked)}
+                      />
+                      Intyget stämmer med registret
+                      {checksPass(doc) && (
+                        <span className={styles.muted}>
+                          {" "}
+                          (alla kontroller gick igenom)
+                        </span>
+                      )}
+                    </label>
                     <div className={styles.row}>
                       <button
                         type="button"
@@ -895,6 +914,7 @@ export function WorkView({
                                 rotation,
                                 toApiRects(rects),
                                 noPersonalData,
+                                matches,
                               ),
                             (d) => {
                               setRedo(false);

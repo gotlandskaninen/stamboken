@@ -105,6 +105,8 @@ export interface Individual extends LimitedIndividual {
   genebank_id: number;
   certificate: string | null;
   digital_certificate?: string | null;
+  /** When the queue's handler found the paper certificate's photo and the registry in agreement (v2 GET only). */
+  paper_certificate_checked?: string | null;
   birth_date: string | null;
   mother: LimitedIndividual | null;
   father: LimitedIndividual | null;

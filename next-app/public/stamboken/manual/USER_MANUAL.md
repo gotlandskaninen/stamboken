@@ -816,7 +816,9 @@ Allt om en kanin. Adressen är /stamboken/individ/ följt av individnumret.
   ort.
 - **Pappersintyg** – en kopia av pappersintyget som lästs in, med säljarens och
   köparens uppgifter överstrukna. Klicka bilden för full storlek. Blocket visas bara
-  om kaninen har en kopia och du får se den.
+  om kaninen har en kopia och du får se den. Märkningen **Intyget kontrollerat** vid
+  kaninens nummer ser alla: pappersintyget finns i Stamboken och stämde med registret när
+  det lästes in. Håll muspekaren över den för att se datumet.
 - **Anteckningar** – fritext och eventuell dödsorsak.
 - **Ändringshistorik** – visas bara för genbanksansvarig och administratör.
 
@@ -1247,6 +1249,9 @@ administratörer, genbanksansvariga och genbankshjälpare, och alla tre kan se h
    Stämmer inte individnumret på pappret med Stambokens öppnas samma ruta som för
    uppfödaren, se [När pappret och Stamboken har olika individnummer](#när-pappret-och-stamboken-har-olika-individnummer).
    Stämmer pappret lämnar du ärendet till genbanksansvarig.
+   Har kaninen redan samma intygsnummer i Stamboken, som de flesta kaniner från det gamla
+   registret, ändras ingenting i registret: fotot kopplas till kaninen så att kopian kan läggas
+   på den. Det får också en genbankshjälpare göra.
 
    Är bildtolkningen på har Stamboken redan läst fotot, och formuläret är ifyllt med ett förslag.
    Varje fält är märkt med varifrån värdet kommer: **läst** (läst på intyget; mor, far och
@@ -1265,7 +1270,10 @@ administratörer, genbanksansvariga och genbankshjälpare, och alla tre kan se h
    Delete tar bort den). **Lägg till ruta** ger fler. Klicka **Bekräfta maskningen och
    nästa**. Rutorna och fotots vridning skickas tillsammans, så kopian görs som du ser fotot.
    Visar intyget ingen säljare eller köpare tar du bort rutorna, kryssar i **Fotot visar inga
-   säljar- eller köparuppgifter** och klickar **Bekräfta maskningen och nästa**. Kopian läggs
+   säljar- eller köparuppgifter** och klickar **Bekräfta maskningen och nästa**. Har du
+   jämfört intyget med registret och de stämmer, kryssa i **Intyget stämmer med registret**.
+   Rutan är redan ikryssad när alla kontroller i förslaget gick igenom, men det är du som
+   avgör. Kaninen får då märkningen **Intyget kontrollerat**. Kopian läggs
    på kaninen som pappersintyg. Därefter går vridning och typ inte att ändra. Blev maskningen
    fel klickar du **Gör om maskningen** på det klara dokumentet: handläggaren kan det medan
    ärendet är öppet, genbanksansvarig och administratör när som helst. Kopian på kaninen

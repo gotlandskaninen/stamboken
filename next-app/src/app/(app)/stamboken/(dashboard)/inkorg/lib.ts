@@ -72,6 +72,8 @@ export interface InboxDocument {
   herd_tracking_id?: number | null;
   has_original?: boolean;
   has_copy: boolean;
+  /** The copy was checked against the registry (the rabbit's badge), or null. */
+  verified_at?: string | null;
 }
 
 // The image reading (docs/inkorg.md, "Tolkning"): its status on a document and
@@ -102,6 +104,14 @@ export type InterpretationSummary = {
 /** The proposal the form shows: only a finished reading's. */
 export const shownProposal = (doc: InboxDocument): Proposal | null =>
   doc.interpretation_status === "klar" ? doc.proposal : null;
+
+/** The reading passed every check against the registry: "stämmer" is proposed, the handler decides. */
+export const checksPass = (doc: InboxDocument): boolean => {
+  const checks = shownProposal(doc)?.checks ?? [];
+  return (
+    checks.some((c) => c.ok === true) && !checks.some((c) => c.ok === false)
+  );
+};
 
 export interface InboxEvent {
   id: number;

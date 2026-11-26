@@ -86,6 +86,26 @@ class TestCopy(CopyTest):
         self.assertTrue(close(copy.getpixel((600, 400)), (0, 0, 0)))
         self.assertTrue(close(copy.getpixel((600, 1200)), BLUE))
 
+    def test_a_copy_checked_against_the_registry_gives_the_rabbit_a_badge_everyone_sees(self):
+        item, document = self.saved_document()
+        rects = [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+        self.assertEqual(self.mask(item, document, mask_rects=rects, matches_registry="ja").status_code, 400)
+        resp = self.mask(item, document, mask_rects=rects, matches_registry=True)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        stored = db.InboxDocument.get_by_id(document.id)
+        self.assertEqual(resp.get_json()["document"]["verified_at"], stored.verified_at.isoformat())
+        self.assertEqual(stored.verified_by_id, self.helper.id)
+
+        self.login("spec")  # a viewer: sees the badge, not the copy
+        rabbit = self.client.get("/api/v2/individual/G1-2112").get_json()
+        self.assertEqual(rabbit["paper_certificate_checked"], stored.verified_at.isoformat())
+        self.assertEqual(self.client.get("/api/v2/individual/G1-2112/paper-certificate").status_code, 403)
+
+        self.login("man")  # made again without the check: the badge goes with it
+        self.assertEqual(self.mask(item, document, mask_rects=rects).status_code, 200)
+        self.assertIsNone(db.InboxDocument.get_by_id(document.id).verified_at)
+        self.assertIsNone(self.client.get("/api/v2/individual/G1-2112").get_json()["paper_certificate_checked"])
+
     def test_masking_needs_a_saved_certificate_and_a_confirmation(self):
         self.login("owner")
         item = db.InboxItem.get_by_id(self.upload().get_json()["item"]["id"])

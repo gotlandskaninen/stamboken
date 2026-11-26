@@ -154,6 +154,12 @@ class TestGenebank(ProposalTest):
         for key in ("mother", "father", "paper_number"):
             self.assertEqual(self.source(proposal, key), ("osäker", None), key)
 
+    def test_an_item_without_a_genebank_searches_the_one_its_letter_names(self):
+        # A mail from an address not in the member register has no genebank: the letter read points to one.
+        self.assertEqual(self.source(build_proposal(reading(), None), "father"), ("läst", "G9003-2311"))
+        proposal = build_proposal(reading(genbanksnr="9001"), None)  # no letter read: no genebank to search
+        self.assertEqual(self.source(proposal, "father"), ("osäker", None))
+
 
 class TestPedigree(ProposalTest):
     """Rule 3: a parent is confirmed by its own parents in the registry; grandparents only under a confirmed one."""

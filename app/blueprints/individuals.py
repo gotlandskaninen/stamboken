@@ -83,11 +83,18 @@ def get_individual_v2(number):
         return problem(404, "Not Found", f"No accessible individual with number {number}")
     # Include updated_at for cache-busting photo URLs (stripped by as_dict for legacy compat)
     from utils.database import Individual as IndividualModel
+    from utils.inbox import paper_certificate
 
+    individual["paper_certificate_checked"] = None
     try:
         ind = IndividualModel.get(IndividualModel.number == number)
         if ind.updated_at:
             individual["updated_at"] = ind.updated_at.isoformat()
+        # The badge everyone who sees the rabbit sees: its paper certificate is in Stamboken, checked against the
+        # registry. The copy itself only for those who may see its certificate (…/paper-certificate).
+        copy = paper_certificate(ind)
+        if copy is not None and copy.verified_at is not None:
+            individual["paper_certificate_checked"] = copy.verified_at.isoformat()
     except IndividualModel.DoesNotExist:
         pass
     return jsonify(_with_viewer_rights(individual, user_uuid)), 200

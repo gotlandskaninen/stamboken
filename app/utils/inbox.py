@@ -870,11 +870,13 @@ def make_copy(document):
     document.public_path, _ = store_jpeg(image, "kopia", name=str(document.id))
 
 
-def confirm_mask(item, document, user, rotation, rects, no_personal_data=None):
+def confirm_mask(item, document, user, rotation, rects, no_personal_data=None, matches_registry=None):
     """
     POST …/maskning: the rotation and the rectangles covering the seller and the buyer, stored together, and the copy
     made from exactly that pair goes on the rabbit; the document is done. The item's handler, while the item is open;
-    a copy already made can be made again by a manager of the item's genebank or an admin at any time.
+    a copy already made can be made again by a manager of the item's genebank or an admin at any time. With
+    matches_registry true the caller found the certificate and the registry in agreement: the rabbit's badge. Each
+    call sets it anew, as it does the pair.
     """
     if not (document.public_path and manages(user, item.genebank_id)):
         require_handler(item, user)
@@ -885,11 +887,16 @@ def confirm_mask(item, document, user, rotation, rects, no_personal_data=None):
         raise InboxError(400, "Ange mask_rects: rektanglarna som täcker säljaren och köparen.")
     if not rects and no_personal_data is not True:
         raise InboxError(400, 'En tom mask_rects kräver "no_personal_data": true: intyget visar ingen säljare.')
+    if matches_registry not in (None, True, False):
+        raise InboxError(400, "matches_registry är true eller false.")
     document.rotation, document.mask_rects = rotation, rects
+    document.verified_at, document.verified_by = (now(), user.id) if matches_registry else (None, None)
     document.done_at = document.done_at or now()
     make_copy(document)
     document.save()
-    log_event(item, user, "kopia", document=document.id, rects=len(rects), rotation=rotation)
+    log_event(
+        item, user, "kopia", document=document.id, rects=len(rects), rotation=rotation, stammer=bool(matches_registry)
+    )
     close_if_done(item, user)
 
 
@@ -962,6 +969,7 @@ def documents_json(documents, report=False):
             "herd_tracking_id": d.herd_tracking_id,
             "has_original": d.original_path is not None,
             "has_copy": d.public_path is not None,
+            "verified_at": _iso(d.verified_at),
             "done_at": _iso(d.done_at),
         }
         for d in documents

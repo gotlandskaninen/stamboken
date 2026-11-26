@@ -1706,6 +1706,28 @@ class TestDatabaseMigration(DatabaseTest):
         self.assertIn(("gmail_processed", "failures", False), fresh[0])
         self.assertIn(("seller_member_id", "member", "member_id"), fresh[2])
 
+    def test_replay_55_to_56_records_who_checked_a_copy(self):
+        """A database stamped at 55 gets verified_at and verified_by on inbox_document, as a fresh bootstrap."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("column introspection requires PostgreSQL")
+        self.addCleanup(db.check_migrations)
+
+        def shape():
+            columns = {(c.name, c.data_type, c.null) for c in db.DATABASE.get_columns("inbox_document")}
+            indexes = {(i.name, tuple(i.columns), i.unique) for i in db.DATABASE.get_indexes("inbox_document")}
+            keys = {(k.column, k.dest_table, k.dest_column) for k in db.DATABASE.get_foreign_keys("inbox_document")}
+            return columns, indexes, keys
+
+        fresh = shape()
+        rewind_migrations(56)
+        db.DATABASE.execute_sql("ALTER TABLE inbox_document DROP COLUMN verified_at, DROP COLUMN verified_by_id")
+
+        db.check_migrations()
+
+        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+        self.assertEqual(shape(), fresh)
+        self.assertIn(("verified_by_id", "hbuser", "user_id"), fresh[2])
+
     def _drop_rex_column(self):
         """The schema before 45 -> 46: no rex column, the audit trigger on, and the version row gone."""
         self.addCleanup(db.check_migrations)
