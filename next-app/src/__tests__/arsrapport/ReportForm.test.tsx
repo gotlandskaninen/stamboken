@@ -615,6 +615,30 @@ describe("ReportForm", () => {
     expect(within(row(1)).getByText("✓ Klar")).toBeTruthy();
   });
 
+  it("takes a newer view's word over the buyers it kept itself (review r1: a purge or another device)", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    a.saveDraft.mockImplementationOnce(() =>
+      ok({
+        updated_at: "2026-12-31T10:00:00+00:00",
+        submission_key: null,
+        kopare: { "1": { kopare_id: 7, kept_buyer_date: "2026-06-30" } },
+        refusals: [],
+      }),
+    );
+    const { rerender } = render(
+      <ReportForm env="demo" view={view()} actions={a} />,
+    );
+    sellOutside();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10);
+    });
+    expect(within(row(1)).getByText("✓ Klar")).toBeTruthy();
+    // the page read again: the server no longer holds the buyer, so the view gives no day for it
+    rerender(<ReportForm env="demo" view={view()} actions={a} />);
+    expect(within(row(1)).queryByText("✓ Klar")).toBeNull();
+  });
+
   it("keeps såld utanför genbanken through the draft: klar again after a reload (#273)", async () => {
     vi.useFakeTimers();
     const a = actions();

@@ -370,8 +370,11 @@ export function ReportForm({
   const [snapshot, setSnapshot] = React.useState<Set<number>>(new Set());
   const [search, setSearch] = React.useState("");
   const [soldFor, setSoldFor] = React.useState<number | null>(null);
-  // the day of each buyer the server kept since the page was read (typedBuyers), until the view brings it
-  const [keptDates, setKeptDates] = React.useState<Record<number, string>>({});
+  // the day of each buyer the server kept since the view was read (typedBuyers); a newer view has the server's own
+  const [keptFor, setKeptFor] = React.useState<{
+    base: ReportView["rabbits"];
+    dates: Record<number, string>;
+  } | null>(null);
   // "Kullar under Y": a litter is written at once, so the list comes from the answer until the page is read again
   const [saved, setSaved] = React.useState<{
     base: Litter[];
@@ -564,11 +567,12 @@ export function ReportForm({
             // the next round of this loop may send before React renders: it must see the ids already
             stateRef.current = withKept(stateRef.current, sent, kept);
             setState((s) => withKept(s, sent, kept));
-            setKeptDates((d) => {
-              const next = { ...d };
-              for (const [id, k] of Object.entries(kept))
-                next[Number(id)] = k.kept_buyer_date;
-              return next;
+            setKeptFor((k) => {
+              const base = viewRef.current.rabbits;
+              const dates = { ...(k?.base === base ? k.dates : {}) };
+              for (const [id, { kept_buyer_date }] of Object.entries(kept))
+                dates[Number(id)] = kept_buyer_date;
+              return { base, dates };
             });
             // the typed buyers' refusals replace those rows' earlier ones
             const ids = new Set(Object.keys(sent).map(Number));
@@ -639,13 +643,12 @@ export function ReportForm({
     return () => clearTimeout(autosaveTimer.current);
   }, [version, retry, mode, canEdit, env, store, herd.herd, year]);
 
-  const rabbits = React.useMemo(
-    () =>
-      view.rabbits.map((r) =>
-        keptDates[r.id] ? { ...r, kept_buyer_date: keptDates[r.id] } : r,
-      ),
-    [view.rabbits, keptDates],
-  );
+  const rabbits = React.useMemo(() => {
+    const dates = keptFor?.base === view.rabbits ? keptFor.dates : {};
+    return view.rabbits.map((r) =>
+      dates[r.id] ? { ...r, kept_buyer_date: dates[r.id] } : r,
+    );
+  }, [view.rabbits, keptFor]);
   const lastId = rabbits.length ? rabbits[rabbits.length - 1].id : null;
   const lastVisible = React.useRef(false);
 
