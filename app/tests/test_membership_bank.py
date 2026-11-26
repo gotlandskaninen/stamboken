@@ -315,6 +315,31 @@ class TestReaders(SupportAccountTest):
             }
             self.assertEqual(seen, {OTHER, ACCOUNT} if whole else {"••77", "••12"})
 
+    def test_a_short_number_shows_only_that_there_is_one(self):
+        """Two digits of a number with few digits would give most of it away: then only the mask, everywhere."""
+        for number, shown in (("12-3", "••"), ("123-4", "••"), ("1234-5", "••45")):
+            with self.subTest(number):
+                self.assertEqual(db.account_end(number), shown)
+        db.Membership.update(bank_account_type="plusgiro", bank_account_number="12-3").where(
+            db.Membership.id == self.ms.id
+        ).execute()
+        manager = db.User.get_by_id(self.manager.id)
+        form = self.herd().filtered_dict(manager)
+        self.assertEqual(form["bank_account_number"], "••")
+        rnd = db.YearlyReportRound.create(
+            report_year=2025, start_date=date(2025, 12, 31), end_date=date(2026, 3, 30), created_by=self.admin
+        )
+        db.YearlyHerdReport.create(
+            herd=self.herds[0], report_date=date(2026, 1, 1), generated_by=self.manager, name="2025", data="{}",
+            publish=False, publish_tel=False, publish_email=False, publish_address=False, round=rnd,
+        )  # fmt: skip
+        self.assertEqual(da.get_yearly_reports(rnd.id, self.genebanks[0].id)[0]["bank_account"], "••")
+        from utils.arsrapport import account_end  # pylint: disable=import-outside-toplevel
+
+        self.assertEqual(account_end(self.herd()), "")  # an account, its end not shown; None is no account
+        self.assertEqual(da.update_herd({**form, "herd_name": "Ny"}, manager.uuid, legacy=True), {"status": "updated"})
+        self.assertEqual(self.stored(), ("plusgiro", "12-3", "Banken"))
+
     def test_account_end_reads_the_membership(self):
         from utils.arsrapport import account_end  # pylint: disable=import-outside-toplevel
 

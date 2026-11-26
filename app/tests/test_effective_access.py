@@ -305,7 +305,8 @@ class TestEffectiveAccessConsumers(EffectiveAccessTest):
         for value, expected in (
             ("8327-9, 123 456 789 12", "••12"),
             ("1234-5", "••45"),
-            ("7", "••7"),
+            ("7", "••"),  # too few digits to hide the rest: only that there is one
+            ("1234", "••"),
             ("ingen siffra", "••"),
             ("", ""),
             (None, None),

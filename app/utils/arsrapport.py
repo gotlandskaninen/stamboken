@@ -981,9 +981,10 @@ def _report_json(report, round_, access, is_open):
 def account_end(herd):
     """
     The herd's membership's account's last two digits ("12"): the only account data paper entry reads (fråga 34).
+    "" is an account whose end is not shown (database.account_end), None no account.
     """
     number = herd.membership.bank_account_number if herd.membership_id else None
-    return (masked_account(number) or "").removeprefix("••") or None
+    return masked_account(number).removeprefix("••") if number else None
 
 
 def report_litters(herd, year):

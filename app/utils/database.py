@@ -548,16 +548,20 @@ ACCOUNT_MASK = "••"
 
 def account_end(value):
     """
-    Only the last two digits of a bank account number, for readers who must not see all of it.
+    Only the last two digits of a bank account number, for readers who must not see all of it. Under five digits the
+    two would give most of it away (a plusgiro may have two): then only the mask, which says there is one.
 
     >>> account_end("8327-9, 123 456 789 12")
     '••12'
+    >>> account_end("123-4")
+    '••'
     >>> account_end(None) is None
     True
     """
     if not value:
         return value
-    return ACCOUNT_MASK + re.sub(r"\D", "", str(value))[-2:]
+    digits = re.sub(r"\D", "", str(value))
+    return ACCOUNT_MASK + (digits[-2:] if len(digits) >= 5 else "")
 
 
 def remove_fields_by_privacy(data, access_level):
