@@ -46,6 +46,7 @@ const EXPORT_TITLES: Record<string, string> = {
   "avelsprioritet-lista": "Uttag: Avelsprioritet (listan på skärmen)",
   matr: "Uttag: matrikeln (MATR)",
   "address-list": "Uttag: adresslistan till tryckeriet",
+  koharen: "Uttag: Koharens lista över besättningar",
 };
 
 export const tableLabel = (t: string) => TABLE_LABELS[t] ?? t;

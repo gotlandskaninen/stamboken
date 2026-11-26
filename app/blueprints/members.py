@@ -22,6 +22,7 @@ from utils.data_access import session_holds
 from utils.database import (
     BILLING_FIELDS,
     DB_PROXY,
+    OUTSIDE_GENEBANK_HERDS,
     Genebank,
     Herd,
     HerdAccessGrant,
@@ -882,50 +883,70 @@ def export_members():
     )
 
 
-KOHAREN_HEADER = ["Nr", "Namn", "Telefon", "E-post", "Gatuadress", "Postnummer", "Postort", "Samtycke"]
+def _csv_download(header, rows, filename):
+    """A CSV for Excel that no browser or proxy keeps: personal data, and a cached copy would skip the audit row."""
+    buf = io.StringIO()
+    buf.write("\ufeff")  # UTF-8 BOM for Excel
+    writer = csv.writer(buf, quoting=csv.QUOTE_ALL)  # a ";" inside a value stays in its cell in sv Excel
+    writer.writerow(header)
+    writer.writerows(rows)
+    return Response(
+        buf.getvalue(),
+        mimetype="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"},
+    )
 
 
-# [Next.js] Phase 19 — consent-aware Koharen listing (new route; the MATR export's contract is untouched, ADR-0006)
+KOHAREN_HEADER = ["Nr", "Namn", "Telefon", "E-post", "Postnummer", "Postort"]
+
+
+# The list of active herds in Koharen, the one purpose of the publication consent (fråga 33, spec 5.11): one row per
+# active herd whose holder said yes, with the herd number as Nr and only what the holder allowed. Never the street
+# address, a family member, or a Nej or never answered ({}) consent.
+# New route; the MATR export's contract is untouched (ADR-0006).
 @members_bp.route("/v2/members/koharen-export", methods=["GET"])
 @json_login_required
 @matrikel_admin_required
 def export_koharen():
-    buf = io.StringIO()
-    buf.write("\ufeff")  # UTF-8 BOM for Excel
-    writer = csv.writer(buf, quoting=csv.QUOTE_ALL)  # a ";" inside a value stays in its cell in sv Excel
-    writer.writerow(KOHAREN_HEADER)
-    q = Membership.select().where(Membership.membership_status == "active")
-    for ms in q.order_by(Membership.member_number.asc(nulls="LAST"), Membership.id):
-        persons = Member.select().where(Member.membership == ms, Member.end_date.is_null(True))
-        if ms.organization_name:
-            persons = [persons.where(Member.role == "huvudmedlem").first()]
-        else:
-            persons = persons.order_by(Member.role != "huvudmedlem", Member.id)
-        # {} = never answered: blank PII + "ej angivet" so the keeper
-        # can fall back to the yearly-report answer by hand. No automatic seeding.
-        answered = consent_answered(ms)
-        consent = effective_consent(ms) if answered else {key: False for key in CONSENT_KEYS}
-        samtycke = "angivet" if answered else "ej angivet"
-        nr = str(ms.member_number) if ms.member_number is not None else ""
-        for person in persons:
-            name = ms.organization_name or person.display_name
-            writer.writerow(
+    if settings.service.demo_instance:
+        return problem(403, "Inte i testmiljön", DEMO_EXPORT_REFUSED)
+    rows = []
+    with snapshot_read():  # herds, memberships and holders from one snapshot
+        herds = list(
+            Herd.select(Herd, Membership)
+            .join(Membership)
+            .where(
+                Herd.is_active == True,  # noqa: E712
+                Herd.herd.not_in(OUTSIDE_GENEBANK_HERDS),
+                Membership.membership_status == "active",
+            )
+            .order_by(Herd.herd)
+        )
+        holders = {
+            p.membership_id: p
+            for p in Member.select().where(
+                Member.membership.in_({h.membership_id for h in herds}),
+                Member.role == "huvudmedlem",
+                Member.end_date.is_null(True),
+            )
+        }
+        for herd in herds:
+            ms, holder = herd.membership, holders.get(herd.membership_id)
+            consent = effective_consent(ms)  # only a literal true: Nej and {} are no row
+            if holder is None or not consent["name"]:
+                continue
+            rows.append(
                 [
-                    nr,
-                    csv_safe(name) if consent["name"] else "",
-                    csv_safe(person.phone) if consent["phone"] and person else "",
-                    csv_safe(person.email) if consent["email"] and person else "",
-                    csv_safe(ms.address) if consent["address"] else "",
+                    herd.herd,
+                    csv_safe(ms.organization_name or holder.display_name),
+                    csv_safe(holder.phone) if consent["phone"] else "",
+                    csv_safe(holder.email) if consent["email"] else "",
                     csv_safe(ms.postal_code) if consent["address"] else "",
                     csv_safe(ms.city) if consent["address"] else "",
-                    samtycke,
                 ]
             )
-    return Response(
-        buf.getvalue(),
-        mimetype="text/csv; charset=utf-8",
-        headers={"Content-Disposition": 'attachment; filename="koharen-matrikel.csv"'},
-    )
+    log_export(Membership, "koharen", rows=len(rows))
+    return _csv_download(KOHAREN_HEADER, rows, f"koharen-besattningar-{date.today().isoformat()}.csv")
 
 
 ADDRESS_LIST_HEADER = ["Nr", "Namn Efternamn", "Adress", "Postadress", "Betala nu"]
@@ -993,17 +1014,9 @@ def export_address_list():
                 )
             )
 
-    buf = io.StringIO()
-    buf.write("\ufeff")  # UTF-8 BOM for Excel
-    writer = csv.writer(buf, quoting=csv.QUOTE_ALL)
-    writer.writerow(ADDRESS_LIST_HEADER)
-    writer.writerows(row for _, row in sorted(rows, key=lambda r: r[0]))
     log_export(Membership, "address-list", rows=len(rows), fee_reminder=fee_reminder)
-    return Response(
-        buf.getvalue(),
-        mimetype="text/csv; charset=utf-8",
-        headers={
-            "Content-Disposition": f'attachment; filename="koharen-adresslista-{date.today().isoformat()}.csv"',
-            "Cache-Control": "no-store",  # personal data: never kept by a browser or a proxy
-        },
+    return _csv_download(
+        ADDRESS_LIST_HEADER,
+        [row for _, row in sorted(rows, key=lambda r: r[0])],
+        f"koharen-adresslista-{date.today().isoformat()}.csv",
     )
