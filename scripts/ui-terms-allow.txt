@@ -8,6 +8,7 @@ next-app/messages/sv.json:"suggestionError": "Kunde inte hämta förslag på num
 next-app/messages/sv.json:"suggestionSuffix": "\(förslag\)"
 next-app/src/app/(app)/stamboken/(dashboard)/genetik/page.tsx:Parningsförslag
 next-app/src/app/(app)/stamboken/(dashboard)/inkorg/[id]/CertificateForm.tsx:[Ff]örslag
+next-app/src/app/(app)/stamboken/(dashboard)/inkorg/[id]/WorkView.tsx:Förslag: stämmer
 next-app/src/components/genetics/BreedingSuggestionsTab.tsx:(parningsförslag|för att få förslag)
 # "min/din/utan genbank" och "aktiva genbanker" är fel för en medlems besättning. Träffarna här är
 # kodkommentarer om rollen genbanksansvarig utan genbank, inte text till användaren.

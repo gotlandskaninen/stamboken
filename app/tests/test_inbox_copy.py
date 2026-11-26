@@ -6,10 +6,12 @@ isort:skip_file
 import datetime
 import io
 import os
+from unittest import mock
 
 import utils.database as db  # noqa: E402
 from PIL import Image  # noqa: E402
 
+from tests.ht_helpers import ht_row  # noqa: E402
 from tests.inbox_fixtures import InboxTest, encoded  # noqa: E402
 
 RED, BLUE = (220, 30, 30), (30, 30, 220)
@@ -85,6 +87,135 @@ class TestCopy(CopyTest):
         copy = self.copy(document)
         self.assertTrue(close(copy.getpixel((600, 400)), (0, 0, 0)))
         self.assertTrue(close(copy.getpixel((600, 1200)), BLUE))
+
+    def test_a_copy_checked_against_the_registry_gives_the_rabbit_a_badge_everyone_sees(self):
+        item, document = self.saved_document()
+        rects = [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+        for wrong in ("ja", 1):
+            self.assertEqual(self.mask(item, document, mask_rects=rects, matches_registry=wrong).status_code, 400)
+        resp = self.mask(item, document, mask_rects=rects, matches_registry=True)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        stored = db.InboxDocument.get_by_id(document.id)
+        self.assertEqual(resp.get_json()["document"]["verified_at"], stored.verified_at.isoformat())
+        self.assertEqual((stored.verified_by_id, stored.saved_certificate), (self.helper.id, "P-1"))
+
+        self.login("spec")  # a viewer: sees the badge, not the copy
+        rabbit = self.client.get("/api/v2/individual/G1-2112").get_json()
+        self.assertEqual(rabbit["paper_certificate_checked"], stored.verified_at.isoformat())
+        self.assertEqual(self.client.get("/api/v2/individual/G1-2112/paper-certificate").status_code, 403)
+
+        # Another certificate on the rabbit since: not the one checked.
+        db.Individual.update(certificate="P-2").where(db.Individual.number == "G1-2112").execute()
+        self.assertIsNone(self.client.get("/api/v2/individual/G1-2112").get_json()["paper_certificate_checked"])
+        db.Individual.update(certificate="P-1").where(db.Individual.number == "G1-2112").execute()
+
+        self.login("man")  # made again without the check: the badge goes with it, and the old file after the commit
+        old = stored.public_path
+        self.assertEqual(self.mask(item, document, mask_rects=rects).status_code, 200)
+        again = db.InboxDocument.get_by_id(document.id)
+        self.assertIsNone(again.verified_at)
+        self.assertNotEqual(again.public_path, old)
+        self.assertFalse(os.path.exists(os.path.join(self.folder, old)))
+        self.assertIsNone(self.client.get("/api/v2/individual/G1-2112").get_json()["paper_certificate_checked"])
+
+    def test_an_old_certificate_linked_masked_and_checked_shows_its_badge_to_a_member(self):
+        # The case the feature is for: G1-2111 has had certificate "12" since the old registry.
+        self.login("owner")
+        resp = self.upload(("intyg.jpg", encoded(red_over_blue())), accept_warnings="1")
+        item = db.InboxItem.get_by_id(resp.get_json()["item"]["id"])
+        document = item.documents.get()
+        self.login("hjalp")
+        self.post(f"/{item.id}/ta")
+        body = {"action": "pappersintyg", "individual": "G1-2111", "paper_certificate": "12", "paper_number": "G1-2111"}
+        self.assertEqual(self.post(f"/{item.id}/dokument/{document.id}/spara", **body).status_code, 200)
+        self.assertFalse(db.IndividualCommand.select().exists())  # nothing written to the registry
+        rects = [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+        resp = self.mask(item, document, mask_rects=rects, matches_registry=True)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertEqual(resp.get_json()["item"]["state"], "klar")
+        self.login("owner")  # a member without a genebank role
+        rabbit = self.client.get("/api/v2/individual/G1-2111").get_json()
+        self.assertEqual(
+            rabbit["paper_certificate_checked"], db.InboxDocument.get_by_id(document.id).verified_at.isoformat()
+        )
+
+    def test_removing_the_copy_removes_its_check(self):
+        item, document = self.saved_document()
+        self.mask(item, document, mask_rects=[{"x": 0, "y": 0.5, "w": 1, "h": 0.5}], matches_registry=True)
+        self.login("man")
+        resp = self.client.delete(f"/api/v2/inkorg/{item.id}/dokument/{document.id}/kopia")
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        stored = db.InboxDocument.get_by_id(document.id)
+        self.assertEqual((stored.verified_at, stored.verified_by_id), (None, None))
+        self.assertEqual(stored.saved_certificate, "P-1")  # what the photo was saved as stays
+
+    def test_the_check_is_of_the_certificate_the_photo_was_saved_as(self):
+        item, document = self.saved_document()  # saved as P-1
+        db.Individual.update(certificate="P-2").where(db.Individual.number == "G1-2112").execute()
+        rects = [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+        resp = self.mask(item, document, mask_rects=rects, matches_registry=True)
+        self.assertEqual(resp.status_code, 409, resp.get_json())
+        self.assertIsNone(db.InboxDocument.get_by_id(document.id).verified_at)
+        self.assertEqual(self.mask(item, document, mask_rects=rects).status_code, 200)  # unchecked, it goes on
+
+    def test_a_rabbit_with_a_digital_certificate_beside_the_paper_number_gets_no_badge(self):
+        item, document = self.saved_document()  # saved as P-1
+        db.Individual.update(digital_certificate=500000).where(db.Individual.number == "G1-2112").execute()
+        rects = [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+        self.assertEqual(self.mask(item, document, mask_rects=rects, matches_registry=True).status_code, 409)
+        db.InboxDocument.update(verified_at=datetime.datetime.now(datetime.timezone.utc)).where(
+            db.InboxDocument.id == document.id
+        ).execute()
+        self.assertEqual(self.mask(item, document, mask_rects=rects).status_code, 200)
+        db.InboxDocument.update(verified_at=datetime.datetime.now(datetime.timezone.utc)).where(
+            db.InboxDocument.id == document.id
+        ).execute()
+        self.login("spec")
+        self.assertIsNone(self.client.get("/api/v2/individual/G1-2112").get_json()["paper_certificate_checked"])
+
+    def test_a_rabbit_renumbered_since_the_save_is_not_checked(self):
+        item, document = self.saved_document()  # G1-2112, P-1
+        db.Individual.update(number="G1-2118").where(db.Individual.number == "G1-2112").execute()
+        rects = [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+        self.assertEqual(self.mask(item, document, mask_rects=rects, matches_registry=True).status_code, 409)
+
+    def test_a_rabbit_whose_latest_row_has_no_herd_still_has_its_copy_decided(self):
+        item, document = self.saved_document()
+        rabbit = db.Individual.get(db.Individual.number == "G1-2112")
+        ht_row("TRANSFER", individual=rabbit, herd=None, herd_tracking_date=datetime.date.today())
+        rects = [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+        resp = self.mask(item, document, mask_rects=rects, matches_registry=True)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertEqual(resp.get_json()["document"]["individual_genebank_id"], rabbit.origin_herd.genebank_id)
+
+    def test_a_photo_saved_before_the_number_was_kept_is_never_checked(self):
+        item, document = self.saved_document()
+        db.InboxDocument.update(saved_certificate=None).where(db.InboxDocument.id == document.id).execute()
+        rects = [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+        resp = self.mask(item, document, mask_rects=rects, matches_registry=True)
+        self.assertEqual(resp.status_code, 409, resp.get_json())
+        self.assertNotIn("None", resp.get_json()["detail"])
+
+    def test_a_manager_of_another_genebank_who_helps_here_cannot_redo_a_closed_copy(self):
+        item, document = self.saved_document()
+        rects = [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+        self.mask(item, document, mask_rects=rects, matches_registry=True)
+        db.InboxItem.update(genebank=None).where(db.InboxItem.id == item.id).execute()  # any manager "manages" it
+        both = self.user("bada", ("manager", self.genebanks[1].id), ("helper", self.genebanks[0].id))
+        db.User.update(v2_prod_access=True).where(db.User.id == both.id).execute()
+        self.login("bada")
+        self.assertEqual(self.mask(item, document, mask_rects=rects).status_code, 409)  # not the handler, closed
+        self.assertIsNotNone(db.InboxDocument.get_by_id(document.id).verified_at)
+
+    def test_a_failed_cleanup_does_not_fail_a_committed_redo(self):
+        item, document = self.saved_document()
+        rects = [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+        self.mask(item, document, mask_rects=rects)
+        self.login("man")
+        with mock.patch("utils.inbox.remove_files", side_effect=PermissionError("read-only")):
+            resp = self.mask(item, document, mask_rects=rects, matches_registry=True)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertIsNotNone(db.InboxDocument.get_by_id(document.id).verified_at)
 
     def test_masking_needs_a_saved_certificate_and_a_confirmation(self):
         self.login("owner")

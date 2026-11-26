@@ -511,7 +511,7 @@ då genbanksansvarig, se [del 2](#numrera-om-kullar-med-registrerade-kaniner).
 
 1. Öppna kaninens sida (klicka kaninen under **Kaniner** eller i **Alla kaniner**).
 2. Klicka kameraknappen **Ladda upp foto** nere i bildens hörn. Välj en bild i JPEG,
-   PNG eller WebP, högst 10 MB.
+   PNG eller WebP, högst 25 MB.
 3. Beskär bilden i rutan **Beskär foto**: dra bilden och använd reglaget **Zoom**.
 4. Klicka **Använd**. Bekräftelsen "Foto uppladdat!" visas.
 
@@ -527,8 +527,8 @@ fotona. De som arbetar med inläsningen lägger in kaninerna åt dig.
 2. Välj **Besättning**. Har du bara en är den redan vald. Arbetar du med inläsningen
    är **Besättning** ett sökfält där du kan välja vilken besättning som helst.
 3. Klicka **Ta foto eller välj filer**. På telefonen kan du välja kameran eller
-   bildbiblioteket. Du kan också välja en PDF. Högst 10 bilder och 9 MB tillsammans per
-   inskick; en PDF räknas sida för sida.
+   bildbiblioteket. Du kan också välja en PDF. Högst 10 bilder, 25 MB per fil och 48 MB
+   tillsammans per inskick; en PDF räknas sida för sida.
 4. Skriv ett **Meddelande** om du vill (valfritt).
 5. Klicka **Skicka**.
 
@@ -816,7 +816,10 @@ Allt om en kanin. Adressen är /stamboken/individ/ följt av individnumret.
   ort.
 - **Pappersintyg** – en kopia av pappersintyget som lästs in, med säljarens och
   köparens uppgifter överstrukna. Klicka bilden för full storlek. Blocket visas bara
-  om kaninen har en kopia och du får se den.
+  om kaninen har en kopia och du får se den. Märkningen **Intyget kontrollerat** vid
+  kaninens nummer ser alla: pappersintyget finns i Stamboken, och den som lade in det jämförde
+  det med registret och kryssade i att de stämmer. Håll muspekaren över märkningen för att se
+  datumet.
 - **Anteckningar** – fritext och eventuell dödsorsak.
 - **Ändringshistorik** – visas bara för genbanksansvarig och administratör.
 
@@ -1247,6 +1250,9 @@ administratörer, genbanksansvariga och genbankshjälpare, och alla tre kan se h
    Stämmer inte individnumret på pappret med Stambokens öppnas samma ruta som för
    uppfödaren, se [När pappret och Stamboken har olika individnummer](#när-pappret-och-stamboken-har-olika-individnummer).
    Stämmer pappret lämnar du ärendet till genbanksansvarig.
+   Har kaninen redan samma intygsnummer i Stamboken, som de flesta kaniner från det gamla
+   registret, ändras ingenting i registret: fotot kopplas till kaninen så att kopian kan läggas
+   på den. Det får också en genbankshjälpare göra.
 
    Är bildtolkningen på har Stamboken redan läst fotot, och formuläret är ifyllt med ett förslag.
    Varje fält är märkt med varifrån värdet kommer: **läst** (läst på intyget; mor, far och
@@ -1265,11 +1271,17 @@ administratörer, genbanksansvariga och genbankshjälpare, och alla tre kan se h
    Delete tar bort den). **Lägg till ruta** ger fler. Klicka **Bekräfta maskningen och
    nästa**. Rutorna och fotots vridning skickas tillsammans, så kopian görs som du ser fotot.
    Visar intyget ingen säljare eller köpare tar du bort rutorna, kryssar i **Fotot visar inga
-   säljar- eller köparuppgifter** och klickar **Bekräfta maskningen och nästa**. Kopian läggs
+   säljar- eller köparuppgifter** och klickar **Bekräfta maskningen och nästa**. Har du
+   jämfört intyget med registret och de stämmer, kryssa i **Jag har jämfört intyget med
+   registret och de stämmer** innan du bekräftar. När tolkningen hittade kaninen och alla
+   kontroller gick igenom står "Förslag: stämmer" under rutan, men det är du som avgör och
+   kryssar. Kaninen får då märkningen **Intyget kontrollerat**. Kopian läggs
    på kaninen som pappersintyg. Därefter går vridning och typ inte att ändra. Blev maskningen
    fel klickar du **Gör om maskningen** på det klara dokumentet: handläggaren kan det medan
-   ärendet är öppet, genbanksansvarig och administratör när som helst. Kopian på kaninen
-   ersätts.
+   ärendet är öppet, genbanksansvarig för kaninens genbank och administratör när som helst.
+   Kopian på kaninen ersätts. Är kaninen i en genbank där du inte är hjälpare lämnar du ärendet
+   till genbanksansvarig. Har kaninen fått ett annat intygsnummer sedan fotot sparades kan du
+   inte kryssa i att intyget stämmer.
 5. Visar intyget en försäljning registrerar du den innan du bekräftar maskningen: öppna
    **Visar intyget en försäljning?** och fyll i **Individnummer**, **Köparens besättning**
    eller **Köparen är utanför föreningen** (sparas på GX1 eller MX1) och **Säljdatum**.
@@ -1405,7 +1417,7 @@ spara finns inte. Har du inte ärendet står det vem som har det, med **Jag tar
 den** eller **Ta över**; du kan bara spara när ärendet är ditt och taget. Ett mejlat ärende visar
 avsändarens adress (med "Avsändaren är inte bekräftad" när den inte gick att bekräfta; inget
 mejl skickas då till adressen), **Gäller kanske** när det kan höra till ett annat ärende, och
-**Sparades inte** med namnen på bilagor som inte är foton eller PDF, är större än 10 MB
+**Sparades inte** med namnen på bilagor som inte är foton eller PDF, är större än 25 MB
 eller kom efter de tio första bilderna. På ett klart intyg finns **Gör om maskningen** för dem som
 får. **Fråga uppfödaren** finns när ärendet är ditt
 och taget, se [Arbeta i inkorgen](#arbeta-i-inkorgen).

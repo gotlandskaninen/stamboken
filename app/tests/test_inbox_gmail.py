@@ -602,7 +602,7 @@ class TestItemsFromMail(GmailTest):
         self.assertEqual(item.message, "En fråga")
 
     def test_files_too_big_too_many_or_of_another_type_are_named_and_not_stored(self):
-        big = encoded(photo()) + b"\0" * (10 * 1024 * 1024)  # a JPEG by its first bytes, over 10 MB
+        big = encoded(photo()) + b"\0" * (25 * 1024 * 1024)  # a JPEG by its first bytes, over 25 MB
         docx = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         files = [("stor.jpg", JPEG, big), ("brev.docx", docx, b"PK\x03\x04syntetisk")]
         files += [(f"{n}.jpg", JPEG, encoded(photo((600, 800), seed=n))) for n in range(11)]

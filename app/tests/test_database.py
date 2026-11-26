@@ -1690,8 +1690,10 @@ class TestDatabaseMigration(DatabaseTest):
             db.SchemaHistory.get_or_none(db.SchemaHistory.version == 42) is None
         ):  # init() stamps only the latest version
             db.SchemaHistory.insert(version=42, comment="test seed", applied=datetime.now()).execute()  # pylint: disable=E1120
-        db.DATABASE.execute_sql(
+        db.DATABASE.execute_sql(  # and the columns of later migrations, as on a real database at 42
             "ALTER TABLE inbox_document DROP COLUMN seller_member_id, DROP COLUMN buyer_member_id, "
+            "DROP COLUMN verified_at, DROP COLUMN verified_by_id, DROP COLUMN saved_certificate, "
+            "DROP COLUMN saved_number, "
             "ALTER COLUMN original_path SET NOT NULL"
         )
         db.DATABASE.execute_sql("ALTER TABLE inbox_item DROP COLUMN sender_authenticated")
@@ -1705,6 +1707,35 @@ class TestDatabaseMigration(DatabaseTest):
         self.assertIn(("inbox_item", "sender_authenticated", True), fresh[0])
         self.assertIn(("gmail_processed", "failures", False), fresh[0])
         self.assertIn(("seller_member_id", "member", "member_id"), fresh[2])
+
+    def test_replay_55_to_56_records_who_checked_a_copy(self):
+        """A database stamped at 55 gets verified_at and verified_by on inbox_document, as a fresh bootstrap."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("column introspection requires PostgreSQL")
+        self.addCleanup(db.check_migrations)
+
+        def shape():
+            columns = {(c.name, c.data_type, c.null) for c in db.DATABASE.get_columns("inbox_document")}
+            indexes = {(i.name, tuple(i.columns), i.unique) for i in db.DATABASE.get_indexes("inbox_document")}
+            keys = {(k.column, k.dest_table, k.dest_column) for k in db.DATABASE.get_foreign_keys("inbox_document")}
+            return columns, indexes, keys
+
+        fresh = shape()
+        item = db.InboxItem.create(kind="upload", genebank=self.genebanks[0], herd=self.herds[0])
+        saved = db.InboxDocument.create(item=item, mime="image/jpeg", sha256="0" * 64, individual=self.individuals[0])
+        rewind_migrations(56)
+        db.DATABASE.execute_sql(
+            "ALTER TABLE inbox_document DROP COLUMN verified_at, DROP COLUMN verified_by_id, "
+            "DROP COLUMN saved_certificate, DROP COLUMN saved_number"
+        )
+
+        db.check_migrations()
+
+        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+        self.assertEqual(shape(), fresh)
+        self.assertIn(("verified_by_id", "hbuser", "user_id"), fresh[2])
+        # A certificate saved before 56: the number it was saved as is unknown, so it is never marked checked.
+        self.assertIsNone(db.InboxDocument.get_by_id(saved.id).saved_certificate)
 
     def _drop_rex_column(self):
         """The schema before 45 -> 46: no rex column, the audit trigger on, and the version row gone."""

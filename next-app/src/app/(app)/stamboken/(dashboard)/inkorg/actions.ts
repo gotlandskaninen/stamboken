@@ -253,6 +253,7 @@ export async function registerSale(
  * The rectangles come with the rotation they were drawn in (fractions of the
  * image as turned by it): the API stores both and makes the copy from the pair.
  * An empty list needs `noPersonalData`, the handler's explicit "nothing to hide".
+ * `matchesRegistry`: the handler found the certificate and the registry in agreement.
  */
 export async function confirmMask(
   id: number,
@@ -260,6 +261,7 @@ export async function confirmMask(
   rotation: number,
   rects: Rect[],
   noPersonalData = false,
+  matchesRegistry = false,
 ) {
   if (!isId(id) || !isId(doc) || !Array.isArray(rects))
     return refused("Ogiltig maskning.");
@@ -271,6 +273,7 @@ export async function confirmMask(
     rotation,
     mask_rects: rects,
     ...(rects.length === 0 ? { no_personal_data: true } : {}),
+    matches_registry: matchesRegistry === true,
   });
 }
 
