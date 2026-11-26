@@ -569,6 +569,7 @@ def add_person(membership, data, actor):
         locked = Membership.select().where(Membership.id == membership.id).for_update().get()
         if locked.membership_status == "inactive":
             raise ValueError("Kan inte lägga till personer i ett inaktivt medlemskap")
+        lock_addresses([data.get("email")])  # waits for a code login creating an account on the same address
         person = Member.create(
             membership=membership,
             **_new_person_names(data, optional=locked.organization_name and role == "huvudmedlem"),
@@ -1130,6 +1131,7 @@ def set_member_email(person, address, actor, *, by):
         # Someone who holds no login address (ended, friexemplar, or reactivated and not yet linked) must not keep
         # previous ones: they would wake up when she is linked.
         if not holder and person.email != address:
+            lock_addresses([address])  # waits for a code login creating an account on the same address
             _expire_previous_addresses([person.id])
         if _same(person.email, address):
             if person.email != address:  # the same address, spelled otherwise

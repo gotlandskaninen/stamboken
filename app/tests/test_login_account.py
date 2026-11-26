@@ -221,6 +221,10 @@ class TestLoginAccount(MatrikelApiTest):
         main_user = data_access.register_user("main@example.org", "pass", username="main")
         matrikel.link_member_user(self.member.id, main_user.id, actor=self.admin, mode="admin",
                                   confirmed_herd_ids=[self.herds[1].id])  # fmt: skip
+        # an older owner role on the herd, as legacy stored it: the linked account is not hers
+        db.User.update(_privileges=f'[{{"level": "owner", "herd": {self.herds[1].id}}}]').where(
+            db.User.id == main_user.id
+        ).execute()
         for role in ("familjemedlem", "skotare"):
             with self.subTest(role=role):
                 person = _mk_person(self.member.membership, "Test", role.title(), f"{role}@example.org", role=role)
@@ -230,6 +234,30 @@ class TestLoginAccount(MatrikelApiTest):
                 self.assertEqual(self.create(client=client).status_code, 200)
                 user = db.Member.get_by_id(person.id).user
                 self.assertEqual((user.email, user.effective_herd_ids()), (person.email, {self.herds[1].id}))
+
+    def test_an_unlinked_owner_account_on_a_granted_herd_outside_the_membership_refuses_creation(self):
+        keeper = _mk_person(self.member.membership, "Test", "Keeper", "keeper@example.org", role="skotare")
+        matrikel.create_grant(keeper, self.herds[0], None, self.admin)  # a herd of another membership
+        older = data_access.register_user("old-keeper@example.org", "pass", username="old-keeper")
+        db.User.update(_privileges=f'[{{"level": "owner", "herd": "{self.herds[0].id}"}}]').where(
+            db.User.id == older.id
+        ).execute()
+        self.pending(person=keeper)
+        self.assertEqual(self.create().status_code, 409)
+        self.assertIsNone(db.Member.get_by_id(keeper.id).user_id)
+
+    def test_another_persons_workspace_address_gives_the_family_member_no_code(self):
+        family = _mk_person(_mk_membership(), "Test", "Family", "board@gotlandskaninen.se", role="familjemedlem")
+        self.assertEqual(login_code.login_holder("board@gotlandskaninen.se").id, family.id)
+        db.Member.update(workspace_email="Board@Gotlandskaninen.se").where(db.Member.id == self.member.id).execute()
+        self.assertIsNone(login_code.login_holder("board@gotlandskaninen.se"))
+
+    def test_an_ended_persons_previous_address_does_not_stop_the_family_member(self):
+        matrikel.set_member_email(self.member, "ny@example.org", self.admin, by="self")  # the old one counts a week
+        family = _mk_person(_mk_membership(), "Test", "Family", "member@example.org", role="familjemedlem")
+        self.assertEqual(login_code.login_holder("member@example.org").id, self.member.id)
+        db.Member.update(end_date=date.today()).where(db.Member.id == self.member.id).execute()
+        self.assertEqual(login_code.login_holder("member@example.org").id, family.id)
 
     def test_a_shared_address_stays_the_holders_and_gives_the_family_member_no_code(self):
         family = _mk_person(self.member.membership, "Test", "Family", self.member.email.upper(), role="familjemedlem")

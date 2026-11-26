@@ -10,7 +10,7 @@ from flask import current_app, session
 from peewee import fn
 
 from utils import data_access, login_code, matrikel, settings
-from utils.database import DB_PROXY, AccountRulesSnapshot, Herd, Member, User
+from utils.database import DB_PROXY, AccountRulesSnapshot, Herd, HerdAccessGrant, Member, User
 from utils.mail import address_hash
 
 PENDING_FOR = timedelta(minutes=15)
@@ -92,6 +92,11 @@ def _existing_account(person, address):
         return True
 
     herd_ids = {str(h.id) for h in Herd.select(Herd.id).where(Herd.membership == person.membership_id)}
+    # A grant can be on a herd outside the membership, where an older owner account may be hers.
+    grants = HerdAccessGrant.select(HerdAccessGrant.herd).where(
+        (HerdAccessGrant.member == person.id) & HerdAccessGrant.revoked_at.is_null(True)
+    )
+    herd_ids |= {str(g.herd_id) for g in grants}
     owners = User.select(User._privileges).where(User._privileges.contains('"owner"'))
     # For anyone but the main member, her linked account owns the herds: only an unlinked owner may be this person.
     if person.role != "huvudmedlem":
