@@ -18,7 +18,7 @@ from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 from flask import current_app
-from peewee import JOIN, IntegrityError, OperationalError, fn
+from peewee import JOIN, SQL, IntegrityError, OperationalError, fn
 
 import utils.inbox as inbox
 import utils.report_code as report_code
@@ -2485,6 +2485,9 @@ def _matrikel_refusals(herd, paper, submissions, *, check_email):
     return refusals
 
 
+_INSERTED_ACCOUNT = r"(new_data->>'bank_account_number' ~ '[^\s\u00a0]' OR new_data->>'bank_name' ~ '[^\s\u00a0]')"
+
+
 def later_fields(herd, membership, member, signed_on: date, own=frozenset()) -> set[str]:
     """
     D19: the PAPER_FIELDS the matrikel changed after the form's date, that is from the next day in Stockholm: the
@@ -2531,9 +2534,10 @@ def later_fields(herd, membership, member, signed_on: date, own=frozenset()) -> 
     account = AuditLog.select(AuditLog.transaction_id).where(
         AuditLog.table_name == "herd",
         AuditLog.record_id.in_({str(herd.id)} | {str(row.id) for row in herds}),
-        AuditLog.operation == "UPDATE",  # an INSERT lists every column it filled
         AuditLog.changed_at >= after,
-        AuditLog.changed_fields.contains_any("bank_account_number", "bank_name"),
+        ((AuditLog.operation == "UPDATE") & AuditLog.changed_fields.contains_any("bank_account_number", "bank_name"))
+        # an INSERT lists every column it filled: it counts when it filled the account (add_herd before 58)
+        | ((AuditLog.operation == "INSERT") & SQL(_INSERTED_ACCOUNT)),
     )
     if any(row.transaction_id not in transactions for row in account):
         fields.add("konto")

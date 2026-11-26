@@ -501,6 +501,28 @@ class KontaktTest(PaperTest):
         self.assertEqual((receipt["matrikel"], receipt["warnings"]), ([], [later("konto")]))
         self.assertEqual(self.account()[1], OLD_ACCOUNT)
 
+    def test_a_sibling_herd_inserted_with_an_account_after_the_form_counts(self):  # Codex #278 r2
+        """Before 58 add_herd could insert a herd with an account; linked later, its account may be the one the
+        membership got. Its INSERT row counts as an account change; one without an account does not."""
+        today = self.real_clock()
+        sibling = db.Herd.create(genebank=self.gotland, herd="G9006", membership=self.member.membership_id)
+        new_data = {"herd_id": sibling.id, "herd": "G9006", "bank_account_number": "5555-12345", "bank_name": None}
+        signed = (today - timedelta(days=10)).isoformat()
+        self.login("man")
+        item = self.form(self.manager)
+        body = self.paper(item, matrikel(konto=NEW_KONTO), received_on=today.isoformat(), signed_on=signed)
+        self.assertEqual(self.ok(item, body)["matrikel"], ["konto"])  # the sibling's own INSERT had no account
+        db.AuditLog.create(
+            table_name="herd", record_id=str(sibling.id), operation="INSERT",
+            changed_fields=list(new_data), old_data=None, new_data=new_data,
+        )  # fmt: skip
+        again = self.form(self.manager)
+        retyped = matrikel(konto={**NEW_KONTO, "konto": "4618 0378"})
+        body = self.paper(again, retyped, received_on=today.isoformat(), signed_on=signed, revision=1, reason="Ny")
+        receipt = self.ok(again, body)
+        self.assertEqual((receipt["matrikel"], receipt["warnings"]), ([], [later("konto")]))
+        self.assertEqual(self.account()[1], "9420-46180377")
+
     def test_later_matrikel_change_wins(self):  # Review Focus 5, D19
         today = self.real_clock()  # audit_log cannot be backdated
         # A phone through the profile and an account on the herd page, both now
