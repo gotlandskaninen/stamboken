@@ -138,6 +138,7 @@ class ProposalApiTest(ArsrapportTest):
                 "name": None,
                 "to_herd": None,
                 "buyer": {"name": BUYER["name"], "town": BUYER["town"]},  # K7: name and town only
+                "buyer_not_recorded": False,
                 "sale_date": "2025-10-03",
                 "day_known": True,
                 "buyer_notified_at": "2026-01-11T00:00:00+00:00",
