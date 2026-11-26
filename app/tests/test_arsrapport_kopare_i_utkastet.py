@@ -424,6 +424,20 @@ class DialogBuyerTest(KeptBuyerBase):
         self.assertEqual([sale.holder_contact_id for sale in sales(self.a, active=True)], [contact.id])
         self.assertEqual(self.buyer_mails(), [("kopare.information", contact.id)])  # resumed, not queued again
 
+    def test_a_registered_buyer_is_never_taken_by_the_month_rule(self):  # review r1: held by an active row
+        contact = self.notice_kept()
+        self.ok(self.sent(contact.id))  # registered late in the month; its notice is queued, not sent yet
+        self.assertEqual(buyer_contact.purge_uninformed(arsrapport.now() + timedelta(days=31)), 0)
+        self.assertEqual(list(contacts()), [contact.id])
+        (sale,) = sales(self.a, active=True)
+        self.assertEqual((sale.holder_contact_id, sale.buyer_removed), (contact.id, False))
+
+    def test_a_buyer_waiting_for_the_address_check_is_not_taken_by_the_month_rule(self):  # review r1
+        contact = self.notice_kept()
+        db.BuyerContact.update(email_review_pending=True).execute()
+        self.assertEqual(buyer_contact.purge_uninformed(arsrapport.now() + timedelta(days=31)), 0)
+        self.assertEqual(list(contacts()), [contact.id])
+
     def test_a_reason_may_not_name_the_kept_buyer(self):  # it lives in audit_log; no row holds the buyer yet
         self.login("man")
         _, contact = self.kept()

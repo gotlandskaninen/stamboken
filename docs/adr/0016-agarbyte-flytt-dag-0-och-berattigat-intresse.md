@@ -303,7 +303,9 @@ sparas aldrig i ett utkast.
   sparad", och genbanksansvarig ser köparen först när rapporten har skickats.
   En köpare utan bevis (`email_notice_only`) raderas om mejlet inte har gått
   inom en månad från dagen då den sparades (`purge_uninformed`), också medan
-  rundan är öppen. Dialogen säger det.
+  rundan är öppen. Dialogen säger det. En köpare som en registrerad
+  försäljning håller, eller vars adress väntar på genbanksansvarigs kontroll,
+  raderas aldrig så: försäljningen skulle förlora köparen för gott.
 
 ## Mer information
 
