@@ -340,7 +340,9 @@ för en post med `ref_type` `sale_proposal`, vars statusvy avgör förslaget, oc
   [Gallring](#gallring)); `…/original` svarar då 404.
 - `has_copy`: kopian finns.
 - `verified_at`: när handläggaren bekräftade kopian med "stämmer med registret"
-  (`matches_registry` i [Maskning](#maskning-och-kopian-på-kaninen)), annars `null`.
+  (`matches_registry` i [Maskning](#maskning-och-kopian-på-kaninen)), annars `null`. Dokumentet
+  sparar också intygsnumret det sparades med (`saved_certificate`, inte i svaret); märkningen gäller
+  bara så länge kaninen har kvar det.
 
 ### Händelser
 
@@ -909,21 +911,22 @@ Bekräftar vridningen och maskningen tillsammans och gör kopian av just det par
 | `rotation` | krävs: 0, 90, 180 eller 270 grader medurs |
 | `mask_rects` | krävs: rektanglarna i bråkdelar av bilden vriden `rotation` grader. Får inte vara `null` |
 | `no_personal_data` | `true` krävs när `mask_rects` är en tom lista: intyget visar ingen säljare eller köpare |
-| `matches_registry` | `true` när handläggaren har jämfört intyget med registret och de stämmer. Ger kaninen märkningen "Intyget kontrollerat" (se nedan). Handläggaren kryssar i det själv varje gång, också när kopian görs om. Gränssnittet visar "Förslag: stämmer" när tolkningen läste kaninens eget nummer (`läst`) och ingen kontroll gick emot, men handläggaren avgör (Jonas 2026-11-26). Utelämnat eller `false`: ingen märkning. Kaninen måste ha ett pappersintyg i Stamboken (409 annars) |
+| `matches_registry` | `true` när handläggaren har jämfört intyget med registret och de stämmer. Ger kaninen märkningen "Intyget kontrollerat" (se nedan). Handläggaren kryssar i det själv varje gång, också när kopian görs om. Gränssnittet visar "Förslag: stämmer" när tolkningen läste kaninens eget nummer (`läst`) och ingen kontroll gick emot, men handläggaren avgör (Jonas 2026-11-26). Utelämnat eller `false`: ingen märkning. Kaninen måste ha kvar det intygsnummer som fotot sparades med (`saved_certificate`), annars 409: kontrollen gäller det intyg handläggaren jämförde |
 
 Båda värdena sparas på dokumentet i samma transaktion som kopian görs. Det som redan står på
 dokumentet (från `PATCH`) används inte: kopian visar exakt det paret som skickades. Likaså
-`matches_registry`: varje anrop sätter `verified_at`, den som bekräftade (`verified_by`) och kaninens
-intygsnummer just då (`saved_certificate`) på nytt, eller tar bort dem. Görs kopian om utan
-`matches_registry` försvinner märkningen. En ny kopia sparas under ett nytt filnamn, och den gamla
-filen tas bort när den nya är sparad; blir den kvar tar nattjobbet den.
+`matches_registry`: varje anrop sätter `verified_at` och den som bekräftade (`verified_by`) på nytt,
+eller tar bort dem. Görs kopian om utan `matches_registry` försvinner märkningen. Kaninen läses under
+sitt lås. En ny kopia sparas under ett nytt filnamn, och den gamla filen tas bort efter commit; går
+det inte loggas det, svaret är ändå 200, och nattjobbet tar filen.
 
 **Vem:** handläggaren medan posten är öppen. Har dokumentet redan en kopia får också
-genbanksansvarig för postens genbank och admin göra om den, i alla lägen och också när posten är
+genbanksansvarig för kaninens genbank och admin göra om den, i alla lägen och också när posten är
 stängd eller någon annan har den, så att en felaktig kopia kan rättas. Dokumentet måste vara ett
 sparat intyg (`individual` satt). Den som gör kopian måste dessutom ha en roll i kaninens genbank:
 genbanksansvarig, admin, eller hjälpare när kaninen inte står i GX1/MX1 (403 annars). Det spelar
-roll för ett mejl utan genbank, som vem som helst i kön kan ta.
+roll för ett mejl utan genbank, som vem som helst i kön kan ta. En hjälpare som inte har en roll i
+kaninens genbank lämnar posten till genbanksansvarig.
 
 Dokumentet blir klart (`status: "klar"`, `has_copy: true`). Är alla dokument i posten klara
 eller avfärdade blir posten `klar`, uppladdaren får notisen `klar` och mejlet `inlasning.klar`, en gång per post: en post som öppnas igen och
@@ -1328,8 +1331,8 @@ Tar bort dokumentets maskade kopia, till exempel när den är dåligt maskad och
 så att `…/maskning` inte kan göra om den. Kopian försvinner från kaninens sida och filen raderas efter
 commit. Händelsen `kopia_borttagen` loggas, utan fritext.
 
-**Vem:** genbanksansvarig för postens genbank och admin (en post utan genbank: alla
-genbanksansvariga), i alla lägen.
+**Vem:** genbanksansvarig för kaninens genbank och admin, i alla lägen. Bekräftelsen
+(`verified_at`, `verified_by`) tas bort med kopian.
 
 **Svar 200:** `{"item": <post i listform>, "document": <dokument>}`.
 

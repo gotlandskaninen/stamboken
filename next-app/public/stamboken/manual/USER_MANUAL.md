@@ -1277,8 +1277,10 @@ administratörer, genbanksansvariga och genbankshjälpare, och alla tre kan se h
    kryssar. Kaninen får då märkningen **Intyget kontrollerat**. Kopian läggs
    på kaninen som pappersintyg. Därefter går vridning och typ inte att ändra. Blev maskningen
    fel klickar du **Gör om maskningen** på det klara dokumentet: handläggaren kan det medan
-   ärendet är öppet, genbanksansvarig och administratör när som helst. Kopian på kaninen
-   ersätts.
+   ärendet är öppet, genbanksansvarig för kaninens genbank och administratör när som helst.
+   Kopian på kaninen ersätts. Är kaninen i en genbank där du inte är hjälpare lämnar du ärendet
+   till genbanksansvarig. Har kaninen fått ett annat intygsnummer sedan fotot sparades kan du
+   inte kryssa i att intyget stämmer.
 5. Visar intyget en försäljning registrerar du den innan du bekräftar maskningen: öppna
    **Visar intyget en försäljning?** och fyll i **Individnummer**, **Köparens besättning**
    eller **Köparen är utanför föreningen** (sparas på GX1 eller MX1) och **Säljdatum**.
