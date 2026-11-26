@@ -5059,39 +5059,50 @@ def _create_support_account_guards():
 
 def _move_support_accounts():
     """
-    Migration 58's move, every herd included, active or not: each membership takes its herds' account number and
-    bank name, and keeps a value it already holds. Text that is only blanks is no value. Numbers compare by their
-    digits (a text without digits by itself, ignoring case) and names ignoring case and blanks, each column alone, so
-    a herd with the number only and one with the number and the bank agree. Anything else is never guessed: a
-    membership whose herds (or its own value) differ, or an account on a herd without a membership, stops the
-    migration before it writes, naming only ids and counts.
+    Migration 58's move, every herd included, active or not: each membership takes the account its herds hold, and
+    keeps one it holds already. A text that is only whitespace (tabs, newlines and no-break spaces too) is no value.
+    Herds agree only on the same number and bank together, compared without whitespace and the marks . , - and
+    ignoring case; letters such as BG or PG stay, so they keep two accounts apart. Nothing is merged or guessed: a
+    membership whose herds (or its own account) differ, or an account on a herd without a membership, stops the
+    migration before it writes, naming only ids and counts. A household whose persons are all anonymised gets no
+    account (U14); its herds are emptied like the others.
     """
 
-    def norm(column, text):
-        text = (text or "").strip()
-        return (re.sub(r"\D", "", text) if column == "number" else "") or " ".join(text.casefold().split())
+    def key(number, name):
+        number, name = (number or "").strip(), (name or "").strip()
+        return re.sub(r"[\s.,\-]", "", number).casefold(), " ".join(name.casefold().split()), bool(number or name)
 
     rows = DATABASE.execute_sql(
         "SELECT herd_id, membership_id, bank_account_number, bank_name FROM herd"
-        " WHERE btrim(coalesce(bank_account_number, '') || coalesce(bank_name, '')) <> '' ORDER BY herd_id"
+        " WHERE bank_account_number IS NOT NULL OR bank_name IS NOT NULL ORDER BY herd_id"
     ).fetchall()
+    rows = [row for row in rows if key(*row[2:])[2]]
     orphans = [herd_id for herd_id, membership_id, *_ in rows if membership_id is None]
     held = {}
     for _, membership_id, number, name in (row for row in rows if row[1] is not None):
         held.setdefault(membership_id, []).append((number, name))
+    # the names anonymize_person writes (utils.matrikel.ANONYMIZED_FIRST_NAME and _LAST_NAME)
+    erased = {
+        row[0]
+        for row in DATABASE.execute_sql(
+            "SELECT membership_id FROM member WHERE membership_id = ANY(%s) GROUP BY membership_id"
+            " HAVING bool_and(first_name = 'Borttagen' AND last_name = 'person')",
+            (list(held),),
+        )
+    }
     stored = DATABASE.execute_sql(
         "SELECT membership_id, bank_account_number, bank_name FROM membership WHERE membership_id = ANY(%s)",
         (list(held),),
     ).fetchall()
-    moves, conflicts = {}, set()
+    moves, conflicts = {}, []
     for membership_id, *own in stored:
-        move = []
-        for i, column in enumerate(("number", "name")):
-            values = [v for v in (own[i], *(account[i] for account in held[membership_id])) if norm(column, v)]
-            if len({norm(column, v) for v in values}) > 1:
-                conflicts.add(membership_id)
-            move.append(values[0].strip() if values else None)  # the membership's own value, else the first herd's
-        moves[membership_id] = move
+        if membership_id in erased:
+            continue
+        accounts = held[membership_id] + ([tuple(own)] if key(*own)[2] else [])
+        if len({key(*account) for account in accounts}) > 1:
+            conflicts.append(membership_id)
+        elif not key(*own)[2]:
+            moves[membership_id] = [(value or "").strip() or None for value in accounts[0]]
     if conflicts or orphans:
         conflicts = sorted(conflicts)
         raise RuntimeError(

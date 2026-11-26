@@ -106,9 +106,10 @@ class TestMigration58(IsolatedSchemaTest):
     def test_moves_one_account_per_membership_without_audit_copies(self):
         g1, g2, m3 = self.herds
         with db.DB_PROXY.atomic() as tx:
-            # G2 has the same account without the bank; M3 (inactive) only a bank name; G4 only blanks
-            self.to_v57({g1: (f" {ACCOUNT} ", "Banken"), g2: ("83274471-5512", None), m3: (None, " Bara bank "),
-                         self.orphan: ("  ", "")})  # fmt: skip
+            # G2 has the same account written otherwise; M3 (inactive) only a bank name; G4, without a membership,
+            # only blanks: tab, newline, no-break space
+            self.to_v57({g1: (f" {ACCOUNT} ", "Banken"), g2: ("83274471-5512", " banken\t"), m3: (None, " Bara bank "),
+                         self.orphan: ("\t\n", "\u00a0")})  # fmt: skip
             audit_rows = self.herd_audit_rows()
             db.migrate_57_to_58()
             self.assertEqual(self.account(self.a), (None, ACCOUNT, "Banken"))  # the type is not guessed
@@ -128,9 +129,9 @@ class TestMigration58(IsolatedSchemaTest):
             db.Membership.id == self.a.id
         ).execute()
         with db.DB_PROXY.atomic() as tx:
-            self.to_v57({g1: ("8327 4471 5512", "Banken")}, drop_columns=False)  # the same digits
+            self.to_v57({g1: ("8327 4471 5512", None)}, drop_columns=False)  # the same account
             db.migrate_57_to_58()
-            self.assertEqual(self.account(self.a), ("bankkonto", ACCOUNT, "Banken"))
+            self.assertEqual(self.account(self.a), ("bankkonto", ACCOUNT, None))
             self.assertEqual(self.herd_accounts(), [])
             tx.rollback()
         with db.DB_PROXY.atomic() as tx:
@@ -145,6 +146,11 @@ class TestMigration58(IsolatedSchemaTest):
         cases = {
             "two accounts": {g1: (ACCOUNT, "Banken"), g2: (OTHER, "Banken")},
             "two banks": {g1: (ACCOUNT, "Banken"), g2: (ACCOUNT, "Andra banken")},
+            # never merged into an account no herd held: the bank from one herd, the number from the other
+            "number and bank apart": {g1: (ACCOUNT, None), g2: (None, "Banken")},
+            "one bank missing": {g1: (ACCOUNT, "Banken"), g2: (ACCOUNT, None)},
+            "bankgiro and plusgiro": {g1: ("BG 123-4567", None), g2: ("PG 1234567", None)},
+            "a marker on one": {g1: ("1234567", None), g2: ("bg 123-4567", None)},
             "no membership": {m3: (ACCOUNT, None), self.orphan: (OTHER, None)},
         }
         for case, accounts in cases.items():
@@ -163,8 +169,9 @@ class TestMigration58(IsolatedSchemaTest):
                 for secret in (*DIGITS, "9420", "4618", "Banken", "Andra"):
                     self.assertNotIn(secret, message)
                 # all rolled back: the herds keep their values, the membership has no new columns, the trigger is on
-                held = _sql("SELECT herd_id, bank_account_number FROM herd WHERE bank_account_number IS NOT NULL")
-                self.assertEqual(dict(held.fetchall()), {h.id: v[0] for h, v in accounts.items()})
+                held = _sql("SELECT herd_id, bank_account_number, bank_name FROM herd WHERE bank_account_number "
+                            "IS NOT NULL OR bank_name IS NOT NULL")  # fmt: skip
+                self.assertEqual({row[0]: row[1:] for row in held.fetchall()}, {h.id: v for h, v in accounts.items()})
                 columns = {c.name for c in db.DATABASE.get_columns("membership")}
                 self.assertNotIn("bank_account_number", columns)
                 enabled = _sql("SELECT tgenabled FROM pg_trigger WHERE tgrelid = 'herd'::regclass "
@@ -172,6 +179,23 @@ class TestMigration58(IsolatedSchemaTest):
                 self.assertEqual(enabled, ("O",))
                 self.assertEqual(self.herd_audit_rows(), audit_rows)
                 tx.rollback()
+
+    def test_an_erased_household_gets_no_account(self):
+        """U14: a membership whose persons are all anonymised gets nothing, whatever its herds hold, and stops
+        nothing; its herds are emptied like the others."""
+        person = db.Member.create(first_name="Test", last_name="Person", membership=self.a, role="huvudmedlem")
+        anonymize_person(person, db.User.get_by_id(self.admin.id))
+        db.Member.create(first_name="Test", last_name="Kvar", membership=self.b, role="huvudmedlem")
+        gone = db.Member.create(first_name="Test", last_name="Borta", membership=self.b, role="familjemedlem")
+        anonymize_person(gone, db.User.get_by_id(self.admin.id))  # one erased person is not an erased household
+        g1, g2, m3 = self.herds
+        with db.DB_PROXY.atomic() as tx:
+            self.to_v57({g1: (ACCOUNT, "Banken"), g2: (OTHER, None), m3: (OTHER, "Banken")})
+            db.migrate_57_to_58()
+            self.assertEqual(self.account(self.a), (None, None, None))
+            self.assertEqual(self.account(self.b), (None, OTHER, "Banken"))
+            self.assertEqual(self.herd_accounts(), [])
+            tx.rollback()
 
     def test_the_herd_columns_and_the_type_are_guarded(self):
         for write in (
