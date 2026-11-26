@@ -348,6 +348,40 @@ class BlankettTest(ArsrapportTest):
         self.assertEqual(json.loads(report.data)["not_stated"], ids)
         self.assertTrue(arsrapport.on_time(report, self.round_))
 
+    def test_ej_angiven_answered_through_the_link(self):  # case 8, the member's half (step 6: Å22 and its page)
+        import utils.arsrapport_remind as remind  # pylint: disable=import-outside-toplevel
+        import utils.mail as mail  # pylint: disable=import-outside-toplevel
+        import utils.settings as settings  # pylint: disable=import-outside-toplevel
+
+        rabbits, missing = self.ej_angiven_case(self.h)
+        item = self.form(self.manager)
+        self.login("man")
+        entries = [self.ej_angiven(r) if r in missing else self.kvar(r, vikt=2.8) for r in rabbits]
+        first = self.ok(item, self.paper(item, *entries, received_on="2026-01-12"))
+        report = db.YearlyHerdReport.get_by_id(first["report_id"])
+        self.client.get("/api/logout")
+        with mock.patch.multiple(settings.mail, link_secret="test-link-secret", link_hosts=[]), APP.app_context():
+            self.assertEqual(remind.send_missing_questions(NOW), 1)
+            (question,) = db.MailMessage.select().where(db.MailMessage.kind == remind.MISSING)
+            token = mail.link_token("rapport", question.params["code_id"])
+            self.assertEqual(self.client.post("/api/v2/rapport/oppna", json={"token": token}).status_code, 200)
+            path = f"{REPORT.format(herd='G9001')}"
+            view = self.client.get(f"{path}?via=lank").get_json()["report"]
+            self.assertEqual((view["not_stated"], view["can_complete_missing"]), (sorted(r.id for r in missing), True))
+            buck = missing[-1]
+            body = {
+                "submission_key": str(uuid.uuid4()),
+                "revision": view["revision"],
+                "rabbits": dict([self.kvar(buck, vikt=3.1)]),
+            }
+            response = self.client.post(f"{path}/komplettera?via=lank", json=body)
+            self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        after = db.YearlyHerdReport.get_by_id(report.id)
+        self.assertEqual(after.received_at, report.received_at)
+        self.assertEqual(json.loads(after.data)["not_stated"], sorted(r.id for r in missing[:2]))
+        self.assertTrue(all(arsrapport.herd_conditions(self.h, self.round_, after).values()))
+        self.assertTrue(arsrapport.on_time(after, self.round_))
+
     def test_paper_over_a_digital_report_needs_a_reason(self):
         a, b = self.rabbits(self.h, 2)
         rid = self.logged_in(self.body(self.kvar(a, vikt=2.8), self.kvar(b, vikt=2.8)))["report_id"]

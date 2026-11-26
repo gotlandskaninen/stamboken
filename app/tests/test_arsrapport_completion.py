@@ -198,6 +198,19 @@ class TestCompletion(CompletionTest):
         self.login("man")
         self.assertEqual(self.answer(self.kvar(self.doe2, vikt=3.0))[0].status_code, 200)
 
+    def test_the_link_answers_through_the_production_gate(self):  # P8: via=lank, also for an unpromoted account
+        self.open_link()
+        response, _ = self.answer(self.kvar(self.buck, vikt=3.0), query="?via=lank")
+        self.assertEqual(response.status_code, 200, response.get_json())
+        account = self.user("ny")  # an account without v2_prod_access, with the link in its session
+        self.login("ny")
+        self.open_link()
+        response, _ = self.answer(self.kvar(self.doe, vikt=3.0), query="?via=lank")
+        self.assertEqual(response.status_code, 200, response.get_json())
+        latest = arsrapport._submissions(self.current())[-1]
+        self.assertEqual((latest.access_code_id, latest.user_id), (self.code.id, None))
+        self.assertFalse(db.User.get_by_id(account.id).v2_prod_access)
+
     def test_nothing_to_complete_after_an_ending_a_withdrawal_or_a_closed_round(self):
         self.open_link()
         data = self.data() | {"ending_genbank": True}
