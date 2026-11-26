@@ -11,7 +11,7 @@ import herdbook  # noqa: E402
 import utils.data_access as da  # noqa: E402
 import utils.database as db  # noqa: E402
 import utils.inbox as inbox  # noqa: E402
-from utils.herd_tracking import HerdTrackingConflict  # noqa: E402
+from utils.herd_tracking import HerdTrackingConflict, record_herd_tracking  # noqa: E402
 from utils.individual_commands import (  # noqa: E402
     AssignPaperCertificate,
     EditDescription,
@@ -544,6 +544,24 @@ class TestTransferEndpoint(GrantTest):
         self.assertEqual(db.InboxOperation.select().count(), 1)  # linking writes nothing on the rabbit
         event = self.reload(item).events.where(db.InboxEvent.kind == "sparad").order_by(db.InboxEvent.id.desc()).get()
         self.assertEqual(event.detail["action"], "bevis")
+
+    def test_a_proof_of_a_sale_without_buyer_links_as_sold_outside_and_keeps_no_buyer(self):
+        day = "2026-11-20"  # before the försäljningsbevis: the seller may have no buyer to give (#273)
+        db.HerdTracking.update(herd_tracking_date="2021-02-01").where(
+            db.HerdTracking.individual == self.rabbit("G1-2111")
+        ).execute()
+        sale = record_herd_tracking(self.rabbit("G1-2111"), "GX1", day, "TRANSFER", self.manager)  # no buyer
+        item, proof = self.taken(self.helper)
+        self.login("hjalp")
+        resp = self.client.patch(f"/api/v2/inkorg/{item.id}/dokument/{proof.id}", json={"doc_type": "bevis"})
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+
+        resp = self.transfer(item, proof, individual="G1-2111", herd="GX1", date=day, buyer={"not_recorded": True})
+
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertEqual(resp.get_json()["herd_tracking_id"], sale.id)
+        self.assertEqual(db.BuyerContact.select().count(), 0)
+        self.assertIsNone(db.HerdTracking.get_by_id(sale.id).holder_contact_id)
 
     def test_a_refused_sale_names_its_field(self):
         item, document = self.taken(self.helper)

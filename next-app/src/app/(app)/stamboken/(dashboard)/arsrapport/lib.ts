@@ -391,7 +391,7 @@ export const REFUSAL_TEXT: Record<string, string> = {
     "Kaninen har en senare händelse i Stamboken. Genbanksansvarig kan rätta.",
   forsaljning_skotare:
     "Försäljningen registreras av ägaren eller genbanksansvarig.",
-  kopare_saknas: "Skriv köparens namn och ort.",
+  kopare_saknas: "Fyll i köparen, eller välj såld utanför genbanken.",
   halsa_saknas: "Välj Inga sjukdomsfall eller defekter, eller Ja.",
   ej_angiven_digitalt: "Ej angiven finns bara när en blankett matas in.",
   orsak_kravs: "Skriv varför rapporten ändras.",
@@ -1228,6 +1228,7 @@ export interface SaleProposalRow {
   name: string | null;
   to_herd: string | null;
   buyer: { name: string; town: string | null } | null;
+  buyer_not_recorded: boolean; // såld utanför genbanken: no buyer kept (#273)
   sale_date: string;
   day_known: boolean; // false: the report gave it without its day (5.3), so its month is shown
   buyer_notified_at: string | null; // the buyer's own notice (K7)

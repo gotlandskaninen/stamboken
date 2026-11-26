@@ -115,7 +115,7 @@ def _same_contact_fields(contact, fields):
             old, new = (old or "").strip().lower(), (new or "").strip().lower()
         if old != new:
             return False
-    ticks = ("contact_consent_at", "membership_optin_at")
+    ticks = ("contact_consent_at", "membership_optin_at", "email_notice_only")
     return all(bool(getattr(contact, key)) == bool(fields[key]) for key in ticks)
 
 
@@ -451,7 +451,7 @@ def _operation_rows(individual_ids, operation_id):
     )
 
 
-KEPT_BUYER_GONE = "Köparen finns inte längre sparad. Skriv köparens namn och ort."
+KEPT_BUYER_GONE = "Köparen finns inte längre sparad. Fyll i köparen, eller välj såld utanför genbanken."
 
 
 def record_herd_tracking(
@@ -469,6 +469,7 @@ def record_herd_tracking(
     holder_contact=None,
     address_optional=False,
     buyer_removed=False,
+    new_sale=True,
 ):
     """
     The central writer. Locks the individual, re-reads its
@@ -490,6 +491,8 @@ def record_herd_tracking(
     reject_contact_details(notes)
     if buyer_removed and (buyer is not None or holder_contact is not None):
         raise HerdTrackingConflict(BUYER_REMOVED)
+    if buyer == NOT_RECORDED and holder_contact is not None:  # såld utanför genbanken keeps no buyer (#273)
+        raise HerdTrackingInvalid("En försäljning utan köpare kan inte behålla en sparad köpare.")
     if (buyer is not None or holder_contact is not None or buyer_removed) and (
         kind != "TRANSFER" or target.herd not in OUTSIDE_GENEBANK_HERDS
     ):
@@ -498,7 +501,7 @@ def record_herd_tracking(
     if buyer is not None:
         # A new sale needs the address, except from a manager or admin (old paper certificates); corrections never.
         address_required = not address_optional and not is_manager_of(user, target.genebank_id)
-        contact_fields = buyer_contact_fields(buyer, when, address_required=address_required)
+        contact_fields = buyer_contact_fields(buyer, when, address_required=address_required, new_sale=new_sale)
     individual_id = individual.id if isinstance(individual, Individual) else int(individual)
     code_id = getattr(user, "access_code_id", None)  # the report link as the signer: no account, no signature
     signer = {"access_code_id": code_id} if code_id is not None else {"signature": user}
@@ -975,13 +978,15 @@ def _parse_events(events, individual):
         buyer = event.get("buyer")
         if buyer is not None and (kind != "TRANSFER" or herd.herd not in OUTSIDE_GENEBANK_HERDS):
             raise HerdTrackingInvalid(f"Händelse {number}: en köpare hör bara till en försäljning utanför genbanken.")
+        fields = buyer_contact_fields(buyer, when) if buyer is not None else None
         parsed.append(
             {
                 "date": when,
                 "herd": herd,
                 "kind": kind,
                 "notes": notes,
-                "buyer": buyer_contact_fields(buyer, when) if buyer is not None else None,
+                "buyer": fields,
+                "not_recorded": buyer is not None and fields is None,  # såld utanför genbanken (#273)
             }
         )
         previous = when
@@ -1052,7 +1057,14 @@ def _refuse_buyerless_sales_outside(parsed, pairs):
             continue
         if event["buyer"] is not None and index in pairs and pairs[index].buyer_removed:
             raise HerdTrackingConflict(BUYER_REMOVED)  # never registered again, as in attach_buyer
-        if event["buyer"] is None and index not in pairs:
+        buyer = event["buyer"]
+        if buyer and not buyer["email_notice_only"] and event["date"] < BEVIS_FROM:
+            # before BEVIS_FROM only a buyer registered the old way may be corrected the old way (#273)
+            replaced = pairs[index].holder_contact_id if index in pairs else None
+            old_way = BuyerContact.select().where(BuyerContact.id == replaced, ~BuyerContact.email_notice_only)
+            if replaced is None or not old_way.exists():
+                raise HerdTrackingInvalid(f"Händelse {index + 1}: {BEVIS_NOT_YET}")
+        if event["buyer"] is None and index not in pairs and not event["not_recorded"]:
             hint = "ange köparens namn och ort" if event["kind"] == "TRANSFER" else "välj Flytt, där köparen anges"
             raise HerdTrackingInvalid(f"Händelse {index + 1}: en försäljning utanför föreningen: {hint}.")
 
@@ -1114,7 +1126,9 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
         pairs = _outside_pairs([by_id[v] for v in void_ids], parsed)
         _refuse_buyerless_sales_outside(parsed, pairs)
         carried = {
-            i: r.holder_contact_id for i, r in pairs.items() if parsed[i]["buyer"] is None and r.holder_contact_id
+            i: r.holder_contact_id
+            for i, r in pairs.items()
+            if parsed[i]["buyer"] is None and not parsed[i]["not_recorded"] and r.holder_contact_id
         }
         lock_buyer_addresses(e["buyer"]["email"] for e in parsed if e["buyer"])
         voided = _void_rows([by_id[v] for v in void_ids], user, cleaned, op)
@@ -1197,7 +1211,9 @@ def attach_buyer(row, buyer, user):
     trigger records the id on the row. Never on a row that has a buyer or that is not a sale into GX1/MX1. Once
     the five years have passed: None, and the row is marked buyer_removed instead.
     """
-    fields = buyer_contact_fields(buyer, row.herd_tracking_date)
+    fields = buyer_contact_fields(buyer, row.herd_tracking_date, new_sale=True)
+    if fields is None:
+        raise HerdTrackingInvalid("Det finns ingen köpare att lägga till.")
     if row.holder_contact_id is not None:
         raise HerdTrackingConflict("Försäljningen har redan en köpare. Genbanksansvarig ändrar den.")
     if row.buyer_removed:  # an erased or purged buyer is never registered again from a paper
@@ -1417,13 +1433,46 @@ CONTACT_OR_MEMBERSHIP_NEEDED = (
 )
 
 
-def buyer_contact_fields(buyer, sale_date, address_required=False):
+# The försäljningsbevis informs the buyer (ADR-0016): it may have come with a sale from 2026 (Jonas 2026-11-26; the
+# yearly report asks of it from 2027 only). A sale without one, until the end of 2027 for now (#273), keeps its
+# buyer only with an e-mail the notice goes to, or nothing about the buyer.
+BEVIS_FROM = datetime(2026, 1, 1).date()
+REPORT_BEVIS_FROM = datetime(2027, 1, 1).date()  # the yearly report and its proposals
+TRANSITION_UNTIL = datetime(2027, 12, 31).date()
+NOT_RECORDED = {"not_recorded": True}  # "såld utanför genbanken": nothing about the buyer is kept
+BEVIS_NOT_YET = (
+    "Före 2026 fanns inget försäljningsbevis. Skriv köparens e-post, så mejlar föreningen köparen, "
+    "eller välj såld utanför genbanken."
+)
+REPORT_BEVIS_NOT_YET = (
+    "Årsrapporten tar emot köparen från ett försäljningsbevis för försäljningar från 2027. Skriv köparens e-post, "
+    "så mejlar föreningen köparen, eller välj såld utanför genbanken."
+)
+TRANSITION_OVER = "Från 2028 får köparen försäljningsbeviset. Skriv köparens uppgifter från beviset."
+
+
+def buyer_contact_fields(buyer, sale_date, address_required=False, new_sale=False, report=False):
     """
     The BuyerContact columns from a sale's `buyer` object: name and town required, postal_address too when
     `address_required`; email and phone only with contact_consent or membership_optin (ADR-0016). Swedish 400s.
+    Without a försäljningsbevis (#273): `notice_only` needs name, town, postal address and e-mail, and takes no
+    phone or yes; NOT_RECORDED gives None. Both only for a sale until TRANSITION_UNTIL, and a `new_sale` before
+    BEVIS_FROM (REPORT_BEVIS_FROM for the yearly `report` and its proposals) takes nothing else.
     """
     if not isinstance(buyer, dict):
         raise HerdTrackingInvalid("Köparens uppgifter ska skickas som ett objekt.")
+    notice_only, not_recorded = buyer.get("notice_only", False), buyer.get("not_recorded", False)
+    if not isinstance(notice_only, bool) or not isinstance(not_recorded, bool) or (notice_only and not_recorded):
+        raise HerdTrackingInvalid("Välj om köparen har e-post eller om kaninen är såld utanför genbanken.")
+    day = coerce_date(sale_date)
+    if (notice_only or not_recorded) and day > TRANSITION_UNTIL:
+        raise HerdTrackingInvalid(TRANSITION_OVER)
+    if new_sale and not (notice_only or not_recorded) and day < (REPORT_BEVIS_FROM if report else BEVIS_FROM):
+        raise HerdTrackingInvalid(REPORT_BEVIS_NOT_YET if report else BEVIS_NOT_YET)
+    if not_recorded:
+        if buyer != NOT_RECORDED:
+            raise HerdTrackingInvalid("Skicka inga uppgifter om köparen när kaninen är såld utanför genbanken.")
+        return None
     fields = {}
     for key, label in BUYER_TEXT_FIELDS.items():
         value = buyer.get(key)
@@ -1452,10 +1501,18 @@ def buyer_contact_fields(buyer, sale_date, address_required=False):
     consent, optin = buyer.get("contact_consent", False), buyer.get("membership_optin", False)
     if not isinstance(consent, bool) or not isinstance(optin, bool):
         raise HerdTrackingInvalid("Köparens kryss ska vara ja eller nej.")
-    if (fields["email"] or fields["phone"]) and not (consent or optin):
+    if notice_only:  # the seller cannot say yes for the buyer
+        if fields["phone"] or consent or optin:
+            raise HerdTrackingInvalid("Utan försäljningsbevis sparas bara köparens namn, ort, postadress och e-post.")
+        if not fields["postal_address"]:
+            raise HerdTrackingInvalid("Ange köparens postadress.")
+        if not fields["email"]:
+            raise HerdTrackingInvalid("Ange köparens e-post, så att föreningen kan mejla köparen.")
+    elif (fields["email"] or fields["phone"]) and not (consent or optin):
         raise HerdTrackingInvalid(CONTACT_OR_MEMBERSHIP_NEEDED)
     fields["contact_consent_at"] = _now_utc() if consent else None
     fields["membership_optin_at"] = _sale_midnight(sale_date) if optin else None
+    fields["email_notice_only"] = notice_only
     return fields
 
 

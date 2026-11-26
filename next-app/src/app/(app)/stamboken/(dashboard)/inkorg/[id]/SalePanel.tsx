@@ -13,6 +13,7 @@ import {
   EMPTY_BUYER,
   buyerComplete,
   buyerPayload,
+  saleYear,
 } from "@/components/individual/BuyerFields";
 import { rabbitSales, registerSale, type RegistrySale } from "../actions";
 import {
@@ -55,6 +56,7 @@ export function SalePanel({
     {},
   );
   const [buyer, setBuyer] = useState(EMPTY_BUYER);
+  const year = saleYear(form.date); // the buyer's choice follows it (#273)
   const [formError, setFormError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [pending, start] = useTransition();
@@ -101,7 +103,7 @@ export function SalePanel({
         itemId,
         doc.id,
         form.outside && !saleRegistered
-          ? { ...payload, buyer: buyerPayload(buyer) }
+          ? { ...payload, buyer: buyerPayload(buyer, year) }
           : payload,
       );
       if (res.ok) {
@@ -170,6 +172,7 @@ export function SalePanel({
                 <BuyerFields
                   value={buyer}
                   onChange={setBuyer}
+                  year={year}
                   size="small"
                   addressRequired={addressRequired}
                 />
@@ -223,7 +226,7 @@ export function SalePanel({
             pending ||
             (form.outside &&
               !saleRegistered &&
-              !buyerComplete(buyer, addressRequired)) ||
+              !buyerComplete(buyer, addressRequired, year)) ||
             (form.outside && (lookupFailed || (proof && !lookedUp)))
           }
         >

@@ -20,6 +20,7 @@ import {
   EMPTY_BUYER,
   buyerComplete,
   buyerPayload,
+  saleYear,
   type BuyerDraft,
   type SaleBuyer,
 } from "./BuyerFields";
@@ -154,7 +155,10 @@ function CorrectionContent({
   const needsBuyer = (e: CorrectionEvent) =>
     e.kind === "TRANSFER" && isOutsideGenebankHerd(e.herd) && !carried(e.herd);
   const complete = events.every(
-    (e, i) => e.date && e.herd && (!needsBuyer(e) || buyerComplete(buyers[i])),
+    (e, i) =>
+      e.date &&
+      e.herd &&
+      (!needsBuyer(e) || buyerComplete(buyers[i], false, saleYear(e.date))),
   );
   const chronological = isChronological(events);
   const needsReason = voidIds.length > 0 && !reason.trim();
@@ -248,6 +252,7 @@ function CorrectionContent({
                 <div style={{ flexBasis: "100%" }}>
                   <BuyerFields
                     value={buyers[index]}
+                    year={saleYear(event.date)}
                     size="small"
                     onChange={(value) =>
                       setBuyers((list) =>
@@ -332,7 +337,9 @@ function CorrectionContent({
               operation_id: operationId,
               void_ids: voidIds,
               events: events.map((e, i) =>
-                needsBuyer(e) ? { ...e, buyer: buyerPayload(buyers[i]) } : e,
+                needsBuyer(e)
+                  ? { ...e, buyer: buyerPayload(buyers[i], saleYear(e.date)) }
+                  : e,
               ),
               reason: voidIds.length > 0 ? reason.trim() : "",
             })

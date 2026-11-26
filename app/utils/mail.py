@@ -1050,7 +1050,7 @@ def queue_member_added(person):
     if queued is None:
         # A row being sent loses its claim, so before _renew it does not go to the address replaced or removed; a
         # queued one is locked until the change commits, so the sender cannot read the old address meanwhile. Not
-        # a bounced one: a delay report counts as a bounce too (status view, "Försök igen").
+        # a bounced one: that goes again from the status view ("Försök igen").
         MailMessage.update(
             status="queued",
             next_attempt_at=not_before,

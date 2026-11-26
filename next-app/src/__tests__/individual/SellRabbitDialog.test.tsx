@@ -129,13 +129,32 @@ describe("SellRabbitDialog", () => {
     const OPTIN =
       "Köparen har kryssat ja: föreningen får kontakta köparen om medlemskap";
 
+    afterEach(() => vi.useRealTimers());
+
+    // The buyer's choice follows the sale's year (#273): before 2026 e-mail or none,
+    // 2026 and 2027 the bevis too, from 2028 only the försäljningsbevis, with no choice to make.
     async function chooseOutside(
       onConfirm = vi.fn(),
       canResellOutside = false,
+      mode: "epost" | "utan" | "bevis" = "epost",
     ) {
+      if (mode === "bevis") {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        vi.setSystemTime(new Date("2028-03-01T12:00:00Z"));
+      }
       render(dialog({ onConfirm, canResellOutside }));
       const options = await openHerdOptions();
       fireEvent.click(options[0]); // GX1
+      if (mode === "epost")
+        fireEvent.click(
+          screen.getByRole("radio", { name: "Nej, men köparen har e-post" }),
+        );
+      if (mode === "utan")
+        fireEvent.click(
+          screen.getByRole("radio", {
+            name: "Nej, och köparen har ingen e-post: såld utanför genbanken",
+          }),
+        );
       return onConfirm;
     }
     const type = (label: RegExp, value: string) =>
@@ -156,16 +175,44 @@ describe("SellRabbitDialog", () => {
       expect(screen.queryByLabelText(/Köparens namn/)).toBeNull();
       fireEvent.mouseDown(screen.getByRole("combobox"));
       fireEvent.click((await screen.findAllByRole("option"))[0]);
+      expect(
+        screen.getByText("Fick köparen försäljningsbeviset?"),
+      ).toBeTruthy();
+      fireEvent.click(screen.getByRole("radio", { name: "Ja" }));
       expect(screen.getByLabelText(/Köparens namn/)).toBeTruthy();
       expect(screen.getByLabelText(/^Ort/)).toBeTruthy();
-      expect(
-        screen.getByText(
-          "Ge köparen försäljningsbeviset. Där står föreningens information till köparen.",
-        ),
-      ).toBeTruthy();
     });
 
-    it("requires name, town and address before an owner can confirm the sale", async () => {
+    it("offers the bevis in 2026, with three options", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-10-01T12:00:00Z"));
+      render(dialog());
+      const options = await openHerdOptions();
+      fireEvent.click(options[0]); // GX1
+      expect(
+        screen.getByText("Fick köparen försäljningsbeviset?"),
+      ).toBeTruthy();
+      expect(
+        screen
+          .getAllByRole("radio")
+          .map((r) => r.closest("label")?.textContent),
+      ).toEqual([
+        "Ja",
+        "Nej, men köparen har e-post",
+        "Nej, och köparen har ingen e-post: såld utanför genbanken",
+      ]);
+    });
+
+    it("asks 'Har köparen e-post?' for a 2025 sale", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2025-05-14T12:00:00Z"));
+      render(dialog());
+      fireEvent.click((await openHerdOptions())[0]); // GX1
+      expect(screen.getByText("Har köparen e-post?")).toBeTruthy();
+      expect(screen.getAllByRole("radio")).toHaveLength(2);
+    });
+
+    it("requires name, town, address and e-mail before an owner can confirm the sale", async () => {
       await chooseOutside();
       acknowledge();
       expect(confirmButton().disabled).toBe(true);
@@ -174,11 +221,52 @@ describe("SellRabbitDialog", () => {
       type(/^Ort/, "Visby");
       expect(confirmButton().disabled).toBe(true);
       type(/^Postadress/, "Väg 1");
+      expect(confirmButton().disabled).toBe(true);
+      type(/^E-post/, "anna@example.org");
       await waitFor(() => expect(confirmButton().disabled).toBe(false));
     });
 
+    it("sends the e-mail buyer as notice_only", async () => {
+      const onConfirm = await chooseOutside();
+      type(/Köparens namn/, " Anna Köpare ");
+      type(/^Ort/, "Visby");
+      type(/^Postadress/, "Väg 1");
+      type(/^E-post/, "anna@example.org");
+      acknowledge();
+      await waitFor(() => expect(confirmButton().disabled).toBe(false));
+      fireEvent.click(confirmButton());
+      expect(onConfirm).toHaveBeenCalledWith("GX1", expect.any(String), {
+        name: "Anna Köpare",
+        town: "Visby",
+        postal_address: "Väg 1",
+        email: "anna@example.org",
+        notice_only: true,
+      });
+    });
+
+    it("sends not_recorded and asks for no fields when the buyer has no e-mail", async () => {
+      const onConfirm = await chooseOutside(vi.fn(), false, "utan");
+      expect(screen.queryByLabelText(/Köparens namn/)).toBeNull();
+      acknowledge();
+      await waitFor(() => expect(confirmButton().disabled).toBe(false));
+      fireEvent.click(confirmButton());
+      expect(onConfirm).toHaveBeenCalledWith("GX1", expect.any(String), {
+        not_recorded: true,
+      });
+    });
+
+    it("shows the proof note and no choice from 2028", async () => {
+      await chooseOutside(vi.fn(), false, "bevis");
+      expect(screen.queryByRole("radio")).toBeNull();
+      expect(
+        screen.getByText(
+          "Ge köparen försäljningsbeviset. Där står föreningens information till köparen.",
+        ),
+      ).toBeTruthy();
+    });
+
     it("lets a manager confirm without the address (old papers)", async () => {
-      await chooseOutside(vi.fn(), true);
+      await chooseOutside(vi.fn(), true, "bevis");
       acknowledge();
       type(/Köparens namn/, "Anna Köpare");
       type(/^Ort/, "Visby");
@@ -186,7 +274,7 @@ describe("SellRabbitDialog", () => {
     });
 
     it("shows the address always, e-mail and phone only after a yes", async () => {
-      await chooseOutside();
+      await chooseOutside(vi.fn(), false, "bevis");
       const labels: [string, RegExp][] = [
         ["Postadress", /^Postadress/],
         ["E-post", /^E-post/],
@@ -205,7 +293,7 @@ describe("SellRabbitDialog", () => {
     });
 
     it("sends the buyer, without fields hidden by an unticked box", async () => {
-      const onConfirm = await chooseOutside();
+      const onConfirm = await chooseOutside(vi.fn(), false, "bevis");
       type(/Köparens namn/, " Anna Köpare ");
       type(/^Ort/, "Visby");
       type(/^Postadress/, "Väg 1"); // no yes needed for the address
@@ -229,7 +317,7 @@ describe("SellRabbitDialog", () => {
     });
 
     it("drops e-mail and phone when both boxes are unticked, keeps the address", async () => {
-      const onConfirm = await chooseOutside();
+      const onConfirm = await chooseOutside(vi.fn(), false, "bevis");
       type(/Köparens namn/, "Anna Köpare");
       type(/^Ort/, "Visby");
       type(/^Postadress/, "Väg 1");

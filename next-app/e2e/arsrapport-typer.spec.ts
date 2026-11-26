@@ -169,9 +169,14 @@ async function markSold(
       .click();
   } else {
     await dialog.getByRole("radio", { name: "Utanför genbanken" }).check();
+    // a sale before 2027 had no försäljningsbevis: the buyer is kept with an e-mail for the notice (#273)
+    await dialog.getByRole("radio", { name: "Ja" }).check();
     await dialog.getByLabel("Köparens namn").fill(to.outside);
     await dialog.getByLabel(/^Ort/).fill("Mellerud");
     await dialog.getByLabel(/^Postadress/).fill("Testgatan 1");
+    await dialog
+      .getByLabel(/^E-post/)
+      .fill(`${to.outside.replace(/\W+/g, "").toLowerCase()}@example.org`);
   }
   await dialog.getByLabel(/^År/).selectOption(when.ar);
   await dialog.getByLabel(/^Månad/).selectOption(when.manad);

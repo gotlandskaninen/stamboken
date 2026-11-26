@@ -76,8 +76,8 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # notice.individual and buyer_contact.erased_email_hash (53) +
 # acceptance of the account rules (54) + each history year's realised Ne (55) +
 # a paper certificate's copy checked against the registry, inbox_document.saved_certificate and saved_number,
-# verified_at and verified_by (56).
-CURRENT_SCHEMA_VERSION = 56
+# verified_at and verified_by (56) + a buyer's e-mail kept only for the notice, buyer_contact.email_notice_only (57).
+CURRENT_SCHEMA_VERSION = 57
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -1765,11 +1765,21 @@ BUYER_CONTACT_YEARS = 5
 MEMBERSHIP_OPTIN_FOR = timedelta(days=365)  # at most 12 months from the sale
 
 
+BUYER_EMAIL_PHONE_CHECK = (
+    "CONSTRAINT buyer_contact_email_phone_need_consent CHECK ((email IS NULL AND phone IS NULL) "
+    "OR contact_consent_at IS NOT NULL OR membership_optin_at IS NOT NULL OR (email_notice_only AND phone IS NULL))"
+)
+BUYER_NOTICE_ONLY_CHECK = (
+    "CONSTRAINT buyer_contact_notice_only_no_consent CHECK (NOT email_notice_only "
+    "OR (phone IS NULL AND contact_consent_at IS NULL AND membership_optin_at IS NULL))"
+)
+
+
 class BuyerContact(BaseModel):
     """
     A buyer outside the association, on a sale to GX1/MX1 (ADR-0016): name, town and postal address on legitimate
-    interest, e-mail and phone only with the buyer's yes. Not in AUDITED_TABLES, so erased values never stay in
-    audit_log.
+    interest, e-mail and phone only with the buyer's yes, or the e-mail alone for the notice when the sale had no
+    försäljningsbevis (#273). Not in AUDITED_TABLES, so erased values never stay in audit_log.
     """
 
     id = AutoField()
@@ -1778,6 +1788,9 @@ class BuyerContact(BaseModel):
     postal_address = TextField(null=True)
     email = TextField(null=True)
     email_review_pending = BooleanField(default=False, constraints=[SQL("DEFAULT false")])
+    # The transition for sales without a försäljningsbevis (2026–2027, #273): the seller gave the e-mail, which is
+    # kept only until kopare.information has gone, and never with a phone or a yes.
+    email_notice_only = BooleanField(default=False, constraints=[SQL("DEFAULT false")])
     erased_email_hash = TextField(null=True)  # lets the erase link find this contact after its e-mail is purged
     phone = TextField(null=True)
     contact_consent_at = TimestampTZField(null=True)  # may keep e-mail and phone while the buyer has it
@@ -1799,12 +1812,7 @@ class BuyerContact(BaseModel):
 
     class Meta:  # pylint: disable=too-few-public-methods
         table_name = "buyer_contact"
-        constraints = [
-            SQL(
-                "CONSTRAINT buyer_contact_email_phone_need_consent CHECK ((email IS NULL AND phone IS NULL) "
-                "OR contact_consent_at IS NOT NULL OR membership_optin_at IS NOT NULL)"
-            ),
-        ]
+        constraints = [SQL(BUYER_EMAIL_PHONE_CHECK), SQL(BUYER_NOTICE_ONLY_CHECK)]
 
 
 HT_KINDS = ("BIRTH", "TRANSFER", "ATTESTATION", "CORRECTION")
@@ -4996,6 +5004,23 @@ def migrate_55_to_56():
         ).execute()
 
 
+def migrate_56_to_57():
+    """#273: a buyer's e-mail without a yes, kept only for the notice, for a sale without a försäljningsbevis."""
+    with DATABASE.atomic():
+        DATABASE.execute_sql(
+            "ALTER TABLE buyer_contact ADD COLUMN IF NOT EXISTS email_notice_only BOOLEAN NOT NULL DEFAULT false"
+        )
+        for name, check in (
+            ("buyer_contact_email_phone_need_consent", BUYER_EMAIL_PHONE_CHECK),
+            ("buyer_contact_notice_only_no_consent", BUYER_NOTICE_ONLY_CHECK),
+        ):
+            DATABASE.execute_sql(f'ALTER TABLE buyer_contact DROP CONSTRAINT IF EXISTS "{name}"')
+            DATABASE.execute_sql(f"ALTER TABLE buyer_contact ADD {check}")
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=57, comment="buyer_contact.email_notice_only", applied=datetime.now()
+        ).execute()
+
+
 def migrate_21_to_22():
     """Add litter_number to Breeding table and backfill from minted numbers."""
     with DATABASE.atomic():
@@ -5489,6 +5514,7 @@ MIGRATIONS = {
     (53, 54): migrate_53_to_54,  # account rules acceptance
     (54, 55): migrate_54_to_55,  # realised Ne per history year
     (55, 56): migrate_55_to_56,  # inbox_document.verified_at, verified_by, saved_certificate
+    (56, 57): migrate_56_to_57,  # buyer_contact.email_notice_only
 }
 
 

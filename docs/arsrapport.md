@@ -72,8 +72,10 @@ Utan en inskickad rapport blir svaret 404.
 ## Försäljningsförslag
 
 `GET …/besattning/<besättning>/<år>/forslag` svarar `{"forslag": [{id, individual_id, number, name,
-to_herd, buyer, sale_date, buyer_notified_at, kopanmalan}]}` med de förslag som väntar. En köpare utanför
-genbanken visas bara med namn och ort (`buyer`), och `to_herd` är då `null`. `kopanmalan` är
+to_herd, buyer, buyer_not_recorded, sale_date, buyer_notified_at, kopanmalan}]}` med de förslag som väntar.
+En köpare utanför genbanken visas bara med namn och ort (`buyer`), och `to_herd` är då `null`. En
+försäljning "såld utanför genbanken" utan köpare (#273) har `buyer` `null` och `buyer_not_recorded`
+`true`. `kopanmalan` är
 köparens köpanmälan som förslaget matchar, eller `null`.
 
 `POST /api/v2/arsrapport/forslag/<id>/godkann` registrerar försäljningen, också efter rundans

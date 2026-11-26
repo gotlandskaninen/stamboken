@@ -406,10 +406,13 @@ describe("ReportForm on paper", () => {
       typeNumber("1");
       fireEvent.click(within(row(1)).getByLabelText("Såld"));
       fireEvent.click(screen.getByLabelText("Utanför genbanken"));
+      fireEvent.click(screen.getByRole("radio", { name: "Ja" })); // the buyer has e-mail (before 2027)
       const buyer = {
         name: "Ola Köpare",
         town: "Visby",
         postal_address: "Testgatan 1",
+        email: "ola@example.invalid",
+        notice_only: true,
       };
       fireEvent.change(
         within(screen.getByRole("dialog")).getByLabelText(/Köparens namn/),
@@ -427,6 +430,12 @@ describe("ReportForm on paper", () => {
         within(screen.getByRole("dialog")).getByLabelText(/^Postadress/),
         {
           target: { value: buyer.postal_address },
+        },
+      );
+      fireEvent.change(
+        within(screen.getByRole("dialog")).getByLabelText(/^E-post/),
+        {
+          target: { value: buyer.email },
         },
       );
       fireEvent.change(screen.getByLabelText("Månad"), {

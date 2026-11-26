@@ -72,6 +72,7 @@ from utils.database import (
 from utils.herd_tracking import (
     BUYER_REMOVED,
     DATE_BEFORE_LATEST,
+    NOT_RECORDED,
     QUEUE_CHANGED,
     REPORT_LATER_ROW,
     HerdTrackingError,
@@ -1934,7 +1935,7 @@ REFUSALS = {  # the copy the client shows (P44)
     "ej_angiven_digitalt": "Ej angiven finns bara när en blankett matas in.",
     "forsaljning_skotare": "Försäljningen registreras av ägaren eller genbanksansvarig.",
     "salj_via_lank": "Försäljningen registrerar du hos genbanksansvarig. Ring eller mejla.",
-    "kopare_saknas": "Skriv köparens namn och ort.",
+    "kopare_saknas": "Fyll i köparen, eller välj såld utanför genbanken.",
     "senare_handelse": "Kaninen har en senare händelse i Stamboken. Genbanksansvarig kan rätta.",
     "okand_kanin": "Kaninen finns inte i listan för besättningen.",
     "halsa_saknas": "Välj Inga sjukdomsfall eller defekter, eller Ja.",
@@ -2042,7 +2043,11 @@ def _register_refusals(individual_id, remove, add, ops, admin=False, transfer=No
             if kopare is not None:
                 try:
                     buyer_contact_fields(
-                        kopare, transfer.date, address_required=address_required and not transfer.address_optional
+                        kopare,
+                        transfer.date,
+                        address_required=address_required and not transfer.address_optional,
+                        new_sale=not transfer.corrects_sale,
+                        report=True,  # the report asks of the bevis from 2027 (Jonas 2026-11-26)
                     )
                 except HerdTrackingInvalid as exc:
                     refusals.append(_refusal(individual_id, "kopare", str(exc)))
@@ -2066,7 +2071,9 @@ def _removed_buyers(herd, round_, rabbits, current_ops):
     deleted = AuditLog.select(AuditLog.record_id).where(
         AuditLog.table_name == BuyerContact._meta.table_name,
         AuditLog.operation == "DELETE",
-        AuditLog.new_data["action"].in_(("radering", "invandning", "gallring_fem_ar", "gallring_dod")),
+        AuditLog.new_data["action"].in_(
+            ("radering", "invandning", "gallring_fem_ar", "gallring_dod", "studs", "ej_informerad")
+        ),
     )
     history = AuditLog.select(AuditLog.transaction_id).where(
         AuditLog.table_name == HerdTracking._meta.table_name, AuditLog.record_id == HerdTracking.id.cast("text")
@@ -2183,6 +2190,8 @@ def _report_transfer(herd, round_, entry, current_effects, sale, claim, removed,
     buyer = entry.sald["kopare"]
     if removed:
         return TransferIndividual(target, day, buyer_removed=True)
+    if buyer == NOT_RECORDED:  # såld utanför genbanken (#273): no buyer, not even one kept across Dra tillbaka
+        return TransferIndividual(target, day, buyer=buyer)
     if buyer is None:
         return TransferIndividual(target, day, buyer_contact_id=_kept_contact(herd, round_, entry, claim, sale))
     registered = next((e for e in current_effects if e == sale), None)
@@ -2191,7 +2200,9 @@ def _report_transfer(herd, round_, entry, current_effects, sale, claim, removed,
         kept = _kept_contact(herd, round_, entry, claim, sale)
         return TransferIndividual(target, day, buyer=buyer, buyer_contact_id=kept, address_optional=paper)
     contact = (
-        BuyerContact.select(BuyerContact.name, BuyerContact.town, BuyerContact.postal_address)
+        BuyerContact.select(
+            BuyerContact.name, BuyerContact.town, BuyerContact.postal_address, BuyerContact.email_notice_only
+        )
         .join(HerdTracking, on=(HerdTracking.holder_contact == BuyerContact.id))
         .where(HerdTracking.id == registered.ref)
         .first()
@@ -2207,7 +2218,11 @@ def _report_transfer(herd, round_, entry, current_effects, sale, claim, removed,
         )
     ):
         buyer = {**buyer, "postal_address": contact.postal_address}
-    return TransferIndividual(target, day, buyer=buyer, address_optional=contact is not None or paper)
+    # before the report's bevis year only a buyer registered the old way may be corrected so (#273)
+    corrects = contact is not None and not contact.email_notice_only
+    return TransferIndividual(
+        target, day, buyer=buyer, address_optional=contact is not None or paper, corrects_sale=corrects
+    )
 
 
 def _reason_refusals(reason, rabbit_ids, names=()):
@@ -2307,7 +2322,7 @@ def check(
                 and (sale["dag"] is None or day.day == sale["dag"])
                 for day in removed_dates.get(rabbit, ())
             )
-        if erased and entry.sald and entry.sald["kopare"] is not None:
+        if erased and entry.sald and entry.sald["kopare"] not in (None, NOT_RECORDED):
             refusals.append(_refusal(rabbit, "kopare", BUYER_REMOVED))
             continue
         if row["state"] != "att_valja":
@@ -2963,7 +2978,8 @@ def apply_diff(
         if c.kind in ROW_KINDS:
             op = uuid.uuid4()
             keep_until = keep_buyer_until
-            if c.kind == "transfer" and transfer and transfer.buyer and c.value == (transfer.herd,):
+            kept_buyer = transfer and transfer.buyer and transfer.buyer != NOT_RECORDED  # såld utanför: none (#273)
+            if c.kind == "transfer" and kept_buyer and c.value == (transfer.herd,):
                 contact = HerdTracking.get_by_id(c.ref).holder_contact
                 if contact:
                     # The sale writer compares the typed fields under lock and reuses an unchanged recipient.
