@@ -69,7 +69,6 @@ export function PhotoViewer({
   } | null>(null);
   const shown = useRef(0); // the zoom last laid out, for the wheel's listener
   const spun = useRef(0); // wheel travel not yet a whole step
-  const dragging = useRef(false); // a masking rectangle is being dragged: its maths holds the photo's size
   const [contrast, setContrast] = useState(100);
   const [pencil, setPencil] = useState(false);
 
@@ -106,29 +105,27 @@ export function PhotoViewer({
     }
   }, [image, rotation, pencil]);
 
-  // The wheel zooms a step at a time; at 100 % a wheel down, a sideways swipe and a pinch
-  // (ctrlKey) are the page's. A listener of our own: React's onWheel is passive.
+  // The wheel zooms a step at a time. A wheel past the last step (down at 100 %, up at 600 %),
+  // a sideways swipe and a pinch (ctrlKey) are the page's. Our own listener: React's onWheel is passive.
   const viewer = Boolean(onRotate);
   useEffect(() => {
     const vp = viewportRef.current;
     if (!vp) return;
     const onWheel = (e: WheelEvent) => {
-      const sideways = Math.abs(e.deltaX) > Math.abs(e.deltaY);
-      if (e.ctrlKey || sideways || (e.deltaY > 0 && shown.current === 0))
-        return;
-      e.preventDefault();
+      if (e.ctrlKey) return;
+      // A button held: a masking rectangle or the photo is being dragged, and its maths needs the photo still.
+      if (e.buttons) return e.preventDefault();
       const stage = stageRef.current;
-      if (dragging.current || pan.current || !stage) return;
-      spun.current += e.deltaY * (e.deltaMode === 1 ? 16 : 1); // Firefox counts lines
+      const sideways = Math.abs(e.deltaX) > Math.abs(e.deltaY);
+      const last = e.deltaY > 0 ? 0 : ZOOMS.length - 1;
+      if (sideways || !stage || shown.current === last) return;
+      e.preventDefault();
+      // A line or a page (deltaMode 1, 2) is a notch.
+      spun.current += e.deltaMode ? Math.sign(e.deltaY) * WHEEL_STEP : e.deltaY;
       if (Math.abs(spun.current) < WHEEL_STEP) return;
       // One step per event: a mouse notch is one step whatever its size; a trackpad's flicks add up.
       const step = spun.current < 0 ? 1 : -1;
       spun.current %= WHEEL_STEP;
-      const next = Math.min(
-        ZOOMS.length - 1,
-        Math.max(0, shown.current + step),
-      );
-      if (next === shown.current) return; // at the end: no zoom, so no aim left for the buttons' next one
       const photo = stage.getBoundingClientRect();
       if (!photo.width || !photo.height) return;
       anchor.current = {
@@ -183,7 +180,6 @@ export function PhotoViewer({
     e.preventDefault();
     e.stopPropagation();
     mask.onSelect(i);
-    dragging.current = true;
     const { width, height } = stage.getBoundingClientRect();
     const start = { x: e.clientX, y: e.clientY, rect: mask.rects[i] };
     const target = e.currentTarget as HTMLElement;
@@ -199,7 +195,6 @@ export function PhotoViewer({
       );
     };
     const end = () => {
-      dragging.current = false;
       target.removeEventListener("pointermove", move);
       target.removeEventListener("pointerup", end);
       target.removeEventListener("pointercancel", end);

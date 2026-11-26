@@ -42,16 +42,16 @@ function setup() {
 function wheel(
   target: HTMLElement,
   deltaY: number,
-  at = { x: 0, y: 0 },
-  ctrlKey = false,
+  init: Omit<WheelEventInit, "deltaY"> & { x?: number; y?: number } = {},
 ) {
+  const { x = 0, y = 0, ...rest } = init;
   const event = new WheelEvent("wheel", {
     deltaY,
-    clientX: at.x,
-    clientY: at.y,
-    ctrlKey,
+    clientX: x,
+    clientY: y,
     bubbles: true,
     cancelable: true,
+    ...rest,
   });
   act(() => {
     target.dispatchEvent(event);
@@ -71,6 +71,29 @@ describe("PhotoViewer: the mouse wheel zooms", () => {
     expect(screen.getByText("100 %")).toBeInTheDocument();
   });
 
+  it("lets the page scroll on at 600 % too", () => {
+    const region = setup();
+    for (let i = 0; i < 5; i++) wheel(region, -100);
+    expect(screen.getByText("600 %")).toBeInTheDocument();
+    expect(wheel(region, -100).defaultPrevented).toBe(false);
+  });
+
+  it("holds the photo still while a mouse button is held (a drag)", () => {
+    const region = setup();
+    const held = wheel(region, -100, { buttons: 1 });
+    expect(held.defaultPrevented).toBe(true);
+    expect(screen.getByText("100 %")).toBeInTheDocument();
+    expect(wheel(region, 100, { buttons: 1 }).defaultPrevented).toBe(true);
+  });
+
+  it("takes a line or a page as a notch", () => {
+    const region = setup();
+    wheel(region, -1, { deltaMode: WheelEvent.DOM_DELTA_PAGE });
+    expect(screen.getByText("150 %")).toBeInTheDocument();
+    wheel(region, -3, { deltaMode: WheelEvent.DOM_DELTA_LINE });
+    expect(screen.getByText("200 %")).toBeInTheDocument();
+  });
+
   it("adds up a trackpad's flicks and keeps what is left over", () => {
     const region = setup();
     wheel(region, -40);
@@ -82,7 +105,7 @@ describe("PhotoViewer: the mouse wheel zooms", () => {
 
   it("leaves a pinch (ctrlKey) to the browser", () => {
     const region = setup();
-    expect(wheel(region, -100, undefined, true).defaultPrevented).toBe(false);
+    expect(wheel(region, -100, { ctrlKey: true }).defaultPrevented).toBe(false);
     expect(screen.getByText("100 %")).toBeInTheDocument();
   });
 
