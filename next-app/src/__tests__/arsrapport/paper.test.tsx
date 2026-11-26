@@ -693,6 +693,7 @@ describe("ReportForm on paper", () => {
         paper={paperProps()}
       />,
     );
+    await act(async () => {}); // the reload asks for the page once the writes on their way have answered
     expect(refresh).toHaveBeenCalledTimes(1);
     expect(
       screen.queryByRole("button", { name: "Fortsätt på medlemmens utkast" }),

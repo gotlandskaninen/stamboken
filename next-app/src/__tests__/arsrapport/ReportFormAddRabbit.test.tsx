@@ -2,6 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -127,6 +128,30 @@ describe("Lägg till kanin från intyget in the report", () => {
       />,
     );
     expect(screen.queryByText(ADD_FROM_CERTIFICATE)).toBeNull();
+  });
+
+  it("reads the page again on Back when a save went out while the list was being read again", async () => {
+    vi.useFakeTimers();
+    const a = actions() as unknown as { saveDraft: ReturnType<typeof vi.fn> };
+    const { rerender, unmount } = render(
+      <ReportForm env="demo" view={view()} actions={a as never} />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Lägg till kanin från intyget" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Registrerad" })); // the list is asked for again
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100); // the row's new choice is saved meanwhile
+    });
+    expect(a.saveDraft).toHaveBeenCalled();
+    const read = view(); // the list that answers, read before that save
+    rerender(<ReportForm env="demo" view={read} actions={a as never} />);
+    unmount();
+    refresh.mockReset();
+    render(<ReportForm env="demo" view={read} actions={a as never} />); // Back
+    await act(async () => {});
+    expect(refresh).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
   });
 
   it("after a registration: the list is read again, the note says it stays, and the row takes 'var är kaninen nu'", () => {

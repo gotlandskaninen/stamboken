@@ -1283,6 +1283,7 @@ describe("ReportForm", () => {
     const { rerender } = render(
       <ReportForm env="demo" view={before} actions={a} />,
     );
+    await act(async () => {}); // the reload asks for the page once the writes on their way have answered
     expect(refresh).toHaveBeenCalledTimes(1);
     expect(screen.getAllByText("Hämtar senaste versionen…")).not.toHaveLength(
       0,
@@ -1325,6 +1326,7 @@ describe("ReportForm", () => {
     const { rerender } = render(
       <ReportForm env="demo" view={before} actions={a} />,
     );
+    await act(async () => {}); // the reload asks for the page once the writes on their way have answered
     expect(refresh).toHaveBeenCalledTimes(1);
     rerender(
       <ReportForm
@@ -1369,6 +1371,7 @@ describe("ReportForm", () => {
     await act(async () => {
       later.answer();
     });
+    await act(async () => {}); // the reload asks for the page once the writes on their way have answered
     expect(refresh).toHaveBeenCalledTimes(1);
     rerender(
       <ReportForm
@@ -1393,6 +1396,7 @@ describe("ReportForm", () => {
     });
     other.unmount();
     render(<ReportForm env="demo" view={ordinary} actions={a} />);
+    await act(async () => {}); // the reload asks for the page once the writes on their way have answered
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
@@ -1437,6 +1441,7 @@ describe("ReportForm", () => {
         data: { rabbits: { "2": { val: "kvar" } } },
         updated_at: null,
         revision: null,
+        writer: "a form mounted later",
       }),
     );
     await act(async () => {
@@ -1445,11 +1450,89 @@ describe("ReportForm", () => {
     expect(local()).toContain('"2"');
   });
 
-  it("does not read the page again on Back when nothing was saved from it", () => {
+  it("waits for every save the old form still has queued before it reads the page again", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    const first = answerLater();
+    const second = answerLater();
+    a.saveDraft
+      .mockImplementationOnce(() => first.call)
+      .mockImplementationOnce(() => second.call);
+    const before = view();
+    const old = render(<ReportForm env="demo" view={before} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    choose(2, "Finns kvar"); // its autosave waits behind the first save
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    expect(a.saveDraft).toHaveBeenCalledTimes(1);
+    old.unmount();
+    render(<ReportForm env="demo" view={before} actions={a} />);
+    await act(async () => {
+      first.answer();
+    });
+    expect(a.saveDraft).toHaveBeenCalledTimes(2); // the old form sends the queued one
+    expect(refresh).not.toHaveBeenCalled();
+    await act(async () => {
+      second.answer();
+    });
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves another form's local copy alone when a late save meets a conflict", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    let answer!: (v: unknown) => void;
+    a.saveDraft.mockImplementationOnce(
+      () => new Promise((resolve) => (answer = resolve)),
+    );
+    render(<ReportForm env="demo" view={view()} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    const key = Object.keys(window.localStorage).find((k) =>
+      k.startsWith("arsrapport:"),
+    )!;
+    window.localStorage.setItem(
+      key,
+      JSON.stringify({
+        data: { rabbits: { "2": { val: "kvar" } } },
+        updated_at: null,
+        revision: null,
+        writer: "a form mounted later",
+      }),
+    );
+    await act(async () => {
+      answer({
+        ok: false,
+        problem: {
+          status: 409,
+          title: "t",
+          detail: "x",
+          extensions: {
+            draft: {
+              data: { rabbits: {} },
+              updated_at: "2026-12-31T11:00:00+00:00",
+              submission_key: null,
+              own: true,
+            },
+          },
+        },
+      });
+    });
+    expect(local()).toContain('"2"');
+  });
+
+  it("does not read the page again on Back when nothing was saved from it", async () => {
     const a = actions();
     const before = view();
     render(<ReportForm env="demo" view={before} actions={a} />).unmount();
     render(<ReportForm env="demo" view={before} actions={a} />);
+    await act(async () => {});
     expect(refresh).not.toHaveBeenCalled();
   });
 
@@ -1687,6 +1770,7 @@ describe("ReportForm", () => {
     // the litter is written, the view is not: Back reads the page again
     cleanup();
     render(<ReportForm env="demo" view={shown} actions={withLitters} />);
+    await act(async () => {}); // the reload asks for the page once the writes on their way have answered
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
