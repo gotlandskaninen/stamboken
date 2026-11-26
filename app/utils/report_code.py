@@ -47,6 +47,20 @@ def invitation_members(now):
     )
 
 
+def mail_addresses(member: Member, now) -> list[str]:
+    """
+    Where a mail to `member` may go now, the preferred first: the current address when it counts for login (no
+    seven days' wait left, U8), then the earlier ones that still count. Empty when none does: the mail is cancelled.
+    """
+    current = (member.email or "").strip() and (member.email_login_from is None or member.email_login_from <= now)
+    previous = MemberPreviousAddress.select(MemberPreviousAddress.address).where(
+        MemberPreviousAddress.member == member.id,
+        MemberPreviousAddress.login_until > now,
+        fn.TRIM(MemberPreviousAddress.address) != "",
+    )
+    return ([member.email] if current else []) + [row.address for row in previous.order_by(MemberPreviousAddress.id)]
+
+
 def invitation_recipient(herd: Herd, *, now=None) -> Member | None:
     """
     FA11: who the herd's invitation goes to, and who a code must have been issued to: the active main member of the

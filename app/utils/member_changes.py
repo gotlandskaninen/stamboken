@@ -17,17 +17,19 @@ from datetime import datetime, timedelta, timezone
 from flask import current_app
 
 import utils.arsrapport as arsrapport
+import utils.report_code as report_code
 from utils.arsrapport import ArsrapportError
 from utils.database import (
     DB_PROXY,
     MatrikelAudit,
     Member,
     MemberChangeRequest,
+    ReportAccessCode,
     YearlyHerdReport,
     YearlyReportSubmission,
 )
 from utils.login_code import AddressTaken
-from utils.mail import verify_link
+from utils.mail import address_hash, verify_link
 from utils.matrikel import set_member_email
 from utils.members import (
     CONSENT_TEXT_VERSION,
@@ -217,12 +219,18 @@ def revoke_withdrawn(report, now):
 
 
 def _submission(token):
-    """The submission the mail's token names, or the 403 of a link that does not work (never which part failed)."""
-    submission_id = verify_link("andringar", token)
-    submission = YearlyReportSubmission.get_or_none(YearlyReportSubmission.id == (submission_id or 0))
-    if submission is None:
-        raise ArsrapportError(403, arsrapport.LINK_INVALID, code="lank_ogiltig")
-    return submission
+    """
+    The submission the mail's token names, or the 403 of a link that does not work (never which part failed). The
+    token is bound to the mailbox the receipt went to (confirm_token): it works only while that address still counts
+    for the code's member, so a mailbox the matrikel replaced cannot confirm. Checked on every read and write.
+    """
+    submission = YearlyReportSubmission.get_or_none(YearlyReportSubmission.id == int(token.split(".")[0]))
+    code = ReportAccessCode.get_or_none(ReportAccessCode.id == submission.access_code_id) if submission else None
+    member = Member.get_or_none(Member.id == code.member_id) if code else None
+    for address in report_code.mail_addresses(member, arsrapport.now()) if member else ():
+        if verify_link(f"andringar:{address_hash(address)}", token) == submission.id:
+            return submission
+    raise ArsrapportError(403, arsrapport.LINK_INVALID, code="lank_ogiltig")
 
 
 def _context(submission, *, lock):

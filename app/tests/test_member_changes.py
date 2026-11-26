@@ -473,3 +473,38 @@ class TestReviewRound1(DetailsTest):
             for a in db.MatrikelAudit.select().where(db.MatrikelAudit.action == "kontakt_andrad")
         ]
         self.assertEqual(actions, [])  # the same phone and e-mail write nothing
+
+    # 2. Confirmation is bound to the mailbox the receipt went to
+    def test_confirmation_dies_with_the_mailbox_it_went_to(self):
+        receipt = self.submit_changes({"telefon": "0709-777 888"})
+        token = self.token(receipt["submission_id"])
+        with db.DB_PROXY.atomic():  # matrikel staff correct the address: the old one stops counting at once
+            set_member_email(db.Member.get_by_id(self.member.id), "ratt@example.invalid", self.admin, by="matrikel")
+        response = self.client.post("/api/v2/rapport/andringar", json={"token": token})
+        self.assertEqual((response.status_code, response.get_json().get("code")), (403, "lank_ogiltig"))
+
+    # 4. Recipients by the queued member; never an address still waiting
+    def test_a_login_receipt_goes_to_its_queued_member(self):
+        self.link_owner()
+        self.login("owner")
+        self.ok()
+        (kvitto,) = self.mails("arsrapport.kvitto")
+        other = db.Member.create(
+            first_name="Ny",
+            last_name="Huvudmedlem",
+            membership=self.membership(),
+            role="familjemedlem",
+            email="ny-hm@example.invalid",
+        )
+        swap_main_member(self.membership(), other, self.admin)
+        self.assertEqual(mail.MAIL_KINDS[kvitto.kind].login_address(kvitto.params), "g9001@example.invalid")
+
+    def test_the_account_notice_never_goes_to_a_waiting_address(self):
+        db.Membership.update(membership_status="pending").where(db.Membership.id == self.member.membership_id).execute()
+        with db.DB_PROXY.atomic():
+            set_member_email(db.Member.get_by_id(self.member.id), "vantar@example.invalid", self.admin, by="other")
+        resolve = mail.MAIL_KINDS[arsrapport.ACCOUNT_NOTICE].login_address
+        params = {"member_id": self.member.id, "membership_id": self.member.membership_id}
+        self.assertEqual(resolve(params), "g9001@example.invalid")
+        db.MemberPreviousAddress.delete().execute()  # no address counts now: the notice is cancelled
+        self.assertIsNone(resolve(params))

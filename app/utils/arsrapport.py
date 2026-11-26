@@ -3223,15 +3223,18 @@ def _written(rabbit, exc):
     return _denied(rabbit, exc.detail if isinstance(exc, HerdTrackingError) else None)
 
 
-def _mail(kind, herd, user, params, ref, *, other_actor_only=False):
-    """Å7–Å9 to the herd's main member, in the caller's transaction; none without an e-mail address."""
+def _mail(kind, herd, user, params, ref, *, other_actor_only=False, with_member=False):
+    """
+    Å7–Å9 to the herd's main member, in the caller's transaction; none without an e-mail address. `with_member` puts
+    the member in the params, so the receipt's address is resolved for the member it was queued for.
+    """
     member = inbox.herd_holder(herd.id)
     if member is not None and member.email and not (other_actor_only and member.user_id == user.id):
         enqueue_mail(
             kind,
             "member",
             member.id,
-            params,
+            {**params, "member_id": member.id} if with_member else params,
             ref=ref,
             herd=herd,
             genebank=herd.genebank_id,
@@ -3466,7 +3469,8 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
             (YearlyReportDraft.herd == herd.id) & (YearlyReportDraft.round == round_.id)
         ).execute()
         kind = "arsrapport.andrad" if change else "arsrapport.kvitto"
-        _mail(kind, herd, user, {"submission_id": submission.id}, ("yearly_report_submission", submission.id))
+        ref = ("yearly_report_submission", submission.id)
+        _mail(kind, herd, user, {"submission_id": submission.id}, ref, with_member=True)
         return receipt(submission)
 
 
@@ -3741,29 +3745,30 @@ def settle_rejection(report, user, rabbit, then, at):
 
 def _receipt_address(params):
     """
-    Where Å7 and Å8 go (U8): a link's receipt carries the confirmation page of its changes, so it goes where the
-    invitation would, the code's member's login address (the old one while a new one waits seven days), and nowhere
-    once that member is not the main member. A login's or a paper receipt goes to the main member's address as
-    before.
+    Where Å7 and Å8 go (U8): to the member the receipt was queued for (a row queued before `member_id` names the
+    herd's main member), at an address that counts for login now, so never to a new one in its seven days' wait.
+    A link's receipt carries the confirmation page of its changes: it goes only while that member is the code's and
+    still the herd's main member. None cancels the mail.
     """
     submission = YearlyReportSubmission.get_or_none(YearlyReportSubmission.id == params["submission_id"])
     if submission is None:
         return None
-    if submission.access_code_id is None:
-        member = inbox.herd_holder(YearlyHerdReport.get_by_id(submission.report_id).herd_id)
-        return member.email if member is not None else None
-    recipient = report_code.invitation_recipient(YearlyHerdReport.get_by_id(submission.report_id).herd)
-    code = ReportAccessCode.get_by_id(submission.access_code_id)
-    return recipient.login_address if recipient is not None and recipient.id == code.member_id else None
+    herd = YearlyHerdReport.get_by_id(submission.report_id).herd
+    member = Member.get_or_none(Member.id == params["member_id"]) if "member_id" in params else _main_member(herd)
+    if member is None:
+        return None
+    if submission.access_code_id is not None:
+        recipient = report_code.invitation_recipient(herd)
+        code = ReportAccessCode.get_by_id(submission.access_code_id)
+        if recipient is None or not recipient.id == code.member_id == member.id:
+            return None
+    return next(iter(report_code.mail_addresses(member, now())), None)
 
 
 def _member_address(params):
-    """The account notice's address: the member's login address, so a new one that waits is not told (U8)."""
-    member = report_code.invitation_members(now()).where(Member.id == params["member_id"]).first()
-    if member is not None:
-        return member.login_address
-    member = Member.get_or_none(Member.id == params["member_id"])  # erased: the mail is cancelled
-    return member.email if member is not None else None
+    """The account notice's address: one that counts for login, never a new one that waits (U8); else none."""
+    member = Member.get_or_none(Member.id == params["member_id"])
+    return next(iter(report_code.mail_addresses(member, now())), None) if member is not None else None
 
 
 @mail_kind("arsrapport.andrad", priority=0, category="T", login_address=_receipt_address)
@@ -3787,6 +3792,7 @@ def _kvitto(params):
             MemberChangeRequest.expires_at > now(),
         )
     )
+    address = _receipt_address(params) if waiting else None  # the mailbox the confirmation is bound to
     report = YearlyHerdReport.get_by_id(submission.report_id)
     received = submission.data.get("received_on") if submission.source == "paper" else None
     # Late import: arsrapport_pdf imports this module.
@@ -3808,14 +3814,19 @@ def _kvitto(params):
             for item in submission.data.get("litters_added") or ()
         ],
         "end_date": f"{report.round.end_date:%Y-%m-%d}",
-        "andringar": f"{settings.service.host.rstrip('/')}/rapport/andringar#{link_token('andringar', submission.id)}"
-        if waiting
+        "andringar": f"{settings.service.host.rstrip('/')}/rapport/andringar#{confirm_token(submission.id, address)}"
+        if waiting and address
         else None,
         "andringar_senast": f"{min(row.expires_at for row in waiting).astimezone(STOCKHOLM):%Y-%m-%d}"
         if waiting
         else None,
         "andrat_konto": any(row.kind == "konto" for row in waiting),
     }
+
+
+def confirm_token(submission_id, address):
+    """The receipt's confirmation token, bound to the mailbox it goes to: it works only while that address counts."""
+    return link_token(f"andringar:{address_hash(address)}", submission_id)
 
 
 @mail_kind(ACCOUNT_NOTICE, priority=0, category="T", login_address=_member_address)
