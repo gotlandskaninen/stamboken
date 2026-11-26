@@ -146,6 +146,17 @@ class TestArsrapportMigration(IsolatedSchemaTest):
             self.assertEqual(snapshot(), self.bootstrapped)
             tx.rollback()  # keep the class's original bootstrap stamp
 
+    def test_59_adds_revoked_reason_once(self):
+        """Step 5: migration 59 on a database from before it gives init()'s schema, and a rerun changes nothing."""
+        with db.DB_PROXY.atomic() as tx:
+            _sql('ALTER TABLE "member_change_request" DROP COLUMN "revoked_reason"')
+            for _ in range(2):
+                db.SchemaHistory.delete().where(db.SchemaHistory.version == 59).execute()
+                db.migrate_58_to_59()
+            self.assertEqual(snapshot(), self.bootstrapped)
+            self.assertEqual(db.SchemaHistory.get_by_id(59).comment, db.CHANGE_REVOKED_59)
+            tx.rollback()
+
     def test_helper_is_idempotent(self):
         db._create_arsrapport_schema()
         db._create_arsrapport_schema()

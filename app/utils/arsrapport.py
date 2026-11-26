@@ -105,7 +105,7 @@ from utils.individual_commands import (
 )
 from utils.individual_policy import Role
 from utils.login_code import AddressTaken, login_address_taken
-from utils.mail import Recipient, address_hash, enqueue_mail, mail_kind, recipient_kind
+from utils.mail import Recipient, address_hash, enqueue_mail, link_token, mail_kind, recipient_kind
 from utils.matrikel import (
     AddressValidationError,
     is_anonymized,
@@ -993,6 +993,62 @@ def account_end(herd):
     return (masked_account(number) or "").removeprefix("••") or None
 
 
+NOT_MAIN = "Huvudmedlemmen ändrar kontaktuppgifterna, kontot för stödet och svaret om Koharen."
+
+
+def _own_details(member, access, user):
+    """
+    D1 (5.11): who changes the herd's main member's details in the report: the link for the member its code was
+    mailed to, logged in only the account linked to that member. Never the logged-in person's membership through a
+    link, nor an owner, caretaker or manager who is someone else.
+    """
+    if member is None:
+        return False
+    if access.code is not None:
+        return member.id == access.code.member_id
+    return member.user_id is not None and member.user_id == getattr(user, "id", None)
+
+
+def details_mode(herd, access, user):
+    if access.item is not None:
+        return "paper"
+    if access.code is not None:
+        return "link"
+    return "main" if _own_details(_main_member(herd), access, user) else "none"
+
+
+def member_details(herd, report, access, user):
+    """
+    ReportView.member_details (5.11, D1): "main" with the main member's contact, Koharen answer (null when never
+    answered) and the account's last four digits; "link" with the state of the report's changes from the link and
+    no stored value; "paper" and "none" with nothing.
+    """
+    import utils.member_changes as member_changes  # pylint: disable=import-outside-toplevel  # it imports this module
+
+    mode = details_mode(herd, access, user)
+    if mode == "link":
+        return {"mode": mode, "changes": member_changes.report_changes(report)}
+    if mode != "main":
+        return {"mode": mode}
+    membership, member = herd.membership, _main_member(herd)
+    consent = stored_consent(membership)
+    digits = re.sub(r"\D", "", membership.bank_account_number or "")
+    return {
+        "mode": mode,
+        "contact": {
+            "address": membership.address or "",
+            "postal_code": membership.postal_code or "",
+            "city": membership.city or "",
+            "phone": member.phone or "",
+            "email": member.email or "",
+        },
+        "publicering": {"ja": consent.get("name") is True, "utom": [k for k in UTOM if consent.get(k) is not True]}
+        if consent
+        else None,
+        "konto": f"••••{digits[-4:]}" if digits else None,
+    }
+
+
 def report_litters(herd, year):
     """ReportView.litters: the herd's litters born in `year`; `preliminary` while the 6-week count is a guess."""
     Mother, Father = Individual.alias(), Individual.alias()
@@ -1139,6 +1195,7 @@ def report_view(herd, round_, access, user):
         if report
         else None,
         "draft": draft_json(draft, user) if draft else None,
+        "member_details": member_details(herd, report, access, user),
         "item": {
             "id": item.id,
             "received_at": _iso(item.received_at),
@@ -1359,6 +1416,7 @@ def status_view(round_, genebank_id, with_phone=False):
     A fixed number of queries however many herds there are. `with_phone` adds the main member's phone to each row
     (`telefon`, null without one); without it the key is absent.
     """
+    import utils.member_changes as member_changes  # pylint: disable=import-outside-toplevel  # it imports this module
     import utils.purchase_notice as purchase_notice  # pylint: disable=import-outside-toplevel  # it imports this module
 
     year, last = round_.report_year, date(round_.report_year, 12, 31)
@@ -1389,6 +1447,8 @@ def status_view(round_, genebank_id, with_phone=False):
     unstated = sorted({int(i) for body in data.values() for i in body.get("not_stated") or ()})
     waiting, again, bought = _sale_flags(round_, reports)
     notices = purchase_notice.unsettled([herd.id for herd in herds], year)
+    changes = member_changes.status_flags(round_, [herd.id for herd in herds])
+    new_accounts = member_changes.self_made_links(herds, round_.start_date)
     extra = {
         row.id: Kanin(
             row.id, SEXES.get(row.sex), row.sex == "eunuch" or bool(row.castration_date and row.castration_date <= last)
@@ -1453,6 +1513,8 @@ def status_view(round_, genebank_id, with_phone=False):
                     "forsaljning_avvisad_paverkar": _only_with(chosen, *facts),
                     "kopt_efter_inskick": bought[herd.id],
                     "kop_anmalt": notices[herd.id],
+                    **changes.get(herd.id, member_changes.NO_CHANGES),
+                    "nytt_konto": new_accounts.get(herd.id),  # the link's audit id, for Koppla bort (5.1)
                 },
                 "villkor": villkor,
                 "statistik": {
@@ -1529,6 +1591,7 @@ class Submission:
     rabbits: dict[int, RabbitEntry]
     report: dict  # yearlyherdreport.data (section 6); not_weighed and not_stated come from the rabbits
     paper: dict | None  # inbox_item_id, received_on, signed_on (default received_on), matrikel
+    matrikel: dict | None = None  # digital "Dina uppgifter" (5.11): the main member's own, or the link's
 
 
 def _bad(field_, detail):
@@ -1674,8 +1737,11 @@ def _paper(body):
     return {"inbox_item_id": item_id, "received_on": received, "signed_on": signed, "matrikel": _matrikel(body)}
 
 
-def _matrikel(body):
-    """The form's "Dina uppgifter", its shape only: check refuses a bad value, so that the dry run lists it."""
+def _matrikel(body, *, digital=False):
+    """
+    The form's "Dina uppgifter", its shape only: check refuses a bad value, so that the dry run lists it. A digital
+    Koharen answer names the text it answers (`text_version`), as the profile's does.
+    """
     value = body.get("matrikel")
     if value is None:
         return None
@@ -1686,7 +1752,7 @@ def _matrikel(body):
     if any(text is not None and not isinstance(text, str) for text in texts):
         raise _bad("matrikel", "Fältet ska vara text.")
     if (answer := value.get("publicering")) is not None:  # Ja or Nej, and at Ja what may not be listed
-        utom = _keys(answer, ("ja", "utom"), "matrikel").get("utom")
+        utom = _keys(answer, ("ja", "utom", "text_version") if digital else ("ja", "utom"), "matrikel").get("utom")
         if not isinstance(answer.get("ja"), bool) or not isinstance(utom, list) or not all(k in UTOM for k in utom):
             raise _bad("matrikel", "Svara Ja eller Nej om Koharen, och vid Ja vad som inte får stå med.")
     return value
@@ -1698,7 +1764,7 @@ def parse_submission(body: dict, *, paper: bool) -> Submission:
     bodies parse equal (D21). Free text passes reject_contact_details here, so that require_reason at write time
     never turns it into a 422 on some rabbit.
     """
-    _keys(body, BODY_KEYS + (PAPER_KEYS if paper else ()), "body")
+    _keys(body, BODY_KEYS + (PAPER_KEYS if paper else ("matrikel",)), "body")
     try:
         key = uuid.UUID(body["submission_key"]) if body.get("submission_key") is not None else None
     except (AttributeError, TypeError, ValueError) as exc:
@@ -1725,7 +1791,8 @@ def parse_submission(body: dict, *, paper: bool) -> Submission:
         "message": _text(body.get("message"), "message") or "",
     }
     reason = _text(body.get("reason"), "reason")
-    return Submission(key, revision, reason, rabbits, report, _paper(body) if paper else None)
+    matrikel = None if paper else _matrikel(body, digital=True)
+    return Submission(key, revision, reason, rabbits, report, _paper(body) if paper else None, matrikel)
 
 
 def partial_date(ar, manad, dag, on: date) -> date:
@@ -1960,6 +2027,8 @@ REFUSALS = {  # the copy the client shows (P44)
     "telefon_ogiltig": "Telefonnumret får vara högst 50 tecken.",
     "epost_ogiltig": "Kontrollera e-postadressen.",
     "epost_kan_inte_anvandas": "E-postadressen kan inte användas. Kontrollera den med medlemmen.",
+    "koharen_ny_fraga": "Frågan om Koharen har ändrats. Ladda om sidan och svara igen.",
+    "epost_via_kod": "Den nya e-postadressen bekräftar du med en kod. Byt den under Dina uppgifter.",
     "konto_ogiltigt": (
         "Ett bankkonto har clearingnummer med 4–5 siffror och kontonummer med 5–12 siffror. "
         "Ett bankgironummer har 7–8 siffror och ett plusgironummer 2–8, utan clearingnummer."
@@ -2396,6 +2465,8 @@ def check(
         )
     if access.source == "paper":
         refusals += _matrikel_refusals(herd, sub.paper, submissions, check_email=check_email)
+    elif sub.matrikel is not None:
+        refusals += _details_refusals(access, sub.matrikel)
     return refusals, warnings
 
 
@@ -2460,6 +2531,32 @@ def _contact(matrikel) -> tuple[dict, list[Refusal]]:
             written = f"{clearing}-{number}" if cut == 0 else f"{number[:cut]}-{number[cut:]}"
             contact["konto"] = {"bank_account_type": typ, "bank_account_number": written, "bank_name": bank}
     return contact, refusals
+
+
+def _contact_cleared(matrikel) -> tuple[dict, list[Refusal]]:
+    """
+    The logged-in main member's contact changes (5.11): as _contact, but a blank address part or phone that the body
+    names clears it, as in the profile (U9); the client sends only what changed. An account is never cleared here.
+    """
+    contact, refusals = _contact(matrikel)
+    given = matrikel or {}
+    for part, text in (given.get("adress") or {}).items():
+        if text is not None and not text.strip():
+            contact.setdefault("adress", {})[part] = None
+    if given.get("telefon") is not None and not given["telefon"].strip():
+        contact["telefon"] = {"phone": None}
+    return contact, refusals
+
+
+def _details_refusals(access, matrikel):
+    """check's refusals of a digital "Dina uppgifter": bad values, and an e-mail outside the link (D1, 5.11)."""
+    contact, refusals = (_contact if access.code is not None else _contact_cleared)(matrikel)
+    if access.code is None and "epost" in contact:  # logged in, the new address gets a code (the profile's flow)
+        refusals.append(_refusal(None, "epost_via_kod"))
+    answer = matrikel.get("publicering")
+    if answer is not None and answer.get("text_version") != CONSENT_TEXT_VERSION:
+        refusals.append(_refusal(None, "koharen_ny_fraga"))
+    return refusals
 
 
 def _main_member(herd):
@@ -2556,7 +2653,7 @@ def _same(column, stored, value):
     if column == "bank_account_number":
         return re.sub(r"\D", "", stored or "") == re.sub(r"\D", "", value)
     stored = (stored or "").strip()
-    return (stored.lower() if column == "email" else stored) == value
+    return (stored.lower() if column == "email" else stored) == (value or "")  # None: a cleared field
 
 
 def apply_paper_matrikel(herd, membership, member, submission, item, user, matrikel, signed_on):
@@ -2573,19 +2670,7 @@ def apply_paper_matrikel(herd, membership, member, submission, item, user, matri
     report = YearlyHerdReport.get_by_id(submission.report_id)
     same = (YearlyHerdReport.herd == report.herd_id) & (YearlyHerdReport.round == report.round_id)
     own = YearlyReportSubmission.select(YearlyReportSubmission.id).join(YearlyHerdReport).where(same)
-    rows = {"adress": membership, "telefon": member, "epost": member, "konto": membership}
-    changes = {}
-    for name, columns in _contact(matrikel)[0].items():
-        row = rows[name]
-        if name == "konto":  # the same digits are the same account, unless the stored type says otherwise
-            moved = not _same("bank_account_number", row.bank_account_number, columns["bank_account_number"])
-            differ = columns if moved or row.bank_account_type not in (None, columns["bank_account_type"]) else {}
-        else:
-            differ = {
-                column: value for column, value in columns.items() if not _same(column, getattr(row, column), value)
-            }
-        if differ:
-            changes[name] = differ
+    changes = _changes(membership, member, _contact(matrikel)[0])
     answer = (matrikel or {}).get("publicering")
     consent = consent_from_answer(answer["ja"], answer["utom"]) if answer is not None else None
     consent = None if consent == stored_consent(membership) else consent
@@ -2615,6 +2700,38 @@ def apply_paper_matrikel(herd, membership, member, submission, item, user, matri
         except AddressTaken as exc:
             code = "epost_kan_inte_anvandas"
             raise ArsrapportError(409, REFUSALS[code], code=code, field="epost") from exc
+    payload = {"source": "paper", "inbox_item_id": item.id, "submission_id": submission.id}
+    if "epost" in written:  # same audit shape as person_updated
+        payload |= {"before": {"email": old_email}, "after": {"email": member.email}}
+    save_contact(membership, member, written, user, payload)
+    return list(written) + (["publicering"] if consented else []), skipped
+
+
+def _changes(membership, member, contact):
+    """`contact` ({field: {column: value}}) without what the matrikel already holds: the address and the account on
+    `membership`, phone and e-mail on its main `member`."""
+    rows = {"adress": membership, "telefon": member, "epost": member, "konto": membership}
+    changes = {}
+    for name, columns in contact.items():
+        row = rows[name]
+        if name == "konto":  # the same digits are the same account, unless the stored type says otherwise
+            moved = not _same("bank_account_number", row.bank_account_number, columns["bank_account_number"])
+            differ = columns if moved or row.bank_account_type not in (None, columns["bank_account_type"]) else {}
+        else:
+            differ = {
+                column: value for column, value in columns.items() if not _same(column, getattr(row, column), value)
+            }
+        if differ:
+            changes[name] = differ
+    return changes
+
+
+def save_contact(membership, member, written, actor, payload):
+    """
+    The contact columns of `written` (_changes; the e-mail is set_member_email's) saved with save(only=…), since a
+    whole row would write back a stale user_id, and one kontakt_andrad row naming the columns, never a value, with
+    `payload` (source, and the submission or the change request). The caller holds the membership's lock.
+    """
     for model, row, names, stamp in (
         (Membership, membership, ("adress", "konto"), [Membership.updated_at]),
         (Member, member, ("telefon",), [Member.updated_at]),
@@ -2625,17 +2742,50 @@ def apply_paper_matrikel(herd, membership, member, submission, item, user, matri
         if columns:
             row.save(only=[getattr(model, column) for column in columns] + stamp)
     if written:
-        payload = {
-            "person_id": member.id,
-            "fields": [column for columns in written.values() for column in columns],
-            "source": "paper",
-            "inbox_item_id": item.id,
-            "submission_id": submission.id,
-        }
-        if "epost" in written:  # same audit shape as person_updated
-            payload |= {"before": {"email": old_email}, "after": {"email": member.email}}
-        write_matrikel_audit(user, "kontakt_andrad", membership, payload)
-    return list(written) + (["publicering"] if consented else []), skipped
+        fields = [column for columns in written.values() for column in columns]
+        write_matrikel_audit(actor, "kontakt_andrad", membership, {"person_id": member.id, "fields": fields, **payload})
+
+
+def apply_login_matrikel(herd, membership, member, submission, user, matrikel):
+    """
+    5.11 logged in (D2, D3): the main member's own changes, written at once in Skicka's transaction, only what
+    differs. The caller holds the membership's lock and checked D1 under it. A new account is told to the matrikel's
+    e-mail (account_notice). The e-mail is not here: it goes through the profile's code flow.
+    """
+    changes = _changes(membership, member, _contact_cleared(matrikel)[0])
+    answer = matrikel.get("publicering")
+    if answer is not None:
+        set_consent(
+            membership,
+            consent_from_answer(answer["ja"], answer["utom"]),
+            source="login",
+            text_version=CONSENT_TEXT_VERSION,
+            user=user.id,
+            report=submission.report_id,
+            submission=submission.id,
+            at=submission.created_at,
+        )
+    save_contact(membership, member, changes, user, {"source": "login", "submission_id": submission.id})
+    if "konto" in changes:
+        account_notice(herd, member, f"submission:{submission.id}", created_by=user.id)
+
+
+ACCOUNT_NOTICE = "kontakt.konto_andrat"
+
+
+def account_notice(herd, member, key, *, created_by=None):
+    """The notice that the support account changed, to the matrikel's e-mail as login reads it (a new address waits)."""
+    enqueue_mail(
+        ACCOUNT_NOTICE,
+        "member",
+        member.id,
+        {"member_id": member.id, "membership_id": member.membership_id},
+        ref=("membership", member.membership_id),
+        herd=herd,
+        genebank=herd.genebank_id,
+        dedupe_key=f"{ACCOUNT_NOTICE}:{key}",
+        created_by=created_by,
+    )
 
 
 def log_and_mail_paper_contact(herd, item, submission, user, member, fields, skipped, old_email):
@@ -2768,6 +2918,8 @@ def request_hash(sub: Submission) -> str:
     matrikel and every buyer. Nothing in it depends on today, so a retry from an old tab matches.
     """
     fields = {name: value for name, value in asdict(sub).items() if name not in ("key", "revision")}
+    if sub.matrikel is None:  # a body without it hashes as before step 5, so an older retry still matches
+        del fields["matrikel"]
     canonical = json.dumps(fields, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
     return hmac.new(current_app.secret_key.encode(), canonical.encode(), hashlib.sha256).hexdigest()
 
@@ -2835,9 +2987,25 @@ def receipt(submission) -> dict:
             "vantar": waiting,
             "ej_angivna": chosen["ej_angiven"],
         },
-        "matrikel": event.get("falt", []),
+        "matrikel": event.get("falt", []) if submission.source == "paper" else _digital_fields(submission),
         "warnings": [asdict(warning) for warning in warnings if warning],
     }
+
+
+def _digital_fields(submission):
+    """
+    The PAPER_FIELDS a digital Skicka wrote into the matrikel itself, from the rows that name its id: the logged-in
+    member's kontakt_andrad and either's consent row. A link's change confirmed later names its request, not this.
+    """
+    audits = MatrikelAudit.select(MatrikelAudit.payload).where(
+        MatrikelAudit.membership == YearlyHerdReport.get_by_id(submission.report_id).herd.membership_id,
+        MatrikelAudit.action == "kontakt_andrad",
+        MatrikelAudit.payload["submission_id"] == str(submission.id),
+    )
+    columns = {column for audit in audits for column in audit.payload.get("fields") or ()}
+    consented = PublicationConsentChange.select().where(PublicationConsentChange.submission_id == submission.id)
+    fields = {COLUMN_FIELDS[column] for column in columns if column in COLUMN_FIELDS}
+    return [name for name in PAPER_FIELDS if name in fields] + (["publicering"] if consented.exists() else [])
 
 
 def submitted_body(sub: Submission) -> dict:
@@ -3175,7 +3343,10 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
         if paper:
             check_paper(sub, access, on)
         # the membership before the report row, and the main member and its e-mail read under it, before any write
-        membership, member = _lock_matrikel(herd) if paper and sub.paper["matrikel"] is not None else (None, None)
+        matrikel = sub.paper["matrikel"] if paper else sub.matrikel
+        membership, member = _lock_matrikel(herd) if matrikel is not None else (None, None)
+        if not paper and matrikel is not None and not _own_details(member, access, user):  # D1 again, under the lock
+            raise ArsrapportError(403, NOT_MAIN)
         old_email = member.email if member is not None else None
         report = YearlyHerdReport.select().where(same & (YearlyHerdReport.status == "submitted")).for_update().first()
         draft = _draft(herd, round_)  # K1: its kept buyers are linked again or deleted, under the rabbits' locks
@@ -3272,10 +3443,16 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
         except IntegrityError as exc:  # the key, taken meanwhile for another herd, which this lock does not cover
             raise ArsrapportError(409, KEY_TAKEN) from exc
         _propose(report, submission, proposed)
-        if member is not None:  # check() refused a contact change without one (ingen_huvudmedlem)
-            matrikel, signed = sub.paper["matrikel"], sub.paper["signed_on"]
+        if member is not None and paper:  # check() refused a contact change without one (ingen_huvudmedlem)
+            signed = sub.paper["signed_on"]
             fields, skipped = apply_paper_matrikel(herd, membership, member, submission, item, user, matrikel, signed)
             log_and_mail_paper_contact(herd, item, submission, user, member, fields, skipped, old_email)
+        elif member is not None and access.code is not None:
+            import utils.member_changes as member_changes  # pylint: disable=import-outside-toplevel  # imports this
+
+            member_changes.record(herd, membership, member, submission, access.code, matrikel)
+        elif member is not None:
+            apply_login_matrikel(herd, membership, member, submission, user, matrikel)
         for page in pages:  # every page of the form; the photo goes once the report cannot be withdrawn (fråga 31)
             page.done_at, page.purge_after = page.done_at or at, at + timedelta(days=WITHDRAW_DAYS)
             page.save()
@@ -3419,6 +3596,9 @@ def withdraw(herd, round_, access, user, *, revision, reason=None, now=None) -> 
             draft.submission_key, draft.updated_at = None, max(stamp, draft.updated_at + timedelta(microseconds=1))
             draft.data = data
             draft.save()
+        import utils.member_changes as member_changes  # pylint: disable=import-outside-toplevel  # it imports this
+
+        member_changes.revoke_withdrawn(report, at)
         _mail("arsrapport.angrad", herd, user, {"report_id": report.id}, ("yearlyherdreport", report.id))
     return report_view(herd, round_, access, user)
 
@@ -3556,16 +3736,51 @@ def settle_rejection(report, user, rabbit, then, at):
         draft.save()
 
 
-@mail_kind("arsrapport.andrad", priority=0, category="T")
-@mail_kind("arsrapport.kvitto", priority=0, category="T")
-def _kvitto(params):
+def _receipt_address(params):
     """
-    Å7 and Å8 to the herd's main member: what the submission sent, from its row, so a later mail still says what
-    was sent (5.4 point 5). Only end_date is the round's when the mail goes (fråga 32: texts read the round's dates).
+    Where Å7 and Å8 go (U8): a link's receipt carries the confirmation page of its changes, so it goes where the
+    invitation would, the code's member's login address (the old one while a new one waits seven days), and nowhere
+    once that member is not the main member. A login's or a paper receipt goes to the main member's address as
+    before.
     """
     submission = YearlyReportSubmission.get_or_none(YearlyReportSubmission.id == params["submission_id"])
     if submission is None:
         return None
+    if submission.access_code_id is None:
+        member = inbox.herd_holder(YearlyHerdReport.get_by_id(submission.report_id).herd_id)
+        return member.email if member is not None else None
+    recipient = report_code.invitation_recipient(YearlyHerdReport.get_by_id(submission.report_id).herd)
+    code = ReportAccessCode.get_by_id(submission.access_code_id)
+    return recipient.login_address if recipient is not None and recipient.id == code.member_id else None
+
+
+def _member_address(params):
+    """The account notice's address: the member's login address, so a new one that waits is not told (U8)."""
+    member = report_code.invitation_members(now()).where(Member.id == params["member_id"]).first()
+    return member.login_address if member is not None else Member.get_by_id(params["member_id"]).email
+
+
+@mail_kind("arsrapport.andrad", priority=0, category="T", login_address=_receipt_address)
+@mail_kind("arsrapport.kvitto", priority=0, category="T", login_address=_receipt_address)
+def _kvitto(params):
+    """
+    Å7 and Å8 to the herd's main member: what the submission sent, from its row, so a later mail still says what
+    was sent (5.4 point 5). Only end_date is the round's when the mail goes (fråga 32: texts read the round's dates).
+    A link's changes that still wait when the mail goes get the confirmation page's link, their last day and the
+    subject of 5.11.
+    """
+    submission = YearlyReportSubmission.get_or_none(YearlyReportSubmission.id == params["submission_id"])
+    if submission is None:
+        return None
+    waiting = list(
+        MemberChangeRequest.select(MemberChangeRequest.kind, MemberChangeRequest.expires_at).where(
+            MemberChangeRequest.submission == submission.id,
+            MemberChangeRequest.access_code.is_null(False),
+            MemberChangeRequest.confirmed_at.is_null(),
+            MemberChangeRequest.revoked_at.is_null(),
+            MemberChangeRequest.expires_at > now(),
+        )
+    )
     report = YearlyHerdReport.get_by_id(submission.report_id)
     received = submission.data.get("received_on") if submission.source == "paper" else None
     # Late import: arsrapport_pdf imports this module.
@@ -3587,7 +3802,22 @@ def _kvitto(params):
             for item in submission.data.get("litters_added") or ()
         ],
         "end_date": f"{report.round.end_date:%Y-%m-%d}",
+        "andringar": f"{settings.service.host.rstrip('/')}/rapport/andringar#{link_token('andringar', submission.id)}"
+        if waiting
+        else None,
+        "andringar_senast": f"{min(row.expires_at for row in waiting).astimezone(STOCKHOLM):%Y-%m-%d}"
+        if waiting
+        else None,
+        "andrat_konto": any(row.kind == "konto" for row in waiting),
     }
+
+
+@mail_kind(ACCOUNT_NOTICE, priority=0, category="T", login_address=_member_address)
+def _konto_andrat(params):
+    """The account notice (5.11): the account's last two digits as they are when the mail goes, so it says "nu"."""
+    membership = Membership.get_or_none(Membership.id == params["membership_id"])
+    number = membership.bank_account_number if membership is not None else None
+    return {"account_end": (masked_account(number) or "").removeprefix("••") or None} if number else None
 
 
 @mail_kind(A23, priority=0, category="T")
@@ -3619,7 +3849,7 @@ def _kontakt_andrad(params):
 def _old_address(request_id):
     """The old address of a member_change_request e-mail change (step 5's link path reuses it)."""
     request = MemberChangeRequest.get_or_none(MemberChangeRequest.id == request_id)
-    if request is None:
+    if request is None or not request.value.get("old"):  # gone, or purged to its status (U14)
         return None
     member = Member.get_by_id(request.member_id)
     return Recipient(request.value["old"], f"{member.first_name} {member.last_name}")

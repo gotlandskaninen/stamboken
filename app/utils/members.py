@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 
 from peewee import fn
 
-from utils.database import Member, Membership, PublicationConsentChange, User
+from utils.database import Member, MemberChangeRequest, Membership, PublicationConsentChange, User
 from utils.matrikel import ConfirmRequired, LinkError, link_member_user
 
 logger = logging.getLogger(__name__)
@@ -95,13 +95,24 @@ def consent_from_answer(ja: bool, utom: list[str]) -> dict[str, bool]:
     return {key: ja and key not in utom for key in CONSENT_KEYS}
 
 
-def set_consent(membership, value, *, source, text_version, user=None, report=None, submission=None, at=None) -> bool:
+def set_consent(
+    membership, value, *, source, text_version, user=None, report=None, submission=None, at=None, revoke_waiting=True
+) -> bool:
     """
     Writes `value` as the membership's publication consent, with one publication_consent_change row (D9, art. 7.1),
     when it differs from the stored answer to this question, `{}` included: the same answer to an older text is new.
     Consent only: never the whole row. A report's write names its `report` and `submission` ids. The caller holds the
-    membership's lock. Returns whether it wrote.
+    membership's lock. Every answer, an unchanged one too, revokes a Ja that waits for the report link's receipt mail
+    (5.11: a direct No always does); only the confirmation of such a Ja passes `revoke_waiting=False`. Returns
+    whether it wrote.
     """
+    if revoke_waiting:
+        MemberChangeRequest.update(revoked_at=datetime.now(timezone.utc), revoked_reason="nyare").where(
+            MemberChangeRequest.kind == "publicering",
+            MemberChangeRequest.member.in_(Member.select(Member.id).where(Member.membership == membership.id)),
+            MemberChangeRequest.confirmed_at.is_null(),
+            MemberChangeRequest.revoked_at.is_null(),
+        ).execute()
     if value == stored_consent(membership):
         return False
     membership.publication_consent = value

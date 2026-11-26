@@ -692,7 +692,11 @@ class KontaktTest(PaperTest):
         self.assertIn(rule, inbox_purge.RULES)  # the nightly inbox_purge runs it
         self.assertEqual(rule(NOW + timedelta(days=30)), 0)
         self.assertEqual(rule(NOW + timedelta(days=30, seconds=1)), 1)
-        self.assertFalse(db.MemberChangeRequest.select().exists())
+        # U14: the values go and the row stays with its kind and dates; a second night changes nothing
+        purged = db.MemberChangeRequest.get_by_id(request.id)
+        self.assertEqual((purged.value, purged.kind, purged.confirmed_at), ({}, "epost", NOW))
+        self.assertEqual(rule(NOW + timedelta(days=31)), 0)
+        self.assertIsNone(mail.RECIPIENT_KINDS["email_change_old"](request.id))  # a queued Å23 finds no address
 
     def test_address_writes_all_three_fields(self):  # Codex 13
         item = self.form(self.manager)
