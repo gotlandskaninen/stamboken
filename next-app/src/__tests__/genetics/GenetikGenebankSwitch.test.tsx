@@ -64,6 +64,25 @@ vi.mock("next/navigation", async () => {
     },
   };
 });
+// Avelsprioritet reads the logged work-list route (useWorkList), with the same
+// keep-the-last-result behaviour as the RTK double above, in the view's mode.
+vi.mock("@/components/genetics/workList", async (original) => {
+  const { useRef } = await import("react");
+  return {
+    ...(await original<typeof import("@/components/genetics/workList")>()),
+    useWorkList: (genebankId: number) => {
+      const last = useRef<unknown>(undefined);
+      const now = responses.priorities.get(genebankId);
+      if (now !== undefined) last.current = now;
+      return {
+        data: last.current,
+        isLoading: last.current === undefined,
+        refetch: () => {},
+      };
+    },
+  };
+});
+vi.mock("@/lib/mode-context", () => ({ useMode: () => "prod" }));
 vi.mock("@/hooks/useAuth", () => ({
   default: () => ({ user: { is_admin: true, is_manager: [1] } }),
 }));

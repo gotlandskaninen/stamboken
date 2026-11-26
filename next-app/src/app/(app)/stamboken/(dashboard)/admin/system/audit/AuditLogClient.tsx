@@ -314,6 +314,7 @@ export function AuditLogClient({
             <MenuItem value="DELETE">Borttagen</MenuItem>
             <MenuItem value="SYSTEM">Systemhändelse</MenuItem>
             <MenuItem value="REDACT">Gallring</MenuItem>
+            <MenuItem value="READ">Uttag</MenuItem>
           </TextField>
           <button type="submit" className="sb-btn sb-btn-secondary sb-btn-sm">
             Filtrera

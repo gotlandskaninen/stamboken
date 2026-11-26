@@ -6,13 +6,30 @@ See ADR-0007 for details.
 """
 
 import re
+from datetime import datetime, timezone
 from functools import wraps
 
 from flask import jsonify
 from flask_login import current_user, login_required  # noqa: F401 — re-exported for blueprints
+from utils.database import AuditLog
 
 # Shared email-shape check for member_applications.py and members.py.
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+# The demo is a nightly copy of production: an export there would carry real data
+# while its audit row is gone at the next sync.
+DEMO_EXPORT_REFUSED = "Exporten går bara att göra i den riktiga Stamboken, där varje uttag loggas."
+
+
+def log_export(model, action, **details):
+    """One audit_log row per download of an export: who, when and which rows, by identifier; never a value."""
+    AuditLog.create(
+        table_name=model._meta.table_name,
+        record_id=f"export-{action}-{datetime.now(timezone.utc).isoformat()}",
+        operation="READ",
+        new_data={"action": action, **details},
+        changed_by=current_user.username or current_user.email,
+    )
 
 
 def json_login_required(f):

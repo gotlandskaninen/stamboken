@@ -27,6 +27,7 @@ export const OPERATION_LABELS: Record<string, string> = {
   DELETE: "Borttagen",
   SYSTEM: "Systemhändelse",
   REDACT: "Gallring",
+  READ: "Uttag",
 };
 
 // "Skapad av admin" / "Ändrad av admin" — läsbar fras i radhuvudet.
@@ -36,6 +37,15 @@ const OPERATION_PREPOSITION: Record<string, string> = {
   DELETE: "Borttagen av",
   SYSTEM: "Utförd av",
   REDACT: "Utförd av",
+  READ: "Hämtat av",
+};
+
+// Uttagen loggas med record_id "export-<action>-<utc>" (log_export, app/blueprints/common.py).
+const EXPORT_TITLES: Record<string, string> = {
+  avelsprioritet: "Uttag: Avelsprioritet (CSV)",
+  "avelsprioritet-lista": "Uttag: Avelsprioritet (listan på skärmen)",
+  matr: "Uttag: matrikeln (MATR)",
+  "address-list": "Uttag: adresslistan till tryckeriet",
 };
 
 export const tableLabel = (t: string) => TABLE_LABELS[t] ?? t;
@@ -55,6 +65,10 @@ export function rowTitle(tableName: string, recordId: string): string {
   }
   if (recordId.startsWith("purge-ip-")) {
     return "Gallring av IP-adresser";
+  }
+  const exported = /^export-(.+)-\d{4}-\d{2}-\d{2}T/.exec(recordId);
+  if (exported) {
+    return EXPORT_TITLES[exported[1]] ?? `Uttag: ${exported[1]}`;
   }
   return `${tableLabel(tableName)} #${recordId}`;
 }

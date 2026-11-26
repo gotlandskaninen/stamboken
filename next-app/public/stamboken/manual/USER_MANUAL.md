@@ -1160,26 +1160,46 @@ pappersintyg; de byts ut för hand.
 **Genetik** i menyn visar populationsgenetiken för din genbank. Sidan räknar om vid
 första anropet och kan ta upp till en minut.
 
-1. Välj **Genbank** om du ansvarar för flera.
-2. **Översikt** – nyckeltalen **Kaniner i beräkningen** (med datumet som räkningen
-   börjar från), **Effektiv populationsstorlek (Ne)** (målet är minst 50, helst 100),
-   **Effektivt antal founderdjur (FE)** och **Medelsläktskap (MK)**. Det finns ingen
-   gräns för vad som är ett högt medelsläktskap, så kortet visar i stället de två
-   senaste stängda åren under dagens tal; de räknas på varje års kaniner och jämförs
-   med varandra, inte med dagens tal. Sedan kommer
-   diagrammet **Founderdjur med störst andel av generna**, rutan **Inavel** med
-   genomsnittlig inavel (F) och inavelsökning per generation (ΔF), **Genetiska
-   trender** med ett mått i taget och tabellen **Founderdjurens läge** med statusarna
-   Ingen bärare, 1 bärare kvar, 2–3 bärare, Liten andel och Ok. Founderdjur är rasens
-   ursprungsdjur, kaniner utan kända föräldrar i stamboken. Korten visar läget i dag;
-   trenden har ett värde per stängd årsrapportering. I trenden för Ne är en ihålig
+1. Välj **Genbank** om du ansvarar för flera. Genbanken och fliken står i adressen, så
+   du kan spara en länk till en flik, och webbläsarens bakåtknapp tar dig till fliken du
+   var på innan.
+2. **Översikt** – överst står **Läget**: några korta rader om Ne jämfört med FAO:s gräns
+   50 och målet 100, om inavelsökningen per generation (ΔF) jämfört med FAO:s gräns
+   1 %, och om hur många founderdjur som har bara 1 bärare kvar. Finns det founderdjur
+   utan bärare i beräkningen men med möjliga bärare att leta upp, får de en egen rad. En
+   bock betyder att läget är bra, en varningstriangel att du ska hålla ögonen på det och
+   ett utropstecken att något behöver göras. **Se vilka** går till tabellen
+   Founderdjurens läge. Sedan kommer nyckeltalen **Kaniner i beräkningen** (med datumet
+   som räkningen börjar från), **Effektiv populationsstorlek (Ne)** (målet är minst 50,
+   helst 100), **Effektivt antal founderdjur (FE)** och **Medelsläktskap (MK)**. Det
+   finns ingen gräns för vad som är ett högt medelsläktskap, så kortet visar i stället
+   de två senaste stängda åren under dagens tal; de räknas på varje års kaniner och
+   jämförs med varandra, inte med dagens tal. Sedan kommer diagrammet **Founderdjur med
+   störst andel av generna**, rutan **Inavel** med genomsnittlig inavel (F) och
+   inavelsökning per generation (ΔF), **Genetiska trender** med ett mått i taget och
+   tabellen **Founderdjurens läge**. Tabellen visar först founderdjuren med 1 bärare
+   kvar, sedan de utan bärare som har kaniner att leta efter (kaniner utan dödsdatum som
+   inte är med i beräkningen), sedan 2–3 bärare och Liten andel. Knappen **Visa N till**
+   visar resten: Ok och de utan bärare där det inte finns någon kanin att leta efter.
+   Numren på founderdjuren och bärarna är länkar till kaninernas sidor. Founderdjur är
+   rasens ursprungsdjur, kaniner utan kända föräldrar i stamboken. Korten visar läget i
+   dag; trenden har ett värde per stängd årsrapportering. I trenden för Ne är en ihålig
    punkt en osäker skattning, från färre än 30 kaniner; för musen över punkten så syns
    Ne med osäkerheten och antalet kaniner. **Visa som tabell** under diagrammet visar
    samma värden år för år, också med tangentbord och skärmläsare.
 3. **Avelsprioritet** – kaninerna sorterade efter hur viktiga de är för aveln:
-   **Högsta**, **Hög** eller **Övriga**, med **Ovanliga gener (0–100)**, **Unika gener**
-   och **Skäl**. Knapparna **Högsta (N)**, **Hög (N)** och **Övriga (N)** slår av och på
-   nivåerna.
+   **Högsta**, **Hög** eller **Övriga**. Tabellen har **Individnummer** (en länk till
+   kaninens sida), **Namn**, **Besättning** (en länk till besättningens sida, med
+   uppfödarens kontaktuppgifter), **Kön**, **Född**, **Ovanliga gener (0–100)**, **Unika
+   gener** och **Skäl**, som står i sin helhet. Knapparna **Högsta (N)**, **Hög (N)** och
+   **Övriga (N)** slår av och på nivåerna; en bock visar vilka som är på. **Sortera per
+   besättning** samlar varje besättnings kaniner inom varje nivå, så att du ser vilka
+   uppfödare du ska kontakta om kaninerna med högsta prioritet. **Ladda ner CSV** sparar listan med de nivåer som är
+   på och i den ordning som Sortera per besättning ger, med svenska rubriker, i en fil
+   som Excel öppnar. Både att öppna listan och varje nedladdning loggas i
+   aktivitetsloggen: vem, när och vilka kaniner som visades eller fanns i filen. I
+   testmiljön går listan inte att ladda ner. På en smal
+   skärm drar du tabellerna i sidled för att se alla kolumner.
 4. **Parningsförslag** – ange **Max antal par**, **Max inavel (F)** och **Max per hane**
    och klicka **Beräkna**. Tabellen visar paren med **Förväntad F**, **ΔGD**, **MSI**
    (1 = utmärkt, 6 = dålig) och **Skäl**.

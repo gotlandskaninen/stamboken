@@ -18,15 +18,16 @@ vi.hoisted(() => {
 });
 
 import { apiSlice } from "@/redux/api/apiSlice";
-import PrioritiesTab from "@/components/genetics/PrioritiesTab";
+import FoundersAtRiskPanel from "@/components/genetics/FoundersAtRiskPanel";
 import BreedingSuggestionsTab from "@/components/genetics/BreedingSuggestionsTab";
 import { ModeProvider } from "@/lib/mode-context";
 import { MODE_COOKIE, type Mode } from "@/lib/mode";
 
-// The genetics cache with a real RTK store: what an hour-long cache may show.
+// The genetics cache with a real RTK store: what an hour-long cache may show. Shown on the
+// founderdjur table: the Avelsprioritet list reads the logged work list instead (useWorkList).
 
 const theme = createTheme();
-const rows = () => screen.queryByText("Högsta (1)");
+const rows = () => screen.queryByText("Founderdjurens läge (1 founderdjur)");
 const failedAlert = () =>
   screen.queryByText(/inte behörighet|gick inte att hämta/);
 
@@ -36,11 +37,13 @@ const priorities = () =>
       status: "success",
       data: [
         {
-          individual_id: "G1-1",
-          priority: "critical",
-          reasons: [],
-          genetic_value_score: 1,
-          genome_uniqueness: 0.5,
+          founder_id: "G1-1",
+          risk_level: "critical",
+          n_carriers: 1,
+          avg_contribution: 0.1,
+          allele_retention: null,
+          carrier_ids: ["G1-2"],
+          recoverable_carriers: [],
         },
       ],
     }),
@@ -67,7 +70,7 @@ function makeStore() {
 function tab(
   genebankId: number,
   mode: Mode,
-  Panel: typeof PrioritiesTab = PrioritiesTab,
+  Panel: React.ComponentType<{ genebankId: number }> = FoundersAtRiskPanel,
 ) {
   return (
     <Provider store={store}>
@@ -109,8 +112,8 @@ async function refetch(
   genebankId: number,
   mode: Mode,
   endpoint:
-    | "fetchGeneticPriorities"
-    | "fetchPopulationMetrics" = "fetchGeneticPriorities",
+    | "fetchFoundersAtRisk"
+    | "fetchPopulationMetrics" = "fetchFoundersAtRisk",
 ) {
   const arg = { genebankId, mode };
   const options = { forceRefetch: true };
@@ -121,7 +124,7 @@ async function refetch(
             apiSlice.endpoints.fetchPopulationMetrics.initiate(arg, options),
           )
         : store.dispatch(
-            apiSlice.endpoints.fetchGeneticPriorities.initiate(arg, options),
+            apiSlice.endpoints.fetchFoundersAtRisk.initiate(arg, options),
           );
     await request;
     request.unsubscribe();
@@ -219,9 +222,9 @@ describe("genetics cache", () => {
     render(tab(15, "demo"));
     await waitFor(() => expect(rows()).toBeTruthy());
 
-    expect(requested("genetic-priorities")).toEqual([
-      "/api/14/genetic-priorities/",
-      "/api-test/15/genetic-priorities/",
+    expect(requested("founders-at-risk")).toEqual([
+      "/api/14/founders-at-risk/",
+      "/api-test/15/founders-at-risk/",
     ]);
   });
 

@@ -32,6 +32,7 @@ import GeneticsInfoPanel, {
 import GeneticsError from "./GeneticsError";
 import TrendChart from "./TrendChart";
 import FoundersAtRiskPanel from "./FoundersAtRiskPanel";
+import Laget from "./Laget";
 import { useQueryView, StaleNote } from "./queryView";
 import { useMode } from "@/lib/mode-context";
 import type { Theme } from "@mui/material/styles";
@@ -128,12 +129,15 @@ const OverviewTab = ({ genebankId }: OverviewTabProps) => {
 
   // The founderdjur table's rows (the same request as the table below), so the
   // card and the table count the same animals. Until it arrives the count is left out.
-  const founderRows = useQueryView(
+  const founderView = useQueryView(
     useFetchFoundersAtRiskQuery(
       { genebankId, mode },
       { refetchOnMountOrArgChange: true },
     ),
-  ).data;
+  );
+  const founderRows = founderView.data;
+  // Läget leaves its founder lines out while the founder table has failed.
+  const founderError = founderView.failed;
   // The trend below shares this request; its last row is the last closed year.
   const trend = useQueryView(
     useFetchGeneticsTrendsQuery(
@@ -208,6 +212,11 @@ const OverviewTab = ({ genebankId }: OverviewTabProps) => {
           Förklaringar.
         </Alert>
       )}
+      {/* While the founder table shows an error, "Se vilka" would have nothing to go to. */}
+      <Laget
+        metrics={metrics}
+        founders={founderError ? undefined : founderRows}
+      />
       <Grid
         container
         spacing={6}

@@ -2772,6 +2772,10 @@ def genetic_priorities(g_id):
         return jsonify({"error": "Error calculating genetic priorities"}), 500
 
 
+# The work list and its CSV (blueprints/genetics.py) read the same memoized priorities; ADR-0007: no import of herdbook.
+APP.extensions["genetic_priorities"] = get_genetic_priorities
+
+
 @APP.route("/api/<int:g_id>/breeding-suggestions/")
 @login_required
 def breeding_suggestions(g_id):

@@ -6,6 +6,7 @@ import {
   matrikelFieldLabel,
   matrikelValue,
   operationLabel,
+  operationPhrase,
   rowTitle,
   tableLabel,
 } from "@/app/(app)/stamboken/(dashboard)/admin/_lib/auditLabels";
@@ -46,6 +47,34 @@ describe("existing exports are unchanged (UserEditClient imports these)", () => 
     expect(rowTitle("audit_log", "purge-ip-20261114T034500Z")).toBe(
       "Gallring av IP-adresser",
     );
+  });
+});
+
+describe("export rows (log_export)", () => {
+  it("name the download, for the member exports too", () => {
+    expect(operationLabel("READ")).toBe("Uttag");
+    expect(operationPhrase("READ", "anna")).toBe("Hämtat av anna");
+    expect(
+      rowTitle(
+        "individual",
+        "export-avelsprioritet-2026-11-25T14:23:49.113774+00:00",
+      ),
+    ).toBe("Uttag: Avelsprioritet (CSV)");
+    expect(
+      rowTitle(
+        "individual",
+        "export-avelsprioritet-lista-2026-11-25T14:23:49.113774+00:00",
+      ),
+    ).toBe("Uttag: Avelsprioritet (listan på skärmen)");
+    expect(
+      rowTitle("membership", "export-matr-2026-11-25T08:00:00+00:00"),
+    ).toBe("Uttag: matrikeln (MATR)");
+    expect(
+      rowTitle("membership", "export-address-list-2026-11-25T08:00:00+00:00"),
+    ).toBe("Uttag: adresslistan till tryckeriet");
+    expect(
+      rowTitle("membership", "export-nytt-2026-11-25T08:00:00+00:00"),
+    ).toBe("Uttag: nytt");
   });
 });
 

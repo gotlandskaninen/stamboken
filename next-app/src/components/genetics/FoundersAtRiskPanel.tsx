@@ -1,10 +1,12 @@
-import React from "react";
+import React, { useState } from "react";
+import Link from "next/link";
 
 import {
   Card,
   CardContent,
   Typography,
   Table,
+  TableContainer,
   TableBody,
   TableCell,
   TableHead,
@@ -49,6 +51,44 @@ const riskConfig: Record<
   ok: { label: "Ok", summary: "ok", color: "success" },
 };
 
+const ORDER: FounderAtRisk["risk_level"][] = [
+  "critical",
+  "warning",
+  "monitor",
+  "ok",
+  "lost",
+];
+
+// Action first: 1 bärare kvar, then Ingen bärare with possible carriers to look for, 2–3 bärare
+// and Liten andel. Ok, and Ingen bärare with nobody to look for, are folded away.
+const rank = (f: FounderAtRisk) =>
+  ({
+    critical: 0,
+    lost: f.recoverable_carriers?.length ? 1 : 5,
+    warning: 2,
+    monitor: 3,
+    ok: 4,
+  })[f.risk_level];
+export const isFolded = (f: FounderAtRisk) => rank(f) >= 4;
+
+export const founderOrder = (founders: FounderAtRisk[]) =>
+  [...founders].sort((a, b) => rank(a) - rank(b));
+
+export const FOUNDER_TABLE_ID = "founderdjurens-lage";
+
+const RabbitLinks = ({ numbers }: { numbers: string[] }) =>
+  numbers.map((n, i) => (
+    <React.Fragment key={n}>
+      {i > 0 && ", "}
+      <Link
+        href={`/stamboken/individ/${encodeURIComponent(n)}`}
+        className="sb-link"
+      >
+        {n}
+      </Link>
+    </React.Fragment>
+  ));
+
 function CarrierInfo({ founder }: { founder: FounderAtRisk }) {
   const { carrier_ids, recoverable_carriers, risk_level } = founder;
 
@@ -56,17 +96,17 @@ function CarrierInfo({ founder }: { founder: FounderAtRisk }) {
 
   // Carriers in the calculation (sent for 1 and 2–3 carriers)
   if (carrier_ids.length > 0) {
-    parts.push(`I beräkningen: ${carrier_ids.join(", ")}`);
+    parts.push(
+      <React.Fragment key="carriers">
+        I beräkningen: <RabbitLinks numbers={carrier_ids} />
+      </React.Fragment>,
+    );
   }
 
   // recovery_eligible minus the members: certified, no death date or note, not castrated,
   // within the age cap, but outside the calculation (sent for none and 1 carrier)
   if (recoverable_carriers && recoverable_carriers.length > 0) {
     const n = recoverable_carriers.length;
-    const label =
-      n <= 10
-        ? recoverable_carriers.join(", ")
-        : `${recoverable_carriers.slice(0, 10).join(", ")} (+${n - 10} till)`;
     parts.push(
       <Typography
         key="recoverable"
@@ -77,7 +117,8 @@ function CarrierInfo({ founder }: { founder: FounderAtRisk }) {
         {n === 1
           ? "1 kanin utan dödsdatum som inte är med i beräkningen"
           : `${n} kaniner utan dödsdatum som inte är med i beräkningen`}
-        : {label}
+        : <RabbitLinks numbers={recoverable_carriers.slice(0, 10)} />
+        {n > 10 && ` (+${n - 10} till)`}
       </Typography>,
     );
   } else if (risk_level === "lost") {
@@ -101,6 +142,8 @@ interface FoundersAtRiskPanelProps {
 }
 
 const FoundersAtRiskPanel = ({ genebankId }: FoundersAtRiskPanelProps) => {
+  const [showAll, setShowAll] = useState(false);
+
   const mode = useMode();
   const query = useFetchFoundersAtRiskQuery(
     { genebankId, mode },
@@ -131,9 +174,23 @@ const FoundersAtRiskPanel = ({ genebankId }: FoundersAtRiskPanelProps) => {
   // Summary counts
   const counts = { lost: 0, critical: 0, warning: 0, monitor: 0, ok: 0 };
   for (const f of founders) counts[f.risk_level]++;
+  const hidden = founders.filter(isFolded);
+  const hiddenOk = hidden.filter((f) => f.risk_level === "ok").length;
+  const hiddenParts = [
+    hiddenOk && `${riskConfig.ok.label} (${hiddenOk})`,
+    hidden.length - hiddenOk &&
+      `${riskConfig.lost.label} (${hidden.length - hiddenOk})`,
+  ].filter(Boolean);
+  const rows = founderOrder(founders).filter((f) => showAll || !isFolded(f));
 
   return (
-    <Card sx={{ mb: 6 }}>
+    // scrollMarginTop: the link from Läget lands below the sticky top bar.
+    // tabIndex: "Se vilka" moves focus here, as a followed in-page link would.
+    <Card
+      id={FOUNDER_TABLE_ID}
+      tabIndex={-1}
+      sx={{ mb: 6, scrollMarginTop: 96 }}
+    >
       <CardContent>
         <Typography variant="h6" gutterBottom>
           Founderdjurens läge ({founders.length} founderdjur)
@@ -150,59 +207,93 @@ const FoundersAtRiskPanel = ({ genebankId }: FoundersAtRiskPanelProps) => {
             mb: 4,
           }}
         >
-          {(Object.keys(counts) as FounderAtRisk["risk_level"][])
-            .filter((level) => counts[level] > 0)
+          {ORDER.filter((level) => counts[level] > 0)
             .map((level) => `${counts[level]} ${riskConfig[level].summary}`)
             .join(" · ")}
         </Typography>
-        <Table size="small">
-          <TableHead>
-            <TableRow>
-              <TableCell>Founderdjur</TableCell>
-              <TableCell>Status</TableCell>
-              <TableCell align="right">Bärare i beräkningen</TableCell>
-              <TableCell align="right">Andel av generna</TableCell>
-              {hasRetention && (
-                <TableCell align="right">Bevarade gener (simulerat)</TableCell>
-              )}
-              <TableCell>Bärare</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {founders.map((f) => {
-              const config = riskConfig[f.risk_level];
-              return (
-                <TableRow key={f.founder_id}>
-                  <TableCell>{f.founder_id}</TableCell>
-                  <TableCell>
-                    <Chip
-                      label={config.label}
-                      color={config.color}
-                      size="small"
-                      sx={readableChip}
-                    />
-                  </TableCell>
-                  <TableCell align="right">{f.n_carriers}</TableCell>
-                  <TableCell align="right">
-                    {percent(f.avg_contribution, 2)}
-                  </TableCell>
-                  {hasRetention && (
-                    <TableCell align="right">
-                      {f.allele_retention !== null
-                        ? percent(f.allele_retention)
-                        : "–"}
-                    </TableCell>
-                  )}
-                  <TableCell>
-                    <Typography variant="body2" color="textSecondary">
-                      <CarrierInfo founder={f} />
-                    </Typography>
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
+        {rows.length === 0 ? (
+          <Typography variant="body2">
+            Inget founderdjur behöver åtgärdas just nu.
+          </Typography>
+        ) : (
+          <>
+            <Typography
+              variant="body2"
+              color="textSecondary"
+              sx={{ display: { xs: "block", sm: "none" }, mb: 1 }}
+            >
+              Tabellen är bredare än skärmen. Dra i sidled för att se alla
+              kolumner.
+            </Typography>
+            <TableContainer>
+              <Table size="small" sx={{ minWidth: 640 }}>
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Founderdjur</TableCell>
+                    <TableCell>Status</TableCell>
+                    <TableCell align="right">Bärare i beräkningen</TableCell>
+                    <TableCell align="right">Andel av generna</TableCell>
+                    {hasRetention && (
+                      <TableCell align="right">
+                        Bevarade gener (simulerat)
+                      </TableCell>
+                    )}
+                    <TableCell>Bärare</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {rows.map((f) => {
+                    const config = riskConfig[f.risk_level];
+                    return (
+                      <TableRow key={f.founder_id}>
+                        <TableCell sx={{ whiteSpace: "nowrap" }}>
+                          <RabbitLinks numbers={[f.founder_id]} />
+                        </TableCell>
+                        <TableCell>
+                          <Chip
+                            label={config.label}
+                            color={config.color}
+                            size="small"
+                            sx={readableChip}
+                          />
+                        </TableCell>
+                        <TableCell align="right">{f.n_carriers}</TableCell>
+                        <TableCell align="right">
+                          {percent(f.avg_contribution, 2)}
+                        </TableCell>
+                        {hasRetention && (
+                          <TableCell align="right">
+                            {f.allele_retention !== null
+                              ? percent(f.allele_retention)
+                              : "–"}
+                          </TableCell>
+                        )}
+                        <TableCell>
+                          <Typography variant="body2" color="textSecondary">
+                            <CarrierInfo founder={f} />
+                          </Typography>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </>
+        )}
+        {hidden.length > 0 && (
+          <button
+            type="button"
+            className="sb-btn sb-btn-sm sb-btn-secondary"
+            style={{ marginTop: 16 }}
+            aria-expanded={showAll}
+            onClick={() => setShowAll(!showAll)}
+          >
+            {showAll
+              ? `Dölj de ${hidden.length}`
+              : `Visa ${hidden.length} till: ${hiddenParts.join(" och ")}`}
+          </button>
+        )}
       </CardContent>
     </Card>
   );
