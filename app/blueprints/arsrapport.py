@@ -296,6 +296,18 @@ def register_extract(herd, year):
     return response
 
 
+# [Next.js] The sale dialog's Spara: one rabbit's sale registered at once (Jonas 2026-11-26); 422 with refusals.
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/forsaljning", methods=["POST"])
+@report_actor_required
+def sell_now(herd, year):
+    herd, round_, access = _report_target(herd, year)
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or type(body.get("individual_id")) is not int:  # True is an int too
+        raise ArsrapportError(400, "Ange kaninen och försäljningen.")
+    operation_id = arsrapport.sell_now(herd, round_, access, _actor(access), body["individual_id"], body.get("sald"))
+    return jsonify({"operation_id": operation_id})
+
+
 # [Next.js] Autosave of the server draft; a stale version is a 409 with the current draft.
 @arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/utkast", methods=["PUT"])
 @report_actor_required
