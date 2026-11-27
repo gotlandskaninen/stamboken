@@ -814,6 +814,7 @@ class TestItemsFromMail(GmailTest):
         with mock.patch.object(settings.interpretation, "interpreter", "gemma"):
             self.fake.deliver(message(files=[("ny.jpg", JPEG, encoded(photo()))], In_Reply_To=self.our_mail(item)))
             self.read()
+        self.assertEqual(len(self.documents(item)), 2)  # the reply's photo, not the item's first
         self.assertEqual(self.documents(item)[-1].interpretation_status, "av")
 
     def test_a_message_that_fails_leaves_no_files(self):

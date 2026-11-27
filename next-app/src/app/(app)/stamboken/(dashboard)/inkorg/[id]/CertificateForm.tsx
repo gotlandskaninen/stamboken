@@ -115,9 +115,9 @@ export function CertificateForm({
           )}
           {doc.interpretation_status === "for_litet" && (
             <p className={styles.muted}>
-              Fotot är för litet för att tolkas av sig självt. Be uppfödaren om
-              ett större foto, skriv av fälten, eller klicka Tolka igen för att
-              tolka det ändå.
+              Fotot är för litet för att tolkas av sig självt.
+              {canSave &&
+                " Be uppfödaren om ett större foto, skriv av fälten, eller klicka Tolka igen för att tolka det ändå."}
             </p>
           )}
           {latest && !applied && (

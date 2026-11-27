@@ -96,10 +96,26 @@ describe("CertificateForm with the image reading's proposal", () => {
   });
 
   it("says why a photo too small was not read, and that Tolka igen reads it", () => {
-    show(doc({ proposal: null, interpretation_status: "for_litet" }));
+    const small = doc({ proposal: null, interpretation_status: "for_litet" });
+    show(small);
     expect(
       screen.getByText(/för litet för att tolkas av sig självt/),
     ).toHaveTextContent("klicka Tolka igen");
+    cleanup();
+    // Someone who only reads the item gets the reason, not a button they lack.
+    render(
+      <CertificateForm
+        itemId={12}
+        doc={small}
+        colors={[]}
+        canSave={false}
+        onSaved={() => undefined}
+        onSkip={() => undefined}
+      />,
+    );
+    expect(
+      screen.getByText(/för litet för att tolkas av sig självt/),
+    ).not.toHaveTextContent("Tolka igen");
   });
 
   it("keeps the queue's compact look: Kön a menu, not the member's choices", () => {

@@ -773,12 +773,11 @@ class TestReportPhotoReading(AddRabbitTest):
         self.assertEqual(detail["documents"][0]["proposal"], read.proposal)
         self.assertIsNone(inbox.item_detail(queued, self.helper)["registered"])
 
-    def test_a_photo_too_small_waits_for_tolka_igen_once_registered(self):
+    def test_a_photo_too_small_is_not_read_once_registered(self):
         self.open_link()
-        item_id = self.reload(self.photo_item()).id
-        db.InboxDocument.update(quality={"short_side": 600, "sharpness": 900.0, "brightness": 200.0}).where(
-            db.InboxDocument.item == item_id
-        ).execute()
+        response = self.upload_photo(content=encoded(photo((600, 800))))
+        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+        item_id = response.get_json()["item_id"]
         self.assertEqual(self.kit(item_id).status_code, 201)
         (document,) = self.reload(item_id).documents
         self.assertEqual(document.interpretation_status, "for_litet")
