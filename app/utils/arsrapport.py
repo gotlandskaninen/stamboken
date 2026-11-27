@@ -1467,26 +1467,36 @@ def _invitations(herds, round_):
     """
     Each herd's invitation state from its active code: `oppnad` once the link has been opened, else the state of the
     mail that carries it (`skickad`, `studsade`, `misslyckades`); a herd with no active code or no such mail is None.
+    Also track invited herds whose link was revoked so the manager can still send them a replacement.
     """
-    codes = {
-        code.herd_id: code
-        for code in ReportAccessCode.select().where(
+    codes = list(
+        ReportAccessCode.select().where(
             ReportAccessCode.round == round_.id,
             ReportAccessCode.herd.in_([herd.id for herd in herds]),
-            ReportAccessCode.revoked_at.is_null(),
         )
-    }
+    )
     mail = {
         row.ref_id: _MAIL_INVITATION.get(row.status)
         for row in MailMessage.select(MailMessage.ref_id, MailMessage.status)
         .where(
             MailMessage.ref_type == "access_code",
-            MailMessage.ref_id.in_([code.id for code in codes.values()]),
+            MailMessage.ref_id.in_([code.id for code in codes]),
             MailMessage.kind.in_(("arsrapport.inbjudan", "arsrapport.ny_lank")),
         )
         .order_by(MailMessage.id)  # the newest mail of a code decides
     }
-    return {herd_id: "oppnad" if code.last_opened_at else mail.get(code.id) for herd_id, code in codes.items()}
+    states, links = {}, {}
+    for code in codes:
+        state = "oppnad" if code.last_opened_at else mail.get(code.id)
+        if code.revoked_at is None:
+            states[code.herd_id] = state
+        # An issued link can outlive its mail row. A first invitation still in the queue has not gone out yet.
+        if state or code.id not in mail:
+            if code.revoked_at is None:
+                links[code.herd_id] = "current"
+            else:
+                links.setdefault(code.herd_id, "revoked")
+    return states, links
 
 
 def _only_with(more, counted, villkor, stat, report, deadline):
@@ -1610,7 +1620,7 @@ def status_view(round_, genebank_id, with_phone=False):
         .order_by(Herd.herd)
     )
     items, drafts, emails = _row_states(herds, round_)
-    invitations = _invitations(herds, round_)
+    invitations, links = _invitations(herds, round_)
     reminded = {row.herd_id: row for row in filter(remind.counts, remind.reminders(round_, [h.id for h in herds]))}
     held, stats, pending = innehav(genebank_id, year), statistik(genebank_id, year), _pending_sales(last)
     data = {herd_id: json.loads(report.data) for herd_id, report in reports.items()}
@@ -1669,6 +1679,7 @@ def status_view(round_, genebank_id, with_phone=False):
                 "herd_name": herd.herd_name,
                 "state": state,
                 "inbjudan": invitations.get(herd.id),
+                "report_link": links.get(herd.id),
                 "ingen_epost": not emails.get(herd.id),
                 "needs_report": herd.is_active and report is None,  # Å5 and "Ej svarat" (P12)
                 "last_reminder": _reminder_json(reminded.get(herd.id)),
