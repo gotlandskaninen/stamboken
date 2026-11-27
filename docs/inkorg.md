@@ -718,11 +718,13 @@ redan är sparad, eftersom tolkningen jämförs med det uppfödaren registrerade
 visar vinkeln, och handläggaren sparar den med `PATCH` (`straighten`) eller med maskningen. Ingen
 händelse loggas.
 
-Kroppen är tom, eller `{"straighten": 2.5}` (som i `PATCH`). Med `straighten` letas ingen lutning:
-`angle` är den vinkeln och pappret letas i fotot vridet med den. Det gör arbetsvyn i
+Kroppen är `{"rotation": 90}` eller `{"rotation": 90, "straighten": 2.5}` (som i `PATCH`).
+`rotation` är vridningen som vyn visar. Är den inte dokumentets sparade svarar API:t 409, så att
+pappret aldrig hamnar i en annan kvartsvridning än den handläggaren ser. Med `straighten` letas
+ingen lutning: `angle` är den vinkeln och pappret letas i fotot vridet med den. Det gör arbetsvyn i
 maskningssteget, där vinkeln är låst.
 
-**Svar 200:** `{"angle": 4.0, "paper": {"x": 0.18, "y": 0.14, "w": 0.64, "h": 0.72}}`.
+**Svar 200:** `{"angle": 4.0, "paper": {"x": 0.18, "y": 0.14, "w": 0.64, "h": 0.72}, "paper_tight": {"x": 0.195, "y": 0.155, "w": 0.61, "h": 0.69}}`.
 
 - `angle`: den `straighten` som lägger fotots skrift vågrätt, i steg om 0,1 grad. 0,0 när ingen
   vinkel tydligt slår fotot som det är, och när lutningen är under 0,3 grader. Med `straighten` i
@@ -730,6 +732,9 @@ maskningssteget, där vinkeln är låst.
 - `paper`: pappret, i bråkdelar av fotot vridet dokumentets `rotation` plus `angle`, med 1,5 %
   marginal; `null` när inget ljust område av rimlig storlek (20–97 % av fotot) sticker ut, till
   exempel på ett ljust bord eller när fotot bara är papper.
+- `paper_tight`: samma papper utan marginal, eller `null`. Arbetsvyns ram får sin underkant av
+  den: två tredjedelar av det täta pappret, så att marginalen aldrig når ned i säljarens och
+  köparens tredjedel. Ramens övriga kanter är `paper`s.
 
 Letas på en grå kopia med högst 800 bildpunkter på längsta sidan (`app/utils/inbox_paper.py`).
 Vinkeln: de mörka bildpunkterna (Otsus tröskel) vrids från −15 till 15 grader i steg om 0,5 och
@@ -738,13 +743,15 @@ mörka bildpunkter. Den bästa vinkeln gäller bara när den slår vinkeln 0 med
 de ljusa bildpunkterna på det upprätade fotot, med skrift upp till 9 bildpunkter igenfylld; den
 längsta följden av rader och kolumner där andelen ljust är minst hälften av den största andelen.
 Hörnen som vridningen lägger till räknas varken som papper eller bord. Pappret måste visa en kant
-mot bordet på minst två sidor, annars är det ljusa området bordet och `paper` är `null`.
+mot bordet på tre sidor, eller på två motstående (ett papper som fyller fotots bredd eller höjd).
+Annars är det ljusa området bordet, och `paper` och `paper_tight` är `null`: ett ljust bord med
+mörkt bara till höger och nedanför ger kanter på två sidor som möts i ett hörn.
 
 **Vem:** handläggaren (posten i ett läge med handläggare).
 
-**Fel:** 400 när `straighten` är ogiltig; 403 för den som inte arbetar i kön eller i postens
-genbank; 404 när posten eller dokumentet inte finns; 409 när anroparen inte är handläggare eller
-originalet är raderat.
+**Fel:** 400 när `rotation` eller `straighten` är ogiltig; 403 för den som inte arbetar i kön
+eller i postens genbank; 404 när posten eller dokumentet inte finns; 409 när anroparen inte är
+handläggare, när `rotation` inte är dokumentets eller när originalet är raderat.
 
 ### `POST /api/v2/inkorg/{id}/dokument/{dok}/kontrollerad`
 
