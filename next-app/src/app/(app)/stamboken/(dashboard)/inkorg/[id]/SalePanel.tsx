@@ -165,7 +165,7 @@ export function SalePanel({
           saknas&quot;.
         </p>
       )}
-      {read && (
+      {read && !saved && (
         <div className={styles.note}>
           <strong>Från fotot</strong>
           <ul aria-label="Från fotot">

@@ -388,6 +388,45 @@ describe("SalePanel with the seller and buyer read off the photo", () => {
     });
   });
 
+  it("in 2026 and 2027 picks the e-mail for the notice, not the bevis", async () => {
+    registerSale.mockResolvedValue({ ok: true, data: { document: doc } });
+    readPanel({ date: "2026-10-03" });
+    fireEvent.click(fillButton());
+    expect(
+      screen.getByRole("radio", { name: "Nej, men köparen har e-post" }),
+    ).toBeChecked();
+    expect(screen.getByRole("radio", { name: /Ja/ })).not.toBeChecked();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Spara försäljningen" }),
+    );
+    await waitFor(() => expect(registerSale).toHaveBeenCalledTimes(1));
+    expect(registerSale.mock.calls[0][2].buyer).toEqual({
+      ...READ_BUYER,
+      notice_only: true,
+    });
+    // Saved: what was read off the photo goes from the panel, as from the server.
+    await waitFor(() =>
+      expect(screen.queryByText("Fyll i från fotot")).toBeNull(),
+    );
+  });
+
+  it("leaves the choice to the handler when no e-mail was read", () => {
+    readPanel({ buyer: { ...READ_BUYER, email: "" } });
+    fireEvent.click(fillButton());
+    expect(screen.getByRole("radio", { name: "Ja" })).not.toBeChecked();
+    expect(screen.queryByLabelText(/Köparens namn/)).toBeNull();
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Spara försäljningen",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    fireEvent.click(screen.getByRole("radio", { name: "Ja" }));
+    expect(value(/Köparens namn/)).toBe("Köpa Testsson"); // the rest is filled in
+    expect(value(/^E-post/)).toBe("");
+  });
+
   it("fills the buyer's herd when it is in Stamboken", () => {
     readPanel({ buyer_herd: { herd: "G9002" } });
     fireEvent.click(fillButton());
