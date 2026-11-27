@@ -477,7 +477,8 @@ export type CertForm = {
   paper_number: string;
   paper_certificate: string;
   name: string;
-  sex: "" | "female" | "male";
+  /** "unknown" only in the queue, where Okänt is a choice of its own (sent as null). */
+  sex: "" | "female" | "male" | "unknown";
   birth_date: string;
   color: string;
   litter_size: string;
@@ -596,7 +597,13 @@ export function takeRead(
   const text = read.trim();
   switch (key) {
     case "sex":
-      return /^hon/i.test(text) ? "female" : /^han/i.test(text) ? "male" : null;
+      return /^hon/i.test(text)
+        ? "female"
+        : /^han/i.test(text)
+          ? "male"
+          : /^okän/i.test(text)
+            ? "unknown"
+            : null;
     case "birth_date":
       return isoDate(text);
     case "litter_size":

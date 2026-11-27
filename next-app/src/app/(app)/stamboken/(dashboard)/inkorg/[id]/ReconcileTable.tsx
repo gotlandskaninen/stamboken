@@ -38,17 +38,58 @@ const EXAMPLE = new Set<RowKey>([
   "mother",
   "father",
 ]);
-// What saving needs in each mode, as the form has always asked for it.
+// What Spara needs in each mode. A new rabbit, as in "Registrera kanin" (Jonas 2026-11-27): nothing on the
+// paper is left out; a certificate that cannot be read waits until the handler has found the details.
 const REQUIRED: Record<SaveMode, RowKey[]> = {
   pappersintyg: ["individual", "paper_number", "paper_certificate"],
   ny_kanin: [
     "paper_number",
     "paper_certificate",
+    "sex",
     "birth_date",
+    "color",
+    "litter_size",
+    "litter_size6w",
     "mother",
     "father",
   ],
 };
+const whole = (s: string) => (/^\d+$/.test(s.trim()) ? Number(s) : 0);
+
+/** A mandatory row that is empty or not yet what saving takes (a colour off the list, a count out of range). */
+function lacks(
+  mode: SaveMode,
+  key: RowKey,
+  values: CertForm & Grandparents,
+  colors: string[],
+) {
+  if (!REQUIRED[mode].includes(key)) return false;
+  const value = values[key].trim();
+  switch (key) {
+    case "color":
+      return !value || (colors.length > 0 && !colors.includes(value));
+    case "litter_size":
+      return whole(value) < 1;
+    case "litter_size6w":
+      return (
+        whole(value) < 1 ||
+        (whole(values.litter_size) >= 1 &&
+          whole(value) > whole(values.litter_size))
+      );
+    default:
+      return !value;
+  }
+}
+
+/** The labels of the mandatory rows still to fill in, in the table's order: Spara waits for none. */
+export const missingRows = (
+  mode: SaveMode,
+  values: CertForm & Grandparents,
+  colors: string[],
+) =>
+  rowKeys(mode)
+    .filter(([key]) => lacks(mode, key, values, colors))
+    .map(([, label]) => label);
 /** Whether …/spara sends the row: in "kanin som finns" only the three numbers, never a grandparent. */
 const saved = (mode: SaveMode, key: RowKey) =>
   mode === "pappersintyg"
@@ -60,7 +101,11 @@ const WORD: Record<RowStatus, string> = {
   osaker: "osäker",
   ingen: "inget att jämföra",
 };
-const SEX: Record<string, string> = { female: "Hona", male: "Hane" };
+const SEX: Record<string, string> = {
+  female: "Hona",
+  male: "Hane",
+  unknown: "Okänt",
+};
 
 export const rowKeys = (mode: SaveMode) =>
   ROWS.filter(([key]) => mode === "pappersintyg" || key !== "individual");
@@ -138,7 +183,7 @@ export function ReconcileTable({
     const input =
       key === "sex" || (key === "color" && colors.length > 0) ? (
         <select {...props}>
-          <option value="">Inte angivet</option>
+          <option value="">Välj</option>
           {key === "sex"
             ? Object.entries(SEX).map(([value, word]) => (
                 <option key={value} value={value}>
@@ -162,6 +207,11 @@ export function ReconcileTable({
                 : "text"
           }
           min={key === "litter_size" || key === "litter_size6w" ? 1 : undefined}
+          max={
+            key === "litter_size6w" && whole(values.litter_size) >= 1
+              ? whole(values.litter_size)
+              : undefined
+          }
           maxLength={
             key === "paper_certificate" ? 20 : key === "name" ? 50 : undefined
           }
@@ -234,9 +284,15 @@ export function ReconcileTable({
                   key={key}
                   className={styles.reconcileRow}
                   data-grandparent={gp}
+                  data-missing={lacks(mode, key, values, colors) || undefined}
                 >
                   <th scope="row">
                     <label htmlFor={`${id}-${key}`}>{label}</label>
+                    {REQUIRED[mode].includes(key) && (
+                      <span aria-hidden="true" className={styles.requiredMark}>
+                        *
+                      </span>
+                    )}
                   </th>
                   <td className={styles.reconcileRead} data-label="Inläst">
                     {read || "–"}

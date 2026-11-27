@@ -134,6 +134,13 @@ const registryOf = (label: string) =>
 const type = (label: string, value: string) =>
   fireEvent.change(screen.getByLabelText(label), { target: { value } });
 const wait = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
+/** What a new rabbit's paper also has, and Spara asks for (Jonas 2026-11-27). */
+const fillPaper = () => {
+  type("Kön", "female");
+  type("Färg", "viltgrå");
+  type("Antal födda", "5");
+  type("Levande efter 6 veckor", "4");
+};
 
 const input = (label: string) => screen.getByLabelText(label);
 
@@ -190,7 +197,7 @@ describe("CertificateForm with the image reading's proposal", () => {
     const labels = screen
       .getAllByRole("row")
       .slice(1)
-      .map((row) => row.querySelector("th")?.textContent);
+      .map((row) => row.querySelector("th label")?.textContent);
     expect(labels).toEqual(ALL_ROWS);
     expect(rowOf("Far")).toHaveTextContent("G9002 2311"); // Inläst
     expect(rowOf("Farfar")).toHaveTextContent("G9003 2011");
@@ -343,6 +350,7 @@ describe("CertificateForm's table for a new rabbit", () => {
     type("Mor", "g9001 2211");
     type("Far", "G9002 2311");
     type("Födelsedatum", "2025-05-10");
+    fillPaper();
     fireEvent.click(screen.getByRole("button", { name: "Spara och nästa" }));
     await wait(0);
     expect(saveCertificate).toHaveBeenCalledWith(
@@ -378,6 +386,7 @@ describe("CertificateForm saves as before the move", () => {
     type("Intygsnummer", "P-1");
     type("Far", "g9002-2311");
     type("Födelsedatum", "2025-05-10");
+    fillPaper();
   };
   const NEW_RABBIT = {
     action: "ny_kanin",
@@ -387,6 +396,10 @@ describe("CertificateForm saves as before the move", () => {
     father: "G9002-2311",
     birth_date: "2025-05-10",
     rex: false, // main's rex choice, sent with every new rabbit
+    sex: "female",
+    color: "viltgrå",
+    litter_size: 5,
+    litter_size6w: 4,
   };
 
   it("posts the item's document with the form's payload, and hands on the saved document", async () => {
@@ -789,5 +802,115 @@ describe("CertificateForm saves a paper certificate as before the table", () => 
       "aria-invalid",
       "true",
     );
+  });
+});
+
+// Jonas 2026-11-27: as in "Registrera kanin", Spara waits until nothing mandatory is left.
+describe("CertificateForm's mandatory rows", () => {
+  const spara = () => screen.getByRole("button", { name: "Spara och nästa" });
+  const left = () => screen.queryByText(/^Kvar att fylla i:/)?.textContent;
+  const FILLED: [string, string][] = [
+    ["Individnummer på pappret", "G9001-2511"],
+    ["Intygsnummer", "P-1"],
+    ["Kön", "female"],
+    ["Födelsedatum", "2025-05-10"],
+    ["Färg", "viltgrå"],
+    ["Antal födda", "5"],
+    ["Levande efter 6 veckor", "4"],
+    ["Mor", "G9001-2211"],
+    ["Far", "G9002-2311"],
+  ];
+
+  it("a new rabbit waits for each one, and says which", () => {
+    show(doc({ proposal: null, interpretation_status: "misslyckad" }));
+    expect(spara()).toBeDisabled();
+    expect(left()).toBe(
+      "Kvar att fylla i: individnummer på pappret, intygsnummer, kön, födelsedatum, färg, antal födda, levande efter 6 veckor, mor, far.",
+    );
+    for (const [label, value] of FILLED) type(label, value);
+    expect(spara()).toBeEnabled();
+    expect(left()).toBeUndefined();
+    for (const [label, value] of FILLED) {
+      type(label, "");
+      expect(spara()).toBeDisabled();
+      expect(left()).toBe(
+        `Kvar att fylla i: ${label[0].toLowerCase()}${label.slice(1)}.`,
+      );
+      expect(rowOf(label)).toHaveAttribute("data-missing", "true");
+      type(label, value);
+      expect(rowOf(label)).not.toHaveAttribute("data-missing");
+    }
+    expect(spara()).toBeEnabled();
+  });
+
+  it("a count is a whole number from 1, and alive at 6 weeks no more than born", () => {
+    show(doc({ proposal: null, interpretation_status: "misslyckad" }));
+    for (const [label, value] of FILLED) type(label, value);
+    for (const [label, value] of [
+      ["Antal födda", "0"],
+      ["Levande efter 6 veckor", "0"],
+      ["Levande efter 6 veckor", "6"], // 5 born
+    ]) {
+      const before = (screen.getByLabelText(label) as HTMLInputElement).value;
+      type(label, value);
+      expect(spara()).toBeDisabled();
+      expect(left()).toContain(label.toLowerCase());
+      type(label, before);
+    }
+    expect(spara()).toBeEnabled();
+  });
+
+  it("Okänt is a choice of its own, sent as normal registration sends it", async () => {
+    vi.mocked(saveCertificate).mockResolvedValue({
+      ok: true,
+      data: { item: {} as never, document: doc() },
+    });
+    show(doc({ proposal: null, interpretation_status: "misslyckad" }));
+    for (const [label, value] of FILLED) type(label, value);
+    expect(
+      within(screen.getByLabelText("Kön"))
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["Välj", "Hona", "Hane", "Okänt"]);
+    type("Kön", "unknown");
+    expect(spara()).toBeEnabled();
+    fireEvent.click(spara());
+    await waitFor(() =>
+      expect(saveCertificate).toHaveBeenCalledWith(
+        12,
+        31,
+        expect.objectContaining({ sex: null, color: "viltgrå" }),
+      ),
+    );
+  });
+
+  it("a rabbit in Stamboken needs only its three numbers", () => {
+    show(doc({ proposal: FOUND }));
+    expect(spara()).toBeDisabled();
+    expect(left()).toBe("Kvar att fylla i: individnummer i Stamboken.");
+    type("Individnummer i Stamboken", "G9001-2411");
+    expect(spara()).toBeEnabled();
+    for (const label of ["Individnummer på pappret", "Intygsnummer"]) {
+      const before = (screen.getByLabelText(label) as HTMLInputElement).value;
+      type(label, "");
+      expect(spara()).toBeDisabled();
+      expect(left()).toBe(`Kvar att fylla i: ${label.toLowerCase()}.`);
+      type(label, before);
+    }
+    expect(rowOf("Färg")).not.toHaveAttribute("data-missing"); // compared only
+  });
+
+  it("someone who may not save gets no list of what is left", () => {
+    render(
+      <CertificateForm
+        itemId={12}
+        doc={doc({ proposal: null, interpretation_status: "misslyckad" })}
+        colors={["viltgrå"]}
+        canSave={false}
+        onSaved={() => undefined}
+        onSkip={() => undefined}
+      />,
+    );
+    expect(left()).toBeUndefined();
   });
 });
