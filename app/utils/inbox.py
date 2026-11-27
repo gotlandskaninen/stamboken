@@ -441,7 +441,8 @@ def drop_sale_reading(document):
     """
     The seller and buyer read off the photo (rule 5 b) leave its reading and proposal, on `document` for the caller
     to save, once no sale is saved from it any more: a sale was (its buyer is then in BuyerContact, under its own
-    rules), the document is done or dismissed, or its item closed. Returns whether there were any.
+    rules), the document is done, dismissed or no longer a certificate, or its item closed. Returns whether there were
+    any.
     """
     found = False
     for name, key in (("interpretation", interpreter.SALE_READING), ("proposal", "sale")):
@@ -826,6 +827,7 @@ def update_document(item, document, user, changes):
         read = changes["doc_type"] == "intyg" and not unread(item) and document.original_path is not None
         document.interpretation_status = interpreter.initial_status(document.quality) if read else "av"
         document.attempts = 0
+        drop_sale_reading(document)  # retyped: read again as a certificate, or not at all
     for key in ("doc_type", "cert_format", "rotation"):
         if key in changes:
             setattr(document, key, changes[key])

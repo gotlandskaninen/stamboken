@@ -321,6 +321,19 @@ class TestSaleReadingGoes(InterpretationTest):
         for document in documents:
             self.assertGone(document)
 
+    def test_a_document_retyped_off_intyg(self):
+        item, documents = self.read(files=3)
+        inbox.take(item, self.helper, over=False)
+        self.login("hjalp")
+        for document, doc_type in zip(documents, ("bevis", "arsblankett", "annat"), strict=True):
+            with self.subTest(doc_type):
+                resp = self.client.patch(
+                    f"/api/v2/inkorg/{item.id}/dokument/{document.id}", json={"doc_type": doc_type}
+                )
+                self.assertEqual(resp.status_code, 200, resp.get_json())
+                self.assertNotIn("sale", resp.get_json()["document"]["proposal"])
+                self.assertGone(document)
+
     def test_only_the_queue_is_served_it(self):
         item, _ = self.read(files=1)
         self.login("hjalp")
