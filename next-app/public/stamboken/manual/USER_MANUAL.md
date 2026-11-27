@@ -1294,11 +1294,11 @@ administratörer, genbanksansvariga och genbankshjälpare, och alla tre kan se h
    "Det finns ett förslag från tolkningen", och först när du klickar **Fyll i förslaget** läggs
    det in.
 4. Dölj säljaren och köparen. Kopian på kaninen är det som syns innanför ramen; fotot
-   utanför är dämpat. På det gröna handskrivna intyget behåller ramen intygets övre del, ned
-   till säljaren och köparen. Dra ramen eller dess hörn så att säljarens och köparens
-   uppgifter hamnar utanför, eller välj den och använd piltangenterna (Skift ändrar
-   storleken, Delete tar bort den). **Lägg till ram** ger en ram och **Ta bort ramen** tar
-   bort den; utan ram blir hela fotot kopian. Syns något mer innanför ramen täcker du det med
+   utanför är dämpat. Valde du formatet **Handskrivet (grönt)** innan du sparade finns ramen
+   redan och behåller intygets övre del, ned till säljaren och köparen; annars klickar du
+   **Lägg till ram**. Dra ramen eller dess hörn så att säljarens och köparens uppgifter
+   hamnar utanför, eller välj den och använd piltangenterna (Skift ändrar storleken, Delete
+   tar bort den). **Ta bort ramen** tar bort den; utan ram blir hela fotot kopian. Syns något mer innanför ramen täcker du det med
    en svart ruta: **Lägg till ruta**, och flytta den på samma sätt. Klicka **Bekräfta
    maskningen och nästa**. Ramen, rutorna och fotots vridning skickas tillsammans, så kopian
    görs som du ser fotot. Visar intyget ingen säljare eller köpare tar du bort ramen och
