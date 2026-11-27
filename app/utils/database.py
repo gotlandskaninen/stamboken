@@ -5765,6 +5765,7 @@ def check_migrations():
     try:
         _run_migrations()
         _repair_arsrapport_columns()
+        _repair_support_account_guards()
     finally:
         try:
             DATABASE.execute_sql(
@@ -5777,6 +5778,26 @@ def check_migrations():
             # migration error — turning e.g. a fatal ProgrammingError into
             # an OperationalError that connect() swallows.
             logger.warning("Failed to release migration advisory lock", exc_info=True)
+
+
+def _repair_support_account_guards():
+    """
+    Migration 58's guards, checked at every boot under the migration lock: a fresh bootstrap stamps the schema version
+    before init() reaches _create_support_account_guards, so one that died in between would serve without them. The
+    catalog is read first, so a healthy database takes no lock; one not at 58 yet is the migration's.
+    """
+    if "membership" not in DATABASE.get_tables():
+        return
+    if "bank_account_type" not in {c.name for c in DATABASE.get_columns("membership")}:
+        return
+    present = DATABASE.execute_sql(
+        "SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = 'herd'::regclass AND tgname = 'herd_bank_guard')"
+        " AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ck_membership_bank_account_type')"
+    ).fetchone()[0]
+    if not present:
+        logger.warning("Repairing migration 58's guards on the support account")
+        with DATABASE.atomic():
+            _create_support_account_guards()
 
 
 def _repair_arsrapport_columns():

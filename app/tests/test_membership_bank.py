@@ -206,6 +206,19 @@ class TestMigration58(IsolatedSchemaTest):
             self.assertEqual(self.herd_accounts(), [])
             tx.rollback()
 
+    def test_boot_puts_back_guards_an_interrupted_bootstrap_left_out(self):
+        """Codex #278 r3: init() stamps the version before it creates the guards; a bootstrap that died in between
+        must not serve without them. Every boot checks them under the migration lock."""
+        with db.DB_PROXY.atomic() as tx:
+            _sql("DROP TRIGGER herd_bank_guard ON herd")
+            _sql("ALTER TABLE membership DROP CONSTRAINT ck_membership_bank_account_type")
+            with self.assertLogs("herdbook.db", "WARNING"):
+                db.check_migrations()
+            self.assertEqual(snapshot(), self.bootstrapped)
+            with self.assertRaises(IntegrityError), db.DB_PROXY.atomic():
+                db.Herd.update(bank_account_number="1234-5").where(db.Herd.id == self.orphan.id).execute()
+            tx.rollback()
+
     def test_the_herd_columns_and_the_type_are_guarded(self):
         """No writer puts a new value in a herd's account columns; one kept by migration 58 may stay or be emptied."""
         g1, g2, _ = self.herds
