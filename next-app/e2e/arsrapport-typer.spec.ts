@@ -865,18 +865,21 @@ test("12. Dina uppgifter: huvudmedlemmen ändrar i rapporten, andra ser vem som 
   context,
 }) => {
   await loginInline(page, context, USERS.owner);
-  // M9001's main member is this account (5.11, D1): the details are filled in and saved with Skicka
+  // M9001's main member is this account (5.11, D1): the details are filled in and saved when a field is left
   await page.goto("/stamboken/arsrapport/M9001/2025");
   await page.getByRole("button", { name: /^(Ändra|Fortsätt ändra)$/ }).click();
   await expect(page.getByText(/^E-post: /)).toBeVisible();
   await page.getByLabel("Telefon").fill("0709-555 666");
+  await page.getByLabel("Telefon").blur();
+  await expect(page.getByText("Kontaktuppgifter sparade")).toBeVisible();
   // test 9 sold M9007-2412 to M9001 on 31 December, so the report now asks about her too
   const bought = rabbit(page, "M9007-2412");
   await kvar(bought).check();
   await weight(bought).fill("2,8");
   await page.getByRole("button", { name: SEND }).click();
   await submitted(page);
-  await expect(page.getByText("Sparat i matrikeln: telefon.")).toBeVisible();
+  // saved already: the receipt lists only what Skicka itself wrote
+  await expect(page.getByText("Sparat i matrikeln: telefon.")).toHaveCount(0);
   // M9002 is the account's herd, but its main member is someone else
   await page.goto("/stamboken/arsrapport/M9002/2025");
   await page.getByRole("button", { name: /^(Ändra|Fortsätt ändra)$/ }).click();
