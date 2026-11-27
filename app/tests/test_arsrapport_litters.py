@@ -28,6 +28,7 @@ from tests.test_purchase_notice import in_thread, lock_waiter, run_all, until
 
 NOW = datetime.combine(date(2026, 1, 15), clock(12), arsrapport.STOCKHOLM)
 BORN = "2025-05-10"
+BORN_TEXT = "10 maj 2025"  # as the mails write it
 REPORT = "/besattning/G9001/2025"
 
 
@@ -109,7 +110,7 @@ class TestAddLitter(LitterApiTest):
         self.assertEqual(sent.status_code, 200, sent.get_data(as_text=True))
         (mail_row,) = db.MailMessage.select().where(db.MailMessage.kind == "arsrapport.kvitto")
         kvitto = arsrapport._kvitto(mail_row.params)
-        self.assertEqual(kvitto["kullar"], [f"efter {self.doe.number} född {BORN}, 5 födda"])
+        self.assertEqual(kvitto["kullar"], [f"efter {self.doe.number} född {BORN_TEXT}, 5 födda"])
         _, text = mail.render("arsrapport.kvitto", kvitto)
         self.assertIn("De finns kvar även om du drar tillbaka rapporten.", text)
         report = db.YearlyHerdReport.get()
@@ -483,7 +484,7 @@ class TestAddedReceipt(LitterApiTest):
         subject, body = mail.render("arsrapport.ny_kull", mail.MAIL_KINDS["arsrapport.ny_kull"].build(row.params))
         self.assertEqual(subject, "Genbanksansvarig har lagt till en kull i G9001")
         self.assertIn(
-            f"Genbanksansvarig har lagt till kullen efter {self.doe.number}, född {BORN}, "
+            f"Genbanksansvarig har lagt till kullen efter {self.doe.number}, född {BORN_TEXT}, "
             "i besättning G9001 i årsrapporten. Den finns kvar även om du drar tillbaka rapporten.",
             body,
         )
@@ -531,7 +532,7 @@ class TestReceiptSnapshot(LitterApiTest):
         (row,) = db.MailMessage.select().where(db.MailMessage.kind == "arsrapport.kvitto")
         for kind in ("arsrapport.kvitto", "arsrapport.andrad"):
             _, body = mail.render(kind, mail.MAIL_KINDS[kind].build(row.params))
-            self.assertIn(f"efter {self.doe.number} född {BORN}, 1 född.", body)
+            self.assertIn(f"efter {self.doe.number} född {BORN_TEXT}, 1 född.", body)
 
     def test_the_receipt_mail_kinds_build(self):
         """Review P1: the mail worker calls the registered builder with the row's params."""
@@ -541,7 +542,7 @@ class TestReceiptSnapshot(LitterApiTest):
         (row,) = db.MailMessage.select().where(db.MailMessage.kind == "arsrapport.kvitto")
         for kind in ("arsrapport.kvitto", "arsrapport.andrad"):
             variables = mail.MAIL_KINDS[kind].build(row.params)
-            self.assertEqual(variables["kullar"], [f"efter {self.doe.number} född {BORN}, 5 födda"])
+            self.assertEqual(variables["kullar"], [f"efter {self.doe.number} född {BORN_TEXT}, 5 födda"])
 
     def test_a_corrected_mother_keeps_the_litter_on_the_receipt(self):
         """The litter is found by the id its command made, not by the mother it ran on."""
@@ -553,7 +554,7 @@ class TestReceiptSnapshot(LitterApiTest):
         self.assertEqual([item["id"] for item in submission.data["litters_added"]], [litter_id])
         self.assertEqual(
             arsrapport._kvitto({"submission_id": submission.id})["kullar"],
-            [f"efter {self.doe2.number} född {BORN}, 5 födda"],
+            [f"efter {self.doe2.number} född {BORN_TEXT}, 5 födda"],
         )
 
     def test_a_litter_after_the_submission_is_the_next_ones_and_later_edits_leave_the_receipt(self):
@@ -571,7 +572,7 @@ class TestReceiptSnapshot(LitterApiTest):
         second = db.YearlyReportSubmission.select().order_by(db.YearlyReportSubmission.id.desc()).first()
         self.assertEqual(
             arsrapport._kvitto({"submission_id": second.id})["kullar"],
-            [f"efter {self.doe2.number} född 2025-06-20, 5 födda"],
+            [f"efter {self.doe2.number} född 20 juni 2025, 5 födda"],
         )
 
 

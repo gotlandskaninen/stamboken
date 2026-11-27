@@ -347,7 +347,7 @@ class ProposalApiTest(ArsrapportTest):
         subject, text = mail.render(row.kind, mail.MAIL_KINDS[row.kind].build(row.params))
         self.assertEqual(subject, f"{self.a.number} är registrerad i din besättning")
         self.assertIn(
-            f"{self.a.number} är registrerad i din besättning från 2025-10-03. Ändra din årsrapport och välj Finns kvar"
+            f"{self.a.number} är registrerad i din besättning från 3 oktober 2025. Ändra din årsrapport och välj Finns kvar"
             " för kaninen, så räknas den den 31 december.",
             text,
         )

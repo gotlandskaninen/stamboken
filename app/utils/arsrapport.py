@@ -4294,20 +4294,18 @@ def _kvitto(params):
         "attachments": [("kvittens.pdf", "application/pdf", render_pdf(shown))],
         "herd": report.herd.herd,
         "kvittens": render_text(shown),
-        "datum": received or f"{submission.created_at.astimezone(STOCKHOLM):%Y-%m-%d}",
+        "datum": sv_date(date.fromisoformat(received) if received else submission.created_at.astimezone(STOCKHOLM)),
         **receipt(submission)["summary"],
         "kullar": [
-            f"efter {item['mother']} född {item['birth_date']}, {item['litter_size']} "
+            f"efter {item['mother']} född {sv_date(date.fromisoformat(item['birth_date']))}, {item['litter_size']} "
             f"{'född' if item['litter_size'] == 1 else 'födda'}"
             for item in submission.data.get("litters_added") or ()
         ],
-        "end_date": f"{report.round.end_date:%Y-%m-%d}",
+        "end_date": sv_date(report.round.end_date),
         "andringar": f"{settings.service.host.rstrip('/')}/rapport/andringar#{confirm_token(submission.id, address)}"
         if waiting and address
         else None,
-        "andringar_senast": f"{min(row.expires_at for row in waiting).astimezone(STOCKHOLM):%Y-%m-%d}"
-        if waiting
-        else None,
+        "andringar_senast": sv_date(min(row.expires_at for row in waiting).astimezone(STOCKHOLM)) if waiting else None,
         "andrat_konto": any(row.kind == "konto" for row in waiting),
     }
 
@@ -4366,7 +4364,7 @@ def _angrad(params):
     report = YearlyHerdReport.get_or_none(YearlyHerdReport.id == params["report_id"])
     if report is None or report.voided_at is None:
         return None
-    return {"herd": report.herd.herd, "datum": f"{report.voided_at.astimezone(STOCKHOLM):%Y-%m-%d}"}
+    return {"herd": report.herd.herd, "datum": sv_date(report.voided_at.astimezone(STOCKHOLM))}
 
 
 @mail_kind("arsrapport.forsaljning_avvisad", priority=1, category="T")
@@ -4392,7 +4390,7 @@ def _kop_godkant(params):
     proposal = SaleProposal.get_or_none(SaleProposal.id == params["proposal_id"])
     if proposal is None or proposal.state != "godkand":
         return None
-    return {"number": proposal.individual.number, "datum": f"{proposal.sale_date:%Y-%m-%d}"}
+    return {"number": proposal.individual.number, "datum": sv_date(proposal.sale_date)}
 
 
 def stale_link_retry(key, herd, round_):
@@ -4608,7 +4606,7 @@ def _ny_kull(params):
         "namn": name,
         "herd": litter.breeding_herd_id.herd,
         "mother": litter.mother.number,
-        "birth_date": litter.birth_date.isoformat(),
+        "birth_date": sv_date(litter.birth_date),
     }
 
 

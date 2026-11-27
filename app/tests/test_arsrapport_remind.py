@@ -182,7 +182,7 @@ class TestEligibility(ReminderTest):
         self.assertEqual(subject, "Påminnelse om årsrapporten 2025 för G9001")
         self.assertIn("Din årsrapport är påbörjad men inte inskickad.", body)
         self.assertNotIn("Vi saknar", body)
-        self.assertIn("Sista dag för stödet är 2026-01-31. Länken gäller till och med 2026-03-30.", body)
+        self.assertIn("Sista dag för stödet är 31 januari 2026. Länken gäller till och med 30 mars 2026.", body)
         self.assertIn("Har du redan skickat en blankett behöver du inte skicka den igen.", body)
         (token,) = re.findall(r"/rapport#(\S+)", body)
         self.assertEqual(report_code.resolve(token).id, self.code(self.h).id)
@@ -222,7 +222,7 @@ class TestEligibility(ReminderTest):
         (row,) = self.rows()
         self.assertEqual((row.params["slot"], row.params["scheduled"]), (None, False))
         body = mail.render(row.kind, self.build(row))[1]
-        self.assertIn("Sista dag för stödet var 2026-01-31. Rapportera ändå, så räknas dina kaniner.", body)
+        self.assertIn("Sista dag för stödet var 31 januari 2026. Rapportera ändå, så räknas dina kaniner.", body)
         self.assertNotIn("Sista dag för stödet är", body)
 
     def test_demo_followups_create_no_codes_or_mail(self):
