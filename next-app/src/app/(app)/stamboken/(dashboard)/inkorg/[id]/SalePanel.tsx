@@ -70,28 +70,44 @@ export function SalePanel({
   // The seller and buyer read off the photo (rule 5 b): shown, and filled in only when the handler clicks.
   const read = shownProposal(doc)?.sale;
   // The e-mail read off the photo is only for the association's notice (#273): it goes as soon as the notice is not
-  // the choice, so that the bevis's yes never makes it a contact address.
-  const [photoEmail, setPhotoEmail] = useState(false);
+  // the choice, so that the bevis's yes never makes it a contact address. One edited by hand stays.
+  const [photoEmail, setPhotoEmail] = useState<string | null>(null);
   const changeBuyer = (next: BuyerDraft, y = year) => {
-    if (photoEmail && buyerMode(next, y) !== "epost") {
-      setPhotoEmail(false);
-      setBuyer({ ...next, email: "" });
+    if (photoEmail !== null && buyerMode(next, y) !== "epost") {
+      setPhotoEmail(null);
+      setBuyer(next.email === photoEmail ? { ...next, email: "" } : next);
     } else setBuyer(next);
   };
   // A herd number read that is not the genebank's: the handler chooses the herd or a buyer outside.
   const [choose, setChoose] = useState(false);
+  // The reading the form was filled from: once it changes or goes (the item closed and opened again), so does what
+  // it filled, and the save says it came from the photo, so the server refuses it without a reading.
+  const readKey = read ? JSON.stringify(read) : null;
+  const [filledFrom, setFilledFrom] = useState<string | null>(null);
+  if (filledFrom !== null && filledFrom !== readKey) {
+    setFilledFrom(null);
+    setPhotoEmail(null);
+    setChoose(false);
+    setBuyer(EMPTY_BUYER);
+    setForm((f) => ({ ...f, herd: "", outside: false, date: "" }));
+    setFormError("Läsningen har ändrats, fyll i köparen igen.");
+  }
   const fill = () => {
     if (!read) return;
     const date = read.date ?? form.date;
+    setFilledFrom(readKey);
+    setFormError(null);
     setChoose(!!read.buyer_herd && !read.buyer_herd.found);
+    setPhotoEmail(null);
+    setBuyer(EMPTY_BUYER); // never what was typed before
     if (read.buyer_herd?.found) {
       set({ herd: read.buyer_herd.herd, outside: false, date });
     } else if (read.buyer && !read.buyer_herd) {
       const { name, town, postal_address, email } = read.buyer;
-      // The e-mail only in the years that have the notice; never a yes for the buyer, nor what was typed before.
+      // The e-mail only in the years that have the notice; never a yes for the buyer.
       const notice = !!email && buyerModes(saleYear(date)).includes("epost");
       set({ outside: true, date });
-      setPhotoEmail(notice);
+      setPhotoEmail(notice ? email : null);
       setBuyer({
         ...EMPTY_BUYER,
         name,
@@ -100,7 +116,7 @@ export function SalePanel({
         ...(notice ? { email, mode: "epost" as const } : {}),
       });
     } else {
-      set({ date });
+      set({ herd: "", outside: false, date }); // a herd read that is not the genebank's: no choice is made
     }
   };
   const lines = (
@@ -150,7 +166,10 @@ export function SalePanel({
     start(async () => {
       setErrors({});
       setFormError(null);
-      const payload = buildSalePayload(form);
+      const payload = {
+        ...buildSalePayload(form),
+        ...(filledFrom !== null ? { from_photo: true as const } : {}),
+      };
       const res = await registerSale(
         itemId,
         doc.id,
@@ -311,6 +330,7 @@ export function SalePanel({
           disabled={
             !canSave ||
             pending ||
+            (!form.outside && !form.herd.trim()) ||
             (form.outside &&
               !saleRegistered &&
               !buyerComplete(buyer, addressRequired, year)) ||

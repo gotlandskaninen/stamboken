@@ -347,6 +347,27 @@ class TestSaleReading(InterpretationTest):
         gone = self.doc(document)
         self.assertEqual((gone.original_path, gone.interpretation, gone.proposal), (None, None, None))
 
+    def test_a_sale_filled_from_a_reading_that_is_gone_is_refused(self):
+        item, (gone, kept) = self.uploaded(files=2)
+        self.sale = SALE
+        interpreter.interpret_next()
+        inbox.take(item, self.manager, over=False)
+        self.login("man")
+        self.assertEqual(self.post(f"/{item.id}/lage", state="skrap").status_code, 200)
+        self.assertEqual(self.post(f"/{item.id}/lage", state="tagen").status_code, 200)  # gone with the close
+        interpreter.interpret_next()  # the other document, read after the reopen, keeps its seller and buyer
+        self.assertIn("sale", self.doc(kept).proposal)
+        body = {"individual": "G1-2111", "herd": "G2", "date": date.today().isoformat(), "from_photo": True}
+        resp = self.post(f"/{item.id}/dokument/{gone.id}/overlat", **body)
+        self.assertEqual(resp.status_code, 409, resp.get_json())
+        self.assertEqual(resp.get_json()["detail"], "Läsningen har ändrats, fyll i köparen igen.")
+        self.assertIsNone(self.doc(gone).herd_tracking_id)
+        resp = self.post(f"/{item.id}/dokument/{gone.id}/overlat", **{**body, "from_photo": False})  # no check
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        body.update(individual="G2-2011", herd="G1")  # a sale from the document whose reading is still there
+        resp = self.post(f"/{item.id}/dokument/{kept.id}/overlat", **body)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+
     def test_a_worker_dying_in_the_second_reading_keeps_the_first(self):
         _, (document,) = self.uploaded()
         self.sale = SystemExit("the worker stopped")

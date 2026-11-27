@@ -386,6 +386,7 @@ describe("SalePanel with the seller and buyer read off the photo", () => {
       herd: "GX1",
       date: "2025-06-01",
       buyer: { ...READ_BUYER, notice_only: true },
+      from_photo: true, // the server refuses it once the reading is gone
     });
   });
 
@@ -461,6 +462,75 @@ describe("SalePanel with the seller and buyer read off the photo", () => {
     });
     fireEvent.click(screen.getByRole("checkbox", { name: CONSENT }));
     expect(value(/^E-post/)).toBe("");
+  });
+
+  it("clears what the photo filled once that reading changes or goes", () => {
+    const panelFor = (proposal: object) => (
+      <SalePanel
+        itemId={12}
+        doc={{ ...readDoc({}), proposal } as InboxDocument}
+        herds={[]}
+        canSave
+        onDone={vi.fn()}
+      />
+    );
+    const original = (readDoc({}) as unknown as { proposal: { sale: object } })
+      .proposal;
+    const cleared = () => {
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Läsningen har ändrats, fyll i köparen igen.",
+      );
+      expect(value(/Säljdatum/)).toBe("");
+      expect(
+        screen.getByRole("checkbox", {
+          name: "Köparen är utanför föreningen",
+        }),
+      ).not.toBeChecked();
+      expect(screen.queryByDisplayValue("Köpa Testsson")).toBeNull();
+    };
+    const view = render(panelFor(original));
+    fireEvent.click(fillButton());
+    expect(value(/Köparens namn/)).toBe("Köpa Testsson");
+    view.rerender(
+      panelFor({ ...original, sale: { ...original.sale, date: "2025-06-02" } }),
+    ); // read again
+    cleared();
+    fireEvent.click(fillButton());
+    expect(value(/Köparens namn/)).toBe("Köpa Testsson");
+    view.rerender(panelFor({ fields: {}, checks: [] })); // gone with a close
+    cleared();
+  });
+
+  it("leaves nothing of a buyer typed before when the herd read is not the genebank's", () => {
+    readPanel({ buyer_herd: { herd: "G9999", found: false } });
+    fireEvent.change(screen.getByLabelText(/Säljdatum/), {
+      target: { value: "2026-10-03" },
+    });
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
+    );
+    typeEpostBuyer(); // Anna Köpare, by hand
+    fireEvent.click(fillButton());
+    const saveButton = screen.getByRole("button", {
+      name: "Spara försäljningen",
+    }) as HTMLButtonElement;
+    expect(saveButton.disabled).toBe(true); // a herd or a buyer outside must be chosen
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
+    );
+    expect(screen.queryByDisplayValue("Anna Köpare")).toBeNull();
+    expect(screen.queryByDisplayValue("anna@example.org")).toBeNull();
+    expect(saveButton.disabled).toBe(true);
+    expect(registerSale).not.toHaveBeenCalled();
+  });
+
+  it("keeps an e-mail edited by hand when the bevis is chosen", () => {
+    readPanel({ date: "2026-10-03" });
+    fireEvent.click(fillButton());
+    type(/^E-post/, "annan@example.org");
+    fireEvent.click(screen.getByRole("radio", { name: "Ja" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: CONSENT }));
+    expect(value(/^E-post/)).toBe("annan@example.org");
   });
 
   it("asks the handler to choose when the herd read is not the genebank's", () => {
