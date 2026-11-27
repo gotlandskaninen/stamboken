@@ -829,6 +829,52 @@ def require_open(round_, herd, access, day):
         raise ArsrapportError(409, "Rundan är inte öppen.", code="rundan_stangd")
 
 
+def _without_registered(herd, data):
+    """
+    A draft's data without the sales the register already holds out of the herd and no report wrote: the sale
+    dialog registered them (sell_now) and let go of the entry, which an old tab's autosave would bring back. A sale
+    given without its day matches its month, as its made-up day moves with the clock.
+    """
+    judged = data["form"] if isinstance(data.get("form"), dict) else data
+    rabbits = judged.get("rabbits") if isinstance(judged.get("rabbits"), dict) else {}
+    sold = {
+        key: entry["sald"]
+        for key, entry in rabbits.items()
+        if key.isdecimal()
+        and isinstance(entry, dict)
+        and entry.get("val") == "sald"
+        and isinstance(entry.get("sald"), dict)
+    }
+    if not sold:
+        return data
+    rows = list(
+        HerdTracking.select(HerdTracking, Herd)
+        .join(Herd, on=(HerdTracking.herd == Herd.id))
+        .where(
+            HerdTracking.individual.in_([int(key) for key in sold]),
+            HerdTracking.from_herd == herd.id,
+            HerdTracking.kind == "TRANSFER",
+            ht_not_voided(),
+        )
+    )
+    owned = report_owners([row.operation_id for row in rows])
+
+    def registered(key):
+        sald = sold[key]
+        return any(
+            row.individual_id == int(key)
+            and str(row.operation_id) not in owned
+            and row.herd.herd == _sale_code(herd, sald.get("till"))
+            and (row.herd_tracking_date.year, row.herd_tracking_date.month) == (sald.get("ar"), sald.get("manad"))
+            and sald.get("dag") in (None, row.herd_tracking_date.day)
+            for row in rows
+        )
+
+    for key in [key for key in sold if registered(key)]:
+        data = _with_entry(data, key, {"val": None})
+    return data
+
+
 def save_draft(herd, round_, access, user, data, updated_at, submission_key, revision):
     """
     The herd's server draft (5.1), saved under the report's lock. `updated_at` is the version the client saw (None
@@ -857,6 +903,7 @@ def save_draft(herd, round_, access, user, data, updated_at, submission_key, rev
         draft = _draft(herd, round_)
         report = current_report(herd, round_)
         stored, gone = _with_kept(stored, _kept_claims(draft.data) if draft is not None else {})
+        stored = _without_registered(herd, stored)
         if draft is None and updated_at is None and revision == (report.revision if report else None):
             try:
                 with DB_PROXY.atomic():  # a savepoint: a racing first save leaves the transaction usable

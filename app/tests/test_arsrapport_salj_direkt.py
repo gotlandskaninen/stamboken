@@ -255,6 +255,21 @@ class SellNowTest(ArsrapportTest):
         self.assertEqual([c for c, _ in self.refusals(kopare=BUYER)], ["orsak_kravs"])
         self.assertEqual(sales(self.a), [])
 
+    def test_an_old_tabs_autosave_does_not_bring_the_sale_back(self):  # review r1: Skicka would refuse it
+        sald = {"till": "utanfor", "ar": 2026, "manad": 1, "dag": None}
+        entries = {str(self.a.id): {"val": "sald", "sald": sald}, str(self.b.id): {"val": "kvar", "vikt": 2.8}}
+        data = {**arsrapport.stored_body(self.body()), "rabbits": entries, "form": {"rabbits": entries}}
+        put = {"submission_key": None, "revision": None}
+        saved = self.api("PUT", "/besattning/G9001/2025/utkast", data=data, updated_at=None, **put).get_json()
+        self.sold(ar=2026, manad=1, dag=None, kopare=BUYER)
+        self.at(DAY0 + timedelta(days=1))  # the made-up day of a month-only sale moves with the clock
+        old_tab = {**data, "message": "Från en annan flik"}
+        response = self.api("PUT", "/besattning/G9001/2025/utkast", data=old_tab, updated_at=saved["updated_at"], **put)
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        draft = db.YearlyReportDraft.get()
+        self.assertEqual((set(draft.data["rabbits"]), draft.data["message"]), ({str(self.b.id)}, "Från en annan flik"))
+        self.assertEqual(set(draft.data["form"]["rabbits"]), {str(self.b.id)})
+
     def test_paper_rechecks_the_item_under_the_locks(self):
         item, _ = inbox.create_upload(self.owner, self.h, None, [("inkorg/original/x.jpg", "0" * 64, QUALITY)])
         db.InboxDocument.update(doc_type="arsblankett").where(db.InboxDocument.item == item.id).execute()
