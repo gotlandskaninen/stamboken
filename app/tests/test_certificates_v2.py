@@ -221,6 +221,7 @@ class TestPedigreeTemplateV2(unittest.TestCase):
         html = self._html(breed="Mellerudskanin", genebank="Mellerud")
         self.assertIn('<p class="breed">Mellerudskanin</p>', html)
         self.assertNotIn("Ras:", html)
+        self.assertIn("Färg och kännetecken", html)  # as on the paper certificate
 
     def test_long_notes_keep_one_page(self):
         """The header must not grow: long notes still fit on one A4 page with the footer, for both breeds, a new

@@ -302,7 +302,7 @@ h1, .sec, .breed { color:var(--skog) !important; }
   <div class="sec"><span class="no">01</span><span class="t">Identitet</span><span class="fill"></span></div>
   <table class="fields">
     <tr><td class="l">Namn</td><td class="v vname">{{ name or '—' }}</td><td class="l">Födelsedatum</td><td class="v">{{ birth_date }}</td></tr>
-    <tr><td class="l">Kön</td><td class="v">{{ sex }}</td><td class="l">Färg / kännetecken</td><td class="v">{% if color_code %}<span class="chip">{{ color_code }}</span> {% endif %}{{ color }}</td></tr>
+    <tr><td class="l">Kön</td><td class="v">{{ sex }}</td><td class="l">Färg och kännetecken</td><td class="v">{% if color_code %}<span class="chip">{{ color_code }}</span> {% endif %}{{ color }}</td></tr>
     <tr><td class="l">Födda i kullen</td><td class="v">{{ litter_size }}</td><td class="l">Levande vid 6 veckor</td><td class="v">{{ litter_size6w }}</td></tr>
     <tr><td class="l">Färganteckning</td><td class="v" colspan="3">{{ color_note or '—' }}</td></tr>
     <tr><td class="l">Ögonfärg</td><td class="v">{{ eye_color or '—' }}</td><td class="l">Klofärg</td><td class="v">{{ claw_color or '—' }}</td></tr>
