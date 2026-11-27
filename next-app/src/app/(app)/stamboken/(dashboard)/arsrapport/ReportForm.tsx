@@ -402,13 +402,15 @@ export function ReportForm({
   const [mode, setMode] = React.useState<"form" | "receipt">(
     view.report && !isPaper ? "receipt" : "form",
   );
-  // On the link page a typed buyer lives only in memory until Skicka: closing the tab would lose it.
+  // On the link page a typed buyer and changed member details live only in memory until Skicka:
+  // closing the tab, or following the sign-in tip, would lose them.
   useLeaveWarning(
     !!link &&
       mode === "form" &&
-      Object.values(state.rabbits).some(
+      (Object.values(state.rabbits).some(
         (e) => e.val === "sald" && e.sald?.kopare,
-      ),
+      ) ||
+        !!detailsBody(view.member_details, fields)),
   );
   const [version, setVersion] = React.useState(0);
   const [retry, setRetry] = React.useState(0);
@@ -1127,7 +1129,8 @@ export function ReportForm({
     }
     frozen.current = body; // never stored: it may hold a buyer or a matrikel
     clearTimeout(autosaveTimer.current); // a pending autosave must not reach the server after the submission
-    resumeAutosave.current = autosavePending.current;
+    // a save on its way may fail, and Skicka drops its answer: save again if Skicka is refused
+    resumeAutosave.current = autosavePending.current || saving.current !== null;
     submitting.current = true;
     submissions.current += 1;
     setPhase("checking");
@@ -1611,7 +1614,8 @@ export function ReportForm({
             onClick={signIn}
           >
             Logga in
-          </a>
+          </a>{" "}
+          Rapporterar du åt någon annan? Fortsätt då här utan att logga in.
         </p>
       )}
       {link && (

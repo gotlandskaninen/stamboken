@@ -264,6 +264,7 @@ class InviteTest(ArsrapportTest):
         (row,) = self.mails()
         _, body = mail.render(row.kind, {k: v for k, v in self.build(row).items() if k != "attachments"})
         self.assertIn("Logga gärna in i Stamboken först", body)
+        self.assertIn("Den som rapporterar åt dig använder också länken och loggar inte in.", body)
         self.assertIn("/auth/sign-in?return_to=/stamboken/arsrapport/G9001/2025", body)
         self.owner.add_role("owner", self.h.id)
         self.assertIsNone(self.build(row)["login_url"])

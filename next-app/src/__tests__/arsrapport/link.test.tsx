@@ -282,7 +282,7 @@ describe("ReportForm in link mode", () => {
       screen.getByText(/Logga gärna in i Stamboken, så kan du sälja direkt/)
         .textContent,
     ).toBe(
-      "Logga gärna in i Stamboken, så kan du sälja direkt och ändra dina uppgifter. Logga in",
+      "Logga gärna in i Stamboken, så kan du sälja direkt och ändra dina uppgifter. Logga in Rapporterar du åt någon annan? Fortsätt då här utan att logga in.",
     );
     expect(
       screen.getByRole("link", { name: "Logga in" }).getAttribute("href"),
@@ -348,6 +348,72 @@ describe("ReportForm in link mode", () => {
     expect(screen.getByText(/Inte sparat än, ingen anslutning/)).toBeTruthy();
     expect(location.hash).toBe("");
     expect(a.saveDraft).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks before leaving with changed member details", () => {
+    const leave = () => {
+      const e = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    render(
+      <ReportForm
+        link
+        loginTip
+        env="prod"
+        view={view({
+          access: "code",
+          source: "link",
+          member_details: { mode: "link", changes: [] },
+        })}
+        actions={actions()}
+        stickyTop={0}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Ny adress eller telefon" }),
+    );
+    expect(leave()).toBe(false);
+    fireEvent.change(screen.getByLabelText("Telefon"), {
+      target: { value: "070-000 00 00" },
+    });
+    expect(leave()).toBe(true);
+  });
+
+  it("saves again when Skicka is refused while a save was on its way", async () => {
+    vi.useFakeTimers();
+    const pending =
+      Promise.withResolvers<Awaited<ReturnType<ReportActions["saveDraft"]>>>();
+    const a = actions({
+      dryRun: vi.fn(() =>
+        ok({
+          ok: false,
+          refusals: [{ individual_id: null, code: "fel", message: "Nej" }],
+          warnings: [],
+        }),
+      ),
+    });
+    a.saveDraft.mockReturnValueOnce(pending.promise);
+    render(linkForm(a));
+    fillAll();
+    fireEvent.click(
+      screen.getByRole("radio", { name: "Inga sjukdomsfall eller defekter" }),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(a.saveDraft).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Skicka årsrapporten" }),
+      );
+    });
+    expect(a.dryRun).toHaveBeenCalledTimes(1);
+    await act(async () => pending.resolve(await fail(502)));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(a.saveDraft).toHaveBeenCalledTimes(2);
   });
 
   it("keeps a typed buyer until discard is confirmed", () => {

@@ -274,7 +274,10 @@ export async function requestLoginCode(email: string, returnTo?: string) {
   const options = { ...cookieOptions, maxAge: 600 };
   store.set("login_request", value, options);
   // The mail link opens a new tab in the browser that requested this code.
-  if (returnTo) store.set("login_return_to", safeReturnTo(returnTo), options);
+  // fetchApi forwards cookie values as they are, so only plain path characters.
+  const path = returnTo && safeReturnTo(returnTo);
+  if (path && /^[\w\-./?=&]+$/.test(path))
+    store.set("login_return_to", path, options);
   else store.delete("login_return_to");
   return true;
 }

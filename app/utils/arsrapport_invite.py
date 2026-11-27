@@ -209,11 +209,12 @@ def _link_address(params):
     return member.login_address if member is not None else None
 
 
-def login_tip(herd, member_id=None, signed_in_uuid=None):
+def login_tip(herd, member_id=None, signed_in=False):
+    # Signing in ends the link's session: no tip to an account already signed in, the member or someone else.
+    if signed_in:
+        return False
     member = report_code.invitation_recipient(herd, now=arsrapport.now())
     if member is None or (member_id is not None and member.id != member_id):
-        return False
-    if signed_in_uuid and member.user_id and str(member.user.uuid) == str(signed_in_uuid):
         return False
     return login_account.leads_to_prod(member, member.login_address)
 

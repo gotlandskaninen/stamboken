@@ -11,7 +11,7 @@ Det är dags för årsrapporten för besättning {{ herd }}{% if herd_name %} ({
 {% if login_url %}
 Logga gärna in i Stamboken först, med din e-postadress hos föreningen. Vi mejlar en kod, du behöver inget lösenord. Inloggad kan du sälja kaniner direkt, ändra dina uppgifter i rapporten och ångra en försäljning. Logga in på {{ login_url }}.
 
-Vill du inte logga in går det bra att använda länken ovan.
+Vill du inte logga in går det bra att använda länken ovan. Den som rapporterar åt dig använder också länken och loggar inte in.
 {% endif %}
 Kaninerna som står registrerade på din besättning är redan ifyllda. Välj för varje kanin om den finns kvar, är död eller såld, och skriv vikten på de vuxna. Saknas en kanin eller en kull, till exempel en köpt kanin eller en ny kull, lägger du till den i rapporten. Det du fyller i sparas, så du kan fortsätta senare med samma länk.
 

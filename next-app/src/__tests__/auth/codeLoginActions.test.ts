@@ -186,6 +186,16 @@ describe("code login server actions", () => {
       expect(cookieJar.has("login_return_to")).toBe(false);
     },
   );
+  it("keeps a return path with cookie delimiters out of the cookie", async () => {
+    const { requestLoginCode } = await import("@/app/(app)/(auth)/actions");
+    http.mockResolvedValueOnce(
+      flask({}, 200, "login_request=test-request; Path=/"),
+    );
+    expect(
+      await requestLoginCode("member@example.org", "/x; session=test-other"),
+    ).toBe(true);
+    expect(cookieJar.has("login_return_to")).toBe(false);
+  });
   it("uses the demo cookie for a nonpromoted account and reports the overnight delay", async () => {
     const { createMemberAccount } = await import("@/app/(app)/(auth)/actions");
     http.mockResolvedValueOnce(

@@ -136,7 +136,7 @@ def mine():
                     "herd": herd.herd,
                     "herd_name": herd.herd_name,
                     "year": code.round.report_year,
-                    "login_tip": arsrapport_invite.login_tip(herd, code.member_id, session.get("user_id")),
+                    "login_tip": arsrapport_invite.login_tip(herd, code.member_id, bool(session.get("user_id"))),
                 }
             )
     if rows:
