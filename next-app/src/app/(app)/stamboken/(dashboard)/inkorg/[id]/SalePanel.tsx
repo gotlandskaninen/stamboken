@@ -12,15 +12,18 @@ import {
   BuyerFields,
   EMPTY_BUYER,
   buyerComplete,
+  buyerModes,
   buyerPayload,
   saleYear,
 } from "@/components/individual/BuyerFields";
+import { ProposalChecks } from "@/components/register/RegisterFromCertificate";
 import { rabbitSales, registerSale, type RegistrySale } from "../actions";
 import {
   buildSalePayload,
   outsideHerd,
   problemField,
   provenSale,
+  shownProposal,
   type InboxDocument,
   type SaleForm,
 } from "../lib";
@@ -62,6 +65,39 @@ export function SalePanel({
   const [pending, start] = useTransition();
   const set = (changes: Partial<SaleForm>) =>
     setForm((f) => ({ ...f, ...changes }));
+  // The seller and buyer read off the photo (rule 5 b): shown, and filled in only when the handler clicks.
+  const read = shownProposal(doc)?.sale;
+  const fill = () => {
+    if (!read) return;
+    const date = read.date ?? form.date;
+    if (read.buyer_herd) {
+      set({ herd: read.buyer_herd.herd, outside: false, date });
+    } else if (read.buyer) {
+      const { name, town, postal_address, email } = read.buyer;
+      // The e-mail only for the association's notice, in the years that have it (#273); never a yes for the buyer.
+      const notice = !!email && buyerModes(saleYear(date)).includes("epost");
+      set({ outside: true, date });
+      setBuyer((b) => ({
+        ...b,
+        name,
+        town,
+        postal_address,
+        ...(notice ? { email, mode: "epost" as const } : {}),
+      }));
+    } else {
+      set({ date });
+    }
+  };
+  const lines = (
+    [
+      ["Köparens besättning", read?.buyer_herd?.herd],
+      ["Köpare", read?.buyer?.name],
+      ["Postadress", read?.buyer?.postal_address],
+      ["Ort", read?.buyer?.town],
+      ["E-post", read?.buyer?.email],
+      ["Säljdatum", read?.date],
+    ] as const
+  ).filter(([, value]) => value);
   const names = new Map(herds.map((h) => [h.herd, h.herd_name]));
   const proof = doc.doc_type === "bevis";
   // The rabbit's active sales, read through the item: a proof of a sale already registered asks for no buyer
@@ -128,6 +164,26 @@ export function SalePanel({
           En försäljning utan bevis markerar ärendet med &quot;bevis
           saknas&quot;.
         </p>
+      )}
+      {read && (
+        <div className={styles.note}>
+          <strong>Från fotot</strong>
+          <ul aria-label="Från fotot">
+            {lines.map(([label, value]) => (
+              <li key={label}>
+                {label}: {value}
+              </li>
+            ))}
+          </ul>
+          <ProposalChecks checks={read.checks} />
+          <button
+            type="button"
+            className="sb-btn sb-btn-secondary sb-btn-sm"
+            onClick={fill}
+          >
+            Fyll i från fotot
+          </button>
+        </div>
       )}
       <div className={styles.fields}>
         <TextField

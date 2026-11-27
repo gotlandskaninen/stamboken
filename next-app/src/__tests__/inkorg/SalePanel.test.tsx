@@ -294,3 +294,136 @@ describe("SalePanel with a buyer outside the association", () => {
     expect(registerSale.mock.calls[0][2]).not.toHaveProperty("buyer");
   });
 });
+
+// The seller and buyer read off a saved certificate (rule 5 b): made-up names, a reserved domain.
+const READ_BUYER = {
+  name: "Köpa Testsson",
+  postal_address: "Väg 1, 623 55",
+  town: "Visby",
+  email: "kopa@example.com",
+};
+function readDoc(sale: object) {
+  return {
+    ...doc,
+    doc_type: "intyg",
+    status: "sparad",
+    interpretation_status: "klar",
+    proposal: {
+      fields: {},
+      checks: [],
+      sale: {
+        buyer_herd: null,
+        buyer: READ_BUYER,
+        date: "2025-06-01",
+        seller: { name: null, herd: "G9002" },
+        checks: [],
+        ...sale,
+      },
+    },
+  } as unknown as InboxDocument;
+}
+function readPanel(sale: object = {}) {
+  render(
+    <SalePanel
+      itemId={12}
+      doc={readDoc(sale)}
+      herds={[]}
+      canSave
+      onDone={vi.fn()}
+    />,
+  );
+}
+const fillButton = () =>
+  screen.getByRole("button", { name: "Fyll i från fotot" });
+const value = (label: RegExp) =>
+  (screen.getByLabelText(label) as HTMLInputElement).value;
+
+describe("SalePanel with the seller and buyer read off the photo", () => {
+  it("lists what was read and fills nothing by itself", () => {
+    readPanel({
+      checks: [
+        {
+          ok: false,
+          text: "Säljarens besättning G9002 är inte kaninens ursprungsbesättning G9001.",
+        },
+      ],
+    });
+    const read = screen.getByRole("list", { name: "Från fotot" });
+    for (const text of [
+      "Köpa Testsson",
+      "Väg 1, 623 55",
+      "Visby",
+      "kopa@example.com",
+      "2025-06-01",
+    ])
+      expect(read).toHaveTextContent(text);
+    expect(screen.getByText(/ursprungsbesättning G9001/)).toBeInTheDocument();
+    expect(value(/Säljdatum/)).toBe("");
+    expect(
+      screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
+    ).not.toBeChecked();
+    expect(screen.queryByLabelText(/Köparens namn/)).toBeNull();
+  });
+
+  it("fills the buyer outside the association, the e-mail for the notice only, on a click", async () => {
+    registerSale.mockResolvedValue({ ok: true, data: { document: doc } });
+    readPanel();
+    fireEvent.click(fillButton());
+    expect(value(/Säljdatum/)).toBe("2025-06-01");
+    expect(
+      screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
+    ).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Ja" })).toBeChecked(); // before 2026: "Har köparen e-post?"
+    expect(value(/Köparens namn/)).toBe("Köpa Testsson");
+    expect(value(/^Postadress/)).toBe("Väg 1, 623 55");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Spara försäljningen" }),
+    );
+    await waitFor(() => expect(registerSale).toHaveBeenCalledTimes(1));
+    expect(registerSale.mock.calls[0][2]).toEqual({
+      individual: "G9001-2511",
+      herd: "GX1",
+      date: "2025-06-01",
+      buyer: { ...READ_BUYER, notice_only: true },
+    });
+  });
+
+  it("fills the buyer's herd when it is in Stamboken", () => {
+    readPanel({ buyer_herd: { herd: "G9002" } });
+    fireEvent.click(fillButton());
+    expect(value(/Köparens besättning/)).toBe("G9002");
+    expect(
+      screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
+    ).not.toBeChecked();
+  });
+
+  it("from 2028 fills no e-mail and never says yes for the buyer", async () => {
+    registerSale.mockResolvedValue({ ok: true, data: { document: doc } });
+    readPanel({ date: BEVIS_DATE });
+    fireEvent.click(fillButton());
+    expect(screen.queryByRole("radio")).toBeNull(); // the bevis is the only way
+    expect(screen.getByRole("checkbox", { name: CONSENT })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: OPTIN })).not.toBeChecked();
+    fireEvent.click(screen.getByRole("checkbox", { name: CONSENT }));
+    expect(value(/^E-post/)).toBe(""); // a yes ticked by the handler shows an empty field
+    fireEvent.click(screen.getByRole("checkbox", { name: CONSENT }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Spara försäljningen" }),
+    );
+    await waitFor(() => expect(registerSale).toHaveBeenCalledTimes(1));
+    expect(registerSale.mock.calls[0][2].buyer).toEqual({
+      name: "Köpa Testsson",
+      town: "Visby",
+      postal_address: "Väg 1, 623 55",
+      contact_consent: false,
+      membership_optin: false,
+    });
+  });
+
+  it("shows nothing without a finished reading of the sale", () => {
+    render(
+      <SalePanel itemId={12} doc={doc} herds={[]} canSave onDone={vi.fn()} />,
+    );
+    expect(screen.queryByText("Fyll i från fotot")).toBeNull();
+  });
+});

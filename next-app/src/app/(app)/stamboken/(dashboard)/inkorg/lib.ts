@@ -100,6 +100,22 @@ export type ProposedField = {
 export type Proposal = {
   fields: Partial<Record<string, ProposedField>>;
   checks: { ok: boolean | null; text: string }[];
+  /** The seller and buyer read at the bottom of a queue certificate (rule 5 b), for the sale panel. */
+  sale?: SaleReading;
+};
+/** What was read, never a confident value: the handler fills the sale with a click and checks it. */
+export type SaleReading = {
+  /** Only a herd of the genebank, as read. */
+  buyer_herd: { herd: string } | null;
+  buyer: {
+    name: string;
+    postal_address: string;
+    town: string;
+    email: string;
+  } | null;
+  date: string | null;
+  seller: { name: string | null; herd: string | null };
+  checks: Proposal["checks"];
 };
 
 export type InterpretationSummary = {
