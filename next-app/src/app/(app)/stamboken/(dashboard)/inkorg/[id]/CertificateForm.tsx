@@ -1,23 +1,30 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Field,
   proposalHint,
   ProposalChecks,
   RegisterFromCertificate,
 } from "@/components/register/RegisterFromCertificate";
-import { lookupRabbit, saveCertificate } from "../actions";
+import { lookupRabbit, reconcileDocument, saveCertificate } from "../actions";
 import {
   initialCertForm,
+  initialGrandparents,
   initialSaveMode,
   shownProposal,
   type CertForm,
+  type Grandparents,
   type InboxDocument,
   type Proposal,
+  type Reconciliation,
+  type RowKey,
   type SaveMode,
 } from "../lib";
+import { ReconcileTable } from "./ReconcileTable";
 import styles from "../inkorg.module.css";
+
+const RECOMPUTE_MS = 250; // after the last keystroke
 
 const GRANDPARENTS = [
   ["farfar", "Farfar"],
@@ -60,22 +67,43 @@ export function CertificateForm({
     initialSaveMode(latest),
   );
   const [form, setForm] = useState<CertForm>(() => initialCertForm(latest));
+  const [grandparents, setGrandparents] = useState<Grandparents>(() =>
+    initialGrandparents(latest),
+  );
   const [rex, setRex] = useState(false);
   const setMode = (value: SaveMode) => {
     setTouched(true);
     setModeState(value);
   };
-  const set = (key: keyof CertForm, value: string) => {
+  const set = (key: RowKey, value: string) => {
     setTouched(true);
-    setForm((f) => ({ ...f, [key]: value }));
+    if (key in grandparents) setGrandparents((g) => ({ ...g, [key]: value }));
+    else setForm((f) => ({ ...f, [key]: value }));
   };
   const fill = (p: Proposal) => {
     setForm(initialCertForm(p));
+    setGrandparents(initialGrandparents(p));
     setModeState(initialSaveMode(p));
     setApplied(true);
   };
   if (!latest && applied) setApplied(false);
   if (latest && !applied && !touched) fill(latest);
+
+  // The table's rows and checks, recomputed by the API from what is typed. An
+  // answer to an earlier request than the latest is dropped.
+  const table = mode === "pappersintyg";
+  const [answer, setAnswer] = useState<Reconciliation | null>(null);
+  const asked = useRef(0);
+  useEffect(() => {
+    if (!table) return;
+    const request = ++asked.current;
+    const timer = setTimeout(async () => {
+      const typed = { mode, ...form, ...grandparents };
+      const result = await reconcileDocument(itemId, doc.id, typed);
+      if (request === asked.current) setAnswer(result);
+    }, RECOMPUTE_MS);
+    return () => clearTimeout(timer);
+  }, [table, mode, form, grandparents, latest, itemId, doc.id]);
 
   return (
     <RegisterFromCertificate
@@ -164,35 +192,37 @@ export function CertificateForm({
         </>
       }
       afterFields={
-        proposal && (
-          <>
-            {mode === "ny_kanin" &&
-              GRANDPARENTS.some(([key]) => proposed[key]) && (
-                <ul
-                  className={styles.checks}
-                  aria-label="Far- och morföräldrar"
-                >
-                  {GRANDPARENTS.filter(([key]) => proposed[key]).map(
-                    ([key, label]) => (
-                      <li key={key}>
-                        <Field source={proposed[key]?.source}>
-                          {label}: {proposed[key]?.value ?? "–"}
-                          {proposalHint(proposed[key])}
-                        </Field>
-                      </li>
-                    ),
+        table
+          ? answer && <ProposalChecks checks={answer.checks} />
+          : proposal && (
+              <>
+                {mode === "ny_kanin" &&
+                  GRANDPARENTS.some(([key]) => proposed[key]) && (
+                    <ul
+                      className={styles.checks}
+                      aria-label="Far- och morföräldrar"
+                    >
+                      {GRANDPARENTS.filter(([key]) => proposed[key]).map(
+                        ([key, label]) => (
+                          <li key={key}>
+                            <Field source={proposed[key]?.source}>
+                              {label}: {proposed[key]?.value ?? "–"}
+                              {proposalHint(proposed[key])}
+                            </Field>
+                          </li>
+                        ),
+                      )}
+                    </ul>
                   )}
-                </ul>
-              )}
-            <ProposalChecks checks={proposal.checks} />
-            {proposal.checks.length > 0 && (
-              <p className={styles.muted}>
-                Kontrollerna gäller det som lästes från fotot och räknas inte om
-                när du skriver. Spara prövar det du har skrivit.
-              </p>
-            )}
-          </>
-        )
+                <ProposalChecks checks={proposal.checks} />
+                {proposal.checks.length > 0 && (
+                  <p className={styles.muted}>
+                    Kontrollerna gäller det som lästes från fotot och räknas
+                    inte om när du skriver. Spara prövar det du har skrivit.
+                  </p>
+                )}
+              </>
+            )
       }
       buttons={
         <button
@@ -202,6 +232,21 @@ export function CertificateForm({
         >
           Hoppa över
         </button>
+      }
+      table={
+        table
+          ? (errors) => (
+              <ReconcileTable
+                mode={mode}
+                values={{ ...form, ...grandparents }}
+                onChange={set}
+                proposal={latest}
+                answer={answer}
+                colors={colors}
+                errors={errors}
+              />
+            )
+          : undefined
       }
       footer={
         <p className={styles.muted}>

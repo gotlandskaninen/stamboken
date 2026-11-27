@@ -9,6 +9,7 @@ import type {
   InboxDocument,
   InboxItem,
   Problem,
+  Reconciliation,
   Rect,
   shownAssignment,
 } from "./lib";
@@ -219,6 +220,31 @@ export async function saveCertificate(
 ) {
   if (!isId(id) || !isId(doc)) return refused("Ogiltigt dokument.");
   return call<DocResult>(id, `/${id}/dokument/${doc}/spara`, "POST", payload);
+}
+
+/**
+ * The reconciliation table (…/avstamning): what the handler typed beside the
+ * registry. A read, recomputed as she types, so nothing is revalidated (not
+ * through call()); null when it could not be had.
+ */
+export async function reconcileDocument(
+  id: number,
+  doc: number,
+  typed: Record<string, string>,
+): Promise<Reconciliation | null> {
+  if (!isId(id) || !isId(doc) || typeof typed !== "object" || !typed)
+    return null;
+  const body = Object.fromEntries(
+    Object.entries(typed).filter(([, v]) => typeof v === "string"),
+  );
+  try {
+    return await fetchApi<Reconciliation>(
+      `/v2/inkorg/${id}/dokument/${doc}/avstamning`,
+      { method: "POST", body: JSON.stringify(body) },
+    );
+  } catch {
+    return null;
+  }
 }
 
 /** A report photo compared with its rabbit: "Stämmer", or "Rättat" when the rabbit was corrected; it closes. */
