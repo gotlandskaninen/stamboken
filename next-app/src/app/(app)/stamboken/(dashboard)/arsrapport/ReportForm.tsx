@@ -105,6 +105,27 @@ export interface PaperProps {
   leave: (message: string | null, destination: "next" | "inbox") => void;
 }
 const QUEUE = "/stamboken/inkorg";
+// Ångra's question (Jonas 2026-11-27): the sale in the member's words, not the history row's
+type Undoing = {
+  id: number;
+  number: string;
+  date: string;
+  dayKnown: boolean;
+  to: string;
+};
+const undoText = ({ number, date, dayKnown, to }: Undoing) => {
+  const when = !date
+    ? ""
+    : dayKnown
+      ? ` den ${fmtDate(date)}`
+      : ` i ${fmtDayOrMonth(date, false)}`;
+  return to === "GX1" || to === "MX1"
+    ? `Försäljningen av ${number}${when} ångras. Kaninen kommer tillbaka till din besättning, och köparens uppgifter tas bort.`
+    : `Försäljningen av ${number} till ${to}${when} ångras. Kaninen kommer tillbaka till din besättning.`; // no buyer details are kept
+};
+// The focused page's Skicka svar with no rabbit chosen; any choice clears it.
+const NO_CHOICE =
+  "Välj Finns kvar, Död eller Såld för minst en kanin innan du skickar.";
 const UNSTATED: Entry = { ...EMPTY_ENTRY, val: "ej_angiven" };
 type Gate = "draft" | "reported" | null;
 const enteredFrom = (rabbits: ReportView["rabbits"], s: FormState) =>
@@ -968,8 +989,15 @@ export function ReportForm({
       setRefusals((rs) => {
         const left = rs?.filter(
           (r) =>
-            r.individual_id !== id ||
-            !editClears(r.code, before, patch, doneAfter, rabbit?.birth_date),
+            r.message !== NO_CHOICE &&
+            (r.individual_id !== id ||
+              !editClears(
+                r.code,
+                before,
+                patch,
+                doneAfter,
+                rabbit?.birth_date,
+              )),
         );
         if (!rs || left!.length === rs.length) return rs;
         return left!.length ? left! : null;
@@ -1017,16 +1045,12 @@ export function ReportForm({
     return null;
   };
   // Ångra asks first, in the rabbit page's dialog (Jonas 2026-11-26): the sale's row, its day and buyer herd.
-  const [undoing, setUndoing] = React.useState<{
-    id: number;
-    date: string;
-    to: string;
-  } | null>(null);
+  const [undoing, setUndoing] = React.useState<Undoing | null>(null);
   const [undoBusy, setUndoBusy] = React.useState(false);
   const [undoError, setUndoError] = React.useState<string | null>(null);
-  const askUndo = (id: number, date: string, to: string) => {
+  const askUndo = (u: Undoing) => {
     setUndoError(null);
-    setUndoing({ id, date, to });
+    setUndoing(u);
   };
   const undoSale = async (operationId: string) => {
     setUndoBusy(true);
@@ -1231,7 +1255,7 @@ export function ReportForm({
       const val = state.rabbits[id]?.val;
       return val === "kvar" || val === "dod" || val === "sald";
     });
-    if (!answered.length) return fail("Välj för minst en kanin.");
+    if (!answered.length) return fail(NO_CHOICE);
     const submissionKey = newKey(); // its own, never the draft's (keyRef)
     const { rabbits } = toBody(state, submissionKey, report.revision, answered);
     // toBody omits a half-filled death or sale. Show what its row still needs.
@@ -1785,7 +1809,14 @@ export function ReportForm({
       onSell={onSell}
       onUndo={
         actions.undoSale
-          ? (id) => askUndo(id, r.later?.date ?? "", r.undo_to ?? "")
+          ? (id) =>
+              askUndo({
+                id,
+                number: r.number,
+                date: r.later?.date ?? "",
+                dayKnown: r.later?.day_known ?? true,
+                to: r.undo_to ?? "",
+              })
           : undefined
       }
       onNextWeight={onNextWeight}
@@ -1841,11 +1872,7 @@ export function ReportForm({
             reason_replaced: true, // the report asks no reason: the system's, as for a seller with a buyer outside
           } as unknown as HerdTrackingRow)
         }
-        note={
-          undoing?.to === "GX1" || undoing?.to === "MX1"
-            ? "Kaninen kommer tillbaka till din besättning, och köparens uppgifter tas bort."
-            : "Kaninen kommer tillbaka till din besättning." // a herd in the genebank: no buyer details are kept
-        }
+        summary={undoing && undoText(undoing)}
         busy={undoBusy}
         error={undoError}
         onClose={() => setUndoing(null)}
@@ -2472,7 +2499,15 @@ export function ReportForm({
                           <button
                             type="button"
                             className="sb-btn sb-btn-secondary sb-btn-sm"
-                            onClick={() => askUndo(s.undo!, s.date, s.to_herd)}
+                            onClick={() =>
+                              askUndo({
+                                id: s.undo!,
+                                number: s.number,
+                                date: s.date,
+                                dayKnown: s.day_known,
+                                to: s.to_herd,
+                              })
+                            }
                           >
                             Ångra
                           </button>

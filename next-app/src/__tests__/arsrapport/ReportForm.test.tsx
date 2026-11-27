@@ -251,10 +251,14 @@ describe("paper omissions", () => {
     render(<ReportForm env="demo" view={missingView()} actions={a} />);
     sendAnswer();
     expect(screen.getByRole("alert").textContent).toContain(
-      "Välj för minst en kanin.",
+      "Välj Finns kvar, Död eller Såld för minst en kanin innan du skickar.",
     );
     expect(a.dryRunCompletion).not.toHaveBeenCalled();
     expect(a.submitCompletion).not.toHaveBeenCalled();
+    choose(1, "Finns kvar"); // a choice settles it before the next Skicka
+    expect(
+      screen.queryByText(/för minst en kanin innan du skickar/),
+    ).toBeNull();
   });
 
   it("shows what a chosen row still needs before sending any answers", async () => {
@@ -1442,7 +1446,7 @@ describe("ReportForm", () => {
         number: "G9001-3",
         to_herd: "GX1",
         date: "2026-06-30",
-        day_known: true,
+        day_known: false, // the month only
         undo: 55,
       },
     ];
@@ -1459,9 +1463,10 @@ describe("ReportForm", () => {
         actions={a as never}
       />,
     );
-    const BACK = "Kaninen kommer tillbaka till din besättning.";
+    const BACK =
+      "Försäljningen av G9001-2 till G9002 den 5 januari 2027 ångras. Kaninen kommer tillbaka till din besättning.";
     const NOTE =
-      "Kaninen kommer tillbaka till din besättning, och köparens uppgifter tas bort.";
+      "Försäljningen av G9001-3 i juni 2026 ångras. Kaninen kommer tillbaka till din besättning, och köparens uppgifter tas bort.";
     for (const [i, id, note] of [
       [0, 56, BACK], // the row comes before "Sålda under 2026"; sold to G9002, a herd in the genebank
       [1, 55, NOTE], // sold outside the genebank
@@ -1469,6 +1474,10 @@ describe("ReportForm", () => {
       fireEvent.click(screen.getAllByRole("button", { name: "Ångra" })[i]);
       const dialog = screen.getByRole("dialog");
       expect(within(dialog).getByText(note)).toBeTruthy();
+      // none of the history row's words, nor the genetics note for the manager
+      expect(dialog.textContent).not.toMatch(
+        /Flytt|genetikstatistik|\d{4}-\d{2}-\d{2}/,
+      );
       expect(a.undoSale).toHaveBeenCalledTimes(i); // nothing undone before the question is answered
       await act(async () =>
         fireEvent.click(
