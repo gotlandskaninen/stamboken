@@ -18,6 +18,7 @@ import pypdfium2
 import utils.data_access as da
 import utils.inbox as inbox
 import utils.inbox_interpreter as interpreter
+import utils.inbox_paper as inbox_paper
 import utils.inbox_purge as inbox_purge
 import utils.purchase_notice as purchase_notice
 import utils.settings as settings
@@ -607,6 +608,28 @@ def reinterpret(item_id, document_id):
         return jsonify({"item": inbox.items_json([item])[0], "document": inbox.documents_json([document])[0]})
 
     return _locked(item_id, action)
+
+
+# [Next.js] "Hitta pappret": how far the photo is tilted and where the paper lies. It changes nothing.
+@inbox_bp.route("/inkorg/<int:item_id>/dokument/<int:document_id>/hitta-pappret", methods=["POST"])
+@json_login_required
+@_queue_worker
+def find_paper(item_id, document_id):
+    try:
+        item = InboxItem.get_or_none(InboxItem.id == item_id)
+        if item is None:
+            raise inbox.InboxError(404, "Posten finns inte.")
+        inbox.require_handler(item, current_user)
+        document = inbox.document_of(item, document_id)
+        if document.original_path is None:
+            raise inbox.InboxError(409, "Originalet är raderat.")
+        try:  # no transaction and no lock while the photo is looked at
+            found = inbox_paper.find_paper(inbox.private_path(document.original_path), document.rotation)
+        except FileNotFoundError:  # erased meanwhile
+            raise inbox.InboxError(409, "Originalet är raderat.") from None
+    except inbox.InboxError as exc:
+        return problem(exc.status, exc.title, exc.detail)
+    return jsonify(found)
 
 
 # [Next.js] A report photo compared with its rabbit (4b): "Stämmer" or "Rättat" closes it.
