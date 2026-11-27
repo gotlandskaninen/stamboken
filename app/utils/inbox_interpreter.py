@@ -307,15 +307,17 @@ def interpret_next():
             return None
         document = _locked(oldest.id, oldest.item_id)
         item = InboxItem.get_by_id(oldest.item_id)
-        if document is None or document.interpretation_status != "vantar":
+        # _waiting was read before the lock: an item closed or a document finished since is not claimed
+        if document is None or document.interpretation_status != "vantar" or document.done_at or item.closed_at:
             return None
         if document.attempts >= MAX_ATTEMPTS:  # the runs that tried it died
             _finish(document, "misslyckad")
             return document.id
         document.attempts += 1
         document.save()
+        # under the lock: whatever ends the sale after the claim is logged later
+        claimed_at = datetime.now(timezone.utc)
     document_id, claimed = document.id, ("vantar", document.attempts, document.rotation, document.doc_type)
-    claimed_at = datetime.now(timezone.utc)
     DB_PROXY.close()
     try:
         image = prepare_image(os.path.join(settings.service.private_upload_folder, document.original_path), claimed[2])

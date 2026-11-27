@@ -276,6 +276,60 @@ class TestSaleReading(InterpretationTest):
         self.assertEqual(self.doc(kept).interpretation["forsaljning"]["saljare_besattning"], " g 9002 ")
         self.assertNotIn("saljare_besattning", self.doc(dropped).interpretation["forsaljning"])
 
+    def test_an_item_closed_before_the_claims_lock_is_not_claimed(self):
+        item, (document,) = self.uploaded()
+        real, closed = interpreter._locked, []  # pylint: disable=protected-access
+
+        def closed_first(document_id, item_id):  # the claim read the queue before it took the lock
+            if not closed:
+                closed.append(True)
+                db.InboxItem.update(state="skrap", closed_at=inbox.now()).where(db.InboxItem.id == item.id).execute()
+            return real(document_id, item_id)
+
+        with mock.patch.object(interpreter, "_locked", closed_first):
+            self.assertIsNone(interpreter.interpret_next())
+        self.assertEqual((self.calls, self.doc(document).attempts, self.doc(document).interpretation), ([], 0, None))
+
+    def test_a_close_logged_right_after_the_claim_is_seen_after_a_reopen(self):
+        item, (document,) = self.uploaded()
+        inbox.take(item, self.helper, over=False)
+        closed = []
+
+        def close_once():
+            if not closed:
+                closed.append(True)
+                with db.DB_PROXY.atomic():
+                    inbox.change_state(inbox.lock_item(item.id), self.helper, "skrap")
+
+        real_now, real_close = interpreter.datetime.now, db.DB_PROXY.obj.close
+
+        class Clock(interpreter.datetime):  # the first thing after the claim's unlock: its clock, or closing
+            @classmethod
+            def now(cls, tz=None):
+                if not db.DB_PROXY.in_transaction():
+                    close_once()
+                return real_now(tz)
+
+        def close_then_disconnect(*args, **kwargs):
+            close_once()
+            return real_close(*args, **kwargs)
+
+        def reopened_while_reading(image, schema):
+            if schema is interpreter.SCHEMA:
+                with db.DB_PROXY.atomic():
+                    inbox.change_state(inbox.lock_item(item.id), self.manager, "tagen")  # "Öppna igen"
+                return READING
+            return SALE
+
+        with (
+            mock.patch.object(interpreter, "datetime", Clock),
+            mock.patch.object(db.DB_PROXY.obj, "close", close_then_disconnect),
+            mock.patch.dict(interpreter.INTERPRETERS, {"gemma": reopened_while_reading}),
+        ):
+            self.assertEqual(interpreter.interpret_next(), document.id)
+        self.assertEqual((closed, self.reload(item).state), ([True], "tagen"))
+        self.assertEqual(self.doc(document).interpretation, READING)
+
     def test_a_worker_dying_in_the_second_reading_keeps_the_first(self):
         _, (document,) = self.uploaded()
         self.sale = SystemExit("the worker stopped")
