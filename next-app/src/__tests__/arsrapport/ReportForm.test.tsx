@@ -13,16 +13,13 @@ import {
 const refresh = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
 
-vi.mock("@/app/(app)/stamboken/(dashboard)/profil/actions", () => ({
-  updateContact: vi.fn(),
-  verifyEmailCode: vi.fn(),
-  cancelEmailCode: vi.fn(),
-}));
-
 const saveReportContact = vi.fn();
 const saveReportConsent = vi.fn();
 const saveAccount = vi.fn();
 vi.mock("@/app/(app)/stamboken/(dashboard)/arsrapport/actions", () => ({
+  requestReportEmailCode: vi.fn(),
+  verifyReportEmailCode: vi.fn(),
+  cancelReportEmailCode: vi.fn(),
   saveReportContact: (...args: unknown[]) => saveReportContact(...args),
   saveReportConsent: (...args: unknown[]) => saveReportConsent(...args),
   saveAccount: (...args: unknown[]) => saveAccount(...args),

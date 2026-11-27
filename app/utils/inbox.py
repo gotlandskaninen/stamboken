@@ -427,6 +427,13 @@ def _set_state(item, state):
     item.closed_at = item.state_changed_at if state in CLOSED_STATES else None
 
 
+def blocking_paper_documents():
+    return InboxDocument.select(InboxDocument.item).where(
+        InboxDocument.doc_type != "arsblankett",
+        InboxDocument.done_at.is_null() | InboxDocument.waiting_for.is_null(False),
+    )
+
+
 def paper_entry_filter(user_id):
     forms = InboxDocument.select(InboxDocument.item).where(
         InboxDocument.doc_type == "arsblankett", InboxDocument.done_at.is_null()
@@ -437,6 +444,7 @@ def paper_entry_filter(user_id):
     return (
         available
         & InboxItem.id.in_(forms)
+        & InboxItem.id.not_in(blocking_paper_documents())
         & InboxItem.herd.in_(Herd.select(Herd.id).where(Herd.herd.not_in(OUTSIDE_GENEBANK_HERDS)))
         & InboxItem.ref_type.is_null()
     )

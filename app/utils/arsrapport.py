@@ -2941,7 +2941,7 @@ def _save_login_contact(herd, membership, member, user, contact, *, typed, submi
         account_notice(herd, member, key, created_by=user.id)
 
 
-def _lock_login_details(herd, round_, access, user):
+def lock_login_details(herd, round_, access, user):
     """Inside the save's transaction, authorize against the displayed herd's current main member."""
     require_open(_lock_round(round_), herd, access, today())
     membership, member = _lock_matrikel(herd)
@@ -2952,7 +2952,7 @@ def _lock_login_details(herd, round_, access, user):
 
 def save_report_contact(herd, round_, access, user, body):
     with DB_PROXY.atomic():
-        membership, member = _lock_login_details(herd, round_, access, user)
+        membership, member = lock_login_details(herd, round_, access, user)
         _keys(body, ("phone", *MATRIKEL_PARTS["adress"]), "kontakt")
         if len(body) != 1:
             raise ArsrapportError(400, "Ogiltigt fält")
@@ -2970,7 +2970,7 @@ def save_report_contact(herd, round_, access, user, body):
 
 def save_report_consent(herd, round_, access, user, answer):
     with DB_PROXY.atomic():
-        membership, _ = _lock_login_details(herd, round_, access, user)
+        membership, _ = lock_login_details(herd, round_, access, user)
         _validate_publication(answer, digital=True)
         if answer.get("text_version") != CONSENT_TEXT_VERSION:
             raise ArsrapportError(409, REFUSALS["koharen_ny_fraga"])
@@ -2993,7 +2993,7 @@ def save_report_consent(herd, round_, access, user, answer):
 
 def save_report_account(herd, round_, access, user, konto):
     with DB_PROXY.atomic():
-        membership, member = _lock_login_details(herd, round_, access, user)
+        membership, member = lock_login_details(herd, round_, access, user)
         matrikel = _matrikel({"matrikel": {"konto": konto}})
         contact, refusals = _contact(matrikel)
         if refusals or "konto" not in contact:
@@ -3531,8 +3531,7 @@ def _lock_form(access, user, herd):
     inbox.require_handler(item, user)  # its 409 says who holds the item now
     if not _form_item(item, user, herd):
         raise ArsrapportError(409, "Posten kan inte matas in längre. Öppna den i kön.")
-    others = item.documents.where(InboxDocument.doc_type != "arsblankett")
-    if others.where(InboxDocument.done_at.is_null() | InboxDocument.waiting_for.is_null(False)).exists():
+    if inbox.blocking_paper_documents().where(InboxDocument.item == item.id).exists():
         raise ArsrapportError(409, "Registrera intygen i posten först.")
     return item, list(item.documents.where(InboxDocument.doc_type == "arsblankett").order_by(InboxDocument.id))
 
@@ -4390,7 +4389,8 @@ def _kop_godkant(params):
     proposal = SaleProposal.get_or_none(SaleProposal.id == params["proposal_id"])
     if proposal is None or proposal.state != "godkand":
         return None
-    return {"number": proposal.individual.number, "datum": sv_date(proposal.sale_date)}
+    no_day = dayless(proposal.submission.data, proposal.individual_id, "sald")
+    return {"number": proposal.individual.number, "datum": sv_date(proposal.sale_date, month_only=no_day)}
 
 
 def stale_link_retry(key, herd, round_):

@@ -475,7 +475,10 @@ def patch_me_contact():
             "Endast huvudmedlemmen kan ändra medlemskapets uppgifter.",
         )
 
-    body = request.get_json(silent=True)
+    return update_member_contact(m, request.get_json(silent=True), include_profile=True)
+
+
+def update_member_contact(m, body, *, include_profile=False):
     if not isinstance(body, dict):
         return problem(400, "Ogiltigt anrop", "Uppdateringen måste vara ett JSON-objekt")
 
@@ -548,7 +551,8 @@ def patch_me_contact():
             "En annan medlem använder redan e-postadressen.",
         )
     # The same answer whether a code went or not: the member cannot test which addresses are in the matrikel.
-    answer = {**_me_response(m), "email_code_sent": new_email is not None}
+    answer = _me_response(m) if include_profile else {}
+    answer["email_code_sent"] = new_email is not None
     if refused:
         answer["email_refused"] = refused
     return jsonify(answer)
@@ -590,6 +594,10 @@ def _wrong_code():
 @json_login_required
 def cancel_me_email():
     """Avbryt: this session's pending code for a new address stops working. A request in another session stays."""
+    return cancel_email_code()
+
+
+def cancel_email_code():
     cancel(session.pop("login_request", None))
     return "", 204
 
@@ -607,6 +615,10 @@ def verify_me_email():
         return problem(404, "Medlem saknas", "Ingen medlemspost är kopplad till ditt konto.")
     if m.role != "huvudmedlem":
         return problem(403, "Endast huvudmedlem", "Endast huvudmedlemmen kan ändra medlemskapets uppgifter.")
+    return verify_member_email(m)
+
+
+def verify_member_email(m, *, lock_report_member=None):
     body = request.get_json(silent=True)
     entered = body.get("code") if isinstance(body, dict) else None
     if not isinstance(entered, str):
@@ -620,8 +632,13 @@ def verify_me_email():
         return problem(503, "Koder tas inte emot just nu", "Försök igen om en timme.")
     if row is None:
         return _wrong_code()
-    person_id, membership_id = m.id, m.membership_id
     with DB_PROXY.atomic():
+        # check() commits the attempt independently. Reauthorize the report before using its result.
+        if lock_report_member is not None:
+            m = lock_report_member()
+            if m.id != row.member_id:
+                return _wrong_code()
+        person_id, membership_id = m.id, m.membership_id
         # membership → user → person, as set_member_email takes them
         Membership.select().where(Membership.id == membership_id).for_update().get()
         User.select().where(User.id == current_user.id).for_update().get()
@@ -642,7 +659,7 @@ def verify_me_email():
         except AddressTaken:
             return _wrong_code()  # taken since the code went; the code stays used (the return commits)
     session.pop("login_request", None)
-    return jsonify(_me_response(m))
+    return jsonify(_me_response(m)) if lock_report_member is None else ("", 204)
 
 
 @members_bp.route("/v2/members/me/consent", methods=["PATCH"])

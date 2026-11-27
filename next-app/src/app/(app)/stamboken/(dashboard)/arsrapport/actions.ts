@@ -137,6 +137,48 @@ export async function saveReportContact(
   );
 }
 
+export async function requestReportEmailCode(
+  herd: string,
+  year: number,
+  email: string,
+  env: Mode,
+) {
+  return call<{ email_code_sent: boolean; email_refused?: string }>(
+    env,
+    path(herd, year, "/epost/kod"),
+    "POST",
+    { email },
+    { isolateDemo: true },
+  );
+}
+
+export async function cancelReportEmailCode(
+  herd: string,
+  year: number,
+  env: Mode,
+) {
+  return call<void>(env, path(herd, year, "/epost/kod"), "DELETE", undefined, {
+    isolateDemo: true,
+  });
+}
+
+export async function verifyReportEmailCode(
+  herd: string,
+  year: number,
+  code: string,
+  env: Mode,
+) {
+  return call<void>(
+    env,
+    path(herd, year, "/epost/verifiera"),
+    "POST",
+    { code },
+    {
+      isolateDemo: true,
+    },
+  );
+}
+
 export async function saveReportConsent(
   herd: string,
   year: number,

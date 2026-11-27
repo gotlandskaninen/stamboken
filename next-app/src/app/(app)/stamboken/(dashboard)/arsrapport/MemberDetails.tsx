@@ -7,14 +7,16 @@ import {
   PublicationFields,
   type Publication,
 } from "@/components/member/PublicationFields";
-import {
-  cancelEmailCode,
-  updateContact,
-  verifyEmailCode,
-} from "../profil/actions";
 import { MbCard } from "../min-besattning/min-besattning-ui";
 import { AccountFields, TextField, textField } from "./PaperChanges";
-import { saveAccount, saveReportContact, saveReportConsent } from "./actions";
+import {
+  cancelReportEmailCode,
+  requestReportEmailCode,
+  saveAccount,
+  saveReportContact,
+  saveReportConsent,
+  verifyReportEmailCode,
+} from "./actions";
 import {
   CONSENT_TEXT_VERSION,
   detailsBody,
@@ -254,14 +256,25 @@ function MainDetails({
       </span>
     );
   const busy = (key: string) => messages[key]?.state === "saving";
-  const save = (key: string, work: () => Promise<void>) => {
+  const save = (
+    key: string,
+    work: (sent: PaperFields) => Promise<void>,
+    changed?: (sent: PaperFields, latest: PaperFields) => boolean,
+  ) => {
     if (writes.current.has(key)) return;
-    message(key, "Sparar…", "saving");
-    const call = work()
-      .catch(() =>
-        message(key, "Det gick inte att nå servern. Försök igen.", "error"),
-      )
-      .finally(() => writes.current.delete(key));
+    const run = async () => {
+      let sent: PaperFields;
+      do {
+        sent = current.current;
+        message(key, "Sparar…", "saving");
+        try {
+          await work(sent);
+        } catch {
+          message(key, "Det gick inte att nå servern. Försök igen.", "error");
+        }
+      } while (changed?.(sent, current.current));
+    };
+    const call = run().finally(() => writes.current.delete(key));
     writes.current.set(key, track(call));
   };
   // A click on Skicka can itself blur a field. Diff only after its write has answered.
@@ -270,21 +283,30 @@ function MainDetails({
     return detailsBody(saved.current, current.current);
   });
   const blur = (key: ContactKey) => {
+    const normalized = (f: PaperFields) => {
+      const raw = contactValue(f, key);
+      return key === "postal_code" ? formatPostalCode(raw) : raw.trim();
+    };
     const raw = contactValue(current.current, key);
-    const value = key === "postal_code" ? formatPostalCode(raw) : raw.trim();
+    const value = normalized(current.current);
     if (value !== raw) edit(editContact(current.current, key, value));
     if (value === saved.current.contact[key].trim()) return;
-    if (key === "postal_code" && !isValidPostalCode(value))
-      return message(key, "Postnummer ska vara fem siffror", "error");
-    save(key, async () => {
-      const result = await saveReportContact(herd, year, key, value, env);
-      if (!result.ok) return message(key, result.problem.detail, "error");
-      saved.current = {
-        ...saved.current,
-        contact: { ...saved.current.contact, [key]: value },
-      };
-      message(key, "Kontaktuppgifter sparade");
-    });
+    save(
+      key,
+      async (sent) => {
+        const next = normalized(sent);
+        if (key === "postal_code" && !isValidPostalCode(next))
+          return message(key, "Postnummer ska vara fem siffror", "error");
+        const result = await saveReportContact(herd, year, key, next, env);
+        if (!result.ok) return message(key, result.problem.detail, "error");
+        saved.current = {
+          ...saved.current,
+          contact: { ...saved.current.contact, [key]: next },
+        };
+        message(key, "Kontaktuppgifter sparade");
+      },
+      (sent, latest) => normalized(sent) !== normalized(latest),
+    );
   };
   const publish = (answer: Publication | null) => {
     if (!answer) return;
@@ -293,33 +315,41 @@ function MainDetails({
       consent: answer.ja ? "ja" : "nej",
       utom: answer.utom,
     });
-    save("publicering", async () => {
-      const result = await saveReportConsent(
-        herd,
-        year,
-        {
-          ...answer,
-          version: saved.current.publicering_version,
-          text_version: CONSENT_TEXT_VERSION,
-        },
-        env,
-      );
-      if (!result.ok)
-        return message("publicering", result.problem.detail, "error");
-      const version = result.data.publicering_version;
-      if (!Number.isSafeInteger(version))
-        return message(
-          "publicering",
-          "Ladda om sidan och kontrollera svaret.",
-          "error",
+    save(
+      "publicering",
+      async (sent) => {
+        const publication = { ja: sent.consent === "ja", utom: sent.utom };
+        const result = await saveReportConsent(
+          herd,
+          year,
+          {
+            ...publication,
+            version: saved.current.publicering_version,
+            text_version: CONSENT_TEXT_VERSION,
+          },
+          env,
         );
-      saved.current = {
-        ...saved.current,
-        publicering: answer,
-        publicering_version: version,
-      };
-      message("publicering", "Publiceringsval sparade");
-    });
+        if (!result.ok)
+          return message("publicering", result.problem.detail, "error");
+        const version = result.data.publicering_version;
+        if (!Number.isSafeInteger(version))
+          return message(
+            "publicering",
+            "Ladda om sidan och kontrollera svaret.",
+            "error",
+          );
+        saved.current = {
+          ...saved.current,
+          publicering: publication,
+          publicering_version: version,
+        };
+        message("publicering", "Publiceringsval sparade");
+      },
+      (sent, latest) =>
+        sent.consent !== latest.consent ||
+        sent.utom.length !== latest.utom.length ||
+        sent.utom.some((field) => !latest.utom.includes(field)),
+    );
   };
   const storeAccount = () =>
     save("konto", async () => {
@@ -348,7 +378,6 @@ function MainDetails({
                 edit(editContact(current.current, key, e.target.value));
                 message(key, "");
               }}
-              disabled={busy(key)}
               onBlur={() => blur(key)}
               aria-describedby={
                 messages[key]?.text ? `report-detail-${key}` : undefined
@@ -360,7 +389,8 @@ function MainDetails({
         ))}
         <EmailChange
           email={details.contact.email}
-          returnTo={`/stamboken/arsrapport/${herd}/${year}`}
+          herd={herd}
+          year={year}
           track={track}
           env={env}
         />
@@ -407,7 +437,6 @@ function MainDetails({
               : null
           }
           onChange={publish}
-          disabled={busy("publicering")}
         />
         {feedback("publicering")}
       </div>
@@ -420,12 +449,14 @@ function MainDetails({
 function EmailChange({
   email,
   env,
-  returnTo,
+  herd,
+  year,
   track,
 }: {
   email: string;
   env: Mode;
-  returnTo: string;
+  herd: string;
+  year: number;
   track: <T>(call: Promise<T>) => Promise<T>;
 }) {
   const [step, setStep] = React.useState<"none" | "form" | "code" | "done">(
@@ -460,10 +491,13 @@ function EmailChange({
     requesting.current = true;
     run(async () => {
       try {
-        const result = await track(updateContact({ email: next }, env));
-        if (!result.ok) return setError(result.error);
-        if (result.emailRefused) return setError(result.emailRefused);
-        if (!result.codeSent) return close();
+        const result = await track(
+          requestReportEmailCode(herd, year, next, env),
+        );
+        if (!result.ok) return setError(result.problem.detail);
+        if (result.data.email_refused)
+          return setError(result.data.email_refused);
+        if (!result.data.email_code_sent) return close();
         setSentTo(next);
         setStep("code");
       } finally {
@@ -472,6 +506,7 @@ function EmailChange({
     });
   };
 
+  const returnTo = `/stamboken/arsrapport/${herd}/${year}`;
   if (step === "done")
     return (
       <p role="status" style={{ margin: 0 }}>
@@ -548,9 +583,11 @@ function EmailChange({
               disabled={pending || !code.trim()}
               onClick={() =>
                 run(async () => {
-                  const result = await track(verifyEmailCode(code, env));
+                  const result = await track(
+                    verifyReportEmailCode(herd, year, code, env),
+                  );
                   if (result.ok) setStep("done");
-                  else setError(result.error);
+                  else setError(result.problem.detail);
                 })
               }
             >
@@ -562,8 +599,10 @@ function EmailChange({
               disabled={pending}
               onClick={() =>
                 run(async () => {
-                  const result = await track(cancelEmailCode(env));
-                  if (!result.ok) return setError(result.error);
+                  const result = await track(
+                    cancelReportEmailCode(herd, year, env),
+                  );
+                  if (!result.ok) return setError(result.problem.detail);
                   setCode("");
                   close();
                 })

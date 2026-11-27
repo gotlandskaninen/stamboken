@@ -230,6 +230,28 @@ class TestVisibility(InboxTest):
         self.assertEqual([item["id"] for item in body["items"]], [free.id, mine.id])
         self.assertEqual(body["total"], 2)
 
+    def test_paper_claim_skips_mixed_item_until_certificate_ready(self):
+        mixed, ready = self.item(documents=2), self.item()
+        form, certificate = mixed.documents.order_by(db.InboxDocument.id)
+        db.InboxDocument.update(doc_type="arsblankett").where(
+            db.InboxDocument.id.in_([form.id, ready.documents.get().id])
+        ).execute()
+        self.login("hjalp")
+        queue = "/api/v2/inkorg?paper_entry=1"
+        (selected,) = self.client.get(queue).get_json()["items"]
+        self.assertEqual(selected["id"], ready.id)
+        self.assertEqual(self.post(f"/{selected['id']}/ta", paper_entry=True).status_code, 200)
+        self.assertEqual(self.reload(ready).assigned_to_id, self.helper.id)
+        self.assertIsNone(self.reload(mixed).assigned_to_id)
+
+        certificate.done_at = inbox.now()
+        certificate.save()
+        self.assertEqual(self.client.get(queue).get_json()["items"][0]["id"], mixed.id)
+        certificate.waiting_for = ["G1-9999"]  # changed after listing, before the claim
+        certificate.save()
+        self.assertEqual(self.post(f"/{mixed.id}/ta", paper_entry=True).status_code, 409)
+        self.assertIsNone(self.reload(mixed).assigned_to_id)
+
     def test_paper_claim_skips_waiting_and_escalated_forms_after_listing(self):
         self.login("hjalp")
         waiting, escalated = self.item(), self.item()

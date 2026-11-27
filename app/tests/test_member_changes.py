@@ -19,6 +19,7 @@ from unittest import mock
 import utils.arsrapport as arsrapport
 import utils.data_access as da
 import utils.database as db
+import utils.login_code as login_code
 import utils.mail as mail
 import utils.member_changes as member_changes
 import utils.report_code as report_code
@@ -133,6 +134,54 @@ class DetailsTest(ArsrapportTest):
 
 
 class TestLoggedIn(DetailsTest):
+    def test_report_email_code_refuses_switched_session(self):
+        self.link_owner()
+        self.login("owner")
+        self.assertEqual(self.view()["member_details"]["mode"], "main")
+        db.Member.update(user=self.manager).where(db.Member.id == self.member2.id).execute()
+        self.login("man")  # May open either herd, but is the main member only of G9002.
+        old, own = (REPORT.format(herd=herd) + "/epost" for herd in ("G9001", "G9002"))
+        new = "changed@example.org"
+        self.assertEqual(self.api("POST", old + "/kod", email=new).status_code, 403)
+        self.assertFalse(db.LoginCode.select().exists())
+        self.assertEqual(self.mails("konto.kod"), [])
+
+        self.assertEqual(self.api("POST", own + "/kod", email=new).get_json(), {"email_code_sent": True})
+        row = db.LoginCode.get()
+        self.assertEqual(row.member_id, self.member2.id)
+        self.assertEqual(len(self.mails("konto.kod")), 1)
+        code = login_code.code(row)
+        self.assertEqual(self.api("POST", old + "/verifiera", code=code).status_code, 403)
+        self.assertEqual(self.api("DELETE", old + "/kod").status_code, 403)
+        self.assertIsNone(db.LoginCode.get_by_id(row.id).used_at)
+        for member in (self.member, self.member2):
+            self.assertEqual(db.Member.get_by_id(member.id).email, member.email)
+        self.assertEqual(self.api("DELETE", own + "/kod").status_code, 204)
+        self.assertEqual(self.api("POST", own + "/verifiera", code=code).status_code, 400)
+        self.assertTrue(self.api("POST", own + "/kod", email=new).get_json()["email_code_sent"])
+        code = login_code.code(db.LoginCode.get(db.LoginCode.used_at.is_null()))
+        self.assertEqual(self.api("POST", own + "/verifiera", code=code).status_code, 204)
+        self.assertEqual(db.Member.get_by_id(self.member2.id).email, new)
+        self.assertEqual(self.client.get("/api/v2/members/me").status_code, 401)
+
+    def test_report_email_rechecks_herd_after_code_check(self):
+        self.link_owner()
+        self.login("owner")
+        path = REPORT.format(herd="G9001") + "/epost"
+        self.assertTrue(self.api("POST", path + "/kod", email="changed@example.org").get_json()["email_code_sent"])
+        row = db.LoginCode.get()
+
+        def move_herd(*args):
+            checked = login_code.check(*args)
+            db.Herd.update(membership=self.member2.membership_id).where(db.Herd.id == self.h.id).execute()
+            return checked
+
+        with mock.patch("blueprints.members.check", side_effect=move_herd):
+            response = self.api("POST", path + "/verifiera", code=login_code.code(row))
+        self.assertEqual(response.status_code, 403)
+        self.assertIsNone(db.LoginCode.get_by_id(row.id).used_at)
+        self.assertEqual(db.Member.get_by_id(self.member.id).email, self.member.email)
+
     def test_report_detail_saves_refuse_a_switched_session(self):
         self.link_owner()
         self.login("owner")
@@ -155,7 +204,13 @@ class TestLoggedIn(DetailsTest):
         self.link_owner()
         self.login("owner")
         self.open_link("G9002")  # this session also has a valid code for another main member
-        edits = (("PATCH", "/kontakt", {"phone": ""}), ("PUT", "/publicering", {**NEJ, "version": None}))
+        edits = (
+            ("PATCH", "/kontakt", {"phone": ""}),
+            ("PUT", "/publicering", {**NEJ, "version": None}),
+            ("POST", "/epost/kod", {"email": "changed@example.org"}),
+            ("DELETE", "/epost/kod", {}),
+            ("POST", "/epost/verifiera", {"code": "12345678"}),
+        )
         for method, route, body in edits:
             response = self.api(method, REPORT.format(herd="G9002") + route, **body)
             self.assertEqual((response.status_code, response.get_json()["detail"]), (403, arsrapport.NOT_MAIN))

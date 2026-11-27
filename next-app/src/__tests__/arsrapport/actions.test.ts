@@ -18,10 +18,12 @@ vi.mock("@/lib/api", () => ({
 
 import {
   activateGenebank,
+  cancelReportEmailCode,
   dryRun,
   dryRunCompletion,
   newLink,
   nextPaperForm,
+  requestReportEmailCode,
   saveDraft,
   saveReportContact,
   saveReportConsent,
@@ -33,6 +35,7 @@ import {
   submitCompletion,
   submitReport,
   undoSale,
+  verifyReportEmailCode,
   withdrawReport,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/actions";
 import {
@@ -139,6 +142,35 @@ describe("arsrapport actions", () => {
       .mockResolvedValueOnce({ items: [], total: 0 });
     expect(await nextPaperForm("demo")).toBe("/stamboken/inkorg");
     expect(fetchApi).toHaveBeenCalledTimes(2);
+  });
+
+  it("binds email actions to the report and environment", async () => {
+    const url = "/v2/arsrapport/besattning/G9002/2025/epost";
+    const calls = () =>
+      Promise.all([
+        requestReportEmailCode("G9002", 2025, "new@example.org", "demo"),
+        verifyReportEmailCode("G9002", 2025, "12345678", "demo"),
+        cancelReportEmailCode("G9002", 2025, "demo"),
+      ]);
+    await calls();
+    expect(fetchApi.mock.calls).toEqual([
+      [
+        url + "/kod",
+        {
+          method: "POST",
+          body: '{"email":"new@example.org"}',
+          isolateDemo: true,
+        },
+      ],
+      [
+        url + "/verifiera",
+        { method: "POST", body: '{"code":"12345678"}', isolateDemo: true },
+      ],
+      [url + "/kod", { method: "DELETE", body: undefined, isolateDemo: true }],
+    ]);
+    modeCookie = "prod";
+    expect((await calls()).every((result) => !result.ok)).toBe(true);
+    expect(fetchApi).toHaveBeenCalledTimes(3);
   });
 
   it("saves details for the displayed herd and refuses a switched environment", async () => {
