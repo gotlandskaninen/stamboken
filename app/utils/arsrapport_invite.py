@@ -226,10 +226,11 @@ def _inbjudan(params):
         link = report_code.code_url(code)
     extract = extract_context(herd, round_)  # one read for the mail text and the attachment
     host = settings.service.host.rstrip("/")
+    tip = member is not None and login_code.leads_to_prod(member)
     return {
         **_common(herd, round_),
         "link": link,
-        "login_url": f"{host}/auth/sign-in" if member is not None and login_code.leads_to_prod(member) else None,  # built at send time, never stored
+        "login_url": f"{host}/auth/sign-in" if tip else None,  # built at send time, never stored
         "prov": bool(params.get("prov")),
         "utdrag": render_text(extract),
         "attachments": [(f"registerutdrag-{herd.herd}.pdf", "application/pdf", render_pdf(extract))],
