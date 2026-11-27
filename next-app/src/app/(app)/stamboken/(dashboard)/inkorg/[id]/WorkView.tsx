@@ -10,6 +10,7 @@ import {
   changeState,
   confirmMask,
   checkReportPhoto,
+  findPaper,
   reinterpretDocument,
   takeItem,
   updateDocument,
@@ -18,6 +19,7 @@ import {
 } from "../actions";
 import {
   crops,
+  degrees,
   initialFrame,
   initialRects,
   MAX_RECTS,
@@ -236,6 +238,18 @@ export function WorkView({
   const [selectedRect, setSelectedRect] = useState<number | null>(null);
   // "Bifoga utsnitt": the frame on the photo, in the view's rotation.
   const [crop, setCrop] = useState<Rect | null>(null);
+  // "Räta upp": unsaved until the handler saves it, and carried into the masking step, which stores it.
+  // Reset when the document or the handler changes, as the rotation is.
+  const [straighten, setStraighten] = useState(doc?.straighten ?? 0);
+  const [angleNote, setAngleNote] = useState<string | null>(null);
+  const angleKey = `${doc?.id}:${item.assigned_to?.id ?? ""}`;
+  const [shownAngleKey, setShownAngleKey] = useState(angleKey);
+  if (angleKey !== shownAngleKey) {
+    setShownAngleKey(angleKey);
+    setStraighten(doc?.straighten ?? 0);
+    setAngleNote(null);
+  }
+  const unsavedAngle = !!doc && straighten !== doc.straighten;
   if (step !== shownStep) {
     setShownStep(step);
     setRotation(doc?.rotation ?? 0);
@@ -280,6 +294,61 @@ export function WorkView({
       setCopyFrame((f) => f && rotateRect(f, quarterTurns));
     }
     setCrop((c) => c && rotateRect(c, quarterTurns));
+  };
+
+  // A part framed for the question is of the photo at the old angle: it goes.
+  const straightenView = (value: number) => {
+    setStraighten(value);
+    setCrop(null);
+    setAngleNote(null);
+  };
+
+  const saveAngle = () => {
+    if (!doc) return;
+    run(
+      () => updateDocument(item.id, doc.id, { straighten }),
+      () =>
+        setAngleNote(
+          doc.doc_type === "intyg" &&
+            doc.interpretation_status !== "av" &&
+            !purchase
+            ? "Vinkeln är sparad. Klicka Tolka igen om fotot ska läsas om med den."
+            : "Vinkeln är sparad.",
+        ),
+    );
+  };
+
+  // "Hitta pappret": the angle, and in the masking step the frame round the upper two thirds of the paper. The
+  // paper is in the stored rotation; the boxes drawn at another angle no longer cover what they did.
+  const findPaperOnPhoto = () => {
+    if (!doc) return;
+    run(
+      () => findPaper(item.id, doc.id),
+      ({ angle, paper }) => {
+        straightenView(angle);
+        const notes = [
+          angle
+            ? `Fotot lutar ${degrees(angle)}, och vinkeln är satt till det.`
+            : "Ingen tydlig lutning hittades, så vinkeln är 0°.",
+        ];
+        if (masking) {
+          const found =
+            paper && rotateRect(paper, (rotation - doc.rotation) / 90);
+          if (found) {
+            setCopyFrame({ ...found, h: found.h * 0.6667 });
+            notes.push("Ramen ligger runt pappret utom dess nedre tredjedel.");
+          } else notes.push("Pappret hittades inte, så ramen är kvar.");
+          if (angle !== straighten && rects.length > 0) {
+            setRects([]);
+            setSelectedRect(null);
+            notes.push(
+              "De svarta rutorna togs bort, eftersom vinkeln ändrades.",
+            );
+          }
+        }
+        setAngleNote(notes.join(" "));
+      },
+    );
   };
 
   const rotate = (quarterTurns: number) => {
@@ -524,7 +593,8 @@ export function WorkView({
             item.assigned_to?.id === user.id && (
               <AskBreeder
                 itemId={item.id}
-                documentId={doc && !masking ? doc.id : null}
+                // A part of the photo at an unsaved angle would be cut at the saved one.
+                documentId={doc && !masking && !unsavedAngle ? doc.id : null}
                 crop={
                   crop && doc
                     ? toApiRects([
@@ -575,6 +645,11 @@ export function WorkView({
                 src={`${apiBase}/v2/inkorg/${item.id}/dokument/${doc.id}/original`}
                 rotation={rotation}
                 onRotate={rotate}
+                straighten={straighten}
+                onStraighten={straightenView}
+                straightenLocked={masking}
+                onFindPaper={editable ? findPaperOnPhoto : undefined}
+                busy={pending}
                 mask={
                   masking && mayMask
                     ? {
@@ -612,6 +687,35 @@ export function WorkView({
                       : undefined
                 }
               />
+              {masking && unsavedAngle ? (
+                <p className={styles.note}>
+                  Vinkeln {degrees(straighten)} sparas när du bekräftar
+                  maskningen.
+                </p>
+              ) : (
+                unsavedAngle &&
+                editable &&
+                !doc.has_copy && (
+                  <p className={styles.note}>
+                    Vinkeln {degrees(straighten)} är inte sparad. Kopian,
+                    tolkningen och utsnittet till uppfödaren får den först när
+                    du sparar den.{" "}
+                    <button
+                      type="button"
+                      className="sb-btn sb-btn-sm"
+                      disabled={pending}
+                      onClick={saveAngle}
+                    >
+                      Spara vinkeln
+                    </button>
+                  </p>
+                )
+              )}
+              {angleNote && (
+                <p role="status" className={styles.muted}>
+                  {angleNote}
+                </p>
+              )}
               {(doc.warnings.length > 0 || doc.duplicates.length > 0) && (
                 <div className={styles.badges}>
                   {doc.warnings.map((w) => (
@@ -705,7 +809,9 @@ export function WorkView({
                         type="button"
                         className="sb-btn sb-btn-secondary sb-btn-sm"
                         disabled={
-                          pending || doc.interpretation_status === "vantar"
+                          pending ||
+                          doc.interpretation_status === "vantar" ||
+                          unsavedAngle
                         }
                         onClick={() =>
                           run(
@@ -851,6 +957,7 @@ export function WorkView({
                     onClick={() => {
                       // From the stored pair, not from a turn made for reading.
                       setRotation(doc.rotation);
+                      setStraighten(doc.straighten);
                       setRects(initialRects(doc));
                       setCopyFrame(initialFrame(doc));
                       setSelectedRect(null);
@@ -966,6 +1073,7 @@ export function WorkView({
                                 item.id,
                                 doc.id,
                                 rotation,
+                                straighten,
                                 toApiRects(rects),
                                 copyFrame,
                                 noPersonalData,

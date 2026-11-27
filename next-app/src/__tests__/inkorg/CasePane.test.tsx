@@ -256,6 +256,7 @@ describe("CasePane", () => {
       doc_type: "intyg",
       cert_format: null,
       rotation: 90,
+      straighten: 0,
       mask_rects: null,
       copy_frame: null,
       frame_suggestion: null,

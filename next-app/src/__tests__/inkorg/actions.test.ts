@@ -97,8 +97,13 @@ describe("the queue's server actions", () => {
   });
 
   it("pass only the document fields the UI changes", async () => {
-    await updateDocument(12, 31, { rotation: 90, waiting_for: ["X"], foo: 1 });
-    expect(body(0)).toEqual({ rotation: 90 });
+    await updateDocument(12, 31, {
+      rotation: 90,
+      straighten: 2.5,
+      waiting_for: ["X"],
+      foo: 1,
+    });
+    expect(body(0)).toEqual({ rotation: 90, straighten: 2.5 });
   });
 
   it("refuse a document change made for the other environment", async () => {
@@ -137,9 +142,10 @@ describe("the queue's server actions", () => {
 
   it("send the rotation together with the rectangles drawn in it", async () => {
     const rect = { x: 0, y: 0, w: 0.3, h: 1 };
-    await confirmMask(12, 31, 90, [rect], null);
+    await confirmMask(12, 31, 90, 0, [rect], null);
     expect(body(0)).toEqual({
       rotation: 90,
+      straighten: 0,
       mask_rects: [rect],
       copy_frame: null,
       matches_registry: false,
@@ -148,9 +154,10 @@ describe("the queue's server actions", () => {
 
   it("send the frame around the copy rounded inside the image, and no no_personal_data beside it", async () => {
     const frame = { x: 0.33333333, y: 0, w: 0.66669999, h: 1.00001 };
-    await confirmMask(12, 31, 90, [], frame, true);
+    await confirmMask(12, 31, 90, 0, [], frame, true);
     expect(body(0)).toEqual({
       rotation: 90,
+      straighten: 0,
       mask_rects: [],
       copy_frame: { x: 0.3334, y: 0, w: 0.6666, h: 1 }, // inwards: the copy keeps no more than shown
       matches_registry: false,
@@ -159,19 +166,20 @@ describe("the queue's server actions", () => {
 
   it("send whether the handler found the certificate and the registry in agreement", async () => {
     const rect = { x: 0, y: 0, w: 0.3, h: 1 };
-    await confirmMask(12, 31, 0, [rect], null, false, true);
+    await confirmMask(12, 31, 0, 0, [rect], null, false, true);
     expect(body(0)).toMatchObject({ matches_registry: true });
   });
 
   it("need the explicit no_personal_data for an empty list without a frame", async () => {
-    expect((await confirmMask(12, 31, 0, [], null)).ok).toBe(false);
+    expect((await confirmMask(12, 31, 0, 0, [], null)).ok).toBe(false);
     // A frame over the whole photo leaves nothing out: no cover either.
     const whole = { x: 0, y: 0, w: 1, h: 1 };
-    expect((await confirmMask(12, 31, 0, [], whole)).ok).toBe(false);
+    expect((await confirmMask(12, 31, 0, 0, [], whole)).ok).toBe(false);
     expect(api).not.toHaveBeenCalled();
-    await confirmMask(12, 31, 180, [], null, true);
+    await confirmMask(12, 31, 180, 0, [], null, true);
     expect(body(0)).toEqual({
       rotation: 180,
+      straighten: 0,
       mask_rects: [],
       copy_frame: null,
       no_personal_data: true,
@@ -180,7 +188,11 @@ describe("the queue's server actions", () => {
   });
 
   it("refuse a rotation that is not a quarter turn", async () => {
-    expect((await confirmMask(12, 31, 45, [], null)).ok).toBe(false);
+    expect((await confirmMask(12, 31, 45, 0, [], null)).ok).toBe(false);
+    for (const angle of [15.5, NaN, "2" as unknown as number])
+      expect((await confirmMask(12, 31, 0, angle, [], null, true)).ok).toBe(
+        false,
+      );
     expect(api).not.toHaveBeenCalled();
   });
 

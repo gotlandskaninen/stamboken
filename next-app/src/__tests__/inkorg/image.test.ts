@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  degrees,
   enhancePencil,
   crops,
   initialFrame,
@@ -12,6 +13,7 @@ import {
   rotateRect,
   toApiRects,
   turn,
+  turnedSize,
   UPPER_TWO_THIRDS,
 } from "@/app/(app)/stamboken/(dashboard)/inkorg/image";
 
@@ -168,5 +170,28 @@ describe("enhancePencil", () => {
     const px = new Uint8ClampedArray([100, 100, 100, 255, 100, 100, 100, 255]);
     enhancePencil(px);
     expect(px[0]).toBe(0);
+  });
+});
+
+describe("turnedSize", () => {
+  it("swaps width and height for a quarter turn and keeps them for a half", () => {
+    expect(turnedSize(400, 300, 0)).toEqual({ width: 400, height: 300 });
+    expect(turnedSize(400, 300, 90)).toEqual({ width: 300, height: 400 });
+    expect(turnedSize(400, 300, 180)).toEqual({ width: 400, height: 300 });
+    expect(turnedSize(400, 300, 270)).toEqual({ width: 300, height: 400 });
+  });
+
+  it("is the bounding box of the photo turned by any other angle", () => {
+    // 400 cos 30° + 300 sin 30° = 496.4, and 400 sin 30° + 300 cos 30° = 459.8.
+    expect(turnedSize(400, 300, 30)).toEqual({ width: 496, height: 460 });
+    expect(turnedSize(400, 300, -30)).toEqual({ width: 496, height: 460 });
+    expect(turnedSize(400, 300, 90 + 30)).toEqual({ width: 460, height: 496 });
+  });
+});
+
+describe("degrees", () => {
+  it("writes the angle with a decimal comma and a minus sign", () => {
+    expect(degrees(4)).toBe("4,0°");
+    expect(degrees(-2.5)).toBe("−2,5°");
   });
 });

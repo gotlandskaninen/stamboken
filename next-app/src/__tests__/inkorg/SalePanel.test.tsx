@@ -42,6 +42,7 @@ const doc = {
   doc_type: "bevis",
   cert_format: null,
   rotation: 0,
+  straighten: 0,
   mask_rects: null,
   copy_frame: null,
   frame_suggestion: null,

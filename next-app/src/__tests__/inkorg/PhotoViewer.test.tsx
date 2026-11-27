@@ -1,7 +1,13 @@
 import "@/i18n";
 import "@testing-library/jest-dom/vitest";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { PhotoViewer } from "@/app/(app)/stamboken/(dashboard)/inkorg/[id]/PhotoViewer";
 
 afterEach(() => {
@@ -215,5 +221,91 @@ describe("PhotoViewer: the frame around the copy", () => {
     const box = screen.getByRole("button", { name: /^Svart ruta 1 av 1\./ });
     expect(frame.className).toMatch(/copyFrame/);
     expect(box.className).not.toMatch(/copyFrame/);
+  });
+});
+
+/** A loaded photo of `width` × `height` px, drawn on a canvas that records nothing. */
+function loadedPhoto(width: number, height: number) {
+  const ctx = {
+    fillRect: vi.fn(),
+    translate: vi.fn(),
+    rotate: vi.fn(),
+    drawImage: vi.fn(),
+    setTransform: vi.fn(),
+  };
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
+    ctx as unknown as CanvasRenderingContext2D,
+  );
+  vi.stubGlobal(
+    "Image",
+    class {
+      naturalWidth = width;
+      naturalHeight = height;
+      onload = () => {};
+      set src(_: string) {
+        queueMicrotask(() => this.onload());
+      }
+    },
+  );
+  return ctx;
+}
+
+describe("PhotoViewer: straightening", () => {
+  it("draws the photo turned by its rotation and angle on a canvas the size of the turned photo", async () => {
+    const ctx = loadedPhoto(400, 300);
+    render(
+      <PhotoViewer
+        src="/foto.jpg"
+        rotation={90}
+        straighten={30}
+        onRotate={() => {}}
+        onStraighten={() => {}}
+      />,
+    );
+    const canvas = await screen.findByRole("img", { name: "Originalet" });
+    await vi.waitFor(() => expect(ctx.drawImage).toHaveBeenCalled());
+    // 120° in all: the bounding box of 400 × 300 is 460 × 496, white where the photo does not reach.
+    expect([
+      (canvas as HTMLCanvasElement).width,
+      (canvas as HTMLCanvasElement).height,
+    ]).toEqual([460, 496]);
+    expect(ctx.fillRect).toHaveBeenCalledWith(0, 0, 460, 496);
+    expect(ctx.rotate).toHaveBeenCalledWith((120 * Math.PI) / 180);
+  });
+
+  it("changes, resets and finds the angle, and none of it while the masking locks it", () => {
+    const onStraighten = vi.fn();
+    const onFindPaper = vi.fn();
+    const { rerender } = render(
+      <PhotoViewer
+        src="/foto.jpg"
+        rotation={0}
+        straighten={2.5}
+        onRotate={() => {}}
+        onStraighten={onStraighten}
+        onFindPaper={onFindPaper}
+      />,
+    );
+    const slider = screen.getByRole("slider", { name: /Räta upp/ });
+    expect(screen.getByText("2,5°")).toBeInTheDocument();
+    fireEvent.change(slider, { target: { value: "-4" } });
+    expect(onStraighten).toHaveBeenLastCalledWith(-4);
+    fireEvent.click(screen.getByRole("button", { name: "Nollställ" }));
+    expect(onStraighten).toHaveBeenLastCalledWith(0);
+    fireEvent.click(screen.getByRole("button", { name: "Hitta pappret" }));
+    expect(onFindPaper).toHaveBeenCalledTimes(1);
+    rerender(
+      <PhotoViewer
+        src="/foto.jpg"
+        rotation={0}
+        straighten={2.5}
+        onRotate={() => {}}
+        onStraighten={onStraighten}
+        straightenLocked
+      />,
+    );
+    expect(slider).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Nollställ" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Hitta pappret" })).toBeNull();
   });
 });

@@ -46,6 +46,25 @@ export function rotateRect(r: Rect, quarterTurns: number): Rect {
 export const turn = (rotation: number, quarterTurns: number) =>
   (((rotation + quarterTurns * 90) % 360) + 360) % 360;
 
+/**
+ * The size of a w × h image turned `angle` degrees clockwise: its bounding
+ * box, as the API turns the photo (frame F). A quarter turn swaps width and
+ * height.
+ */
+export function turnedSize(w: number, h: number, angle: number) {
+  const a = (angle * Math.PI) / 180;
+  const cos = Math.abs(Math.cos(a));
+  const sin = Math.abs(Math.sin(a));
+  return {
+    width: Math.round(w * cos + h * sin),
+    height: Math.round(w * sin + h * cos),
+  };
+}
+
+/** "4,5°", "−2,0°": the straighten as the handler reads it. */
+export const degrees = (value: number) =>
+  `${value.toLocaleString("sv-SE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}°`;
+
 const round4 = (v: number) => Math.round(v * 10000) / 10000;
 
 /** The API's form: at most 20, four decimals, and never past the edge after rounding. */

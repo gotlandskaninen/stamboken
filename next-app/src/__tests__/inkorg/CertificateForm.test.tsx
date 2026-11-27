@@ -60,6 +60,7 @@ const doc = (changes: Partial<InboxDocument> = {}): InboxDocument => ({
   doc_type: "intyg",
   cert_format: null,
   rotation: 0,
+  straighten: 0,
   mask_rects: null,
   copy_frame: null,
   frame_suggestion: null,

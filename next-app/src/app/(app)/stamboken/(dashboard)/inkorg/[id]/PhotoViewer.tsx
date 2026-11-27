@@ -3,7 +3,14 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useMode } from "@/lib/mode-context";
-import { enhancePencil, MIN_FRAME, moveRect, resizeRect } from "../image";
+import {
+  degrees,
+  enhancePencil,
+  MIN_FRAME,
+  moveRect,
+  resizeRect,
+  turnedSize,
+} from "../image";
 import type { InboxDocument, Rect } from "../lib";
 import styles from "../inkorg.module.css";
 
@@ -40,20 +47,34 @@ function boxLabel(i: number, { rects, frameAt }: MaskLayer) {
 }
 
 /**
- * The original, drawn on a canvas: turned by `rotation`, with zoom, pan,
- * contrast and "Förstärk blyerts". Only the rotation is saved (by the
+ * The original, drawn on a canvas: turned by `rotation` and `straighten`
+ * (frame F: the bounding box of the turned photo, white in the corners), with
+ * zoom, pan, contrast and "Förstärk blyerts". Only the turn is saved (by the
  * caller); the rest is for reading. With `mask`, the masking rectangles lie
  * on top in fractions of the turned image.
  */
 export function PhotoViewer({
   src,
   rotation,
+  straighten = 0,
   onRotate,
+  onStraighten,
+  straightenLocked = false,
+  onFindPaper,
+  busy = false,
   mask,
 }: {
   src: string;
   rotation: number;
+  straighten?: number;
   onRotate?: (quarterTurns: number) => void;
+  /** "Räta upp": the angle in degrees, -15 to 15. */
+  onStraighten?: (degrees: number) => void;
+  /** The angle cannot change (the masking step). */
+  straightenLocked?: boolean;
+  /** "Hitta pappret", for the item's handler. */
+  onFindPaper?: () => void;
+  busy?: boolean;
   mask?: MaskLayer;
 }) {
   const { t } = useTranslation();
@@ -100,11 +121,13 @@ export function PhotoViewer({
     );
     const w = Math.round(image.naturalWidth * scale);
     const h = Math.round(image.naturalHeight * scale);
-    const sideways = rotation % 180 !== 0;
-    canvas.width = sideways ? h : w;
-    canvas.height = sideways ? w : h;
+    const size = turnedSize(w, h, rotation + straighten);
+    canvas.width = size.width;
+    canvas.height = size.height;
+    ctx.fillStyle = "white";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.translate(canvas.width / 2, canvas.height / 2);
-    ctx.rotate((rotation * Math.PI) / 180);
+    ctx.rotate(((rotation + straighten) * Math.PI) / 180);
     ctx.drawImage(image, -w / 2, -h / 2, w, h);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     if (pencil) {
@@ -112,7 +135,7 @@ export function PhotoViewer({
       enhancePencil(pixels.data);
       ctx.putImageData(pixels, 0, 0);
     }
-  }, [image, rotation, pencil]);
+  }, [image, rotation, straighten, pencil]);
 
   // The wheel zooms a step at a time. A wheel past the last step (down at 100 %, up at 600 %),
   // a sideways swipe and a pinch (ctrlKey) are the page's. Our own listener: React's onWheel is passive.
@@ -319,6 +342,42 @@ export function PhotoViewer({
         >
           +
         </button>
+        {onStraighten && (
+          <>
+            <label>
+              Räta upp
+              <input
+                type="range"
+                min={-15}
+                max={15}
+                step={0.5}
+                value={straighten}
+                disabled={straightenLocked}
+                aria-valuetext={`${degrees(straighten)} medurs`}
+                onChange={(e) => onStraighten(Number(e.target.value))}
+              />
+              <output>{degrees(straighten)}</output>
+            </label>
+            <button
+              type="button"
+              className="sb-btn sb-btn-secondary sb-btn-sm"
+              disabled={straightenLocked || straighten === 0}
+              onClick={() => onStraighten(0)}
+            >
+              Nollställ
+            </button>
+          </>
+        )}
+        {onFindPaper && (
+          <button
+            type="button"
+            className="sb-btn sb-btn-secondary sb-btn-sm"
+            disabled={busy}
+            onClick={onFindPaper}
+          >
+            Hitta pappret
+          </button>
+        )}
         <label>
           Kontrast
           <input
@@ -427,6 +486,7 @@ export function CasePhotos({
           key={photo.id}
           src={`${apiBase}/v2/inkorg/${itemId}/dokument/${photo.id}/original`}
           rotation={photo.rotation}
+          straighten={photo.straighten}
         />
       )}
       <div className={styles.photoNav}>
