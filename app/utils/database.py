@@ -564,20 +564,27 @@ def account_end(value):
     return ACCOUNT_MASK + (digits[-2:] if len(digits) >= 5 else "")
 
 
+# Every dash-like character is the same boundary: hyphens, the figure, en and em dashes, the minus sign
+DASHES = "[\u2010-\u2015\u2212\ufe58\ufe63\uff0d]"
+
+
 def account_parts(text):
     """
     What tells two written accounts apart: (digits, letters, digits before the first dash or None). The dash marks
     where a clearing number ends, or a giro number's last part begins (123-4567 is a bankgiro, 123456-7 a plusgiro),
-    and letters such as BG or PG name the kind. Blanks, case and the marks . , do not count.
+    whichever dash it is written with, and letters such as BG or PG name the kind. Blanks, case and the marks . , do
+    not count.
 
     >>> account_parts(" BG 123-4567 ")
     ('1234567', 'bg', 3)
     >>> account_parts("8327-9, 123 456 789 12")
     ('8327912345678912', '', 4)
+    >>> account_parts("123\u20134567") == account_parts("123\u22124567") == account_parts("123-4567")
+    True
     >>> account_parts(None)
     ('', '', None)
     """
-    text = (text or "").casefold()
+    text = re.sub(DASHES, "-", (text or "").casefold())
     head, dash, _ = text.partition("-")
     letters = "".join(c for c in text if c.isalpha())
     return re.sub(r"\D", "", text), letters, len(re.sub(r"\D", "", head)) if dash else None

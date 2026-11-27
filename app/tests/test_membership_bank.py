@@ -111,10 +111,10 @@ class TestMigration58(IsolatedSchemaTest):
     def test_moves_one_account_per_membership_without_audit_copies(self):
         g1, g2, m3 = self.herds
         with db.DB_PROXY.atomic() as tx:
-            # G2 has the same account written otherwise; M3 (inactive) only a bank name; G4, without a membership,
-            # only blanks: tab, newline, no-break space
-            self.to_v57({g1: (f" {ACCOUNT} ", "Banken"), g2: ("8327-44715512", " banken\t"), m3: (None, " Bara bank "),
-                         self.orphan: ("\t\n", "\u00a0")})  # fmt: skip
+            # G2 has the same account written otherwise (an en dash for the hyphen); M3 (inactive) only a bank name;
+            # G4, without a membership, only blanks: tab, newline, no-break space
+            self.to_v57({g1: (f" {ACCOUNT} ", "Banken"), g2: ("8327\u201344715512", " banken\t"),
+                         m3: (None, " Bara bank "), self.orphan: ("\t\n", "\u00a0")})  # fmt: skip
             audit_rows = self.herd_audit_rows()
             db.migrate_57_to_58()
             self.assertEqual(self.account(self.a), (None, ACCOUNT, "Banken"))  # the type is not guessed
@@ -162,6 +162,9 @@ class TestMigration58(IsolatedSchemaTest):
             "giro formats": {g1: ("123-4566", None), g2: ("123456-6", None)},
             "clearing boundary": {g1: ("8327-4471 5512", None), g2: ("83274471-5512", None)},
             "a dash on one": {g1: ("1234566", None), g2: ("123-4566", None)},
+            # an en dash or a minus is the same boundary as a hyphen
+            "giro formats, en dash": {g1: ("123\u20134566", None), g2: ("123456\u20136", None)},
+            "giro formats, minus and hyphen": {g1: ("123\u22124566", None), g2: ("123456-6", None)},
             "no membership": {self.orphan: (OTHER, " Banken ")},
         }
         for case, accounts in cases.items():
