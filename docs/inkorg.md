@@ -305,8 +305,10 @@ för en post med `ref_type` `sale_proposal`, vars statusvy avgör förslaget, oc
 - `straighten`: grader medurs som fotot rätas upp med efter `rotation`, från −15 till 15 med en
   decimal; 0 för ett foto som inte rätats upp. Kopian, tolkningen och utsnittet till uppfödaren
   görs av fotot vridet `rotation` + `straighten` grader: bilden blir den vridna bildens omskrivna
-  rektangel, med vitt i hörnen (ram F). Är `straighten` 0 är bilden exakt den kvartsvridna, bildpunkt
-  för bildpunkt. Rektanglar, ram och utsnitt är bråkdelar av ram F.
+  rektangel, med vitt i hörnen (ram F), räknad som Pillows `Image.rotate` med `expand` gör det.
+  Skulle ram F få fler än 40 miljoner bildpunkter (gränsen för en uppladdning, till exempel ett
+  långt smalt foto vridet 15 grader) förminskas fotot först. Är `straighten` 0 är bilden exakt den
+  kvartsvridna, bildpunkt för bildpunkt. Rektanglar, ram och utsnitt är bråkdelar av ram F.
 - `mask_rects`: rektanglarna som täcker säljaren och köparen, se
   [Maskning](#maskning-och-kopian-på-kaninen). `null` tills handläggaren har angett dem.
 - `copy_frame`: ramen som kopian beskärs till, en rektangel som i
@@ -667,7 +669,7 @@ Stamboken (numren tas då bort, se [Dokument](#dokument)).
 | `doc_type` | `intyg`, `bevis`, `arsblankett` eller `annat`. Blir dokumentet ett intyg läggs det i tolkningens kö (när tolkningen är på); andra typer tolkas inte (`interpretation_status: "av"`) |
 | `cert_format` | `null` eller ett av formaten under [Dokument](#dokument) i objekten |
 | `rotation` | 0, 90, 180 eller 270 (grader medurs) |
-| `straighten` | ett tal från −15 till 15 (grader medurs efter `rotation`), avrundat till en decimal. Inte `true`/`false`, NaN eller oändligt |
+| `straighten` | ett tal från −15 till 15 (grader medurs efter `rotation`), avrundat till en decimal. Inte `true`/`false`, NaN eller oändligt. Ändras `rotation` eller `straighten` medan dokumentet väntar på tolkningen räknas försöken om från 0: en läsning av den gamla vridningen kastas och var inget försök |
 | `mask_rects` | `null` eller en lista med högst 20 rektanglar, se [Maskning](#maskning-och-kopian-på-kaninen) |
 | `waiting_for` | `null`, `[]` eller en lista med ett eller två individnummer (till exempel `G1-2431`) som inte finns i Stamboken än |
 | `dismissed` | `true` avfärdar dokumentet (klart utan att något sparas, till exempel ett foto som inte är ett intyg); `false` ångrar det, om inget har sparats från dokumentet |
@@ -735,6 +737,8 @@ sedan 0,1, och för varje vinkel summeras kvadraten av skillnaden mellan intilli
 mörka bildpunkter. Den bästa vinkeln gäller bara när den slår vinkeln 0 med minst 50 %. Pappret:
 de ljusa bildpunkterna på det upprätade fotot, med skrift upp till 9 bildpunkter igenfylld; den
 längsta följden av rader och kolumner där andelen ljust är minst hälften av den största andelen.
+Hörnen som vridningen lägger till räknas varken som papper eller bord. Pappret måste visa en kant
+mot bordet på minst två sidor, annars är det ljusa området bordet och `paper` är `null`.
 
 **Vem:** handläggaren (posten i ett läge med handläggare).
 
@@ -975,7 +979,7 @@ Bekräftar vridningen, upprätningen, rektanglarna och ramen tillsammans och gö
 | Fält | |
 |---|---|
 | `rotation` | krävs: 0, 90, 180 eller 270 grader medurs |
-| `straighten` | valfritt: vinkeln som rektanglarna och ramen ritades i, från −15 till 15 som i `PATCH`. Utelämnad eller `null`: dokumentets |
+| `straighten` | vinkeln som rektanglarna och ramen ritades i, från −15 till 15 som i `PATCH`. Krävs när dokumentets `straighten` inte är 0 (400 annars, innan någon kopia görs); utelämnad eller `null` är annars 0 |
 | `mask_rects` | krävs: rektanglarna i bråkdelar av bilden vriden `rotation` + `straighten` grader. Får inte vara `null` |
 | `copy_frame` | valfritt: ramen som kopian beskärs till, i bråkdelar av samma bild, minst 0,1 bred och hög. Utelämnad eller `null`: hela fotot |
 | `no_personal_data` | `true` krävs när `mask_rects` är en tom lista och `copy_frame` saknas eller täcker hela fotot (minst 99 %): intyget visar ingen säljare eller köpare |
@@ -1005,7 +1009,7 @@ Varje anrop loggas som händelsen `kopia`, med `stammer` (`true` eller `false`).
 
 **Svar 200:** `{"item": <post>, "document": <dokument>}`.
 
-**Fel:** 400 när `rotation` eller `mask_rects` saknas eller är ogiltiga, när `straighten` är ogiltig, när `copy_frame` inte ligger
+**Fel:** 400 när `rotation` eller `mask_rects` saknas eller är ogiltiga, när `straighten` är ogiltig eller saknas på ett upprätat foto, när `copy_frame` inte ligger
 inom bilden eller är smalare eller lägre än 0,1, eller när `mask_rects` är tom utan `copy_frame` och
 utan `"no_personal_data": true`; 409 när dokumentet inte är ett sparat intyg, anroparen inte får göra
 kopian eller originalet är raderat.
@@ -1062,7 +1066,7 @@ allt i registret är oförändrat sedan dess.
 **Vem:** handläggaren, med posten i läget `tagen`.
 
 ```json
-{"text": "Står det G1-2112 eller G1-2113?", "document": 31, "crop": {"x": 0, "y": 0, "w": 0.5, "h": 0.25}}
+{"text": "Står det G1-2112 eller G1-2113?", "document": 31, "crop": {"x": 0, "y": 0, "w": 0.5, "h": 0.25}, "rotation": 90, "straighten": 0}
 ```
 
 | Fält | |
@@ -1070,6 +1074,7 @@ allt i registret är oförändrat sedan dess.
 | `text` | krävs, högst 2000 tecken |
 | `crop` | valfritt: utsnittet av fotot som frågan gäller, en rektangel som i [Maskning](#maskning-och-kopian-på-kaninen) (bråkdelar av bilden efter dokumentets sparade vridning och upprätning, som sparas med frågan) |
 | `document` | krävs med `crop`: dokumentet som utsnittet är ur |
+| `rotation`, `straighten` | krävs med `crop`: vridningen och vinkeln som utsnittet ritades i. Är de inte längre dokumentets svarar API:t 409 (`Fotot har vridits sedan utsnittet ritades.`) och ingenting skickas |
 
 Frågan sparas som händelsen `fraga`, och mejlet `inlasning.fraga` köas till besättningens
 innehavare enligt matrikeln (medlemskapets huvudmedlem). Ämnesraden slutar med "(ärende 12)".
