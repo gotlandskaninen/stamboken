@@ -62,7 +62,7 @@ SCHEMA = {
 PROMPT = (
     "Fotot visar ett svenskt genbanksintyg för en kanin, gotlandskanin eller mellerudskanin. Skriv av fälten "
     "precis som de står, handskrivna eller tryckta. Kaninen: genbanksnr (besättningsnumret, en bokstav och "
-    "siffror, till exempel G1274), år/kull/individ (fyra eller fem siffror), intygsnummer (uppe till höger), "
+    "siffror), år/kull/individ (fyra eller fem siffror), intygsnummer (uppe till höger), "
     "födelsedatum, kön (Hona eller Hane), namn, färg, antal födda i kullen och antal levande efter 6 veckor. "
     "Härstamningen: far och mor, farfar och farmor (fars föräldrar, till vänster), morfar och mormor (mors "
     "föräldrar, till höger), var och en med genbanksnr, år/kull/individ och namn. Är något överstruket eller "

@@ -1207,14 +1207,20 @@ så hur säkert ett fält är avgörs av kontrollerna mot registret, aldrig av m
    ger en genbank (adressen finns inte där, eller medlemskapet har besättningar i båda genbankerna
    eller ingen) har ingen genbank; då söks den genbank vars besättningar börjar med bokstaven som
    lästes före kaninens besättningsnummer (G eller M). Det gäller bara sökningen: postens genbank,
-   som avgör vem som får ta posten, sätts aldrig från det modellen läste.
+   som avgör vem som får ta posten, sätts aldrig från det modellen läste. Börjar individnumret på
+   intyget med en annan bokstav än genbankens nummer säger en kontroll det: antingen är bokstaven
+   fel läst eller posten i fel genbank, och det ser handläggaren på fotot.
 3. En förälder är bekräftad när numret finns och förälderns egna föräldrar i registret stämmer
    med intyget, minst en av dem och ingen emot. Fel kön eller ett annat namn i registret gör
    föräldern osäker. Kullsyskon har samma föräldrar och födelsedatum, och en felläst siffra landar
    på ett av dem: en förälder med ett kullsyskon av samma kön är bekräftad bara när namnet på
    intyget är dess eget. Far- och morföräldrar föreslås bara under en bekräftad förälder. Står något
    annat på intyget markeras hela grenen, eftersom det lika gärna kan vara föräldern som är fel
-   läst.
+   läst. Är en far- eller morförälder inläst med förälderns eget nummer (mormor som mor) har
+   modellen läst fel ruta: ingen kanin är sin egen förälder. Då blir grenen osäker i stället för
+   avviker. Den rutan jämförs inte med registret, inte heller en ruta med den andra förälderns
+   nummer (modellen läste föräldrarnas rad två gånger), och föräldern används inte för att hitta
+   kullen. Den andra rutan jämförs som vanligt.
 4. Ett nummer ett tecken fel ger registrets nummer som `härlett`, om bara en kanin passar.
 5. Kaninens eget nummer: årssiffrorna mot födelsedatumet och numret mot kullen (samma kontroll
    som pappersnumret vid registreringen), och intygsnumret ska vara ledigt.
@@ -1228,7 +1234,7 @@ Stamboken prövas den på samma sätt: föräldrarna mot registret, kön och nam
 har ett kullsyskon av samma kön. Ett annat födelsedatum än kullens gör den `avviker`, utan värde.
 Har den digitalt intyg och går allt igenom blir förslaget bara "finns redan med digitalt intyg". Ger tolkningen inte två
 bekräftade föräldrar hjälper registret: en förälder som hittats, eller uppladdarens besättning när
-ingen förälder gick att läsa, ger sina kullar. En enda kull född det lästa datumet fyller i mor och
+ingen förälder gick att läsa, ger sina kullar. En bekräftad förälder går före en som bara hittats. En enda kull född det lästa datumet fyller i mor och
 far som `härlett`; annars listas kullarna i `checks`.
 
 Ett foto från årsrapporten som tolkas efter att kaninen sparats jämförs med den kaninen, vilket
