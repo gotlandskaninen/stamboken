@@ -346,9 +346,9 @@ export function ReportForm({
   view: ReportView;
   actions: ReportActions;
   contactSlot?: React.ReactNode;
-  // The page behind the personal link (/rapport): no sign-in, so no mode cookie, profile or sign-in link.
+  // The page behind the personal link (/rapport) uses its code session.
   link?: true;
-  // Code login is on: the link page recommends signing in (set by the page, which asks /v2/login/status).
+  // The link page can recommend sign-in when /v2/rapport/mina returns login_tip for this report.
   loginTip?: true;
   stickyTop?: number;
   post?: number;
@@ -492,7 +492,7 @@ export function ReportForm({
   const visibleIds = React.useRef<number[]>([]);
   const boxRef = React.useRef<HTMLDivElement>(null);
   const stopped = React.useRef(false);
-  const saving = React.useRef(false);
+  const saving = React.useRef<Promise<boolean> | null>(null);
   const again = React.useRef(false);
   const resync = React.useRef(false);
   // the view a reload started from, and whether the local copy waits for the new one
@@ -637,22 +637,19 @@ export function ReportForm({
   // One save in flight at a time: a change made meanwhile is sent after it
   // has been answered, with the version it returned.
   const flush = async () => {
-    if (submitting.current) return;
-    autosavePending.current = false;
+    if (submitting.current) return false;
     if (saving.current) {
       again.current = true;
-      return;
+      return saving.current;
     }
-    saving.current = true;
-    let loopDone = () => {};
-    hold(key, new Promise<void>((resolve) => (loopDone = resolve)));
-    try {
+    const saveChanges = async () => {
       do {
+        autosavePending.current = false;
         again.current = false;
-        if (submitting.current) break;
+        if (submitting.current) return false;
         if (!link && readModeCookieClient() !== env) {
           stopped.current = true; // never save into the other environment
-          break;
+          return false;
         }
         const mine = versionRef.current;
         const sentAt = submissions.current;
@@ -681,7 +678,7 @@ export function ReportForm({
         // Skicka started while this save was on its way: its answer says nothing about the form any more.
         if (!autosaveAnswerKept(sentAt, submissions.current)) {
           setSaveState((s) => (s === "saving" ? "saved" : s));
-          break;
+          return false;
         }
         if (res.ok) {
           setSavedAt(fmtTime(res.data.updated_at));
@@ -708,21 +705,28 @@ export function ReportForm({
           setSaveState("conflict");
         } else if (p.status === 409 && ext.code === "rundan_stangd") {
           stopped.current = true;
+          autosavePending.current = true;
           setSaveState("closed");
         } else if (gone(p)) {
           stopped.current = true;
           router.replace("/rapport/ogiltig");
-        } else if (p.status === 401) setSaveState("loggedout");
-        else {
-          setSaveState("offline");
-          setTimeout(() => setRetry((n) => n + 1), 5000); // the page tries again
+        } else {
+          autosavePending.current = true;
+          if (p.status === 401) setSaveState("loggedout");
+          else {
+            setSaveState("offline");
+            setTimeout(() => setRetry((n) => n + 1), 5000); // the page tries again
+          }
         }
-        again.current = false;
+        return false;
       } while (again.current);
-    } finally {
-      saving.current = false;
-      loopDone();
-    }
+      return true;
+    };
+    saving.current = saveChanges().finally(() => {
+      saving.current = null;
+    });
+    hold(key, saving.current);
+    return saving.current;
   };
   const flushRef = React.useRef(flush);
   React.useEffect(() => {
@@ -754,6 +758,21 @@ export function ReportForm({
     );
     return () => clearTimeout(autosaveTimer.current);
   }, [version, retry, mode, canEdit, env, store, herd.herd, year, writer]);
+
+  const signIn = async (event: React.MouseEvent<HTMLAnchorElement>) => {
+    const anchor = event.currentTarget;
+    if (submitting.current || syncing || olderCopy) {
+      event.preventDefault();
+      return;
+    }
+    if (!saving.current && (!version || !autosavePending.current)) return;
+    event.preventDefault();
+    do {
+      clearTimeout(autosaveTimer.current);
+      if (stopped.current || !(await (saving.current ?? flush()))) return;
+    } while (anchor.isConnected && autosavePending.current);
+    if (anchor.isConnected) window.location.assign(anchor.href);
+  };
 
   const rabbits = view.rabbits;
   const lastId = rabbits.length ? rabbits[rabbits.length - 1].id : null;
@@ -1594,8 +1613,12 @@ export function ReportForm({
         <p className={styles.lead}>
           Logga gärna in i Stamboken, så kan du sälja direkt och ändra dina
           uppgifter.{" "}
-          {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- a full navigation, so the beforeunload guard runs */}
-          <a href="/auth/sign-in?return_to=/stamboken/arsrapport">Logga in</a>
+          <a
+            href={`/auth/sign-in?return_to=/stamboken/arsrapport/${herd.herd}/${year}`}
+            onClick={signIn}
+          >
+            Logga in
+          </a>
         </p>
       )}
       {link && (

@@ -36,7 +36,12 @@ export function CodeLoginForm({ returnTo }: { returnTo?: string }) {
         setError("");
         start(async () => {
           if (!sent) {
-            if (await requestLoginCode(String(fields.get("email")).trim()))
+            if (
+              await requestLoginCode(
+                String(fields.get("email")).trim(),
+                returnTo,
+              )
+            )
               setSent(true);
             else setError("unavailable");
           } else {

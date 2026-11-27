@@ -225,14 +225,71 @@ describe("ReportForm in link mode", () => {
     );
     expect(
       screen.getByRole("link", { name: "Logga in" }).getAttribute("href"),
-    ).toBe("/auth/sign-in?return_to=/stamboken/arsrapport");
+    ).toBe("/auth/sign-in?return_to=/stamboken/arsrapport/G9001/2026");
     // a full navigation, so the beforeunload guard runs: a client-side Link would call preventDefault
     expect(
       fireEvent.click(screen.getByRole("link", { name: "Logga in" })),
     ).toBe(true);
   });
 
-  it("asks before the tab is closed while a buyer is being typed in the sale dialog", () => {
+  it("waits for the last edit before following the sign-in tip", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    const first =
+      Promise.withResolvers<Awaited<ReturnType<ReportActions["saveDraft"]>>>();
+    const second =
+      Promise.withResolvers<Awaited<ReturnType<ReportActions["saveDraft"]>>>();
+    a.saveDraft
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    render(linkForm(a, true));
+    choose(1, "Finns kvar");
+    const anchor = screen.getByRole<HTMLAnchorElement>("link", {
+      name: "Logga in",
+    });
+    // jsdom implements same-document navigation. The destination itself is checked above.
+    anchor.href = "#signed-in";
+    expect(fireEvent.click(anchor)).toBe(false);
+    expect(a.saveDraft).toHaveBeenCalledTimes(1);
+    expect(location.hash).toBe("");
+    choose(2, "Finns kvar");
+    const saved = {
+      updated_at: "2026-12-31T10:00:00+00:00",
+      submission_key: null,
+    };
+    await act(async () => first.resolve(await ok(saved)));
+    expect(a.saveDraft).toHaveBeenCalledTimes(2);
+    expect(a.saveDraft.mock.calls[1][2].rabbits["2"].val).toBe("kvar");
+    expect(a.saveDraft.mock.calls[1][3]).toBe(saved.updated_at);
+    expect(location.hash).toBe("");
+    await act(async () => second.resolve(await ok(saved)));
+    expect(location.hash).toBe("#signed-in");
+    history.replaceState(null, "", location.pathname);
+  });
+
+  it("stays on the report when the in-flight save fails", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    const pending =
+      Promise.withResolvers<Awaited<ReturnType<ReportActions["saveDraft"]>>>();
+    a.saveDraft.mockReturnValueOnce(pending.promise);
+    render(linkForm(a, true));
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    const anchor = screen.getByRole<HTMLAnchorElement>("link", {
+      name: "Logga in",
+    });
+    anchor.href = "#signed-in";
+    expect(fireEvent.click(anchor)).toBe(false);
+    await act(async () => pending.resolve(await fail(502)));
+    expect(screen.getByText(/Inte sparat än, ingen anslutning/)).toBeTruthy();
+    expect(location.hash).toBe("");
+    expect(a.saveDraft).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a typed buyer until discard is confirmed", () => {
     const leave = () => {
       const e = new Event("beforeunload", { cancelable: true });
       window.dispatchEvent(e);
@@ -251,7 +308,27 @@ describe("ReportForm in link mode", () => {
       target: { value: "Ola Köpare" },
     });
     expect(leave()).toBe(true);
+    const dialog = screen.getByRole("dialog");
+    const backdrop = dialog.closest(".MuiDialog-container")!;
+    for (const dismiss of [
+      () => fireEvent.keyDown(dialog, { key: "Escape" }),
+      () => {
+        fireEvent.mouseDown(backdrop);
+        fireEvent.click(backdrop);
+      },
+      () => fireEvent.click(screen.getByRole("button", { name: "Stäng" })),
+    ]) {
+      dismiss();
+      expect(screen.getByRole("alertdialog")).toBeTruthy();
+      expect(
+        screen.queryByRole("textbox", { name: /Köparens namn/ }),
+      ).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Fortsätt" }));
+      expect(screen.getByDisplayValue("Ola Köpare")).toBeTruthy();
+    }
     fireEvent.click(screen.getByRole("button", { name: "Avbryt" }));
+    fireEvent.click(screen.getByText("Stäng"));
+    expect(screen.queryByRole("dialog")).toBeNull();
     expect(leave()).toBe(false);
   });
 

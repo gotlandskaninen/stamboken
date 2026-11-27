@@ -17,7 +17,16 @@ from peewee import fn
 import utils.settings as settings
 from utils.data_access import holds_role
 from utils.database import DB_PROXY, LoginCode, MailSender, Member, MemberPreviousAddress, Membership
-from utils.mail import Recipient, address_hash, forget_recipient, link_mac, mail_kind, one_time_code, recipient_kind
+from utils.mail import (
+    Recipient,
+    _normalize,
+    address_hash,
+    forget_recipient,
+    link_mac,
+    mail_kind,
+    one_time_code,
+    recipient_kind,
+)
 from utils.membership_lifecycle import Status
 
 logger = logging.getLogger("herdbook.login_code")
@@ -46,14 +55,8 @@ def enabled():
     return os.environ.get("KODINLOGGNING", "false").lower() == "true" and not settings.service.demo_instance
 
 
-def leads_to_prod(member):
-    """Whether signing in by code lands `member` in production: an existing account needs v2 prod access, a new
-    self-made one gets it only with SJALVSKAPAT_KONTO_PROD. The yearly report recommends login only then."""
-    if not enabled():
-        return False
-    if member.user is None:
-        return os.environ.get("SJALVSKAPAT_KONTO_PROD", "false").lower() == "true"
-    return bool(member.user.v2_promoted)
+def request_address(email):
+    return _normalize(email) if isinstance(email, str) and len(email) <= 255 else None
 
 
 def refuse_unsafe():

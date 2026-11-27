@@ -167,6 +167,16 @@ class RapportLinkTest(ArsrapportTest):
         rows = self.client.get("/api/v2/rapport/mina").get_json()
         self.assertEqual([row["herd"] for row in rows], ["G9002"])
 
+    @mock.patch.dict(os.environ, KODINLOGGNING="true", SJALVSKAPAT_KONTO_PROD="true")
+    def test_mina_hides_tip_only_for_the_signed_in_member(self):
+        db.Member.update(user=self.owner).where(db.Member.id == self.code.member_id).execute()
+        self.login("owner")
+        self.exchange()
+        _, _, other = self.new_code("G9002")
+        self.exchange(other)
+        rows = self.client.get("/api/v2/rapport/mina").get_json()
+        self.assertEqual({r["herd"]: r["login_tip"] for r in rows}, {"G9001": False, "G9002": True})
+
     def test_at_most_four_codes(self):
         codes = [self.code.id]
         self.exchange()

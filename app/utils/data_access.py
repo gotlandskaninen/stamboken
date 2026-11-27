@@ -547,15 +547,19 @@ class AddressInUseError(Exception):
         self.user_id = user_id
 
 
+def account_with_email(email, excluding=None):
+    accounts = User.select(User.id).where(fn.LOWER(fn.BTRIM(User.email)) == email.strip().lower())
+    if excluding is not None:
+        accounts = accounts.where(User.id != excluding)
+    return accounts.first()
+
+
 def _lock_available_account_email(email, excluding=None):
     """Hold the normalized address through the caller's insert or update."""
     from utils.login_code import lock_addresses
 
     lock_addresses([email])
-    accounts = User.select(User.id).where(fn.LOWER(fn.BTRIM(User.email)) == email.strip().lower())
-    if excluding is not None:
-        accounts = accounts.where(User.id != excluding)
-    taken = accounts.first()
+    taken = account_with_email(email, excluding)
     if taken:
         raise AddressInUseError(taken.id)
 

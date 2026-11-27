@@ -233,6 +233,41 @@ class InviteTest(ArsrapportTest):
         user.save()
         self.assertTrue(tip(SJALVSKAPAT_KONTO_PROD="false"))
 
+    @mock.patch.dict(os.environ, KODINLOGGNING="true", SJALVSKAPAT_KONTO_PROD="true")
+    def test_tip_checks_code_and_account_eligibility(self):
+        self.run_job()
+        row = self.mails()[0]
+        for account in (self.admin, self.manager, self.helper):
+            with self.subTest(account=account.id):
+                db.Member.update(user=account).where(db.Member.id == self.member.id).execute()
+                self.assertIsNone(self.build(row)["login_url"])
+        db.Member.update(user=self.viewer).where(db.Member.id == self.member.id).execute()
+        db.User.update(is_active=False).where(db.User.id == self.viewer.id).execute()
+        self.assertIsNone(self.build(row)["login_url"])
+        db.Member.update(user=None).where(db.Member.id == self.member.id).execute()
+        db.User.update(google_email=self.member.email).where(db.User.id == self.viewer.id).execute()
+        self.assertIsNone(self.build(row)["login_url"])
+        db.User.update(google_email=None).where(db.User.id == self.viewer.id).execute()
+        self.owner.add_role("owner", self.h.id)
+        self.assertIsNone(self.build(row)["login_url"])
+
+    @mock.patch.dict(os.environ, KODINLOGGNING="true", SJALVSKAPAT_KONTO_PROD="true")
+    def test_invitation_returns_to_each_report(self):
+        self.run_job()
+        for row in self.mails():
+            _, body = mail.render(row.kind, {k: v for k, v in self.build(row).items() if k != "attachments"})
+            self.assertIn(f"/auth/sign-in?return_to=/stamboken/arsrapport/{row.herd.herd}/2025", body)
+
+    @mock.patch.dict(os.environ, KODINLOGGNING="true", SJALVSKAPAT_KONTO_PROD="true")
+    def test_preview_uses_the_herd_members_eligibility(self):
+        invite.test_mail(self.round_, self.gotland.id, self.manager)
+        (row,) = self.mails()
+        _, body = mail.render(row.kind, {k: v for k, v in self.build(row).items() if k != "attachments"})
+        self.assertIn("Logga gärna in i Stamboken först", body)
+        self.assertIn("/auth/sign-in?return_to=/stamboken/arsrapport/G9001/2025", body)
+        self.owner.add_role("owner", self.h.id)
+        self.assertIsNone(self.build(row)["login_url"])
+
     def test_test_mail_goes_to_the_user_without_code(self):
         invite.test_mail(self.round_, self.gotland.id, self.owner)
         (row,) = self.mails()

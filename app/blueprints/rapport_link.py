@@ -10,7 +10,7 @@ import re
 from datetime import datetime, timedelta
 
 import utils.arsrapport as arsrapport
-import utils.login_code as login_code
+import utils.arsrapport_invite as arsrapport_invite
 import utils.report_code as report_code
 import utils.settings as settings
 from extensions import limiter
@@ -134,7 +134,7 @@ def mine():
                     "herd": herd.herd,
                     "herd_name": herd.herd_name,
                     "year": code.round.report_year,
-                    "login_tip": login_code.leads_to_prod(code.member),
+                    "login_tip": arsrapport_invite.login_tip(herd, code.member_id, session.get("user_id")),
                 }
             )
     if rows:

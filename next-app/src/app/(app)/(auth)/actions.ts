@@ -265,15 +265,17 @@ function responseCookie(response: Response, name: string) {
   return cookie?.split(";", 1)[0].slice(name.length + 1);
 }
 
-export async function requestLoginCode(email: string) {
+export async function requestLoginCode(email: string, returnTo?: string) {
   const result = await postCodeLogin("kod", { email });
   if (!result?.response.ok) return false;
   const value = responseCookie(result.response, "login_request");
   if (!value) return false;
-  (await cookies()).set("login_request", value, {
-    ...cookieOptions,
-    maxAge: 600,
-  });
+  const store = await cookies();
+  const options = { ...cookieOptions, maxAge: 600 };
+  store.set("login_request", value, options);
+  // The mail link opens a new tab in the browser that requested this code.
+  if (returnTo) store.set("login_return_to", safeReturnTo(returnTo), options);
+  else store.delete("login_return_to");
   return true;
 }
 
@@ -316,8 +318,10 @@ async function finishCodeLogin(
   )
     return { error: "unavailable" };
   const store = await cookies();
+  if (path === "lank") returnTo = store.get("login_return_to")?.value;
   store.set("session", session, cookieOptions);
   store.delete("login_request");
+  store.delete("login_return_to");
   const mode =
     data.pending === true
       ? initialMode(true, await headers())
