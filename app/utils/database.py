@@ -79,8 +79,9 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # a paper certificate's copy checked against the registry, inbox_document.saved_certificate and saved_number,
 # verified_at and verified_by (56) + a buyer's e-mail kept only for the notice, buyer_contact.email_notice_only (57) +
 # the support account on the membership, with its type (58) + why a report link's change was revoked,
-# member_change_request.revoked_reason (59).
-CURRENT_SCHEMA_VERSION = 59
+# member_change_request.revoked_reason (59) + the frame a paper certificate's copy is cropped to,
+# inbox_document.copy_frame (60).
+CURRENT_SCHEMA_VERSION = 60
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -2554,6 +2555,7 @@ class InboxDocument(BaseModel):
     cert_format = TextField(null=True)
     rotation = SmallIntegerField(default=0)
     mask_rects = BinaryJSONField(null=True, index=False)
+    copy_frame = BinaryJSONField(null=True, index=False)  # the part of the turned photo the copy keeps
     interpretation_status = TextField(default=_initial_interpretation)  # av, vantar, klar, misslyckad or for_litet
     attempts = SmallIntegerField(default=0)
     interpreter = TextField(null=True)
@@ -5292,6 +5294,15 @@ def migrate_57_to_58():
         ).execute()
 
 
+def migrate_59_to_60():
+    """A paper certificate's copy is cropped to a frame: the top of the certificate, without seller and buyer."""
+    with DATABASE.atomic():
+        DATABASE.execute_sql("ALTER TABLE inbox_document ADD COLUMN IF NOT EXISTS copy_frame JSONB")
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=60, comment="inbox_document.copy_frame", applied=datetime.now()
+        ).execute()
+
+
 def migrate_21_to_22():
     """Add litter_number to Breeding table and backfill from minted numbers."""
     with DATABASE.atomic():
@@ -5822,6 +5833,7 @@ MIGRATIONS = {
     (56, 57): migrate_56_to_57,  # buyer_contact.email_notice_only
     (57, 58): migrate_57_to_58,  # the support account on the membership
     (58, 59): migrate_58_to_59,  # member_change_request.revoked_reason
+    (59, 60): migrate_59_to_60,  # inbox_document.copy_frame
 }
 
 

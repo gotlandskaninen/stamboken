@@ -152,7 +152,8 @@ Allt annat nekas med 409. `ny` och `vantar_uppfodare` kan inte sättas med `…/
 3. Ett intyg: spara det intyget visar (`…/spara`), en ny kanin eller pappersintyget på en kanin
    som finns. Medan handläggaren skriver av pappret ställs det bredvid registret (`…/avstamning`). Visar intyget också en försäljning, registrera den nu (`…/overlat`): ett dokument som
    är klart går inte att spara eller sälja från.
-4. Bekräfta vridning och maskning (`…/maskning`). Kopian läggs på kaninen och dokumentet blir klart.
+4. Bekräfta vridning, ram och maskning (`…/maskning`). Kopian läggs på kaninen och dokumentet blir
+   klart.
 5. Ett försäljningsbevis: typen `bevis`, sedan `…/overlat`. Beviset blir klart med försäljningen.
 6. Ett foto som inte ska sparas: `dismissed: true`.
 7. När det sista dokumentet är klart eller avfärdat blir posten `klar`, och uppladdaren får en
@@ -275,7 +276,8 @@ för en post med `ref_type` `sale_proposal`, vars statusvy avgör förslaget, oc
   "cert_format": null,
   "rotation": 0,
   "mask_rects": null,
-  "mask_suggestion": null,
+  "copy_frame": null,
+  "frame_suggestion": null,
   "waiting_for": null,
   "interpretation_status": "av",
   "proposal": null,
@@ -301,8 +303,12 @@ för en post med `ref_type` `sale_proposal`, vars statusvy avgör förslaget, oc
 - `rotation`: 0, 90, 180 eller 270 grader medurs, så att intyget står rätt.
 - `mask_rects`: rektanglarna som täcker säljaren och köparen, se
   [Maskning](#maskning-och-kopian-på-kaninen). `null` tills handläggaren har angett dem.
-- `mask_suggestion`: förslaget när `cert_format` är `handskrivet` och `mask_rects` saknas: den
-  nedre tredjedelen, `[{"x": 0.0, "y": 0.6667, "w": 1.0, "h": 0.3333}]`. Annars `null`.
+- `copy_frame`: ramen som kopian beskärs till, en rektangel som i
+  [Maskning](#maskning-och-kopian-på-kaninen), eller `null` (hela fotot). Sätts bara med `…/maskning`.
+- `frame_suggestion`: ramen som maskningen börjar med när `cert_format` är `handskrivet` och varken
+  `copy_frame` eller `mask_rects` är satta: allt utom den nedre tredjedelen, där säljaren och
+  köparen skriver, `{"x": 0.0, "y": 0.0, "w": 1.0, "h": 0.6667}`. Annars `null`. Arbetsvyn börjar
+  med samma ram för ett foto som aldrig maskerats, oavsett format.
 - `waiting_for`: `null` eller en lista med de föräldranummer dokumentet väntar på.
 - `interpretation_status`: bildtolkningen av fotot, se [Tolkning](#tolkning). `av` (tolkningen är
   avstängd, eller dokumentet är inget intyg), `vantar` (i kö), `klar` (förslaget finns),
@@ -375,7 +381,7 @@ för en post med `ref_type` `sale_proposal`, vars statusvy avgör förslaget, oc
 | `lage` | `{"from": "tagen", "to": "ofullstandig", "note": "Pappersintyget saknas"}`; `note` bara när den gavs, `duplicate_of` vid `dubblett` |
 | `dokument` | `{"document": 31, "fields": ["mask_rects", "rotation"]}` |
 | `sparad` | `{"document": 31, "action": "ny_kanin" \| "pappersintyg", "individual": "G1-2511"}`, eller vid en försäljning `{"document": 31, "action": "overlatelse", "individual": "G1-2111", "herd": "G2", "missing_proof": true}`; `"action": "bevis"` när ett bevis kopplas till en försäljning som redan är registrerad |
-| `kopia` | `{"document": 31, "rects": 1, "rotation": 90, "stammer": true}`; varje anrop till `…/maskning`; `stammer` är `matches_registry` |
+| `kopia` | `{"document": 31, "rects": 1, "frame": true, "rotation": 90, "stammer": true}`; varje anrop till `…/maskning`; `frame` är om kopian beskars till en ram, `stammer` är `matches_registry` |
 | `original_visat` | `{"document": 31}` |
 | `foralder_inlagd` | `{"individual": "G1-2431"}`; en kanin som posten väntade på är inlagd |
 | `fraga` | `{"text": "Står det G1-2112?", "document": 31, "rotation": 0, "crop": {"x": 0, "y": 0, "w": 0.5, "h": 0.25}}`; de tre sista bara med utsnitt |
@@ -1004,31 +1010,42 @@ sin plats i historiken. Alla andra får 400.
 
 ## Maskning och kopian på kaninen
 
-Kopian på kaninen är originalet vridet `rotation` grader medurs, med svarta rektanglar över
-säljarens och köparens uppgifter. Den ska inte visa andra personuppgifter än uppfödarens.
+Kopian på kaninen är originalet vridet `rotation` grader medurs, med svarta rektanglar över det
+som ska döljas, och beskuret till ramen när det finns en. Den ska inte visa andra personuppgifter
+än uppfödarens.
 
-**Rektanglarna** anges i bråkdelar av bilden *efter* vridningen: `x` och `y` är det övre vänstra
-hörnet, `w` och `h` bredd och höjd, alla mellan 0 och 1, och rektangeln måste ligga inom bilden.
-`{"x": 0, "y": 0.5, "w": 1, "h": 0.5}` täcker den nedre halvan. Gränssnittet kan förhandsvisa
-kopian genom att rita rektanglarna över det vridna originalet.
+**Ramen** (`copy_frame`) är den del av fotot som kopian behåller. På det gröna handskrivna intyget
+är det överdelen, ned till säljaren och köparen, så att deras uppgifter hamnar utanför kopian. De
+svarta rektanglarna täcker det som ändå syns innanför ramen. Originalet och tolkningen av det
+ändras inte. En ram som täcker hela fotot (minst 99 %) lämnar inget utanför och räknas som ingen
+ram. I arbetsvyn tar bara ramens kant och hörn emot musen; inne i ramen flyttar ett drag fotot.
+
+**Rektanglarna** och ramen anges i bråkdelar av bilden *efter* vridningen: `x` och `y` är det övre
+vänstra hörnet, `w` och `h` bredd och höjd, alla mellan 0 och 1, och rektangeln måste ligga inom
+bilden. `{"x": 0, "y": 0.5, "w": 1, "h": 0.5}` täcker den nedre halvan. Kopian görs i den ordningen:
+originalet vrids, rektanglarna målas svarta, och sedan beskärs bilden till ramen. Gränssnittet
+förhandsvisar kopian genom att rita ramen och rektanglarna över det vridna originalet och dämpa
+fotot utanför ramen.
 
 ### `POST /api/v2/inkorg/{id}/dokument/{dok}/maskning`
 
-Bekräftar vridningen och maskningen tillsammans och gör kopian av just det paret.
+Bekräftar vridningen, rektanglarna och ramen tillsammans och gör kopian av just dem.
 
 ```json
-{"rotation": 90, "mask_rects": [{"x": 0, "y": 0.6667, "w": 1, "h": 0.3333}]}
+{"rotation": 90, "mask_rects": [], "copy_frame": {"x": 0, "y": 0, "w": 1, "h": 0.6667}}
 ```
 
 | Fält | |
 |---|---|
 | `rotation` | krävs: 0, 90, 180 eller 270 grader medurs |
 | `mask_rects` | krävs: rektanglarna i bråkdelar av bilden vriden `rotation` grader. Får inte vara `null` |
-| `no_personal_data` | `true` krävs när `mask_rects` är en tom lista: intyget visar ingen säljare eller köpare |
+| `copy_frame` | valfritt: ramen som kopian beskärs till, i bråkdelar av bilden vriden `rotation` grader, minst 0,1 bred och hög. Utelämnad eller `null`: hela fotot |
+| `no_personal_data` | `true` krävs när `mask_rects` är en tom lista och `copy_frame` saknas eller täcker hela fotot (minst 99 %): intyget visar ingen säljare eller köpare |
 | `matches_registry` | `true` när handläggaren har jämfört intyget med registret och de stämmer. Ger kaninen märkningen "Intyget kontrollerat" (se nedan). Handläggaren kryssar i det själv varje gång, också när kopian görs om. Gränssnittet visar "Förslag: stämmer" när tolkningen läste kaninens eget nummer och intygsnumret (båda `läst`) och ingen kontroll gick emot, men handläggaren avgör (Jonas 2026-11-26). Utelämnat eller `false`: ingen märkning. Kaninen måste ha kvar det intygsnummer och individnummer som fotot sparades med (`saved_certificate`, `saved_number`), annars 409: kontrollen gäller det intyg handläggaren jämförde |
 
-Båda värdena sparas på dokumentet i samma transaktion som kopian görs. Det som redan står på
-dokumentet (från `PATCH`) används inte: kopian visar exakt det paret som skickades. Likaså
+Vridningen, rektanglarna och ramen sparas på dokumentet i samma transaktion som kopian görs, också
+en ram som saknas: en kopia som görs om utan ram är hela fotot. Det som redan står på dokumentet
+(från `PATCH`) används inte: kopian visar exakt det som skickades. Likaså
 `matches_registry`: varje anrop sätter `verified_at` och den som bekräftade (`verified_by`) på nytt,
 eller tar bort dem. Görs kopian om utan `matches_registry` försvinner märkningen. Kaninen läses under
 sitt lås. En ny kopia sparas under ett nytt filnamn, och den gamla filen tas bort efter commit; går
@@ -1050,7 +1067,8 @@ Varje anrop loggas som händelsen `kopia`, med `stammer` (`true` eller `false`).
 
 **Svar 200:** `{"item": <post>, "document": <dokument>}`.
 
-**Fel:** 400 när `rotation` eller `mask_rects` saknas eller är ogiltiga, eller när `mask_rects` är tom
+**Fel:** 400 när `rotation` eller `mask_rects` saknas eller är ogiltiga, när `copy_frame` inte ligger
+inom bilden eller är smalare eller lägre än 0,1, eller när `mask_rects` är tom utan `copy_frame` och
 utan `"no_personal_data": true`; 409 när dokumentet inte är ett sparat intyg, anroparen inte får göra
 kopian eller originalet är raderat.
 

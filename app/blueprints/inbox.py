@@ -1025,6 +1025,7 @@ def confirm_mask(item_id, document_id):
                 body.get("mask_rects"),
                 body.get("no_personal_data"),
                 body.get("matches_registry"),
+                body.get("copy_frame"),
             )
         ]
         return jsonify({"item": inbox.items_json([item])[0], "document": inbox.documents_json([document])[0]})
