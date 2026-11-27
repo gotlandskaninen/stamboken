@@ -12,6 +12,7 @@ from datetime import date
 import utils.data_access as da
 import utils.database as db
 from peewee import IntegrityError
+from utils.herd_contact import link_herd
 from utils.matrikel import anonymize_person
 
 from tests.database_test import _USE_POSTGRES, IsolatedSchemaTest
@@ -108,6 +109,17 @@ class TestMigration58(IsolatedSchemaTest):
             self.assertEqual(snapshot(), self.bootstrapped)
             tx.rollback()
 
+    def test_boot_from_v57_without_audit_triggers(self):
+        with db.DB_PROXY.atomic() as tx:
+            self.to_v57({})
+            db.SchemaHistory.create(version=57, comment="Bootstrapped")
+            _sql("DROP FUNCTION audit_trigger_func() CASCADE")
+            _sql("DROP TABLE audit_log")
+            db.check_migrations()
+            self.assertEqual(snapshot(), self.bootstrapped)
+            self.assertEqual(db.SchemaHistory.get_by_id(58).comment, f"{db.SUPPORT_ACCOUNT_58}; 0 herds keep theirs")
+            tx.rollback()
+
     def test_moves_one_account_per_membership_without_audit_copies(self):
         g1, g2, m3 = self.herds
         with db.DB_PROXY.atomic() as tx:
@@ -165,6 +177,11 @@ class TestMigration58(IsolatedSchemaTest):
             # an en dash or a minus is the same boundary as a hyphen
             "giro formats, en dash": {g1: ("123\u20134566", None), g2: ("123456\u20136", None)},
             "giro formats, minus and hyphen": {g1: ("123\u22124566", None), g2: ("123456-6", None)},
+            "label dash": {g1: ("Konto – 123-4566", None), g2: ("Konto – 123456-6", None)},
+            "second numeric dash": {g1: ("12-3-4566", None), g2: ("12-3456-6", None)},
+            "soft hyphen": {g1: ("123\u00ad4566", None), g2: ("123456\u00ad6", None)},
+            "unclear separator": {g1: ("123/4566", None), g2: ("123456/6", None)},
+            "digits in free text": {g1: ("1 eller 234566", None), g2: ("123456 eller 6", None)},
             "no membership": {self.orphan: (OTHER, " Banken ")},
         }
         for case, accounts in cases.items():
@@ -217,6 +234,42 @@ class TestMigration58(IsolatedSchemaTest):
             self.assertEqual(snapshot(), self.bootstrapped)
             with self.assertRaises(IntegrityError), db.DB_PROXY.atomic():
                 db.Herd.update(bank_account_number="1234-5").where(db.Herd.id == self.orphan.id).execute()
+            tx.rollback()
+
+    def test_v57_audit_snapshots_follow_household_erasure(self):
+        herd = self.herds[0]
+        admin = db.User.get_by_id(self.admin.id)
+        gone, remaining = [
+            db.Member.create(first_name="Test", last_name="Medlem", membership=ms, role="huvudmedlem")
+            for ms in (self.a, self.b)
+        ]
+        anonymize_person(gone, admin)
+
+        with db.DB_PROXY.atomic() as tx:
+            self.to_v57({herd: (ACCOUNT, "Bank A")})
+            # A has only historical values. The two halves of this v57 row belong to different households.
+            _sql(
+                "UPDATE herd SET membership_id = %s, bank_account_number = %s, bank_name = 'Bank B' WHERE herd_id = %s",
+                (self.b.id, OTHER, herd.id),
+            )
+            row = (
+                db.AuditLog.select()
+                .where(db.AuditLog.table_name == "herd", db.AuditLog.record_id == str(herd.id))
+                .order_by(db.AuditLog.id.desc())
+                .get()
+            )
+            self.assertEqual(
+                (row.old_data["bank_account_number"], row.new_data["bank_account_number"]), (ACCOUNT, OTHER)
+            )
+            old, new = (
+                {k: v for k, v in side.items() if k not in db.HERD_BANK_FIELDS} for side in (row.old_data, row.new_data)
+            )
+            db.migrate_57_to_58()
+            migrated = db.AuditLog.get_by_id(row.id)
+            self.assertEqual((migrated.old_data, migrated.new_data), (old, row.new_data))
+            anonymize_person(remaining, admin)
+            erased = db.AuditLog.get_by_id(row.id)
+            self.assertEqual((erased.old_data, erased.new_data), (old, new))
             tx.rollback()
 
     def test_the_herd_columns_and_the_type_are_guarded(self):
@@ -444,7 +497,8 @@ class TestKeptOnHerd(SupportAccountTest):
             self.assertEqual(da.update_herd(form, manager.uuid, legacy=True), {"status": "updated"})
         self.assertEqual(self.kept(), {self.g7.id: OTHER, self.g8.id: "5555-12345"})
         # a new account goes to the membership, never to the herd; a herd without one has nowhere to put it
-        typed = {"id": self.g7.id, "bank_account_number": "7777-12345", "bank_account_revision": 0}
+        revision = self.read(manager, self.g7)["bank_account_revision"]
+        typed = {"id": self.g7.id, "bank_account_number": "7777-12345", "bank_account_revision": revision}
         self.assertEqual(da.update_herd(typed, manager.uuid),
                          {"status": "updated"})  # fmt: skip
         self.assertEqual(db.Membership.get_by_id(self.unclear.id).bank_account_number, "7777-12345")
@@ -555,8 +609,8 @@ class TestLegacyWriters(SupportAccountTest):
         self.assertEqual(self.audits(), [])  # no change, no log
 
     def test_new_account_goes_to_the_membership_and_is_logged_by_name(self):
-        self.assertEqual(self.save(self.main, bank_account_number="1234-567 890", bank_account_revision=0),
-                         {"status": "updated"})  # fmt: skip
+        form = {"bank_account_number": "1234-567 890", "bank_account_revision": self.revision()}
+        self.assertEqual(self.save(self.main, **form), {"status": "updated"})
         # the legacy form has no type, and the old bank goes with the old account
         self.assertEqual(self.stored(), (None, "1234-567 890", None))
         herd = self.herd()
@@ -585,6 +639,43 @@ class TestLegacyWriters(SupportAccountTest):
         again = {"bank_account_number": "pg 1234566", "bank_name": "Nya", "bank_account_revision": self.revision()}
         self.assertEqual(self.save(self.main, **again), {"status": "updated"})
         self.assertEqual(self.stored(), (None, "PG 123456-6", "Nya"))  # the same account written otherwise: the bank
+
+    def test_giro_marker_in_a_label_changes_destination(self):
+        old = "BG 1234566"
+        cases = (
+            ("Bankgiro nr. 1234566", ("bankgiro", old)),
+            ("PG nr 1234566", (None, "PG nr 1234566")),
+            ("Plusgiro nr. 1234566", (None, "Plusgiro nr. 1234566")),
+            ("Reserv 1234566", (None, "Reserv 1234566")),
+        )
+        for new, expected in cases:
+            with self.subTest(new):
+                db.Membership.update(bank_account_type="bankgiro", bank_account_number=old).where(
+                    db.Membership.id == self.ms.id
+                ).execute()
+                form = {**self.read(self.manager), "bank_account_number": new}
+                self.assertEqual(self.save(self.manager, **form), {"status": "updated"})
+                self.assertEqual(self.stored()[:2], expected)
+
+    def test_form_is_bound_to_the_membership_it_read(self):
+        linked = self.read(self.manager)["bank_account_revision"]
+        herd_id = self.herds[0].id
+        db.Herd.update(membership=None).where(db.Herd.id == herd_id).execute()
+        unlinked = self.read(self.manager)["bank_account_revision"]
+        target = db.Membership.create(member_number=903, bank_account_number=OTHER)
+        link_herd(herd_id, target.id)
+        for revision in (unlinked, linked):
+            with self.subTest(revision=revision):
+                self.assertEqual(
+                    self.save(self.manager, bank_account_number="7777-12345", bank_account_revision=revision), RELOAD
+                )
+                self.assertEqual(db.Membership.get_by_id(target.id).bank_account_number, OTHER)
+
+    def test_form_read_before_erasure_cannot_restore_the_account(self):
+        revision = self.read(self.manager)["bank_account_revision"]
+        anonymize_person(self.person, db.User.get_by_id(self.admin.id))
+        self.assertEqual(self.save(self.manager, bank_account_number=ACCOUNT, bank_account_revision=revision), RELOAD)
+        self.assertEqual(self.stored(), (None, None, None))
 
     def test_no_one_blanks_it_on_the_herd_page(self):
         """Everyone reads the mask there, so a blank is never what was shown: it could be a stale form's."""

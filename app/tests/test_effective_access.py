@@ -277,7 +277,8 @@ class TestEffectiveAccessConsumers(EffectiveAccessTest):
                 result = da.update_herd({"id": herd.id, "bank_account_number": value}, self.manager.uuid)
                 self.assertEqual(result["status"], "error")
                 self.assertEqual(stored(), "1234-5")
-        form = {"id": herd.id, "bank_account_number": "9876-54", "bank_account_revision": 0}  # as the herd page read
+        revision = da.get_herd(herd.herd, self.manager.uuid)["bank_account_revision"]
+        form = {"id": herd.id, "bank_account_number": "9876-54", "bank_account_revision": revision}
         result = da.update_herd(form, self.manager.uuid)
         self.assertEqual(result, {"status": "updated"})
         self.assertEqual(stored(), "9876-54")
