@@ -868,6 +868,11 @@ def anonymize_person(member, actor, deferred_originals=None, deferred_accounts=N
             Membership.update(**dict.fromkeys(HOUSEHOLD_PII_FIELDS), updated_at=now).where(
                 Membership.id == membership.id
             ).execute()
+            # and an account migration 58 left on its herds (no safe target), which the herd audit does not copy
+            Herd.update(bank_account_number=None, bank_name=None).where(
+                Herd.membership == membership.id,
+                Herd.bank_account_number.is_null(False) | Herd.bank_name.is_null(False),
+            ).execute()
             redact_household_from_audits(membership)
         application_ids = [
             row.id

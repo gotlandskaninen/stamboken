@@ -439,6 +439,23 @@ class TestKeptOnHerd(SupportAccountTest):
         self.assertEqual(refused["status"], "error")
         self.assertEqual(self.kept(), {self.g7.id: OTHER, self.g8.id: "5555-12345"})
 
+    def test_erasing_the_household_clears_its_herds_kept_accounts(self):
+        """Codex #278 r3: anonymising the last person clears the membership's account and every account its herds
+        kept; another household's herd keeps its own."""
+        g9 = db.Herd.create(genebank=self.genebanks[0], herd="G9", membership=self.unclear)
+        _sql("ALTER TABLE herd DISABLE TRIGGER herd_bank_guard")
+        try:
+            _sql("UPDATE herd SET bank_account_number = %s, bank_name = 'Annan' WHERE herd_id = %s", (ACCOUNT, g9.id))
+        finally:
+            _sql("ALTER TABLE herd ENABLE TRIGGER herd_bank_guard")
+        person = db.Member.create(first_name="Test", last_name="Sist", membership=self.unclear, role="huvudmedlem")
+        anonymize_person(person, db.User.get_by_id(self.admin.id))
+        self.assertEqual(self.kept(), {self.g8.id: "5555-12345"})
+        names = _sql("SELECT count(*) FROM herd WHERE bank_name IS NOT NULL AND membership_id = %s", (self.unclear.id,))
+        self.assertEqual(names.fetchone(), (0,))
+        copies = _sql("SELECT count(*) FROM audit_log WHERE (old_data::text || new_data::text) LIKE '%%8327%%'")
+        self.assertEqual(copies.fetchone(), (0,))
+
     def read(self, user, herd):
         data = da.get_herd(herd.herd, user.uuid)
         data.pop("individuals")
