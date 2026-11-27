@@ -257,6 +257,17 @@ class TestSaleReading(InterpretationTest):
         )
         self.assertEqual(self.doc(right).interpretation["forsaljning"], answers[1])
 
+    def test_a_phone_number_in_any_shape_is_dropped(self):
+        _, (document,) = self.uploaded()
+        self.sale = {
+            "kopare_namn": "Köpa Testsson",
+            "kopare_utdelningsadress": "Väg 1 0046 70 123 45 67",  # international, after the street
+            "kopare_ort": "Visby 070\u2010123\u00a045\u00a067",  # a Unicode hyphen and no-break spaces
+            "kopare_besattning": "070\u2212123 45 67",  # a minus sign
+        }
+        interpreter.interpret_next()
+        self.assertEqual(self.doc(document).interpretation["forsaljning"], {"kopare_namn": "Köpa Testsson"})
+
     def test_a_worker_dying_in_the_second_reading_keeps_the_first(self):
         _, (document,) = self.uploaded()
         self.sale = SystemExit("the worker stopped")

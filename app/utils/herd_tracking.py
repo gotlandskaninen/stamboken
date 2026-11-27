@@ -633,9 +633,25 @@ _URL = re.compile(r"(?i:[a-z][a-z0-9+.-]*://|www\.)|\b[\w-]+\.[a-z]{2,}\b")
 _LINK = re.compile(r"(?i:[a-z][a-z0-9+.-]*://|www\.)")
 
 
-def has_phone(text):
-    """A Swedish phone number somewhere in `text`."""
+# A phone number may be written with other dashes (U+2010 to U+2015, the minus sign) and spaces (no-break, figure,
+# narrow no-break) than _PHONE's, and with 00 for +.
+_PHONE_SEPARATORS = {
+    **dict.fromkeys([*range(0x2010, 0x2016), 0x2212], "-"),
+    **dict.fromkeys([0x00A0, 0x2007, 0x202F], " "),
+}
+_INTERNATIONAL = re.compile(r"(?<![\w-])00(?=46)")
+
+
+def _phone_in(text):
     return any(len(re.sub(r"\D", "", m.group(0))) >= _PHONE_MIN_DIGITS for m in _PHONE.finditer(text))
+
+
+def has_phone(text):
+    """
+    A Swedish phone number somewhere in `text`, also one written with those dashes, spaces or 00. The text as it
+    stands is checked first, so whatever was found before still is.
+    """
+    return _phone_in(text) or _phone_in(_INTERNATIONAL.sub("+", text.translate(_PHONE_SEPARATORS)))
 
 
 def reject_contact_details(text, *, links=False):
@@ -1496,7 +1512,7 @@ def buyer_contact_fields(buyer, sale_date, address_required=False, new_sale=Fals
         except HerdTrackingInvalid:
             raise HerdTrackingInvalid(message) from None
     address = fields["postal_address"] or ""
-    phone = any(len(re.sub(r"\D", "", m.group(0))) >= _PHONE_MIN_DIGITS for m in _PHONE.finditer(address))
+    phone = has_phone(address)
     if _LINK.search(address) or _EMAIL.search(address) or phone:  # no way round the yes; a postcode is no phone
         raise HerdTrackingInvalid("Postadress får inte innehålla en länk, en e-postadress eller ett telefonnummer.")
     consent, optin = buyer.get("contact_consent", False), buyer.get("membership_optin", False)
