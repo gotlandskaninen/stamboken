@@ -6,9 +6,12 @@ interpreter's answers are canned dicts in the shape of inbox_interpreter.SCHEMA.
 """
 
 from datetime import date
+from unittest import mock
 
 import utils.database as db
-from utils.inbox_proposal import build_proposal
+import utils.inbox_proposal as inbox_proposal
+from utils.herd_tracking import buyer_contact_fields
+from utils.inbox_proposal import build_proposal, sale_part
 
 from tests.database_test import DatabaseTest
 from tests.ht_helpers import ht_row, make_individual
@@ -154,6 +157,26 @@ class TestGenebank(ProposalTest):
         for key in ("mother", "father", "paper_number"):
             self.assertEqual(self.source(proposal, key), ("osäker", None), key)
 
+    def test_a_letter_that_is_not_the_genebanks_is_named(self):
+        # Which is wrong, the reading or the item's genebank, the handler sees on the photo.
+        proposal = self.propose(reading(), genebank=1, herd="M9005")
+        named = "Individnumret börjar med G på intyget, men genbankens nummer börjar med M."
+        self.assertEqual(proposal["checks"][0], {"ok": False, "text": named})
+        proposal = self.propose(reading(genbanksnr="M9001"))
+        self.assertIn(
+            "Individnumret börjar med M på intyget, men genbankens nummer börjar med G.", self.texts(proposal)
+        )
+        self.assertEqual(self.source(proposal, "paper_number")[0], "härlett")  # a letter not the genebank's
+        for herd in ("G9001", "9001", "g9001", "Nr 9001"):
+            with self.subTest(herd):
+                self.assertNotIn("börjar med", " ".join(self.texts(self.propose(reading(genbanksnr=herd)))))
+        unreadable = self.propose(reading(genbanksnr="M9001", ar_kull_individ="??"))  # the letter still speaks
+        self.assertIn(
+            "Individnumret börjar med M på intyget, men genbankens nummer börjar med G.", self.texts(unreadable)
+        )
+        struck = self.propose(reading(genbanksnr="M9001", overstruket=["genbanksnr"]))
+        self.assertNotIn("börjar med", " ".join(self.texts(struck)))
+
     def test_an_item_without_a_genebank_searches_the_one_its_letter_names(self):
         # A mail from an address not in the member register has no genebank: the letter read points to one.
         self.assertEqual(self.source(build_proposal(reading(), None), "father"), ("läst", "G9003-2311"))
@@ -188,6 +211,74 @@ class TestPedigree(ProposalTest):
         # A founder: the registry has no parents to compare with.
         proposal = self.propose(reading(far=ancestor("G9003", "2011"), farfar=ancestor(), farmor=ancestor()))
         self.assertEqual(self.source(proposal, "father"), ("osäker", None))
+
+    def test_a_grandparent_read_as_its_own_parent_is_a_misread(self):
+        # The model read the parents' boxes again for the mother's parents: no rabbit is its own parent, so the
+        # registry is not against the certificate. Morfar as the father is a real mating, and named nowhere.
+        proposal = self.propose(reading(morfar=ancestor("G9003", "2311"), mormor=ancestor("G9001", "2211")))
+        for key in ("mother", "morfar", "mormor"):
+            self.assertEqual(self.source(proposal, key), ("osäker", None), key)
+            self.assertNotIn("registry", proposal["fields"][key], key)
+        self.assertIn(
+            "Mor: mormor är inläst med mors eget nummer, så tolkningen har troligen tagit fel ruta.",
+            self.texts(proposal, False),
+        )
+        self.assertNotIn("far- och morföräldrarna på intyget", " ".join(self.texts(proposal)))
+        self.assertEqual(self.source(proposal, "father"), ("läst", "G9003-2311"))  # the other branch stands
+        # Her litter with the confirmed father, born the date read, is listed; she is not taken from it.
+        self.litter("G9001", "G9001-2211", "G9003-2311", date(2025, 5, 10), [], size=5)
+        proposal = self.propose(reading(mormor=ancestor("G9001", "2211")))
+        self.assertEqual(self.source(proposal, "mother"), ("osäker", None))
+        self.assertIn(
+            "Kull i Stamboken: född 2025-05-10, mor G9001-2211, far G9003-2311, 5 födda.", self.texts(proposal)
+        )
+
+    def test_a_misread_box_near_the_parent_is_caught_and_the_other_box_still_counts(self):
+        # Mormor one character from the mother finds her too, and so do both boxes copying her.
+        for morfar, named in (
+            (ancestor("G9004", "2011"), "mormor är inläst"),
+            (ancestor("G9001", "2211"), "morfar och mormor är inlästa"),
+        ):
+            proposal = self.propose(reading(morfar=morfar, mormor=ancestor("G9011", "2211")))
+            self.assertIn(f"Mor: {named} med mors eget nummer", " ".join(self.texts(proposal, False)))
+        proposal = self.propose(reading(mormor=ancestor("G9011", "2211")))
+        self.assertEqual(self.source(proposal, "mother"), ("osäker", None))
+        self.assertIn("Mor: mormor är inläst med mors eget nummer", " ".join(self.texts(proposal, False)))
+        # Mormor repeats the mother and morfar the father, one herd digit off: the parents' row read again.
+        proposal = self.propose(reading(morfar=ancestor("G9013", "2311"), mormor=ancestor("G9001", "2211")))
+        self.assertEqual(self.source(proposal, "mother"), ("osäker", None))
+        self.assertNotIn("far- och morföräldrarna på intyget", " ".join(self.texts(proposal)))
+        # Farmor copies the father, but farfar, read on its own, is not G9002-2311's father: still a disagreement.
+        proposal = self.propose(reading(far=ancestor("G9002", "2311", "Max"), farmor=ancestor("G9002", "2311")))
+        self.assertEqual(self.source(proposal, "father"), ("avviker", None))
+        self.assertEqual(proposal["fields"]["farfar"]["registry"], "G9002-2011")
+        self.assertIn(
+            "Far: far- och morföräldrarna på intyget är inte registrets för G9002-2311.", self.texts(proposal, False)
+        )
+
+    def test_a_misread_box_does_not_lead_to_another_rabbits_litter(self):
+        # The mother misread as Maja, whose mormor box repeats her, and morfar left empty: nothing else speaks
+        # against Maja, but her one litter born that day must not fill in the parents.
+        self.litter("G9003", "G9003-2313", "G9002-2311", date(2025, 5, 10), [], size=5)
+        proposal = self.propose(
+            reading(mor=ancestor("G9003", "2313"), morfar=ancestor(), mormor=ancestor("G9003", "2313"), far=ancestor())
+        )
+        self.assertEqual(self.source(proposal, "mother"), ("osäker", None))
+        self.assertIsNone(self.source(proposal, "father"))
+        self.assertNotIn("Mor och far är hämtade ur Stamboken, ur kullen född 2025-05-10.", self.texts(proposal))
+
+    def test_a_parent_only_found_does_not_overrule_a_confirmed_one(self):
+        # Maja's (or G9002-2311's) litter born that day is not the confirmed parent's: it may not make that one avviker.
+        self.litter("G9003", "G9003-2313", "G9002-2311", date(2025, 5, 10), [], size=5)
+        for role, changes in (
+            ("father", {"mor": ancestor("G9003", "2313"), "morfar": ancestor(), "mormor": ancestor()}),
+            ("mother", {"far": ancestor("G9002", "2311"), "farfar": ancestor(), "farmor": ancestor()}),
+        ):
+            with self.subTest(confirmed=role):
+                proposal = self.propose(reading(**changes))
+                confirmed = {"father": "G9003-2311", "mother": "G9001-2211"}[role]
+                self.assertEqual(self.source(proposal, role), ("läst", confirmed))
+                self.assertNotIn("avviker", [f["source"] for f in proposal["fields"].values()])
 
     def test_grandparents_are_never_proposed_without_their_parent(self):
         proposal = self.propose(reading(far=ancestor()))
@@ -230,11 +321,14 @@ class TestNearestMatch(ProposalTest):
 
     def test_several_or_no_near_numbers_are_unsure(self):
         # G9000 is one digit from both G9002 and G9003; G7777 is a herd nobody has.
-        for herd, why in (("G9000", "liknar flera"), ("G7777", "finns inte")):
+        for herd, why in (
+            ("G9000", "finns inte i Stamboken, men flera kaniner har nästan samma nummer"),
+            ("G7777", "finns inte i Stamboken"),
+        ):
             with self.subTest(herd):
                 proposal = self.propose(reading(far=ancestor(herd, "2311")))
                 self.assertEqual(self.source(proposal, "father"), ("osäker", None))
-                self.assertTrue(any(why in text for text in self.texts(proposal, False)), proposal["checks"])
+                self.assertIn(f"Far: {herd} 2311 {why}.", self.texts(proposal, False))
         proposal = self.propose(reading(genbanksnr="G7777"))  # the rabbit's own herd
         self.assertEqual(self.source(proposal, "paper_number"), ("osäker", None))
 
@@ -366,6 +460,50 @@ class TestExistingRabbit(ProposalTest):
         self.assertEqual(self.source(proposal, "paper_certificate"), ("läst", "SYN-777"))
         self.assertIn("Föräldrarna på intyget stämmer med registret.", self.texts(proposal, True))
 
+    def test_every_row_read_is_set_beside_the_rabbit(self):
+        # What the handler compares in "Pappersintyg på en kanin som finns": each row read, against the rabbit.
+        db.Individual.update(color=self.colors[1]).where(db.Individual.number == "G9001-2411").execute()
+        reading_ = self.existing(
+            "2411",
+            namn="Elsa",
+            levande_efter_6_veckor="3",
+            farfar=ancestor("G9002", "2011"),
+            farmor=ancestor("G", "??"),
+        )
+        proposal = self.propose(reading_)
+        expected = {
+            "individual": ("läst", "G9001-2411"),  # as before
+            "paper_number": ("läst", "G9001-2411"),
+            "paper_certificate": ("läst", "SYN-777"),
+            "mother": ("läst", "G9001-2211"),
+            "father": ("läst", "G9003-2311"),
+            "birth_date": ("läst", "2024-04-20"),
+            "litter_size": ("avviker", None),  # 5 read, 2 registered
+            "litter_size6w": ("avviker", None),
+            "name": ("läst", "Elsa"),
+            "sex": ("läst", "female"),
+            "color": ("avviker", None),  # bleighe read, stgröhn registered
+            "morfar": ("läst", "G9004-2011"),
+            "mormor": ("läst", "G9004-2112"),
+            "farfar": ("avviker", None),  # G9002-2011 is not the father's father
+            "farmor": ("osäker", None),
+        }
+        self.assertEqual({key: self.source(proposal, key) for key in proposal["fields"]}, expected)
+        registry = {key: proposal["fields"][key].get("registry") for key in ("litter_size", "color", "farfar")}
+        self.assertEqual(registry, {"litter_size": 2, "color": "stgröhn", "farfar": "G9003-2011"})
+        self.assertEqual(proposal["fields"]["farmor"]["read"], "G ??")
+        self.assertEqual(self.texts(proposal, False), [])  # the checks are as they were
+        struck = self.propose({**reading_, "overstruket": ["namn", "mormor"]})
+        self.assertEqual(self.source(struck, "name"), ("osäker", None))
+        self.assertEqual(self.source(struck, "mormor"), ("osäker", None))
+
+    def test_a_report_photo_sets_its_fields_once(self):
+        # _registered sets every field itself: the checks it takes from _existing compare nothing more.
+        with mock.patch.object(inbox_proposal, "_beside", wraps=inbox_proposal._beside) as beside:
+            reading_ = self.existing("2411", namn="Elsa")
+            build_proposal(reading_, self.genebanks[0].id, registered=self.r["G9001-2411"])
+        self.assertEqual(beside.call_count, 1)
+
     def test_a_digital_rabbit_that_does_not_fit_gets_the_checks(self):
         proposal = self.propose(self.existing("2412", kon="Hona"))
         self.assertEqual(self.source(proposal, "individual"), ("osäker", None))
@@ -426,3 +564,79 @@ class TestRegistryOnly(ProposalTest):
         for raw in (None, [], {"far": "G9003-2311", "overstruket": "far", "fodelsedatum": 250510}, {"overstruket": 3}):
             with self.subTest(raw):
                 self.assertIsInstance(self.propose(raw)["fields"], dict)
+
+
+class TestSale(ProposalTest):
+    """Rule 5 b: the seller and buyer read at the bottom of the certificate, for the sale panel; nothing confident."""
+
+    def sale(self, own=None, **read):
+        """The sale part of a reading of the seller and buyer `read`, on the certificate `own` (default: reading())."""
+        raw = {**(own or reading()), "forsaljning": read}
+        return sale_part(raw, self.genebanks[0].id, self.propose(raw)["fields"])
+
+    def test_the_buyers_herd_is_filled_only_when_it_is_the_genebanks_as_read(self):
+        db.Herd.create(genebank=self.genebanks[0], herd="GX1")
+        for written, found in (
+            ("G9002", "G9002"),
+            ("9002", "G9002"),
+            ("g 9002", "G9002"),
+            ("M9005", None),  # the other genebank's
+            ("G9999", None),  # no such herd
+            ("GX1", None),  # outside the association is no herd to fill in
+            ("G9OO2", None),  # letters read as digits
+        ):
+            with self.subTest(written):
+                sale = self.sale(kopare_besattning=written, kopare_namn="Köpa Testsson")
+                if found:
+                    self.assertEqual((sale["buyer_herd"], sale["checks"]), ({"herd": found, "found": True}, []))
+                else:  # kept as read, and said
+                    self.assertEqual(sale["buyer_herd"], {"herd": written, "found": False})
+                    text = f"Köparens besättning {written} finns inte i genbanken."
+                    self.assertEqual(sale["checks"], [{"ok": False, "text": text}])
+
+    def test_a_buyer_outside_the_association_in_the_form_the_sale_takes(self):
+        sale = self.sale(
+            kopare_namn=" Köpa Testsson ",
+            kopare_utdelningsadress="Väg 1",
+            kopare_postnummer="623 55",
+            kopare_ort="Visby",
+            kopare_epost="kopa@example.com",
+            datum="1/6-25",
+        )
+        buyer = {
+            "name": "Köpa Testsson",
+            "postal_address": "Väg 1, 623 55",
+            "town": "Visby",
+            "email": "kopa@example.com",
+        }
+        self.assertEqual((sale["buyer"], sale["buyer_herd"], sale["date"]), (buyer, None, "2025-06-01"))
+        # 5 b: a sale until 2027 takes it as it is, with the e-mail for the notice only.
+        fields = buyer_contact_fields({**buyer, "notice_only": True}, date(2025, 6, 1), address_required=True)
+        self.assertEqual((fields["postal_address"], fields["email_notice_only"]), ("Väg 1, 623 55", True))
+
+    def test_a_date_that_does_not_parse_is_none(self):
+        for written in ("juni", "31/2-25", "2099-01-01", ""):
+            with self.subTest(written):
+                self.assertIsNone(self.sale(datum=written, kopare_namn="Köpa Testsson")["date"])
+
+    def test_the_seller_against_the_rabbits_herd_of_origin(self):
+        self.litter("G9001", "G9001-2211", "G9003-2311", date(2025, 5, 10), [], size=5)  # the number is läst
+        sale = self.sale(saljare_besattning="G9002")
+        self.assertEqual(sale["seller_herd"], "G9002")
+        text = "Säljarens besättning G9002 avviker från kaninens ursprungsbesättning G9001."
+        self.assertEqual(sale["checks"], [{"ok": False, "text": text}])
+        self.assertEqual(self.sale(saljare_besattning="9001")["checks"], [])
+
+    def test_the_seller_against_the_number_as_read_when_the_registry_does_not_confirm_it(self):
+        unread = reading(ar_kull_individ="")  # the rabbit's number cannot be looked up
+        text = "Säljarens besättning G9002 avviker från kaninens ursprungsbesättning G9001."
+        self.assertEqual(self.sale(unread, saljare_besattning="G9002")["checks"], [{"ok": False, "text": text}])
+        text = "Säljarens besättning G9001 kan inte bekräftas mot registret."
+        self.assertEqual(self.sale(unread, saljare_besattning="G9001")["checks"], [{"ok": None, "text": text}])
+
+    def test_no_sale_part_without_a_reading_of_it(self):
+        for read in (None, {}, {"kopare_namn": " "}, "Köpa Testsson"):
+            with self.subTest(read):
+                raw = reading() if read is None else reading(forsaljning=read)
+                self.assertIsNone(sale_part(raw, self.genebanks[0].id, {}))
+        self.assertNotIn("sale", self.propose(reading(forsaljning={"kopare_namn": "Köpa Testsson"})))

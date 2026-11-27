@@ -1300,8 +1300,26 @@ administratörer, genbanksansvariga och genbankshjälpare, och alla tre kan se h
    rullhjul zoomar du in och ut där pekaren står. Ange **Typ**
    (Intyg, Bevis, Årsblankett eller Annat) och **Format**.
 3. Ett intyg: välj **Ny kanin** eller **Pappersintyg på en kanin som finns** och skriv av
-   fälten. Under **Mor** och **Far** visar Stamboken registrets uppgifter, så att du kan
-   jämföra dem med fotot. Klicka **Spara och nästa**. Ett fel visas vid fältet det gäller.
+   pappret i tabellen. Varje rad har kolumnerna **Inläst** (det bildtolkningen läste),
+   **Pappret** (det du skriver av från fotot) och **Registret** (det Stamboken har), och en
+   status i ord: **stämmer**, **skiljer sig**, **osäker** (inget ifyllt, men tolkningen läste
+   något där) eller **inget att jämföra**. Statusen räknas om medan du skriver, och överst står
+   hur många rader som stämmer, är osäkra, skiljer sig eller är utan jämförelse. Under **Mor**
+   står **Morfar** och **Mormor**, under **Far** **Farfar** och **Farmor**. Dem skriver du av
+   bara för att jämföra; de sparas inte.
+   - **Ny kanin**: Registret visar mor och far med namn och deras föräldrar. Har mor och far en
+     kull född den dagen visas kullens antal, och vid **Individnummer på pappret** numret som
+     Stamboken ger kaninen. Vid **Intygsnummer** står "ledigt" när numret är ledigt.
+   - **Pappersintyg på en kanin som finns**: skriv kaninens nummer vid **Individnummer i
+     Stamboken**. Då visar Registret det Stamboken har om kaninen, rad för rad, så att du ser om
+     pappret stämmer med den. Bara de tre numren överst sparas.
+
+   Finns ett nummer du skrivit inte i genbanken står "Menar du:" med de kaniner vars nummer är
+   ett tecken ifrån; klicka en för att fylla i den. På en osäker rad fyller **Ta inläst** i det
+   tolkningen läste, med numret skrivet som i Stamboken (G1 2511 blir G1-2511). Under tabellen
+   står kontrollerna, till exempel "Mor och far finns i Stamboken", "Numret stämmer med kullen"
+   och "Intygsnumret är ledigt". De räknas också om medan du skriver.
+   Klicka **Spara och nästa**. Ett fel visas vid raden det gäller.
    Stämmer inte individnumret på pappret med Stambokens öppnas samma ruta som för
    uppfödaren, se [När pappret och Stamboken har olika individnummer](#när-pappret-och-stamboken-har-olika-individnummer).
    Stämmer pappret lämnar du ärendet till genbanksansvarig.
@@ -1309,17 +1327,16 @@ administratörer, genbanksansvariga och genbankshjälpare, och alla tre kan se h
    registret, ändras ingenting i registret: fotot kopplas till kaninen så att kopian kan läggas
    på den. Det får också en genbankshjälpare göra.
 
-   Är bildtolkningen på har Stamboken redan läst fotot, och formuläret är ifyllt med ett förslag.
-   Varje fält är märkt med varifrån värdet kommer: **läst** (läst på intyget; mor, far och
-   individnumret är dessutom kontrollerade mot registret, men namn, kön, färg och intygsnummer, och
-   för en ny kull födelsedatum och antal, är bara lästa), **härlett** (hämtat ur registret),
-   **avviker** (intyget och registret säger olika) eller **osäker**. Fält som avviker eller är osäkra är tomma, med det som lästes bredvid: skriv av
-   dem från fotot. Under fälten står kontrollerna, till exempel "Mor och far finns i Stamboken med
-   intyg", "Numret stämmer med kullen" och "Intygsnumret är ledigt". Jämför alltid förslaget med
-   fotot innan du sparar; inget sparas förrän du klickar **Spara och nästa**. Har du vridit fotot
-   rätt efteråt klickar du **Tolka igen**, så kommer ett nytt förslag några minuter senare.
-   Det du har skrivit skrivs aldrig över: har du redan börjat fylla i när förslaget kommer står
-   "Det finns ett förslag från tolkningen", och först när du klickar **Fyll i förslaget** läggs
+   Är bildtolkningen på har Stamboken redan läst fotot. Det som lästes och som registret
+   bekräftar är ifyllt. Rader där tolkningen var osäker, eller där det lästa avviker från
+   registret, är tomma med det som lästes under **Inläst**: skriv av dem från fotot. Jämför alltid
+   varje rad med fotot innan du sparar; inget sparas förrän du klickar **Spara och nästa**. Har du
+   vridit fotot rätt efteråt klickar du **Tolka igen**, så läses det igen några minuter senare.
+   Ett foto som är för litet (under 1000 bildpunkter på kortsidan) tolkas inte av sig självt:
+   be uppfödaren om ett större foto, skriv av fälten, eller klicka **Tolka igen** för att tolka det
+   ändå.
+   Det du har skrivit skrivs aldrig över: har du redan börjat fylla i när tolkningen blir klar
+   står "Bildtolkningen har läst fotot", och först när du klickar **Fyll i det inlästa** läggs
    det in.
 4. Dölj säljaren och köparen. En svart ruta täcker intygets nedre tredjedel. Dra rutan
    eller dess hörn, eller välj den och använd piltangenterna (Skift ändrar storleken,
@@ -1343,6 +1360,14 @@ administratörer, genbanksansvariga och genbankshjälpare, och alla tre kan se h
    Är köparen utanför föreningen fyller du i köparen med samma fält som när du säljer,
    se [Sälja eller flytta en kanin](#sälja-eller-flytta-en-kanin).
    Utan bevis märks ärendet "bevis saknas".
+   Har tolkningen läst köparen på fotot står det under **Från fotot**. Klicka **Fyll i från
+   fotot**, så läggs köparens besättning in om den finns i Stamboken, annars köparen utanför
+   föreningen med namn, postadress och ort, och datumet. Finns besättningen på fotot inte i
+   Stamboken fylls ingen köpare i: välj besättningen eller **Köparen är utanför föreningen**.
+   E-posten fylls bara i för en försäljning till och med 2027, så att föreningen kan mejla
+   köparen. Telefon och köparens kryss fylls aldrig i. Jämför med fotot innan du sparar.
+   Uppgifterna från fotot tas bort när försäljningen sparas, när dokumentet är klart, avfärdat
+   eller byter typ och när ärendet stängs.
 6. Ett bevis: välj typen **Bevis** och fyll i försäljningen. Beviset blir klart med den.
 7. Ett foto som inte ska sparas: **Avfärda**. **Hoppa över** går till nästa dokument utan
    att spara.
