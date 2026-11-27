@@ -279,8 +279,9 @@ test("3b. Tillbaka från profilen behåller det sparade", async ({
   let saved = saveOf();
   await kvar(rabbit(page, "M9006-2411")).check();
   await saved;
-  // "Dina uppgifter" are in the report now (step 5): the menu's profile link leaves it the same way,
-  // found by its address since the menu's language can differ
+  // "Dina uppgifter" are in the report now (step 5): the menu's profile link leaves it the same way.
+  // The tests run at phone width, where the menu sits behind its button.
+  await page.getByRole("button", { name: "Meny" }).click();
   await page.locator('a[href="/stamboken/profil"]:visible').first().click();
   await page.waitForURL("**/stamboken/profil");
   await page.goBack();
