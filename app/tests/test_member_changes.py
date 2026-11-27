@@ -759,3 +759,24 @@ class TestReviewRound1(DetailsTest):
         self.assertEqual(errors, [])
         self.assertEqual(db.Member.get_by_id(self.member.id).phone, "0709-000 002")
         self.assertEqual(db.YearlyHerdReport.get_by_id(report.id).status, "voided")
+
+    def test_the_shown_koharen_answer_and_its_version_are_one_read(self):  # review round 3
+        with db.DB_PROXY.atomic():
+            set_consent(self.membership(), ALL, source="profil", text_version=CONSENT_TEXT_VERSION)
+        self.link_owner()
+        self.login("owner")
+        get_by_id, done = db.Membership.get_by_id, []
+
+        def withdrawn_right_after(pk):  # the profile withdraws e-mail between the report's reads
+            row = get_by_id(pk)
+            if not done:
+                done.append(pk)
+                set_consent(get_by_id(pk), {**ALL, "email": False}, source="profil", text_version=CONSENT_TEXT_VERSION)
+            return row
+
+        with mock.patch.object(db.Membership, "get_by_id", side_effect=withdrawn_right_after):
+            shown = self.view()["member_details"]
+        self.assertTrue(done)
+        answer = {"ja": True, "utom": [*shown["publicering"]["utom"], "phone"], "text_version": CONSENT_TEXT_VERSION}
+        self.skicka(matrikel={"publicering": {**answer, "version": shown["publicering_version"]}})
+        self.assertFalse(self.membership().publication_consent["email"])  # never back in the export

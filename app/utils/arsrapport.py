@@ -1028,7 +1028,17 @@ def member_details(herd, report, access, user):
     if not _own_details(member, access, user):
         return {"mode": "none"}
     membership = Membership.get_by_id(member.membership_id)
-    consent = stored_consent(membership)
+    # The answer, its text and its version from one row, in one read (set_consent writes the answer and the row
+    # together): read apart, a withdrawal in between would pair the old answer with the new version, and Skicka
+    # would write the withdrawn permission back (review round 3).
+    latest = (
+        PublicationConsentChange.select()
+        .where(PublicationConsentChange.membership == membership.id)
+        .order_by(PublicationConsentChange.id.desc())
+        .first()
+    )
+    counts = latest is not None and latest.text_version in CONSENT_TEXT_VERSIONS and isinstance(latest.value, dict)
+    consent = latest.value if counts else {}  # as stored_consent: an answer to an older text is none
     return {
         "mode": "main",
         "contact": {
@@ -1041,7 +1051,7 @@ def member_details(herd, report, access, user):
         "publicering": {"ja": consent.get("name") is True, "utom": [k for k in UTOM if consent.get(k) is not True]}
         if consent
         else None,
-        "publicering_version": consent_version(membership.id),
+        "publicering_version": latest.id if latest is not None else None,
         "konto": shown_account(membership.bank_account_number),
     }
 
