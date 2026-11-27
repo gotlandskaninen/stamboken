@@ -847,6 +847,10 @@ test("12. Dina uppgifter: huvudmedlemmen ändrar i rapporten, andra ser vem som 
   await page.getByRole("button", { name: /^(Ändra|Fortsätt ändra)$/ }).click();
   await expect(page.getByText(/^E-post: /)).toBeVisible();
   await page.getByLabel("Telefon").fill("0709-555 666");
+  // test 9 sold M9007-2412 to M9001 on 31 December, so the report now asks about her too
+  const bought = rabbit(page, "M9007-2412");
+  await kvar(bought).check();
+  await weight(bought).fill("2,8");
   await page.getByRole("button", { name: SEND }).click();
   await submitted(page);
   await expect(page.getByText("Sparat i matrikeln: telefon.")).toBeVisible();
