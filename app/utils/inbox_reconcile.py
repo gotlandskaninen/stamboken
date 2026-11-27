@@ -105,11 +105,12 @@ def _parents(litter):
     return {role: getattr(litter, role) if litter is not None else None for role in ("mother", "father")}
 
 
-def reconcile(item, document, body):
+def reconcile(item, document, body, user):
     """
     The rows and checks for what was typed (`body`, untrusted: the form's fields as strings or numbers, `mode` and,
     for a paper certificate on a rabbit in Stamboken, `individual`): {"rows": {key: {registry, status, near?}},
-    "checks": [{ok, text}]}. The document's stored proposal says only which rows were read.
+    "checks": [{ok, text}]}. The document's stored proposal says only which rows were read. The number check names
+    what `user` would see in the 409 from …/spara.
     """
     body = body if isinstance(body, dict) else {}
     existing = body.get("mode") == "pappersintyg"
@@ -220,7 +221,7 @@ def reconcile(item, document, body):
             checks.append(_check(False, f"{_LABELS[gp]} har samma nummer som {_LABELS[role].lower()}."))
 
     if not existing:
-        rows["paper_number"] = _new_number(registry, typed, paper, fit, litter, birth, empty, checks)
+        rows["paper_number"] = _new_number(registry, typed, paper, fit, litter, birth, empty, checks, user)
     rows["paper_certificate"] = _certificate(registry, typed, rabbit, empty, checks)
 
     def casefold(a, b):
@@ -248,7 +249,7 @@ def reconcile(item, document, body):
     return {"rows": {key: rows[key] for key in order}, "checks": checks}
 
 
-def _new_number(registry, typed, paper, fit, litter, birth, empty, checks):
+def _new_number(registry, typed, paper, fit, litter, birth, empty, checks, user):
     """A new rabbit's number: the one Stamboken would give it in its litter (number_check, as for a reading)."""
     if not typed["paper_number"]:
         return empty("paper_number", None)
@@ -263,7 +264,7 @@ def _new_number(registry, typed, paper, fit, litter, birth, empty, checks):
         checks.append(_check(None, "Individnumret går inte att pröva mot kullen utan mor, far och födelsedatum."))
         return {"registry": None, "status": NOTHING}
     scratch = {}
-    _number_against_litter(registry, paper, False, typed["paper_number"], litter, fit, birth, scratch, checks)
+    _number_against_litter(registry, paper, False, typed["paper_number"], litter, fit, birth, scratch, checks, user)
     field = scratch["paper_number"]
     if field["source"] == DEVIATES:
         return {"registry": field.get("registry"), "status": DIFFERS}

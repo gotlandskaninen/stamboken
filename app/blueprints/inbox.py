@@ -624,19 +624,25 @@ def check_report_photo(item_id, document_id):
 
 
 # [Next.js] The reconciliation table: what the handler typed off the certificate beside the registry, recomputed as
-# she types. A read: no lock, nothing written.
+# she types. A read: no lock, nothing written. Only for those who work the item's genebank, since it searches its
+# registry; an item without one searches the genebank its letter names, so it takes a manager.
 @inbox_bp.route("/inkorg/<int:item_id>/dokument/<int:document_id>/avstamning", methods=["POST"])
 @json_login_required
 @_queue_worker
+@limiter.limit("600 per minute", key_func=lambda: str(current_user.id))  # a request as the handler pauses typing
 def reconcile_document(item_id, document_id):
+    user = User.get_by_id(current_user.id)
     item = InboxItem.get_or_none(InboxItem.id == item_id)
     try:
         if item is None:
             raise inbox.InboxError(404, "Posten finns inte.")
+        if item.genebank_id is None and not inbox.manages(user, None):
+            raise inbox.InboxError(403, "En post utan genbank stäms av av admin eller genbanksansvarig.")
+        inbox.require_worker_of(item, user)
         document = inbox.document_of(item, document_id)
     except inbox.InboxError as exc:
         return problem(exc.status, exc.title, exc.detail)
-    return jsonify(inbox_reconcile.reconcile(item, document, _body()))
+    return jsonify(inbox_reconcile.reconcile(item, document, _body(), user))
 
 
 # [Next.js] "Mina inskick": the user's own uploads, in plain words.

@@ -6,9 +6,12 @@ certificate or number.
 """
 
 from datetime import date
+from unittest import mock
 
 import utils.database as db
+import utils.inbox_proposal as inbox_proposal
 
+from tests.ht_helpers import ht_row, make_individual
 from tests.inbox_fixtures import InboxTest
 from tests.test_inbox_proposal import ProposalTest
 
@@ -169,6 +172,7 @@ class TestGenebankScope(ReconcileTest):
                 self.assertNotIn("M9005-2399", self.near(answer, "father"))
         # On a Mellerud item nothing of Gotland is found, nor offered.
         mellerud = self.item(herd=2)
+        self.login("mhjalp")
         answer = self.answer(item=mellerud)
         self.assertEqual(self.row(answer, "father"), ("skiljer", "finns inte"))
         self.assertEqual(self.near(answer, "father"), [])
@@ -288,6 +292,8 @@ class TestRequests(ReconcileTest):
     def test_only_the_queue_and_only_its_documents(self):
         self.login("owner")
         self.assertEqual(self.reconcile(**TYPED).status_code, 403)
+        self.login("mhjalp")  # in the queue, but a worker of the other genebank
+        self.assertEqual(self.reconcile(**TYPED).status_code, 403)
         self.login("hjalp")
         self.assertEqual(self.reconcile(**TYPED).status_code, 200)
         other = self.item()
@@ -328,3 +334,63 @@ class TestRequests(ReconcileTest):
                 resp = self.reconcile(body=body)
                 self.assertEqual(resp.status_code, 200, resp.get_data(as_text=True))
                 self.assertIn("paper_number", resp.get_json()["rows"])
+
+    def test_an_item_without_a_genebank_takes_a_manager(self):
+        db.InboxItem.update(genebank=None).where(db.InboxItem.id == self.queue_item.id).execute()
+        self.login("hjalp")
+        self.assertEqual(self.reconcile(**TYPED).status_code, 403)
+        self.login("man")
+        self.assertEqual(self.reconcile(**TYPED).status_code, 200)
+
+
+class TestNumberCheckNames(ReconcileTest):
+    """The number check names the rabbits and litters the user would see in the 409 from …/spara."""
+
+    def sibling_line(self, answer):
+        return next(text for text in self.texts(answer) if "i kullen saknar intyg" in text)
+
+    def test_a_helpers_line_names_what_her_409_would(self):
+        self.litter(
+            "G9001",
+            "G9001-2211",
+            "G9003-2311",
+            date(2025, 5, 10),
+            [("G9001-2512", "female", "Syster", {"certificate": None})],
+        )
+        self.login("hjalp")
+        with mock.patch.object(inbox_proposal, "number_check", wraps=inbox_proposal.number_check) as check:
+            answer = self.answer()
+        self.assertEqual(check.call_args.args[0].id, self.helper.id)  # the helper herself, as …/spara asks
+        self.assertEqual(self.sibling_line(answer), "G9001-2512 i kullen saknar intyg. Är det samma kanin?")
+        # Kept in a herd of the other genebank, the sibling is no longer hers to see: the line without its number.
+        ht_row(
+            "TRANSFER",
+            from_herd=self.h["G9001"],
+            herd=self.h["M9005"],
+            individual=self.r["G9001-2512"],
+            herd_tracking_date=date(2025, 8, 1),
+        )
+        self.assertEqual(self.sibling_line(self.answer()), "En kanin i kullen saknar intyg. Är det samma kanin?")
+
+    def test_another_genebanks_rabbits_are_not_named_to_a_manager_who_cannot_see_them(self):
+        # An item without a genebank, read in Mellerud by its letter, worked by Gotland's manager.
+        db.InboxItem.update(genebank=None).where(db.InboxItem.id == self.queue_item.id).execute()
+        self.r["M9005-2112"] = make_individual(self.h["M9005"], "M9005-2112", date(2021, 4, 1), sex="female")
+        self.litter(
+            "M9005",
+            "M9005-2112",
+            "M9005-2399",
+            date(2025, 5, 10),
+            [("M9005-2512", "female", "Syster", {"certificate": None})],
+        )
+        typed = {
+            "paper_number": "M9005-2511",
+            "mother": "M9005-2112",
+            "father": "M9005-2399",
+            "morfar": "",
+            "mormor": "",
+            "farfar": "",
+            "farmor": "",
+        }
+        answer = self.answer(**typed)
+        self.assertEqual(self.sibling_line(answer), "En kanin i kullen saknar intyg. Är det samma kanin?")

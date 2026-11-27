@@ -409,14 +409,18 @@ def _viewer(genebank_id):
     return SimpleNamespace(accessible_genebanks=[genebank_id], is_manager=None, is_admin=False)
 
 
-def _number_against_litter(registry, paper, swapped, own_text, litter, parents, birth, fields, checks):
-    """The rabbit's number against its litter: the paper-number conflict rule of registration (rule 5)."""
+def _number_against_litter(registry, paper, swapped, own_text, litter, parents, birth, fields, checks, viewer=None):
+    """
+    The rabbit's number against its litter: the paper-number conflict rule of registration (rule 5). The rabbits
+    and litters it names are those `viewer` may see (the genebank's by default).
+    """
     mother, father = parents["mother"], parents["father"]
+    viewer = viewer or _viewer(registry.genebank_id)
     if litter is not None:
-        check = number_check(_viewer(registry.genebank_id), paper, breeding=litter)
+        check = number_check(viewer, paper, breeding=litter)
     elif (herd := mother.current_herd) is not None:
         litter_facts = {"herd": herd, "birth_date": birth, "mother": mother, "father": father}
-        check = number_check(_viewer(registry.genebank_id), paper, **litter_facts)
+        check = number_check(viewer, paper, **litter_facts)
     else:
         check = {"status": "uncomputable", "conflicts": []}
     kinds = {conflict["kind"] for conflict in check["conflicts"]}
