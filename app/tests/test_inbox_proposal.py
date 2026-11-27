@@ -154,6 +154,22 @@ class TestGenebank(ProposalTest):
         for key in ("mother", "father", "paper_number"):
             self.assertEqual(self.source(proposal, key), ("osäker", None), key)
 
+    def test_a_letter_that_is_not_the_genebanks_is_named(self):
+        # Which is wrong, the reading or the item's genebank, the handler sees on the photo.
+        proposal = self.propose(reading(), genebank=1, herd="M9005")
+        named = "Individnumret börjar med G på intyget, men genbankens nummer börjar med M."
+        self.assertEqual(proposal["checks"][0], {"ok": False, "text": named})
+        proposal = self.propose(reading(genbanksnr="M9001"))
+        self.assertIn(
+            "Individnumret börjar med M på intyget, men genbankens nummer börjar med G.", self.texts(proposal)
+        )
+        self.assertEqual(self.source(proposal, "paper_number")[0], "härlett")  # a letter not the genebank's
+        for herd in ("G9001", "9001", "g9001"):
+            with self.subTest(herd):
+                self.assertNotIn("börjar med", " ".join(self.texts(self.propose(reading(genbanksnr=herd)))))
+        struck = self.propose(reading(genbanksnr="M9001", overstruket=["genbanksnr"]))
+        self.assertNotIn("börjar med", " ".join(self.texts(struck)))
+
     def test_an_item_without_a_genebank_searches_the_one_its_letter_names(self):
         # A mail from an address not in the member register has no genebank: the letter read points to one.
         self.assertEqual(self.source(build_proposal(reading(), None), "father"), ("läst", "G9003-2311"))
@@ -188,6 +204,25 @@ class TestPedigree(ProposalTest):
         # A founder: the registry has no parents to compare with.
         proposal = self.propose(reading(far=ancestor("G9003", "2011"), farfar=ancestor(), farmor=ancestor()))
         self.assertEqual(self.source(proposal, "father"), ("osäker", None))
+
+    def test_a_grandparent_read_as_its_own_parent_is_a_misread(self):
+        # The model read the parents' boxes again for the mother's parents: no rabbit is its own parent, so the
+        # registry is not against the certificate. Morfar as the father is a real mating, and named nowhere.
+        proposal = self.propose(reading(morfar=ancestor("G9003", "2311"), mormor=ancestor("G9001", "2211")))
+        for key in ("mother", "morfar", "mormor"):
+            self.assertEqual(self.source(proposal, key), ("osäker", None), key)
+            self.assertNotIn("registry", proposal["fields"][key], key)
+        self.assertIn(
+            "Mor: G9001 2211 är inläst också som mormor, så tolkningen har troligen tagit fel ruta.",
+            self.texts(proposal, False),
+        )
+        self.assertNotIn("far- och morföräldrarna på intyget", " ".join(self.texts(proposal)))
+        self.assertEqual(self.source(proposal, "father"), ("läst", "G9003-2311"))  # the other branch stands
+        # The mother read is still found: her litter with the father born the date read gives her as härlett.
+        self.litter("G9001", "G9001-2211", "G9003-2311", date(2025, 5, 10), [], size=5)
+        proposal = self.propose(reading(mormor=ancestor("G9001", "2211")))
+        self.assertEqual(self.source(proposal, "mother"), ("härlett", "G9001-2211"))
+        self.assertIn("Mor och far är hämtade ur Stamboken, ur kullen född 2025-05-10.", self.texts(proposal))
 
     def test_grandparents_are_never_proposed_without_their_parent(self):
         proposal = self.propose(reading(far=ancestor()))
@@ -230,7 +265,7 @@ class TestNearestMatch(ProposalTest):
 
     def test_several_or_no_near_numbers_are_unsure(self):
         # G9000 is one digit from both G9002 and G9003; G7777 is a herd nobody has.
-        for herd, why in (("G9000", "liknar flera"), ("G7777", "finns inte")):
+        for herd, why in (("G9000", "flera kaniner har nästan samma nummer"), ("G7777", "finns inte")):
             with self.subTest(herd):
                 proposal = self.propose(reading(far=ancestor(herd, "2311")))
                 self.assertEqual(self.source(proposal, "father"), ("osäker", None))

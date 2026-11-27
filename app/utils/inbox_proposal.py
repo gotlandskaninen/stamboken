@@ -47,7 +47,9 @@ _NUMBER_CONFLICTS = {
 SAME_LITTER_DAYS = 35  # a litter of the same parents this close is the certificate's, registered on another date
 MAX_LISTED = 5  # litters listed for the handler when nothing read picks one
 _DIGIT_FOR = str.maketrans({"S": "5", "s": "5", "O": "0", "o": "0", "l": "1", "I": "1", "|": "1"})
-_SEVERAL, _NONE = "liknar flera kaniner i Stamboken", "finns inte i Stamboken"  # why a number read was not found
+# Why a number read was not found.
+_SEVERAL = "finns inte i Stamboken, men flera kaniner har nästan samma nummer"
+_NONE = "finns inte i Stamboken"
 _SEXES = {"HONA": "female", "HANE": "male"}
 
 
@@ -268,11 +270,15 @@ def _branch(registry, raw, struck, role, fields, checks):
         checks.append(_check(False, f"{label}: {text} {how}." if parsed else f"{label}: {how}."))
         return None, None
     litter = Breeding.get_or_none(Breeding.id == rabbit.breeding_id)
-    grandparents = []
+    grandparents, itself = [], None
     for gp_key, theirs in ((father_key, litter and litter.father), (mother_key, litter and litter.mother)):
         gp_entry = _entry(raw, gp_key)
         parsed_gp = None if gp_key in struck else _parse_number(gp_entry, registry.letter)
+        if parsed_gp and parsed_gp[:2] == parsed[:2]:  # no rabbit is its own parent: the model read the wrong box
+            itself, parsed_gp = gp_key, None
         grandparents.append((gp_key, _number_text(gp_entry), theirs, registry.compare(parsed_gp, theirs)))
+    if itself:  # then neither grandparent read is the certificate's to compare with
+        grandparents = [(gp_key, gp_text, theirs, None) for gp_key, gp_text, theirs, _ in grandparents]
 
     if any(result == "differs" for *_, result in grandparents):
         # A number read as it stands is a known disagreement; one this code derived is merely unsure.
@@ -294,7 +300,9 @@ def _branch(registry, raw, struck, role, fields, checks):
     elif sibling := _littermate_doubt(rabbit, name):
         doubts.append(sibling)
     compared = any(result in (READ, DERIVED) for *_, result in grandparents)
-    if not compared:
+    if itself:
+        doubts.append(f"{text} är inläst också som {itself}, så tolkningen har troligen tagit fel ruta")
+    elif not compared:
         doubts.append(f"far- och morföräldrarna går inte att jämföra med registrets för {rabbit.number}")
     if doubts:
         fields[role] = _field(UNSURE, read=text)
@@ -599,6 +607,22 @@ def build_proposal(raw, genebank_id, herd_id=None, registered=None):
     struck = raw.get("overstruket")
     struck = {key for key in struck if isinstance(key, str)} if isinstance(struck, list) else set()
     registry = _Registry(genebank_id if genebank_id is not None else _genebank_of_letter(raw))
+    proposal = _proposal(registry, raw, struck, herd_id, registered)
+    letter = _text(raw.get("genbanksnr"))[:1].upper()
+    if letter.isalpha() and registry.letter and letter != registry.letter and "genbanksnr" not in struck:
+        # The reading or the item's genebank is wrong; which one, the handler sees on the photo.
+        proposal["checks"].insert(
+            0,
+            _check(
+                False,
+                f"Individnumret börjar med {letter} på intyget, men genbankens nummer börjar med {registry.letter}.",
+            ),
+        )
+    return proposal
+
+
+def _proposal(registry, raw, struck, herd_id, registered):
+    """build_proposal's fields and checks, but for the letter of the rabbit's own number."""
     if registered is not None:
         return _registered(registry, raw, struck, registered)
     fields, checks = {}, []
