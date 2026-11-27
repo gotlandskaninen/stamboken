@@ -816,6 +816,11 @@ def update_document(item, document, user, changes):
         changes = {**changes, "straighten": _straighten(changes["straighten"])}
     if "dismissed" in changes and not isinstance(changes["dismissed"], bool):
         raise InboxError(400, "dismissed är true eller false.")
+    # Turned while it waits: a reading of the old turn is dropped when it ends, and was no attempt.
+    if document.interpretation_status == "vantar" and any(
+        key in changes and changes[key] != getattr(document, key) for key in ("rotation", "straighten")
+    ):
+        document.attempts = 0
     if changes.get("doc_type", document.doc_type) != document.doc_type:  # only certificates are read, never a notice's
         read = changes["doc_type"] == "intyg" and not unread(item) and document.original_path is not None
         document.interpretation_status = interpreter.initial_status(document.quality) if read else "av"
@@ -928,6 +933,8 @@ def confirm_mask(
     if not may_publish(user, rabbit):
         raise InboxError(403, f"Du får inte lägga kopian på {rabbit.number}.")
     rotation, rects = _rotation(rotation), _rects(rects)
+    if straighten is None and document.straighten:  # the boxes may have been drawn at another angle
+        raise InboxError(400, "Ange straighten: vinkeln som rutorna och ramen ritades i.")
     straighten = document.straighten if straighten is None else _straighten(straighten)
     if rects is None:
         raise InboxError(400, "Ange mask_rects: rektanglarna som täcker säljaren och köparen.")

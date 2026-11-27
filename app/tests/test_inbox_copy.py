@@ -565,23 +565,27 @@ class TestStraighten(CopyTest):
                 self.assertEqual(self.patch(item, document, straighten=value).status_code, 400)
         self.assertEqual(db.InboxDocument.get_by_id(document.id).straighten, 0)
 
-    def test_masking_keeps_the_straighten_it_is_given_and_without_one_the_documents(self):
+    def test_masking_keeps_the_straighten_it_is_given_and_needs_one_on_a_straightened_photo(self):
         item, document = self.saved_document()
         self.assertEqual(self.patch(item, document, straighten=3).status_code, 200)
         with Image.open(self.stored(document)) as photo:
             three, two = photo.rotate(-3, expand=True).size, photo.rotate(2, expand=True).size
         rects = [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
-        self.assertEqual(self.mask(item, document, mask_rects=rects).status_code, 200)
+        # Boxes without the angle they were drawn at, on a photo straightened by 3°: no copy is made.
+        self.assertEqual(self.mask(item, document, mask_rects=rects).status_code, 400)
+        self.assertIsNone(db.InboxDocument.get_by_id(document.id).public_path)
+        self.assertEqual(self.mask(item, document, mask_rects=rects, straighten=3).status_code, 200)
         self.assertEqual((db.InboxDocument.get_by_id(document.id).straighten, self.copy(document).size), (3, three))
         self.login("man")
         self.assertEqual(self.mask(item, document, mask_rects=rects, straighten=-2).status_code, 200)
         self.assertEqual((db.InboxDocument.get_by_id(document.id).straighten, self.copy(document).size), (-2, two))
         self.assertEqual(self.mask(item, document, mask_rects=rects, straighten=0).status_code, 200)
+        self.assertEqual(self.mask(item, document, mask_rects=rects).status_code, 200)  # not straightened: none needed
         self.assertEqual(
             (db.InboxDocument.get_by_id(document.id).straighten, self.copy(document).size), (0, (1200, 1600))
         )
         events = self.reload(item).events.where(db.InboxEvent.kind == "kopia").order_by(db.InboxEvent.id)
-        self.assertEqual([e.detail["straighten"] for e in events], [3, -2, 0])
+        self.assertEqual([e.detail["straighten"] for e in events], [3, -2, 0, 0])
 
     def test_migration_59_adds_the_straighten_and_replays(self):
         self.addCleanup(db.check_migrations)
