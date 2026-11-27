@@ -617,6 +617,7 @@ export function ReportForm({
     frozen.current = null;
     frozenCompletion.current = null;
     setAnswerSaved(false);
+    setAnsweredHere(new Set()); // the state is the new view's: no focused answer stands in it any more
     keepMissingEdits.current = false;
     if (!keepLocal.current) {
       const copy = readLocal(store, view.herd.herd, view.year);
@@ -1278,12 +1279,14 @@ export function ReportForm({
   };
 
   const startChange = () => {
-    // A browser copy from before the server's draft moved on (an answer on the focused page) is offered, never
-    // saved over: the choice of #275's mount, "Osparade ändringar på den här enheten".
-    const local = localCopy ? localChoice(view, store, isPaper) : null;
-    if (!local?.adopt) {
-      // the refreshed draft and its version together; answers typed on the focused page and not sent go on top
-      const next = fromBody(view.draft?.data ?? view.report?.submitted ?? {});
+    // The browser copy as it is now, also one this or another tab wrote after the mount: a copy at the server's
+    // version is taken up and sent, an older one is offered (#275's "Osparade ändringar på den här enheten").
+    const local = localChoice(view, store, isPaper);
+    if (!(localCopy && local?.adopt)) {
+      // the refreshed draft (or the copy) and its version together; answers typed on the focused page go on top
+      const next =
+        local?.adopt ??
+        fromBody(view.draft?.data ?? view.report?.submitted ?? {});
       if (keepMissingEdits.current)
         for (const id of view.report?.not_stated ?? []) {
           const e = state.rabbits[id];
@@ -1295,7 +1298,7 @@ export function ReportForm({
       if (local?.older) {
         setOlderCopy(local.older);
         setVersion(0); // nothing is saved before the choice
-      }
+      } else if (local?.adopt) setVersion((n) => n + 1); // autosave sends it
     }
     keepMissingEdits.current = false;
     setLocalCopy(false);

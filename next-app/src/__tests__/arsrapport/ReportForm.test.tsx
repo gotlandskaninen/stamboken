@@ -353,6 +353,87 @@ describe("paper omissions", () => {
     expect(screen.getByDisplayValue("Bara i webbläsaren")).toBeTruthy();
   });
 
+  it("forgets focused answers when a conflict reloads the form", async () => {
+    const a = completionActions();
+    a.submitCompletion.mockImplementationOnce(() => fail(409));
+    const withDeath = (v: ReportView) => {
+      const drafted = fromBody(v.draft!.data);
+      drafted.rabbits[1] = {
+        ...drafted.rabbits[1],
+        val: "dod",
+        dod: { ar: 2026, manad: 6, dag: null, slaktad: false, anteckning: "" },
+      };
+      v.draft = { ...v.draft!, data: toDraft(drafted) };
+      return v;
+    };
+    const { rerender } = render(
+      <ReportForm env="demo" view={withDeath(missingView())} actions={a} />,
+    );
+    choose(1, "Finns kvar");
+    fireEvent.change(within(row(1)).getByLabelText("Vikt"), {
+      target: { value: "2,8" },
+    });
+    sendAnswer(); // the report changed meanwhile: 409, and the form reloads
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+    rerender(
+      <ReportForm
+        env="demo"
+        view={withDeath(missingView([1, 2, 3], 5))}
+        actions={a}
+      />,
+    );
+    expect(within(row(1)).queryByRole("radio", { checked: true })).toBeNull();
+    choose(2, "Finns kvar");
+    fireEvent.change(within(row(2)).getByLabelText("Vikt"), {
+      target: { value: "3,1" },
+    });
+    await act(async () => {
+      sendAnswer();
+    });
+    const [, , sent] = a.submitCompletion.mock.calls[1];
+    expect(Object.keys(sent.rabbits)).toEqual(["2"]); // never the draft's death for rabbit 1
+  });
+
+  it("offers another tab's browser copy on the way back to the full form", async () => {
+    vi.useFakeTimers();
+    const a = completionActions();
+    const v = missingView();
+    const { rerender } = render(<ReportForm env="demo" view={v} actions={a} />);
+    choose(1, "Finns kvar");
+    fireEvent.change(within(row(1)).getByLabelText("Vikt"), {
+      target: { value: "2,8" },
+    });
+    // another tab saved nothing yet: its only copy is in the browser, at the version before the answer
+    const theirs = JSON.stringify({
+      data: toDraft({
+        ...fromBody(v.draft!.data),
+        message: "Från den andra fliken",
+      }),
+      updated_at: v.draft!.updated_at,
+      revision: 4,
+      writer: "another tab",
+    });
+    window.localStorage.setItem("arsrapport:demo:G9001:2026", theirs);
+    await act(async () => {
+      sendAnswer();
+    });
+    const next = missingView([2, 3], 5);
+    next.draft!.updated_at = "2027-01-04T10:01:00+00:00";
+    rerender(<ReportForm env="demo" view={next} actions={a} />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Visa hela rapporten" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Fortsätt ändra" }));
+    expect(
+      screen.getByText("Osparade ändringar på den här enheten"),
+    ).toBeTruthy();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    expect(a.saveDraft).not.toHaveBeenCalled();
+    expect(local()).toBe(theirs);
+  });
+
   it("sends only the rows answered on the focused page, never a draft's", async () => {
     const a = completionActions();
     const v = missingView();
