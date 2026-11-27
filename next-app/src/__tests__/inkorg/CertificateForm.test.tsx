@@ -900,6 +900,32 @@ describe("CertificateForm's mandatory rows", () => {
     expect(rowOf("Färg")).not.toHaveAttribute("data-missing"); // compared only
   });
 
+  it("without the genebank's colour list a new rabbit is not saved, whatever is typed", () => {
+    render(
+      <CertificateForm
+        itemId={12}
+        doc={doc({ proposal: null, interpretation_status: "misslyckad" })}
+        colors={[]}
+        canSave
+        onSaved={() => undefined}
+        onSkip={() => undefined}
+      />,
+    );
+    for (const [label, value] of FILLED)
+      type(label, label === "Färg" ? "Svart" : value);
+    expect(spara()).toBeDisabled();
+    expect(left()).toBe("Kvar att fylla i: färg.");
+    expect(
+      screen.getByText(/Färglistan kunde inte hämtas/),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Pappersintyg på en kanin som finns",
+      }),
+    );
+    expect(screen.queryByText(/Färglistan kunde inte hämtas/)).toBeNull(); // not needed there
+  });
+
   it("someone who may not save gets no list of what is left", () => {
     render(
       <CertificateForm

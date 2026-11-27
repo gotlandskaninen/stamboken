@@ -66,8 +66,8 @@ function lacks(
   if (!REQUIRED[mode].includes(key)) return false;
   const value = values[key].trim();
   switch (key) {
-    case "color":
-      return !value || (colors.length > 0 && !colors.includes(value));
+    case "color": // no list (an item without a genebank, or the list not fetched): nothing to choose from
+      return !colors.includes(value);
     case "litter_size":
       return whole(value) < 1;
     case "litter_size6w":

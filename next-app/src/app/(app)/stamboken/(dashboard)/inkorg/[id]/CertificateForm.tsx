@@ -286,6 +286,12 @@ export function CertificateForm({
       }
       footer={
         <>
+          {canSave && mode === "ny_kanin" && colors.length === 0 && (
+            <p className={styles.error}>
+              Färglistan kunde inte hämtas, så en ny kanin kan inte sparas här
+              nu. Ladda om sidan, eller lämna ärendet till genbanksansvarig.
+            </p>
+          )}
           {canSave && lacking.length > 0 && (
             <p className={styles.muted} aria-live="polite">
               Kvar att fylla i:{" "}
