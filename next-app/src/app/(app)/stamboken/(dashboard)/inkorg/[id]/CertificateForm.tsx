@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { CoatChoice } from "@/components/herd/CoatChoice";
 import {
-  Field,
-  proposalHint,
   ProposalChecks,
   RegisterFromCertificate,
+  type Lookup,
 } from "@/components/register/RegisterFromCertificate";
-import { lookupRabbit, reconcileDocument, saveCertificate } from "../actions";
+import { reconcileDocument, saveCertificate } from "../actions";
 import {
   initialCertForm,
   initialGrandparents,
@@ -25,20 +25,16 @@ import { ReconcileTable } from "./ReconcileTable";
 import styles from "../inkorg.module.css";
 
 const RECOMPUTE_MS = 250; // after the last keystroke
-
-const GRANDPARENTS = [
-  ["farfar", "Farfar"],
-  ["farmor", "Farmor"],
-  ["morfar", "Morfar"],
-  ["mormor", "Mormor"],
-] as const;
+// The table looks the registry up through …/avstamning, not number by number.
+const noLookup: Lookup = async () => undefined;
 
 /**
  * What a certificate shows, saved with …/spara: a new rabbit, or the paper
- * certificate on a rabbit that exists. Every field starts empty or from the
- * image reading's proposal, coloured by where its value came from, with the
- * proposal's checks under the fields. Nothing is saved until Spara. The form
- * itself is RegisterFromCertificate, shared with the yearly report.
+ * certificate on a rabbit that exists. Each row starts empty or with what the
+ * image reading read and the registry confirmed, beside the registry in
+ * ReconcileTable, with the checks recomputed from what is typed. Nothing is
+ * saved until Spara. The saving is RegisterFromCertificate's, shared with the
+ * yearly report.
  */
 export function CertificateForm({
   itemId,
@@ -56,13 +52,11 @@ export function CertificateForm({
   onSkip: () => void;
 }) {
   // The reading may finish while the form is open. What the handler has typed
-  // is never replaced: an untouched form takes the proposal, a touched one is
-  // offered it ("Fyll i förslaget").
+  // is never replaced: an untouched form takes the reading, a touched one is
+  // offered it ("Fyll i det inlästa").
   const latest = shownProposal(doc);
   const [applied, setApplied] = useState(latest !== null);
   const [touched, setTouched] = useState(false);
-  const proposal = applied ? latest : null;
-  const proposed = proposal?.fields ?? {};
   const [mode, setModeState] = useState<SaveMode>(() =>
     initialSaveMode(latest),
   );
@@ -91,11 +85,9 @@ export function CertificateForm({
 
   // The table's rows and checks, recomputed by the API from what is typed. An
   // answer to an earlier request than the latest is dropped.
-  const table = mode === "pappersintyg";
   const [answer, setAnswer] = useState<Reconciliation | null>(null);
   const asked = useRef(0);
   useEffect(() => {
-    if (!table) return;
     const request = ++asked.current;
     const timer = setTimeout(async () => {
       const typed = { mode, ...form, ...grandparents };
@@ -103,7 +95,7 @@ export function CertificateForm({
       if (request === asked.current) setAnswer(result);
     }, RECOMPUTE_MS);
     return () => clearTimeout(timer);
-  }, [table, mode, form, grandparents, latest, itemId, doc.id]);
+  }, [mode, form, grandparents, latest, itemId, doc.id]);
 
   return (
     <RegisterFromCertificate
@@ -111,13 +103,8 @@ export function CertificateForm({
       form={form}
       onChange={set}
       rex={rex}
-      onRexChange={(value) => {
-        setTouched(true);
-        setRex(value);
-      }}
       colors={colors}
-      lookup={lookupRabbit}
-      proposed={proposed}
+      lookup={noLookup}
       canSave={canSave}
       submitLabel="Spara och nästa"
       conflictHint="Stämmer pappret? Lämna ärendet till genbanksansvarig."
@@ -131,7 +118,7 @@ export function CertificateForm({
           <h2 className={styles.cardTitle}>Det intyget visar</h2>
           {doc.interpretation_status === "vantar" && (
             <p className={styles.muted}>
-              Fotot tolkas. Förslaget kommer om några minuter; ladda om sidan
+              Fotot tolkas. Det inlästa kommer om några minuter; ladda om sidan
               då.
             </p>
           )}
@@ -150,20 +137,20 @@ export function CertificateForm({
           )}
           {latest && !applied && (
             <p className={styles.note}>
-              Det finns ett förslag från tolkningen.{" "}
+              Bildtolkningen har läst fotot.{" "}
               <button
                 type="button"
                 className="sb-btn sb-btn-secondary sb-btn-sm"
                 onClick={() => fill(latest)}
               >
-                Fyll i förslaget
+                Fyll i det inlästa
               </button>
             </p>
           )}
-          {proposal && (
+          {latest && applied && (
             <p className={styles.note}>
-              Förslag från bildtolkningen. Jämför varje fält med fotot innan du
-              sparar. Fält som avviker från registret eller är osäkra är tomma:
+              Jämför varje rad med fotot innan du sparar. Rader där tolkningen
+              var osäker eller där pappret avviker från registret är tomma:
               skriv av dem från fotot.
             </p>
           )}
@@ -191,39 +178,29 @@ export function CertificateForm({
           </div>
         </>
       }
-      afterFields={
-        table
-          ? answer && <ProposalChecks checks={answer.checks} />
-          : proposal && (
-              <>
-                {mode === "ny_kanin" &&
-                  GRANDPARENTS.some(([key]) => proposed[key]) && (
-                    <ul
-                      className={styles.checks}
-                      aria-label="Far- och morföräldrar"
-                    >
-                      {GRANDPARENTS.filter(([key]) => proposed[key]).map(
-                        ([key, label]) => (
-                          <li key={key}>
-                            <Field source={proposed[key]?.source}>
-                              {label}: {proposed[key]?.value ?? "–"}
-                              {proposalHint(proposed[key])}
-                            </Field>
-                          </li>
-                        ),
-                      )}
-                    </ul>
-                  )}
-                <ProposalChecks checks={proposal.checks} />
-                {proposal.checks.length > 0 && (
-                  <p className={styles.muted}>
-                    Kontrollerna gäller det som lästes från fotot och räknas
-                    inte om när du skriver. Spara prövar det du har skrivit.
-                  </p>
-                )}
-              </>
-            )
-      }
+      table={(errors) => (
+        <>
+          <ReconcileTable
+            mode={mode}
+            values={{ ...form, ...grandparents }}
+            onChange={set}
+            proposal={latest}
+            answer={answer}
+            colors={colors}
+            errors={errors}
+          />
+          {mode === "ny_kanin" && (
+            <CoatChoice
+              rex={rex}
+              onChange={(value) => {
+                setTouched(true);
+                setRex(value);
+              }}
+            />
+          )}
+        </>
+      )}
+      afterFields={answer && <ProposalChecks checks={answer.checks} />}
       buttons={
         <button
           type="button"
@@ -232,21 +209,6 @@ export function CertificateForm({
         >
           Hoppa över
         </button>
-      }
-      table={
-        table
-          ? (errors) => (
-              <ReconcileTable
-                mode={mode}
-                values={{ ...form, ...grandparents }}
-                onChange={set}
-                proposal={latest}
-                answer={answer}
-                colors={colors}
-                errors={errors}
-              />
-            )
-          : undefined
       }
       footer={
         <p className={styles.muted}>

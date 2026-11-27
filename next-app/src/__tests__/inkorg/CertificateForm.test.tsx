@@ -12,7 +12,6 @@ import {
 } from "@testing-library/react";
 
 vi.mock("@/app/(app)/stamboken/(dashboard)/inkorg/actions", () => ({
-  lookupRabbit: vi.fn(async () => null),
   reconcileDocument: vi.fn(async () => null),
   saveCertificate: vi.fn(),
 }));
@@ -90,17 +89,62 @@ const form = (d: InboxDocument, onSaved = () => undefined) => (
 );
 const show = (d: InboxDocument) => render(form(d));
 
-const input = (label: RegExp) => screen.getByLabelText(label);
-const sourceOf = (label: RegExp) =>
-  input(label).closest("[data-source]")?.getAttribute("data-source") ?? null;
+// A rabbit in Stamboken: its number read but unsure, the paper's number and
+// certificate read.
+const FOUND: Proposal = {
+  fields: {
+    individual: { value: null, source: "osäker", read: "G9001 2411" },
+    paper_number: { value: "G9001-2411", source: "läst", read: "G9001 2411" },
+    paper_certificate: { value: "SYN-777", source: "läst", read: "SYN 777" },
+  },
+  checks: [],
+};
+const ANSWER: Reconciliation = {
+  rows: {
+    individual: { registry: null, status: "osaker" },
+    paper_number: { registry: "G9001-2411", status: "stammer" },
+    paper_certificate: { registry: "SYN-778", status: "skiljer" },
+    name: { registry: "Elsa", status: "ingen" },
+    sex: { registry: "female", status: "ingen" },
+  },
+  checks: [
+    { ok: false, text: "G9001-2411 har redan intyg SYN-778 i Stamboken." },
+  ],
+};
+const ALL_ROWS = [
+  "Individnummer på pappret",
+  "Intygsnummer",
+  "Namn",
+  "Kön",
+  "Födelsedatum",
+  "Färg",
+  "Antal födda",
+  "Levande efter 6 veckor",
+  "Mor",
+  "Morfar",
+  "Mormor",
+  "Far",
+  "Farfar",
+  "Farmor",
+];
+
+const rowOf = (label: string) => screen.getByLabelText(label).closest("tr")!;
+const registryOf = (label: string) =>
+  rowOf(label).querySelector('[data-label="Registret"]');
+const type = (label: string, value: string) =>
+  fireEvent.change(screen.getByLabelText(label), { target: { value } });
+const wait = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
+
+const input = (label: string) => screen.getByLabelText(label);
 
 describe("CertificateForm with the image reading's proposal", () => {
   it("prefills läst and härlett, leaves avviker and osäker empty", () => {
     show(doc());
-    expect(input(/^Individnummer på pappret/)).toHaveValue("G9001-2511");
-    expect(input(/^Mor/)).toHaveValue("G9001-2211");
-    expect(input(/^Far(?!-)/)).toHaveValue("");
-    expect(input(/^Födelsedatum/)).toHaveValue("");
+    expect(input("Individnummer på pappret")).toHaveValue("G9001-2511");
+    expect(input("Mor")).toHaveValue("G9001-2211");
+    expect(input("Far")).toHaveValue("");
+    expect(input("Farfar")).toHaveValue("");
+    expect(input("Födelsedatum")).toHaveValue("");
   });
 
   it("says why a photo too small was not read, and that Tolka igen reads it", () => {
@@ -128,7 +172,7 @@ describe("CertificateForm with the image reading's proposal", () => {
 
   it("keeps the queue's compact look: Kön a menu, not the member's choices", () => {
     show(doc({ proposal: null, interpretation_status: "vantar" }));
-    const form = input(/^Namn/).closest("form")!;
+    const form = input("Namn").closest("form")!;
     expect(form.className).not.toContain("memberFields");
     expect(screen.getByRole("combobox", { name: /^Kön/ })).toBeTruthy();
     expect(screen.queryByRole("group", { name: "Kön" })).toBeNull();
@@ -140,52 +184,40 @@ describe("CertificateForm with the image reading's proposal", () => {
     expect(screen.queryByText(/lämna tomt/)).toBeNull();
   });
 
-  it("colours each field by its source and shows what was read", () => {
+  it("shows a new rabbit's rows with what was read, grandparents under their parent", () => {
     show(doc());
-    expect(sourceOf(/^Individnummer på pappret/)).toBe("läst");
-    expect(sourceOf(/^Mor/)).toBe("härlett");
-    expect(sourceOf(/^Far(?!-)/)).toBe("avviker");
-    expect(sourceOf(/^Födelsedatum/)).toBe("osäker");
-    expect(sourceOf(/^Intygsnummer/)).toBeNull();
-    expect(screen.getByText("Inläst: G9002 2311")).toBeInTheDocument();
-    expect(
-      screen.getByText("Inläst: G9003 2011 · Registret: G9002-2011"),
-    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("Individnummer i Stamboken")).toBeNull();
+    const labels = screen
+      .getAllByRole("row")
+      .slice(1)
+      .map((row) => row.querySelector("th")?.textContent);
+    expect(labels).toEqual(ALL_ROWS);
+    expect(rowOf("Far")).toHaveTextContent("G9002 2311"); // Inläst
+    expect(rowOf("Farfar")).toHaveTextContent("G9003 2011");
+    expect(rowOf("Farfar")).toHaveAttribute("data-grandparent", "true");
+    expect(rowOf("Födelsedatum")).toHaveTextContent("10/5");
+    expect(rowOf("Intygsnummer")).toHaveTextContent("–");
   });
 
-  it("does not caption a number read with how to write it", () => {
+  it("lists the checks of what is typed, with the note to compare with the photo", async () => {
+    vi.mocked(reconcileDocument).mockResolvedValue({
+      rows: {},
+      checks: [
+        { ok: true, text: "Intygsnumret är ledigt." },
+        { ok: false, text: "Far saknas." },
+      ],
+    });
     show(doc());
-    expect(screen.getByText("Som det står på intyget.")).toBeInTheDocument();
-    cleanup();
-    const unsure = {
-      ...PROPOSAL,
-      fields: {
-        ...PROPOSAL.fields,
-        paper_number: {
-          value: null,
-          source: "osäker" as const,
-          read: "G9001 2511",
-        },
-      },
-    };
-    show(doc({ proposal: unsure }));
-    expect(screen.getByText("Inläst: G9001 2511")).toBeInTheDocument();
-    expect(screen.queryByText(/Som det står på intyget/)).toBeNull();
-  });
-
-  it("lists the checks under the form, with the note to compare with the photo", () => {
-    show(doc());
-    const checks = screen.getByRole("list", { name: "Kontroller" });
+    const checks = await screen.findByRole("list", { name: "Kontroller" });
     const lines = within(checks).getAllByRole("listitem");
     expect(lines.map((li) => li.getAttribute("data-ok"))).toEqual([
       "true",
       "false",
     ]);
-    expect(checks).toHaveTextContent("Intygsnumret är ledigt.");
-    expect(screen.getByText(/Jämför varje fält med fotot/)).toBeInTheDocument();
-    expect(
-      screen.getByText(/räknas inte om när du skriver/),
-    ).toBeInTheDocument();
+    expect(checks).toHaveTextContent("Far saknas.");
+    expect(checks).not.toHaveTextContent("far- och morföräldrarna"); // the stored reading's
+    expect(screen.getByText(/Jämför varje rad med fotot/)).toBeInTheDocument();
+    expect(screen.queryByText(/räknas inte om/)).toBeNull();
   });
 
   it("opens on the paper certificate when the rabbit is in Stamboken", () => {
@@ -201,17 +233,17 @@ describe("CertificateForm with the image reading's proposal", () => {
         name: "Pappersintyg på en kanin som finns",
       }),
     ).toHaveAttribute("aria-pressed", "true");
-    expect(input(/^Individnummer i Stamboken/)).toHaveValue("G9001-2411");
+    expect(input("Individnummer i Stamboken")).toHaveValue("G9001-2411");
   });
 
   it("while the photo is read, or when it failed, the form is empty", () => {
     show(doc({ interpretation_status: "vantar", proposal: null }));
     expect(screen.getByText(/Fotot tolkas/)).toBeInTheDocument();
-    expect(input(/^Individnummer på pappret/)).toHaveValue("");
+    expect(input("Individnummer på pappret")).toHaveValue("");
     cleanup();
     show(doc({ interpretation_status: "misslyckad" }));
     expect(screen.getByText(/Fotot gick inte att tolka/)).toBeInTheDocument();
-    expect(input(/^Mor/)).toHaveValue("");
+    expect(input("Mor")).toHaveValue("");
     expect(screen.queryByRole("list", { name: "Kontroller" })).toBeNull();
   });
 });
@@ -220,37 +252,92 @@ describe("CertificateForm when the reading finishes while it is open", () => {
   const reading = () =>
     doc({ interpretation_status: "vantar", proposal: null });
 
-  it("never replaces what the handler typed: it offers the proposal", () => {
+  it("never replaces what the handler typed: it offers the reading", () => {
     const { rerender } = show(reading());
-    fireEvent.change(input(/^Individnummer på pappret/), {
-      target: { value: "G9001-9999" },
-    });
+    type("Individnummer på pappret", "G9001-9999");
     rerender(form(doc()));
-    expect(input(/^Individnummer på pappret/)).toHaveValue("G9001-9999");
+    expect(input("Individnummer på pappret")).toHaveValue("G9001-9999");
     expect(
-      screen.getByText(/Det finns ett förslag från tolkningen/),
+      screen.getByText(/Bildtolkningen har läst fotot/),
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Fyll i förslaget" }));
-    expect(input(/^Individnummer på pappret/)).toHaveValue("G9001-2511");
-    expect(screen.queryByText(/Det finns ett förslag/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Fyll i det inlästa" }));
+    expect(input("Individnummer på pappret")).toHaveValue("G9001-2511");
+    expect(screen.queryByText(/Bildtolkningen har läst fotot/)).toBeNull();
   });
 
-  it("fills an untouched form with the proposal at once", () => {
+  it("fills an untouched form with the reading at once", () => {
     const { rerender } = show(reading());
     rerender(form(doc()));
-    expect(input(/^Individnummer på pappret/)).toHaveValue("G9001-2511");
-    expect(screen.queryByText(/Det finns ett förslag/)).toBeNull();
+    expect(input("Individnummer på pappret")).toHaveValue("G9001-2511");
+    expect(screen.queryByText(/Bildtolkningen har läst fotot/)).toBeNull();
   });
 });
 
-// The form moved to RegisterFromCertificate (4b): the queue's save is unchanged.
+describe("CertificateForm's table for a new rabbit", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("sends the grandparents with the rest, and a near match fills the father", async () => {
+    vi.mocked(reconcileDocument).mockResolvedValue({
+      rows: {
+        father: {
+          registry: "finns inte",
+          status: "skiljer",
+          near: [
+            { number: "G9002-2311", name: "Max", sex: "male" },
+            { number: "G9003-2311", name: "Max", sex: "male" },
+          ],
+        },
+      },
+      checks: [],
+    });
+    show(doc());
+    type("Far", "G9000-2311");
+    type("Farmor", "G9003-2112");
+    await wait(250);
+    expect(reconcileDocument).toHaveBeenLastCalledWith(
+      12,
+      31,
+      expect.objectContaining({
+        mode: "ny_kanin",
+        father: "G9000-2311",
+        farmor: "G9003-2112",
+        mother: "G9001-2211",
+      }),
+    );
+    expect(within(rowOf("Far")).getByText("skiljer sig")).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", { name: "G9003-2311 Max (hane)" }),
+    );
+    expect(input("Far")).toHaveValue("G9003-2311");
+  });
+
+  it("Ta inläst fills a number normalised, and is not offered for a date it cannot take", async () => {
+    vi.mocked(reconcileDocument).mockResolvedValue({
+      rows: {
+        father: { registry: null, status: "osaker" },
+        birth_date: { registry: null, status: "osaker" },
+      },
+      checks: [],
+    });
+    show(doc());
+    await wait(250);
+    expect(within(rowOf("Födelsedatum")).getByText("osäker")).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: "Ta inläst: Födelsedatum" }),
+    ).toBeNull(); // "10/5" has no year
+    fireEvent.click(screen.getByRole("button", { name: "Ta inläst: Far" }));
+    expect(input("Far")).toHaveValue("G9002-2311");
+  });
+});
+
+// The form moved to RegisterFromCertificate (4b), and its fields to the table:
+// the queue's save is unchanged.
 describe("CertificateForm saves as before the move", () => {
   const fillRest = () => {
-    fireEvent.change(input(/^Intygsnummer/), { target: { value: "P-1" } });
-    fireEvent.change(input(/^Far(?!-)/), { target: { value: "g9002-2311" } });
-    fireEvent.change(input(/^Födelsedatum/), {
-      target: { value: "2025-05-10" },
-    });
+    type("Intygsnummer", "P-1");
+    type("Far", "g9002-2311");
+    type("Födelsedatum", "2025-05-10");
   };
   const NEW_RABBIT = {
     action: "ny_kanin",
@@ -271,9 +358,27 @@ describe("CertificateForm saves as before the move", () => {
     const onSaved = vi.fn();
     render(form(doc(), onSaved));
     fillRest();
+    type("Morfar", "G9004-2011"); // compared, never saved
     fireEvent.click(screen.getByRole("button", { name: "Spara och nästa" }));
     await waitFor(() => expect(onSaved).toHaveBeenCalledWith(saved));
     expect(saveCertificate).toHaveBeenCalledWith(12, 31, NEW_RABBIT);
+  });
+
+  it("keeps the Päls choice: Rex is sent", async () => {
+    vi.mocked(saveCertificate).mockResolvedValue({
+      ok: true,
+      data: { item: {} as never, document: doc() },
+    });
+    show(doc());
+    fillRest();
+    fireEvent.click(screen.getByRole("radio", { name: "Rex" }));
+    fireEvent.click(screen.getByRole("button", { name: "Spara och nästa" }));
+    await waitFor(() =>
+      expect(saveCertificate).toHaveBeenCalledWith(12, 31, {
+        ...NEW_RABBIT,
+        rex: true,
+      }),
+    );
   });
 
   it("a number conflict opens the dialog, and Pappret rättas sends Stamboken's number", async () => {
@@ -321,54 +426,11 @@ describe("CertificateForm saves as before the move", () => {
     expect(
       screen.getByText("Stämmer pappret? Lämna ärendet till genbanksansvarig."),
     ).toBeInTheDocument();
+    expect(rowOf("Individnummer på pappret")).toHaveTextContent(
+      "stämmer inte med Stambokens",
+    );
   });
 });
-
-// A rabbit in Stamboken: its number read but unsure, the paper's number and
-// certificate read.
-const FOUND: Proposal = {
-  fields: {
-    individual: { value: null, source: "osäker", read: "G9001 2411" },
-    paper_number: { value: "G9001-2411", source: "läst", read: "G9001 2411" },
-    paper_certificate: { value: "SYN-777", source: "läst", read: "SYN 777" },
-  },
-  checks: [],
-};
-const ANSWER: Reconciliation = {
-  rows: {
-    individual: { registry: null, status: "osaker" },
-    paper_number: { registry: "G9001-2411", status: "stammer" },
-    paper_certificate: { registry: "SYN-778", status: "skiljer" },
-    name: { registry: "Elsa", status: "ingen" },
-    sex: { registry: "female", status: "ingen" },
-  },
-  checks: [
-    { ok: false, text: "G9001-2411 har redan intyg SYN-778 i Stamboken." },
-  ],
-};
-const ALL_ROWS = [
-  "Individnummer på pappret",
-  "Intygsnummer",
-  "Namn",
-  "Kön",
-  "Födelsedatum",
-  "Färg",
-  "Antal födda",
-  "Levande efter 6 veckor",
-  "Mor",
-  "Morfar",
-  "Mormor",
-  "Far",
-  "Farfar",
-  "Farmor",
-];
-
-const rowOf = (label: string) => screen.getByLabelText(label).closest("tr")!;
-const registryOf = (label: string) =>
-  rowOf(label).querySelector('[data-label="Registret"]');
-const type = (label: string, value: string) =>
-  fireEvent.change(screen.getByLabelText(label), { target: { value } });
-const wait = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
 
 describe("CertificateForm's table for a rabbit in Stamboken", () => {
   beforeEach(() => vi.useFakeTimers());

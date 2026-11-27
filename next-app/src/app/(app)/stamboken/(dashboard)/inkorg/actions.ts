@@ -328,23 +328,3 @@ export async function rabbitSales(id: number, number: string) {
     "GET",
   );
 }
-
-/** The registry's record of a parent, to compare with the photo; null when not found. */
-export async function lookupRabbit(
-  number: string,
-): Promise<RegistryRabbit | null> {
-  if (
-    typeof number !== "string" ||
-    !/^[A-Za-z]+\d+-\d{4,}$/.test(number.trim())
-  )
-    return null;
-  try {
-    const r = await fetchApi<RegistryRabbit>(
-      `/v2/individual/${encodeURIComponent(number.trim().toUpperCase())}`,
-    );
-    return { name: r.name, color: r.color, mother: r.mother, father: r.father };
-  } catch (e) {
-    if (e instanceof ApiError) return null;
-    throw e;
-  }
-}
