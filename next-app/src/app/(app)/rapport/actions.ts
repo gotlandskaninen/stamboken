@@ -28,6 +28,7 @@ export type MineEntry = {
   herd: string;
   herd_name: string | null;
   year: number;
+  login_tip: boolean; // signing in by code would reach the production report
 };
 
 const HERD = /^[A-Z]{1,3}[0-9]{1,6}$/;

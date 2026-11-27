@@ -1,4 +1,6 @@
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { isTestHost } from "@/lib/mode";
 import { codeLoginEnabled } from "@/lib/code-login-enabled";
 import { LinkGate, type Missing } from "./LinkGate";
 import {
@@ -98,6 +100,9 @@ export default async function RapportPage({
       <ReportForm
         key={`${entry.herd}-${entry.year}`}
         link
+        loginTip={
+          (entry.login_tip && !isTestHost(await headers())) || undefined
+        }
         env="prod"
         accountOffer={accountOffer}
         view={report.data}
