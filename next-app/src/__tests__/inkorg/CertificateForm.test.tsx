@@ -514,6 +514,25 @@ describe("CertificateForm's table for a rabbit in Stamboken", () => {
     expect(registryOf("Namn")).toHaveTextContent("Elsa");
   });
 
+  it("keeps the last answer when a recompute fails, and says so quietly", async () => {
+    vi.mocked(reconcileDocument)
+      .mockResolvedValueOnce(ANSWER)
+      .mockResolvedValueOnce(null) // a 429 or a dropped connection
+      .mockResolvedValueOnce(ANSWER);
+    show(doc({ proposal: FOUND }));
+    await wait(250);
+    const failed = "Kontrollerna kunde inte räknas om just nu.";
+    expect(screen.queryByText(failed)).toBeNull();
+    type("Namn", "Elsa");
+    await wait(250);
+    expect(screen.getByText(failed)).toBeInTheDocument();
+    expect(within(rowOf("Intygsnummer")).getByText("skiljer sig")).toBeTruthy();
+    expect(screen.getByRole("list", { name: "Kontroller" })).toBeTruthy();
+    type("Namn", "Elsa B");
+    await wait(250);
+    expect(screen.queryByText(failed)).toBeNull();
+  });
+
   it("offers the numbers one character off, and one fills the field", async () => {
     vi.mocked(reconcileDocument).mockResolvedValue({
       rows: {

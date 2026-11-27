@@ -84,15 +84,19 @@ export function CertificateForm({
   if (latest && !applied && !touched) fill(latest);
 
   // The table's rows and checks, recomputed by the API from what is typed. An
-  // answer to an earlier request than the latest is dropped.
+  // answer to an earlier request than the latest is dropped; a failed one
+  // keeps the last answer and says so.
   const [answer, setAnswer] = useState<Reconciliation | null>(null);
+  const [failed, setFailed] = useState(false);
   const asked = useRef(0);
   useEffect(() => {
     const request = ++asked.current;
     const timer = setTimeout(async () => {
       const typed = { mode, ...form, ...grandparents };
       const result = await reconcileDocument(itemId, doc.id, typed);
-      if (request === asked.current) setAnswer(result);
+      if (request !== asked.current) return;
+      setFailed(result === null);
+      if (result) setAnswer(result);
     }, RECOMPUTE_MS);
     return () => clearTimeout(timer);
   }, [mode, form, grandparents, latest, itemId, doc.id]);
@@ -200,7 +204,16 @@ export function CertificateForm({
           )}
         </>
       )}
-      afterFields={answer && <ProposalChecks checks={answer.checks} />}
+      afterFields={
+        <>
+          {failed && (
+            <p className={styles.muted} role="status">
+              Kontrollerna kunde inte räknas om just nu.
+            </p>
+          )}
+          {answer && <ProposalChecks checks={answer.checks} />}
+        </>
+      }
       buttons={
         <button
           type="button"
