@@ -21,18 +21,19 @@ Driften av mejlläsningen står i [inkorg-gmail.md](inkorg-gmail.md).
 9. [Ta, ta över och tilldela](#ta-ta-över-och-tilldela)
 10. [Byta läge](#byta-läge)
 11. [Dokument](#dokument)
-12. [Spara det intyget visar](#spara-det-intyget-visar)
-13. [Registrera en försäljning](#registrera-en-försäljning)
-14. [Maskning och kopian på kaninen](#maskning-och-kopian-på-kaninen)
-15. [Bilderna](#bilderna)
-16. [Fråga uppfödaren](#fråga-uppfödaren)
-17. [Mejlade poster](#mejlade-poster)
-18. [Mina inskick](#mina-inskick)
-19. [Notiser](#notiser)
-20. [Mejl](#mejl)
-21. [Tolkning](#tolkning)
-22. [Gallring](#gallring)
-23. [Gränser och sådant gränssnittet behöver veta](#gränser-och-sådant-gränssnittet-behöver-veta)
+12. [Avstämning](#avstämning)
+13. [Spara det intyget visar](#spara-det-intyget-visar)
+14. [Registrera en försäljning](#registrera-en-försäljning)
+15. [Maskning och kopian på kaninen](#maskning-och-kopian-på-kaninen)
+16. [Bilderna](#bilderna)
+17. [Fråga uppfödaren](#fråga-uppfödaren)
+18. [Mejlade poster](#mejlade-poster)
+19. [Mina inskick](#mina-inskick)
+20. [Notiser](#notiser)
+21. [Mejl](#mejl)
+22. [Tolkning](#tolkning)
+23. [Gallring](#gallring)
+24. [Gränser och sådant gränssnittet behöver veta](#gränser-och-sådant-gränssnittet-behöver-veta)
 
 ## Begrepp
 
@@ -150,7 +151,7 @@ Allt annat nekas med 409. `ny` och `vantar_uppfodare` kan inte sättas med `…/
 2. Gå igenom dokumenten: vrid dem rätt, räta upp ett snett foto, och ange typ och format
    (`PATCH …/dokument/{dok}`; vinkeln kan hittas med `…/hitta-pappret`).
 3. Ett intyg: spara det intyget visar (`…/spara`), en ny kanin eller pappersintyget på en kanin
-   som finns. Visar intyget också en försäljning, registrera den nu (`…/overlat`): ett dokument som
+   som finns. Medan handläggaren skriver av pappret ställs det bredvid registret (`…/avstamning`). Visar intyget också en försäljning, registrera den nu (`…/overlat`): ett dokument som
    är klart går inte att spara eller sälja från.
 4. Bekräfta vridning, ram och maskning (`…/maskning`). Kopian läggs på kaninen och dokumentet blir
    klart.
@@ -350,9 +351,15 @@ för en post med `ref_type` `sale_proposal`, vars statusvy avgör förslaget, oc
   `härlett` har ett `value` att fylla i formuläret med; `avviker` och `osäker` har `value: null` och
   skrivs av från fotot. `read` är det tolkningen läste på intyget och `registry` registrets värde där
   de skiljer sig. Ett intygsnummer som redan finns på en annan kanin har inget `registry`: kontrollen
-  säger vilken kanin det finns på. `checks` är kontrollerna i ord; `ok` är `true`, `false` eller
-  `null` (upplysning).
+  säger vilken kanin det finns på. Finns kaninen redan i Stamboken (`individual`) ställs varje fält som
+  lästes bredvid kaninen: mor och far, far- och morföräldrarna, födelsedatum, antal, namn, kön och färg
+  är `läst` (eller `härlett`) när de är kaninens, annars `avviker` med kaninens värde som `registry`.
+  Med digitalt intyg och allt i ordning finns bara `individual`. `checks` är kontrollerna i ord; `ok` är
+  `true`, `false` eller `null` (upplysning). Den som inte arbetar i postens genbank, men ser posten i kön,
+  får bara det fotot visar: varje fälts `source` och `read`, och inga `checks`.
   Förslaget sparas aldrig av sig självt: det är handläggarens `…/spara` som skriver.
+  Ett intyg i kön kan också ha `sale`, säljaren och köparen från fotot: se
+  [Säljare och köpare](#tolkning) under Tolkning.
 - `individual`: kaninens nummer när dokumentet är sparat, annars `null`.
 - `herd_tracking_id`: raden i besättningshistoriken för försäljningen som registrerats genom
   dokumentet (för ett bevis: försäljningen det visar).
@@ -772,6 +779,103 @@ genbank kan ta posten, som andra poster.
 är ett foto från årsrapporten, när anroparen inte är handläggare eller posten inte är tagen, när
 posten och dokumentet inte pekar på samma registrerade kanin, eller när dokumentet redan är klart.
 
+## Avstämning
+
+### `POST /api/v2/inkorg/{id}/dokument/{dok}/avstamning`
+
+Avstämningstabellen i intygsformuläret: det handläggaren har skrivit av från pappret, rad för rad
+bredvid registret, och kontrollerna i ord. Formuläret anropar den medan handläggaren skriver. Den
+läser bara: inget skrivs och posten låses inte.
+
+**Vem:** den som arbetar i postens genbank: admin, eller genbanksansvarig eller genbankshjälpare i den.
+En post utan genbank: admin eller genbanksansvarig. Högst 600 anrop i minuten per användare (429).
+
+Kroppen har formulärets fält och far- och morföräldrarna, som strängar (antalen får vara tal). Alla
+är valfria:
+
+```json
+{
+  "mode": "ny_kanin",
+  "paper_number": "G1-2511",
+  "paper_certificate": "123456",
+  "name": "Stina",
+  "sex": "female",
+  "birth_date": "2025-05-10",
+  "color": "viltgrå",
+  "litter_size": 5,
+  "litter_size6w": 4,
+  "mother": "G1-1911",
+  "father": "G2-1711",
+  "morfar": "G1-1611",
+  "mormor": "G1-1712",
+  "farfar": "G2-1411",
+  "farmor": "G2-1512"
+}
+```
+
+`mode` är `ny_kanin` eller `pappersintyg`. Med `pappersintyg` kommer också `individual`, kaninens
+nummer i Stamboken.
+
+**Svar 200:**
+
+```json
+{
+  "rows": {
+    "mother": {"registry": "G1-1911 Stina", "status": "stammer"},
+    "father": {
+      "registry": "finns inte",
+      "status": "skiljer",
+      "near": [{"number": "G2-1711", "name": "Olle", "sex": "male"}]
+    },
+    "birth_date": {"registry": null, "status": "osaker"}
+  },
+  "checks": [{"ok": false, "text": "Far G3-1711 finns inte i Stamboken."}]
+}
+```
+
+Raderna är fälten i kroppen; med `pappersintyg` kommer `individual` först. `registry` är registrets
+värde för raden: ett nummer med kaninens namn, ett datum ÅÅÅÅ-MM-DD, ett antal, kön som `female` eller
+`male`, eller `null`. `status` är
+
+- `stammer`: det inskrivna är registrets värde. Nummer jämförs som registret skriver dem (`g1 2511`
+  är `G1-2511`), datum som ÅÅÅÅ-MM-DD.
+- `skiljer`: det inskrivna är något annat, eller ett nummer som inte finns i registret
+  (`registry: "finns inte"`). `near` listar då kaninerna vars besättningsnummer är ett tecken ifrån,
+  med samma individsiffror. Ingen av dem väljs.
+- `osaker`: inget är inskrivet, men tolkningen läste något där (`read` i dokumentets `proposal`).
+- `ingen`: registret har inget att jämföra med, eller inget är inskrivet eller läst.
+
+Bara det inskrivna slås upp, aldrig det tolkningen läste: en förälder som bara är läst väljer aldrig
+en kull. Ett nummer slås upp med bokstaven som den skrivits. Allt söks i postens genbank. En post utan
+genbank söker i den genbank vars besättningar börjar med bokstaven i det inskrivna numret
+(`individual`, annars `paper_number`), men bara om anroparen arbetar i den genbanken (läsrätt räcker
+inte); annars jämförs inget och kontrollen säger det. En kanin eller kull nämns bara för den som får läsa den, som i
+`GET /api/v2/individual/{nummer}`: kaninens besättning är i en av anroparens genbanker. En annan står
+som `"en kanin i en annan genbank"` och jämförs inte. `stammer` betyder det `…/spara` tar emot: ett
+intygsnummer jämförs som det skrivits, bara utan mellanslag först och sist, och är det längre än 20
+tecken skiljer det sig. En färg stämmer bara med genbankens stavning.
+
+- `pappersintyg`: finns `individual` i genbanken kommer varje rads `registry` från den kaninen:
+  numret, intygsnumret, namnet, könet, färgen, kullens födelsedatum och antal, mor och far, och deras
+  föräldrar som far- och morföräldrar. Har kaninen digitalt intyg är intygsnumrets `registry`
+  `"digitalt intyg"`, och en kontroll säger att pappersintyget ersätter det digitala när det sparas.
+- `ny_kanin`: mor och far är kaninerna med de inskrivna numren, och far- och morföräldrarna är deras
+  föräldrar i registret. Har mor och far rätt kön och är födelsedatumet helt prövas `paper_number` som
+  vid registreringen: `registry` är numret Stamboken ger, skrivet som registreringen skriver det
+(G1-25012 är G1-2512). Födelsedatum och antal kommer från deras
+  kull född samma dag, om den finns. `paper_certificate` stämmer med `registry: "ledigt"` när
+  intygsnumret är ledigt. En kanin i genbanken som redan har det står som `registry`; finns det i en
+  annan genbank står `"används redan"`. `color` stämmer när färgen finns i genbankens färglista.
+
+Kontrollerna säger bland annat om individnumrets bokstav inte är genbankens, om dess besättning inte
+finns, om årssiffrorna inte stämmer med födelsedatumet, om en far- eller morförälder har samma nummer
+som föräldern, om mor och far finns, om numret stämmer med kullen och om intygsnumret är ledigt. Har
+mor och far ingen kull född den dagen listas förälderns kullar ("Kull i Stamboken: …"). Kontrollen av numret mot kullen nämner de kaniner och kullar som anroparen
+skulle se i 409-svaret från `…/spara`; andra står utan nummer ("En kanin i kullen saknar intyg.").
+
+**Fel:** 403 för den som inte arbetar i postens genbank; 404 när posten inte finns eller dokumentet
+inte hör till den; 429 vid för många anrop.
+
 ## Spara det intyget visar
 
 ### `POST /api/v2/inkorg/{id}/dokument/{dok}/spara`
@@ -925,6 +1029,7 @@ En köpare utanför föreningen:
 | `herd` | köparens besättningsnummer. En köpare utanför föreningen: genbankens besättning för kaniner sålda utanför genbanken, `GX1` (gotlandskanin) eller `MX1` (mellerudskanin). |
 | `date` | försäljningsdatumet |
 | `buyer` | valfritt, bara till GX1/MX1: köparen utanför föreningen ([ADR-0016](adr/0016-agarbyte-flytt-dag-0-och-berattigat-intresse.md)). `name` och `town` krävs, och `postal_address` när den som registrerar varken är genbanksansvarig eller admin; `email` och `phone` bara med `contact_consent` eller `membership_optin`. Annars 400. Med `buyer` går också GX1 till GX1, för genbanksansvarig och admin. När beviset kopplas till en försäljning som redan finns sätts köparen på den bara om försäljningen saknar köpare (registrerad i gamla appen); har den redan en köpare blir svaret 409 |
+| `from_photo` | valfritt, `true` när panelen fylldes i från fotots läsning ([Säljare och köpare](#tolkning)). Har dokumentet inte längre någon `sale` blir svaret 409 "Läsningen har ändrats, fyll i köparen igen." Utan fältet prövas inget |
 
 **Vem:** handläggaren, med samma krav på posten som för `…/spara` men för alla dokumenttyper.
 En hjälpare får sälja kaniner i sin genbank som en ägare får.
@@ -953,7 +1058,7 @@ sin plats i historiken. Alla andra får 400.
 | 400 | besättning eller datum saknas eller är okänd; `title: "Ogiltig försäljning"` med försäljningens regler: datumet i framtiden, före 43 dagars ålder eller före kaninens senaste händelse, en annan genbank, en kanin utan intyg till en annan besättning än GX1/MX1, kaninen finns redan där |
 | 403 | anroparen får inte sälja kaninen |
 | 404 | kaninen finns inte |
-| 409 | som för `…/spara`; en försäljning är redan registrerad genom dokumentet; eller besättningshistoriken skulle bli motsägelsefull (med `rows`) |
+| 409 | som för `…/spara`; en försäljning är redan registrerad genom dokumentet; `from_photo` utan läsning; eller besättningshistoriken skulle bli motsägelsefull (med `rows`) |
 
 ## Maskning och kopian på kaninen
 
@@ -1317,6 +1422,61 @@ registrerades, `avviker` med det registrerade värdet när det inte gör det, oc
 överstruket eller inte går att läsa. Kontrollerna är desamma som för en kanin som redan finns.
 Tolkades fotot innan kaninen sparades, jämförs den sparade tolkningen med kaninen när fotot kopplas
 till den, utan någon ny tolkning.
+
+**Säljare och köpare.** Förut skulle tolkningen inte skriva av intygets nedre del, och den vanliga
+läsningen ber fortfarande om det: "Säljarens och köparens uppgifter ska inte skrivas av". Jonas
+ändrade regeln 2026-11-27, så att försäljningen på ett gammalt intyg kan fyllas i (regel 5 b):
+
+- Den vanliga läsningen sparas först, i en egen kort transaktion. Sedan läser modellen säljaren och
+  köparen i ett andra anrop, med ett eget litet schema (`SALE_SCHEMA`: säljarens besättningsnummer,
+  köparens namn, utdelningsadress, postnummer, ort, e-post och besättningsnummer, och datumet) och
+  en egen prompt. Säljarens namn och telefonnumret skrivs aldrig av. Huvudschemat är oförändrat: ett
+  längre schema fick modellen att upprepa ett fält tills svaret klipptes. Dör jobbet under det andra
+  anropet finns den vanliga läsningen kvar, och inget försök går åt.
+- Svaret hålls mot schemat som det första. Dessutom stryks ett fält som inte kan vara det det
+  säger: en e-post som inte har formen av en adress, ett postnummer som inte är fem siffror
+  (mellanslag går bra), en säljares besättning som inte är ett besättningsnummer och varje värde
+  med ett telefonnummer i, också ett skrivet med 0046 eller med andra streck och mellanslag (U+2010
+  till U+2015, minustecknet och hårt mellanslag). Samma telefonkontroll gäller köparens postadress
+  när en försäljning sparas. Det som återstår sparas i `interpretation.forsaljning`.
+- Bara intyg i kön läses så, i en post utan `ref_type`. Foton som skickas in genom årsrapporten för
+  ett köp av en kanin som saknas i Stamboken (S7) blir en vanlig uppladdning och läses så. Ett foto
+  från årsrapporten som kontrollerar en registrerad kanin, och ett foto till en köpanmälan, läses
+  aldrig så. Ett foto som inte tolkas (`for_litet`) får ingen andra läsning heller, förrän "Tolka
+  igen" läser det. Misslyckas det andra anropet, eller är svaret tomt, står den vanliga läsningen kvar
+  utan säljare och köpare.
+- Det andra anropet görs bara om försäljningen fortfarande kan sparas från dokumentet: det är ett
+  intyg, inte klart, ingen försäljning är sparad från det, originalet och läsningen finns kvar och
+  posten är öppen. Det prövas under postens lås före anropet och igen innan svaret sparas. Redan när
+  dokumentet tas prövas under låset att posten inte har stängts och dokumentet inte blivit klart.
+  Har posten stängts, eller dokumentet avfärdats, bytt typ, blivit klart eller fått en försäljning
+  sedan läsningen började, sparas inte svaret, också om posten har öppnats igen (postens historik
+  avgör). "Tolka igen" efter en försäljning läser alltså bara kaninen.
+- Förslaget får `sale`: `buyer_herd` (`{"herd": "G123", "found": true}` när köparens
+  besättningsnummer finns i genbanken som det står; annars numret som det lästes, med `"found":
+  false` och en kontroll "Köparens besättning … finns inte i genbanken"), `buyer` (`name`,
+  `postal_address` som gata och postnummer, `town` och `email`, som de lästes), `date` (ÅÅÅÅ-MM-DD
+  när datumet går att tolka), `seller_herd` (som det lästes) och `checks`. Säljarens besättning
+  jämförs med kaninens ursprungsbesättning, registrets eller, när registret inte bekräftar kaninens
+  nummer, den lästa: en annan besättning "avviker", och utan registrets nummer "kan inte bekräftas".
+- Inget av det är säkert. Försäljningspanelen visar det under "Från fotot", och "Fyll i från fotot"
+  lägger in det först när handläggaren klickar: besättningen när den finns i genbanken, annars
+  köparen utanför föreningen med e-posten bara för föreningens mejl (`notice_only`) för en
+  försäljning till och med 2027. Köparen börjar då från tomma fält. Byter handläggaren till
+  försäljningsbeviset, eller flyttas datumet till ett år utan mejlet, försvinner e-posten från fotot,
+  så att den aldrig blir en kontaktadress; en e-post som handläggaren ändrat står kvar. Finns
+  besättningen som lästes inte i genbanken töms besättningen och köparen, och panelen ber
+  handläggaren välja. Telefon och köparens kryss fylls aldrig i. Ändras eller försvinner läsningen
+  (posten stängdes och öppnades igen) töms det som fylldes i från den, och sparandet skickar
+  `from_photo`, så att servern nekar en försäljning vars läsning är borta. När försäljningen är
+  sparad visar panelen bara det.
+- Bara köns arbetare (admin, genbanksansvariga och hjälpare) får `sale`, i `GET …/{id}` och i
+  svaren på dokumentets åtgärder. De ser redan originalet. Uppladdaren ser inte posten, och varken
+  "Mina inskick" eller årsrapportens ärenden visar tolkningen.
+- `sale` och `interpretation.forsaljning` tas bort när en försäljning sparas från dokumentet
+  (`…/overlat`; köparen finns sedan i `buyer_contact` under sina egna regler), när dokumentet blir
+  klart, avfärdas eller byter typ från intyg, och när posten stängs. Gallringen och raderingen tar
+  hela tolkningen med originalet, som förut.
 
 **Inställningar** (`.docker/api-variables.env`):
 

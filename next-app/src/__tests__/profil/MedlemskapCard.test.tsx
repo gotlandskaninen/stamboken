@@ -32,6 +32,7 @@ const me = (
     address: false,
   },
   consent_answered: false,
+  has_active_herd: true,
   main_member_name: "Anna Lindqvist",
 });
 afterEach(cleanup);

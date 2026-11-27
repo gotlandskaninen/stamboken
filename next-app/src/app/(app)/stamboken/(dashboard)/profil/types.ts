@@ -26,6 +26,8 @@ export type Me = {
   // false = stored `{}`, i.e. the Koharen question has never been answered,
   // so the first save then submits all four keys.
   consent_answered: boolean;
+  // The Koharen question is about a herd: false = no active herd in a genebank, and the card is not shown.
+  has_active_herd: boolean;
   main_member_name: string | null;
 };
 

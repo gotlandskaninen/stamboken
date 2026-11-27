@@ -823,7 +823,7 @@ class AndraTest(ArsrapportTest):
             [
                 (
                     "arsrapport.andrad",
-                    {"submission_id": sid},
+                    {"submission_id": sid, "member_id": self.member.id},
                     "yearly_report_submission",
                     sid,
                     f"arsrapport.andrad:{sid}",

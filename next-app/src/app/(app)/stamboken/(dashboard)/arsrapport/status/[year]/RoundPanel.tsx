@@ -179,6 +179,13 @@ export function RoundPanel({
             {form}
             <p className={inkorg.muted}>Datumen gäller alla genbanker.</p>
             {invitation}
+            {/* spec 5.11: legacy answers are never consent, so the list can shrink */}
+            <p className={inkorg.muted}>
+              Listan i Koharen tar bara med besättningar vars innehavare har
+              svarat ja i årsrapporten, i profilen eller på blanketten. Svaren
+              från årsrapporterna för 2025 och tidigare räknas inte, så den
+              första listan kan bli kortare än förut.
+            </p>
             <div className={styles.actions}>
               <button
                 type="button"

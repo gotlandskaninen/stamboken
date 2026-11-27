@@ -10,6 +10,7 @@ import type {
   InboxDocument,
   InboxItem,
   Problem,
+  Reconciliation,
   Rect,
   shownAssignment,
 } from "./lib";
@@ -262,6 +263,31 @@ export async function saveCertificate(
   return call<DocResult>(id, `/${id}/dokument/${doc}/spara`, "POST", payload);
 }
 
+/**
+ * The reconciliation table (…/avstamning): what the handler typed beside the
+ * registry. A read, recomputed as she types, so nothing is revalidated (not
+ * through call()); null when it could not be had.
+ */
+export async function reconcileDocument(
+  id: number,
+  doc: number,
+  typed: Record<string, string>,
+): Promise<Reconciliation | null> {
+  if (!isId(id) || !isId(doc) || typeof typed !== "object" || !typed)
+    return null;
+  const body = Object.fromEntries(
+    Object.entries(typed).filter(([, v]) => typeof v === "string"),
+  );
+  try {
+    return await fetchApi<Reconciliation>(
+      `/v2/inkorg/${id}/dokument/${doc}/avstamning`,
+      { method: "POST", body: JSON.stringify(body) },
+    );
+  } catch {
+    return null;
+  }
+}
+
 /** A report photo compared with its rabbit: "Stämmer", or "Rättat" when the rabbit was corrected; it closes. */
 export async function checkReportPhoto(
   id: number,
@@ -284,6 +310,8 @@ export async function registerSale(
     herd: string;
     date: string;
     buyer?: SaleBuyer;
+    /** Filled from the photo's reading (rule 5 b): refused once the document no longer has it. */
+    from_photo?: true;
   },
 ) {
   if (!isId(id) || !isId(doc)) return refused("Ogiltigt dokument.");
@@ -351,24 +379,4 @@ export async function rabbitSales(id: number, number: string) {
     `/${id}/kanin/${encodeURIComponent(number.trim().toUpperCase())}/forsaljningar`,
     "GET",
   );
-}
-
-/** The registry's record of a parent, to compare with the photo; null when not found. */
-export async function lookupRabbit(
-  number: string,
-): Promise<RegistryRabbit | null> {
-  if (
-    typeof number !== "string" ||
-    !/^[A-Za-z]+\d+-\d{4,}$/.test(number.trim())
-  )
-    return null;
-  try {
-    const r = await fetchApi<RegistryRabbit>(
-      `/v2/individual/${encodeURIComponent(number.trim().toUpperCase())}`,
-    );
-    return { name: r.name, color: r.color, mother: r.mother, father: r.father };
-  } catch (e) {
-    if (e instanceof ApiError) return null;
-    throw e;
-  }
 }

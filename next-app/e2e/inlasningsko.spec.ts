@@ -246,15 +246,14 @@ test("Ett intyg går från uppladdning till pappersintyg på kaninen", async ({
       await desk.getByLabel("Individnummer på pappret").fill(paperNumber);
       await desk.getByLabel(/^Intygsnummer/).fill(`E2E-${Date.now() % 1e10}`);
       await desk.getByLabel(/^Namn/).fill("Testa Intyg");
-      await desk.getByRole("combobox", { name: "Kön" }).click();
-      await desk.getByRole("option", { name: "Hona" }).click();
+      // The reconciliation table: Kön and Färg are lists, Mor and Far have their parents under them.
+      await desk.getByLabel("Kön", { exact: true }).selectOption("female");
       await desk.getByLabel("Födelsedatum").fill(BIRTH_DATE);
-      await desk.getByRole("combobox", { name: "Färg" }).fill("Svart");
-      await desk.getByRole("option", { name: "Svart", exact: true }).click();
-      await desk.getByLabel(/^Mor/).fill(MOTHER);
-      await desk.getByLabel(/^Far/).fill(FATHER);
+      await desk.getByLabel("Färg", { exact: true }).selectOption("Svart");
+      await desk.getByLabel("Mor", { exact: true }).fill(MOTHER);
+      await desk.getByLabel("Far", { exact: true }).fill(FATHER);
       await desk.getByLabel("Antal födda").fill("9");
-      await desk.getByLabel("Levande i kullen efter 6 veckor").fill("9");
+      await desk.getByLabel("Levande efter 6 veckor").fill("9");
       await desk.getByRole("button", { name: "Spara och nästa" }).click();
 
       await expect(desk.getByText("Dölj säljare och köpare")).toBeVisible({

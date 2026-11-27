@@ -695,6 +695,24 @@ def list_herd_candidates(membership_id: int):
     return jsonify({"herds": membership_herd_candidates(membership_id, genebank_id)})
 
 
+@memberships_bp.route("/v2/memberships/<int:membership_id>/support-account", methods=["GET"])
+@json_login_required
+@matrikel_admin_required
+def get_support_account(membership_id: int):
+    """
+    The whole support account, for those who pay the support out (admin and matrikel_admin, fråga 34), whatever
+    reports the herds have: the herd page shows only its end. Step 7's payout list builds on it. Each read is logged
+    by ids, never kept by a browser.
+    """
+    ms = Membership.get_or_none(Membership.id == membership_id)
+    if ms is None:
+        return problem(404, "Hittades inte", f"Medlemskapet {membership_id} finns inte")
+    auth_log.info("support account read actor=%s membership=%s", current_user.id, membership_id)
+    response = jsonify({f: getattr(ms, f) for f in ("bank_account_type", "bank_account_number", "bank_name")})
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @memberships_bp.route("/v2/memberships/<int:membership_id>/herds", methods=["POST"])
 @json_login_required
 @matrikel_admin_required

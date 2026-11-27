@@ -8,6 +8,7 @@ import {
   confirmMask,
   findPaper,
   previewHerd,
+  reconcileDocument,
   releaseItem,
   saveCertificate,
   takeItem,
@@ -244,6 +245,25 @@ describe("the queue's server actions", () => {
     );
     await takeItem(12);
     expect(revalidated).not.toHaveBeenCalled();
+  });
+
+  it("recompute the table as a read: the typed strings posted, nothing revalidated, null on a refusal", async () => {
+    const answer = { rows: {}, checks: [] };
+    api.mockResolvedValueOnce(answer);
+    const typed = { mode: "ny_kanin", mother: "G9001-2211", n: 3 as never };
+    expect(await reconcileDocument(12, 31, typed)).toBe(answer);
+    expect(api.mock.calls[0][0]).toBe("/v2/inkorg/12/dokument/31/avstamning");
+    expect(api.mock.calls[0][1]?.method).toBe("POST");
+    expect(body(0)).toEqual({ mode: "ny_kanin", mother: "G9001-2211" });
+    expect(revalidated).not.toHaveBeenCalled();
+    api.mockRejectedValueOnce(
+      new ApiError({ status: 429, title: "För många anrop", detail: "" }),
+    );
+    expect(await reconcileDocument(12, 31, typed)).toBeNull();
+    api.mockRejectedValueOnce(new TypeError("fetch failed"));
+    expect(await reconcileDocument(12, 31, typed)).toBeNull();
+    expect(await reconcileDocument(0, 31, typed)).toBeNull();
+    expect(api).toHaveBeenCalledTimes(3);
   });
 
   it("answer a dropped connection to the API as a refusal instead of throwing", async () => {
