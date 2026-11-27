@@ -209,8 +209,8 @@ class TestSaleReading(InterpretationTest):
     def test_a_failed_or_empty_second_reading_leaves_the_first(self):
         _, documents = self.uploaded(files=3)
         answers = (interpreter.InterpretationError("slut på tid"), {"kopare_namn": "  "}, ["inget objekt"])
-        for document, answer in zip(documents, answers, strict=True):
-            with self.subTest(answer=answer):
+        for n, (document, answer) in enumerate(zip(documents, answers, strict=True)):
+            with self.subTest(n=n):
                 self.sale = answer
                 self.assertEqual(interpreter.interpret_next(), document.id)
                 done = self.doc(document)
