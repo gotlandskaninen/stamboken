@@ -5,8 +5,13 @@ import type { InboxDocument, Rect } from "./lib";
 
 export const MAX_RECTS = 20;
 const MIN_SIZE = 0.02;
-/** The seller and buyer block of the green certificate: its lower third. */
-export const LOWER_THIRD: Rect = { x: 0, y: 0.6667, w: 1, h: 0.3333 };
+/**
+ * The frame around the copy keeps at least a tenth of the photo each way, as
+ * the API requires; a hair more, which the inward rounding of toApiFrame may take.
+ */
+export const MIN_FRAME = 0.101;
+/** The copy of the green certificate: all but its lower third, the seller and buyer block. */
+export const UPPER_TWO_THIRDS: Rect = { x: 0, y: 0, w: 1, h: 0.6667 };
 
 const clamp = (v: number, lo: number, hi: number) =>
   Math.min(hi, Math.max(lo, v));
@@ -18,11 +23,16 @@ export const moveRect = (r: Rect, dx: number, dy: number): Rect => ({
   y: clamp(r.y + dy, 0, 1 - r.h),
 });
 
-/** The lower right corner moved by (dw, dh); never smaller than MIN_SIZE nor outside the image. */
-export const resizeRect = (r: Rect, dw: number, dh: number): Rect => ({
+/** The lower right corner moved by (dw, dh); never smaller than `min` nor outside the image. */
+export const resizeRect = (
+  r: Rect,
+  dw: number,
+  dh: number,
+  min = MIN_SIZE,
+): Rect => ({
   ...r,
-  w: clamp(r.w + dw, MIN_SIZE, 1 - r.x),
-  h: clamp(r.h + dh, MIN_SIZE, 1 - r.y),
+  w: clamp(r.w + dw, min, 1 - r.x),
+  h: clamp(r.h + dh, min, 1 - r.y),
 });
 
 /** The same area after the image is turned `quarterTurns` × 90° clockwise (negative: counter-clockwise). */
@@ -35,6 +45,59 @@ export function rotateRect(r: Rect, quarterTurns: number): Rect {
 
 export const turn = (rotation: number, quarterTurns: number) =>
   (((rotation + quarterTurns * 90) % 360) + 360) % 360;
+
+/**
+ * The size of a w × h image turned `angle` degrees clockwise, as the API turns
+ * the photo (frame F): Pillow's own sum in Image.rotate with expand, step by
+ * step (app/utils/inbox_paper.turned_size), so the preview has F's shape. A
+ * quarter turn swaps width and height.
+ */
+export function turnedSize(w: number, h: number, angle: number) {
+  const m = -angle % 360;
+  const a = m < 0 ? m + 360 : m;
+  if (a === 0 || a === 180) return { width: w, height: h };
+  if (a === 90 || a === 270) return { width: h, height: w };
+  const r = -(a * (Math.PI / 180));
+  const round15 = (v: number) => Number(v.toFixed(15));
+  const [cos, sin] = [round15(Math.cos(r)), round15(Math.sin(r))];
+  const matrix = [cos, sin, 0, round15(-Math.sin(r)), cos, 0];
+  const transform = (x: number, y: number) => [
+    matrix[0] * x + matrix[1] * y + matrix[2],
+    matrix[3] * x + matrix[4] * y + matrix[5],
+  ];
+  [matrix[2], matrix[5]] = transform(-w / 2, -h / 2);
+  matrix[2] += w / 2;
+  matrix[5] += h / 2;
+  const corners = [
+    [0, 0],
+    [w, 0],
+    [w, h],
+    [0, h],
+  ].map(([x, y]) => transform(x, y));
+  const xs = corners.map(([x]) => x);
+  const ys = corners.map(([, y]) => y);
+  return {
+    width: Math.ceil(Math.max(...xs)) - Math.floor(Math.min(...xs)),
+    height: Math.ceil(Math.max(...ys)) - Math.floor(Math.min(...ys)),
+  };
+}
+
+/**
+ * The frame round the paper "Hitta pappret" found, all but its lower third:
+ * the margin round the paper on three sides, and the bottom at two thirds of
+ * the tight paper, so that the margin never reaches into the seller and buyer
+ * block.
+ */
+export const paperFrame = (paper: Rect, tight: Rect): Rect => ({
+  x: paper.x,
+  y: paper.y,
+  w: paper.w,
+  h: tight.y + tight.h * UPPER_TWO_THIRDS.h - paper.y,
+});
+
+/** "4,5°", "−2,0°": the straighten as the handler reads it. */
+export const degrees = (value: number) =>
+  `${value.toLocaleString("sv-SE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}°`;
 
 const round4 = (v: number) => Math.round(v * 10000) / 10000;
 
@@ -51,10 +114,45 @@ export const toApiRects = (rects: Rect[]): Rect[] =>
     };
   });
 
-/** What the masking step starts from: the saved rectangles, the API's suggestion, or the lower third. */
-export const initialRects = (
-  doc: Pick<InboxDocument, "mask_rects" | "mask_suggestion">,
-): Rect[] => doc.mask_rects ?? doc.mask_suggestion ?? [LOWER_THIRD];
+/** The black boxes the masking step starts from: the saved ones, or none. */
+export const initialRects = (doc: Pick<InboxDocument, "mask_rects">): Rect[] =>
+  doc.mask_rects ?? [];
+
+/**
+ * The frame around the copy the masking step starts from: the saved one, the
+ * API's for a handwritten certificate, the upper two thirds for a photo never
+ * masked, or none for a copy made with black boxes only.
+ */
+export const initialFrame = (
+  doc: Pick<InboxDocument, "copy_frame" | "frame_suggestion" | "mask_rects">,
+): Rect | null =>
+  doc.copy_frame ??
+  (doc.mask_rects ? null : (doc.frame_suggestion ?? UPPER_TWO_THIRDS));
+
+const up = (v: number) => Math.ceil(v * 1e4 - 1e-6) / 1e4;
+const down = (v: number) => Math.floor(v * 1e4 + 1e-6) / 1e4;
+
+/**
+ * The frame as the API gets it: four decimals, rounded inwards, so the copy
+ * never keeps a row or column the frame shown leaves out.
+ */
+export const toApiFrame = (r: Rect): Rect => {
+  const x = clamp(up(r.x), 0, 1);
+  const y = clamp(up(r.y), 0, 1);
+  const w = Math.round((clamp(down(r.x + r.w), 0, 1) - x) * 1e4) / 1e4;
+  const h = Math.round((clamp(down(r.y + r.h), 0, 1) - y) * 1e4) / 1e4;
+  return { x, y, w, h };
+};
+
+/**
+ * A frame over (almost) the whole photo leaves nothing out: it is no cover for
+ * the seller and the buyer. Judged as the API gets it.
+ */
+export const crops = (frame: Rect | null): boolean => {
+  if (!frame) return false;
+  const sent = toApiFrame(frame);
+  return sent.w * sent.h < 0.99;
+};
 
 /**
  * "Förstärk blyerts", in place on RGBA pixels: the green channel (the form is

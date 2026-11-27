@@ -46,6 +46,7 @@ export function ReportPhotoCheck({
   registered,
   canCheck = false,
   pending = false,
+  angleUnsaved = false,
   onCheck,
   onReinterpret,
 }: {
@@ -54,6 +55,8 @@ export function ReportPhotoCheck({
   /** The item's handler, the item taken and the photo not checked yet. */
   canCheck?: boolean;
   pending?: boolean;
+  /** The photo is straightened by an angle not yet saved: the reading would not see it. */
+  angleUnsaved?: boolean;
   onCheck?: (outcome: "stammer" | "rattat") => void;
   onReinterpret?: () => void;
 }) {
@@ -152,7 +155,11 @@ export function ReportPhotoCheck({
               <button
                 type="button"
                 className="sb-btn sb-btn-secondary"
-                disabled={pending || doc.interpretation_status === "vantar"}
+                disabled={
+                  pending ||
+                  doc.interpretation_status === "vantar" ||
+                  angleUnsaved
+                }
                 onClick={onReinterpret}
               >
                 Tolka igen

@@ -124,6 +124,47 @@ class TestJob(InterpretationTest):
         stale = self.doc(document)
         self.assertEqual((stale.interpretation_status, stale.proposal), ("vantar", None))
 
+    def test_the_photo_is_read_straightened_and_a_reading_straightened_meanwhile_is_dropped(self):
+        _, (document,) = self.uploaded()
+        db.InboxDocument.update(straighten=2.5).where(db.InboxDocument.id == document.id).execute()
+
+        def straightened_meanwhile(image, schema):  # nothing else changes: the turn and the attempts stay
+            db.InboxDocument.update(straighten=3).where(db.InboxDocument.id == document.id).execute()
+            return READING
+
+        with mock.patch.object(interpreter, "prepare_image", wraps=interpreter.prepare_image) as prepare:
+            with mock.patch.dict(interpreter.INTERPRETERS, {"gemma": straightened_meanwhile}):
+                interpreter.interpret_next()
+            stale = self.doc(document)
+            self.assertEqual((stale.interpretation_status, stale.proposal), ("vantar", None))
+            interpreter.interpret_next()
+        self.assertEqual(self.doc(document).interpretation_status, "klar")
+        self.assertEqual([call.args[1:] for call in prepare.call_args_list], [(0, 2.5), (0, 3)])
+
+    def test_a_turn_while_the_last_attempt_reads_is_no_attempt_and_the_new_angle_is_read(self):
+        item, (document,) = self.uploaded()
+        inbox.take(item, self.helper, over=False)
+        self.login("hjalp")
+        self.answer = interpreter.InterpretationError("slut på minne")
+        interpreter.interpret_next()
+        self.assertEqual(self.doc(document).attempts, 1)
+
+        def straightened_meanwhile(image, schema):  # the last attempt: the handler straightens the photo
+            resp = self.client.patch(f"/api/v2/inkorg/{item.id}/dokument/{document.id}", json={"straighten": 3})
+            self.assertEqual(resp.status_code, 200, resp.get_json())
+            return READING
+
+        self.answer = READING
+        with mock.patch.object(interpreter, "prepare_image", wraps=interpreter.prepare_image) as prepare:
+            with mock.patch.dict(interpreter.INTERPRETERS, {"gemma": straightened_meanwhile}):
+                interpreter.interpret_next()
+            waiting = self.doc(document)
+            self.assertEqual((waiting.interpretation_status, waiting.attempts, waiting.proposal), ("vantar", 0, None))
+            interpreter.interpret_next()
+        done = self.doc(document)
+        self.assertEqual((done.interpretation_status, done.attempts), ("klar", 1))
+        self.assertEqual([call.args[1:] for call in prepare.call_args_list], [(0, 0), (0, 3)])
+
     def test_off_reads_nothing(self):
         with mock.patch.object(settings.interpretation, "interpreter", "av"):
             _, (document,) = self.uploaded()

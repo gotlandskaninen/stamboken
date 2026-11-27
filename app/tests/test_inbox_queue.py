@@ -617,8 +617,8 @@ class TestDocuments(InboxTest):
         body = resp.get_json()["document"]
         self.assertEqual((body["rotation"], body["cert_format"], body["mask_rects"]), (90, "handskrivet", rects))
         self.assertEqual(
-            self.patch(item, document, mask_rects=None).get_json()["document"]["mask_suggestion"],
-            inbox.HANDWRITTEN_MASK,
+            self.patch(item, document, mask_rects=None).get_json()["document"]["frame_suggestion"],
+            inbox.HANDWRITTEN_FRAME,
         )
         for bad in [
             {"rotation": 45},
