@@ -321,6 +321,16 @@ class TestSaleReadingGoes(InterpretationTest):
         for document in documents:
             self.assertGone(document)
 
+    def test_the_item_closed_as_klar_by_its_last_document(self):
+        item, (done, last) = self.read()
+        # done before done removed the reading: the item's closing ("klar") takes it
+        db.InboxDocument.update(done_at=inbox.now()).where(db.InboxDocument.id == done.id).execute()
+        inbox.take(item, self.helper, over=False)
+        self.login("hjalp")
+        resp = self.client.patch(f"/api/v2/inkorg/{item.id}/dokument/{last.id}", json={"dismissed": True})
+        self.assertEqual((resp.status_code, self.reload(item).state), (200, "klar"))
+        self.assertGone(done)
+
     def test_a_document_retyped_off_intyg(self):
         item, documents = self.read(files=3)
         inbox.take(item, self.helper, over=False)
