@@ -388,6 +388,20 @@ class TestDeviations(ProposalTest):
         self.assertEqual(self.source(proposal, "litter_size6w"), ("läst", 3))
 
 
+class TestPreliminaryCount(ProposalTest):
+    def test_a_preliminary_count_alive_is_never_proposed(self):
+        # The litter's count alive is only a copy of its count born until someone confirms it: never härlett, and
+        # what was read is not set against it.
+        self.litter("G9001", "G9001-2211", "G9003-2311", date(2025, 5, 10), [], size=5)
+        db.Breeding.update(litter_size6w_preliminary=True).where(db.Breeding.birth_date == date(2025, 5, 10)).execute()
+        proposal = self.propose(reading(levande_efter_6_veckor=""))
+        self.assertEqual(self.source(proposal, "litter_size"), ("läst", 5))
+        self.assertNotIn("litter_size6w", proposal["fields"])
+        proposal = self.propose(reading())  # 4 read
+        self.assertEqual(self.source(proposal, "litter_size6w"), ("läst", 4))
+        self.assertNotIn("Kullen har 5 i Stamboken där intyget säger 4.", self.texts(proposal))
+
+
 class TestStruckThrough(ProposalTest):
     def test_a_struck_through_value_is_always_unsure(self):
         for struck, key in (("ar_kull_individ", "paper_number"), ("far", "father"), ("fodelsedatum", "birth_date")):

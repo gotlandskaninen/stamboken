@@ -289,6 +289,15 @@ describe("the …/spara payload", () => {
       father: "",
     });
   });
+  it("takes the count alive at 6 weeks only as read, never from the registry", () => {
+    const count = (source: "läst" | "härlett") =>
+      initialCertForm({
+        fields: { litter_size6w: { value: 4, source } },
+        checks: [],
+      }).litter_size6w;
+    expect(count("läst")).toBe("4");
+    expect(count("härlett")).toBe("");
+  });
   it("starts on the paper certificate when the proposal found the rabbit", () => {
     const found = { value: "G9001-2512", source: "läst" as const };
     expect(initialSaveMode({ fields: { individual: found }, checks: [] })).toBe(
