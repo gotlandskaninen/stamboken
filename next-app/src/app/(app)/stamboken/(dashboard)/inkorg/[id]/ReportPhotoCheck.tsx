@@ -80,6 +80,12 @@ export function ReportPhotoCheck({
           Fotot gick inte att tolka. Jämför fotot med registreringen.
         </p>
       )}
+      {doc.interpretation_status === "for_litet" && (
+        <p className={styles.muted}>
+          Fotot är för litet för att tolkas av sig självt. Jämför fotot med
+          registreringen, eller klicka Tolka igen för att tolka det ändå.
+        </p>
+      )}
       <table
         className={`${styles.table} ${styles.photoCheck}`}
         aria-label="Tolkningen och registreringen"

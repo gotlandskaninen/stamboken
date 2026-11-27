@@ -208,10 +208,12 @@ class TestOriginals(PurgeTest):
                 self.assertEqual((document.original_path, document.interpretation, document.proposal), (None,) * 3)
 
     def test_waiting_for_the_reading_stops_with_the_original(self):
-        item = self.make(self.limit - MINUTE)
-        db.InboxDocument.update(interpretation_status="vantar").execute()
-        purge.purge_originals(NOW)
-        self.assertEqual(self.document(item).interpretation_status, "av")
+        for waiting in ("vantar", "for_litet"):  # a photo too small waits for "Tolka igen", which needs the original
+            with self.subTest(waiting):
+                item = self.make(self.limit - MINUTE)
+                db.InboxDocument.update(interpretation_status=waiting).where(db.InboxDocument.item == item).execute()
+                purge.purge_originals(NOW)
+                self.assertEqual(self.document(item).interpretation_status, "av")
 
     def test_the_queue_and_the_images_after_the_purge(self):
         item = self.make(self.limit - MINUTE, state="tagen")

@@ -95,6 +95,13 @@ describe("CertificateForm with the image reading's proposal", () => {
     expect(input(/^Födelsedatum/)).toHaveValue("");
   });
 
+  it("says why a photo too small was not read, and that Tolka igen reads it", () => {
+    show(doc({ proposal: null, interpretation_status: "for_litet" }));
+    expect(
+      screen.getByText(/för litet för att tolkas av sig självt/),
+    ).toHaveTextContent("klicka Tolka igen");
+  });
+
   it("keeps the queue's compact look: Kön a menu, not the member's choices", () => {
     show(doc({ proposal: null, interpretation_status: "vantar" }));
     const form = input(/^Namn/).closest("form")!;

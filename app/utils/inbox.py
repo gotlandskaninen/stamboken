@@ -270,9 +270,15 @@ def create_upload(user, herd, message, stored, *, kind="upload", ref_type=None, 
         ref_type=ref_type,
         ref_data={PURPOSE: held} if held else None,
     )
-    off = {"interpretation_status": "av"} if held else {}
     documents = [
-        InboxDocument.create(item=item, original_path=path, mime="image/jpeg", sha256=sha256, quality=quality, **off)
+        InboxDocument.create(
+            item=item,
+            original_path=path,
+            mime="image/jpeg",
+            sha256=sha256,
+            quality=quality,
+            interpretation_status="av" if held else interpreter.initial_status(quality),
+        )
         for path, sha256, quality in stored
     ]
     log_event(item, user, "inkommen", documents=len(documents), **detail)
@@ -799,7 +805,7 @@ def update_document(item, document, user, changes):
         raise InboxError(400, "dismissed är true eller false.")
     if changes.get("doc_type", document.doc_type) != document.doc_type:  # only certificates are read, never a notice's
         read = changes["doc_type"] == "intyg" and not unread(item)
-        document.interpretation_status = interpreter.initial_status() if read else "av"
+        document.interpretation_status = interpreter.initial_status(document.quality) if read else "av"
         document.attempts = 0
     for key in ("doc_type", "cert_format", "rotation"):
         if key in changes:
@@ -1389,7 +1395,7 @@ def bind_report_photo(item, document, user, individual):
     item.ref_id, item.ref_data = individual.id, None  # held for a purchase no longer: a rabbit's photo is read
     saved(item, document, user, individual, "ny_kanin")
     if document.interpretation_status == "av":  # uploaded for a purchase notice (unread): a rabbit's photo is read (G5)
-        document.interpretation_status = interpreter.initial_status()
+        document.interpretation_status = interpreter.initial_status(document.quality)
         document.save()
     if document.interpretation_status == "klar" and document.interpretation is not None:
         document.proposal = build_proposal(document.interpretation, item.genebank_id, item.herd_id, individual)
