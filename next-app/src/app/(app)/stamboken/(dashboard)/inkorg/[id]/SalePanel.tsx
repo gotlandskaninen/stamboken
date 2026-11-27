@@ -12,9 +12,11 @@ import {
   BuyerFields,
   EMPTY_BUYER,
   buyerComplete,
+  buyerMode,
   buyerModes,
   buyerPayload,
   saleYear,
+  type BuyerDraft,
 } from "@/components/individual/BuyerFields";
 import { ProposalChecks } from "@/components/register/RegisterFromCertificate";
 import { rabbitSales, registerSale, type RegistrySale } from "../actions";
@@ -67,23 +69,36 @@ export function SalePanel({
     setForm((f) => ({ ...f, ...changes }));
   // The seller and buyer read off the photo (rule 5 b): shown, and filled in only when the handler clicks.
   const read = shownProposal(doc)?.sale;
+  // The e-mail read off the photo is only for the association's notice (#273): it goes as soon as the notice is not
+  // the choice, so that the bevis's yes never makes it a contact address.
+  const [photoEmail, setPhotoEmail] = useState(false);
+  const changeBuyer = (next: BuyerDraft, y = year) => {
+    if (photoEmail && buyerMode(next, y) !== "epost") {
+      setPhotoEmail(false);
+      setBuyer({ ...next, email: "" });
+    } else setBuyer(next);
+  };
+  // A herd number read that is not the genebank's: the handler chooses the herd or a buyer outside.
+  const [choose, setChoose] = useState(false);
   const fill = () => {
     if (!read) return;
     const date = read.date ?? form.date;
-    if (read.buyer_herd) {
+    setChoose(!!read.buyer_herd && !read.buyer_herd.found);
+    if (read.buyer_herd?.found) {
       set({ herd: read.buyer_herd.herd, outside: false, date });
-    } else if (read.buyer) {
+    } else if (read.buyer && !read.buyer_herd) {
       const { name, town, postal_address, email } = read.buyer;
-      // The e-mail only for the association's notice, in the years that have it (#273); never a yes for the buyer.
+      // The e-mail only in the years that have the notice; never a yes for the buyer, nor what was typed before.
       const notice = !!email && buyerModes(saleYear(date)).includes("epost");
       set({ outside: true, date });
-      setBuyer((b) => ({
-        ...b,
+      setPhotoEmail(notice);
+      setBuyer({
+        ...EMPTY_BUYER,
         name,
         town,
         postal_address,
         ...(notice ? { email, mode: "epost" as const } : {}),
-      }));
+      });
     } else {
       set({ date });
     }
@@ -96,6 +111,7 @@ export function SalePanel({
       ["Ort", read?.buyer?.town],
       ["E-post", read?.buyer?.email],
       ["Säljdatum", read?.date],
+      ["Säljarens besättning", read?.seller_herd],
     ] as const
   ).filter(([, value]) => value);
   const names = new Map(herds.map((h) => [h.herd, h.herd_name]));
@@ -156,6 +172,17 @@ export function SalePanel({
     });
   };
 
+  // Saved: the sale and its buyer are in Stamboken, the one place for them; nothing here can send it again.
+  if (saved || doc.herd_tracking_id != null)
+    return (
+      <div className={styles.card}>
+        <h2 className={styles.cardTitle}>Försäljning</h2>
+        <p role="status" className={styles.muted}>
+          Försäljningen är sparad.
+        </p>
+      </div>
+    );
+
   return (
     <form className={styles.card} onSubmit={submit}>
       <h2 className={styles.cardTitle}>Försäljning</h2>
@@ -165,7 +192,7 @@ export function SalePanel({
           saknas&quot;.
         </p>
       )}
-      {read && !saved && (
+      {read && (
         <div className={styles.note}>
           <strong>Från fotot</strong>
           <ul aria-label="Från fotot">
@@ -183,6 +210,12 @@ export function SalePanel({
           >
             Fyll i från fotot
           </button>
+          {choose && (
+            <p role="status">
+              Köparens besättning på fotot finns inte i genbanken. Välj
+              besättningen, eller kryssa i Köparen är utanför föreningen.
+            </p>
+          )}
         </div>
       )}
       <div className={styles.fields}>
@@ -200,7 +233,10 @@ export function SalePanel({
           label="Säljdatum"
           type="date"
           value={form.date}
-          onChange={(e) => set({ date: e.target.value })}
+          onChange={(e) => {
+            set({ date: e.target.value });
+            changeBuyer(buyer, saleYear(e.target.value));
+          }}
           error={!!errors.date}
           helperText={errors.date}
           size="small"
@@ -227,7 +263,7 @@ export function SalePanel({
               {!saleRegistered && (
                 <BuyerFields
                   value={buyer}
-                  onChange={setBuyer}
+                  onChange={changeBuyer}
                   year={year}
                   size="small"
                   addressRequired={addressRequired}
@@ -266,11 +302,6 @@ export function SalePanel({
       {formError && (
         <p role="alert" className={styles.error}>
           {formError}
-        </p>
-      )}
-      {saved && !proof && (
-        <p role="status" className={styles.muted}>
-          Försäljningen är sparad.
         </p>
       )}
       <div className={styles.submitRow}>

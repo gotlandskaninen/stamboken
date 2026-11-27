@@ -105,8 +105,8 @@ export type Proposal = {
 };
 /** What was read, never a confident value: the handler fills the sale with a click and checks it. */
 export type SaleReading = {
-  /** Only a herd of the genebank, as read. */
-  buyer_herd: { herd: string } | null;
+  /** The buyer's herd as read; `found` only when it is one of the genebank's, and only then is it filled in. */
+  buyer_herd: { herd: string; found: boolean } | null;
   buyer: {
     name: string;
     postal_address: string;
@@ -114,7 +114,8 @@ export type SaleReading = {
     email: string;
   } | null;
   date: string | null;
-  seller: { name: string | null; herd: string | null };
+  /** As read; a check says when it is not the rabbit's herd of origin. */
+  seller_herd: string | null;
   checks: Proposal["checks"];
 };
 
