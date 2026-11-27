@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 
 from peewee import fn
 
-from utils.database import Member, Membership, PublicationConsentChange, User
+from utils.database import MatrikelAudit, Member, Membership, PublicationConsentChange, User
 from utils.matrikel import ConfirmRequired, LinkError, link_member_user
 
 logger = logging.getLogger(__name__)
@@ -33,6 +33,7 @@ CONSENT_TEXT_VERSION = "2026-11-20"  # the profile asks the same question since 
 # text (the old profile's member directory, "profil-2025") or one without history is no answer to this question: a
 # new text that says more applies only after a new answer (5.11). A bump that says more drops the older versions here.
 CONSENT_TEXT_VERSIONS = ("2026-11", "2026-11-16", "2026-11-18", CONSENT_TEXT_VERSION)
+NEJ = dict.fromkeys(CONSENT_KEYS, False)
 
 # Only Phase 9-provisioned Workspace addresses may auto-link. The
 # /api/auth/google flow enforces this domain, but the flask-dance
@@ -40,19 +41,43 @@ CONSENT_TEXT_VERSIONS = ("2026-11", "2026-11-16", "2026-11-18", CONSENT_TEXT_VER
 WORKSPACE_DOMAIN = "@gotlandskaninen.se"
 
 
-def latest_text_versions(membership_ids) -> dict[int, str]:
-    """Each membership's latest publication_consent_change text version, in one query (a list, an export)."""
-    change = PublicationConsentChange
-    ids = list(membership_ids)
+def holder_since(membership_ids) -> dict[int, datetime]:
+    """When each membership's current main member became it: the latest swap or reactivation (main_member_changed)
+    or main member added. Missing: the holder it was created with. One query for any number of memberships."""
+    audit = MatrikelAudit
+    became = (audit.action == "main_member_changed") | (
+        (audit.action == "person_added") & (audit.payload["role"] == "huvudmedlem")
+    )
+    rows = (
+        audit.select(audit.membership, fn.MAX(audit.created_at).alias("since"))
+        .where(audit.membership.in_(list(membership_ids)), became)
+        .group_by(audit.membership)
+    )
+    return {row.membership_id: row.since.astimezone() for row in rows}  # created_at is naive server time
+
+
+def counted_answers(membership_ids) -> set[int]:
+    """
+    The memberships whose stored answer counts (5.11): its latest publication_consent_change row answers this
+    question (CONSENT_TEXT_VERSIONS) and was given since the current main member became it. An answer belongs to
+    the person who gave it; also one given before a swap made before this rule existed never counts.
+    """
+    change, ids = PublicationConsentChange, list(membership_ids)
     last = change.select(fn.MAX(change.id)).where(change.membership.in_(ids)).group_by(change.membership)
-    rows = change.select(change.membership, change.text_version).where(change.id.in_(last))
-    return {row.membership_id: row.text_version for row in rows}
+    rows = change.select(change.membership, change.text_version, change.at).where(change.id.in_(last))
+    since = holder_since(ids)
+    return {
+        row.membership_id
+        for row in rows
+        if row.text_version in CONSENT_TEXT_VERSIONS
+        and (row.membership_id not in since or row.at >= since[row.membership_id])
+    }
 
 
-def stored_consent(row, versions=None) -> dict:
-    """The membership's publication_consent JSONB as stored — `{}` when it is not an object, or when its latest
-    publication_consent_change row answers another text than CONSENT_TEXT_VERSIONS (or there is none). A caller
-    with many memberships passes their `latest_text_versions`; without it the membership's own row is read.
+def stored_consent(row, counted=None) -> dict:
+    """The membership's publication_consent JSONB as stored — `{}` when it is not an object, or when the answer does
+    not count (counted_answers). A caller with many memberships passes their `counted_answers`; without it the
+    membership's own rows are read.
 
     Anything that is not a dict (a legacy or hand-edited blob) counts as never
     answered rather than as consent.
@@ -60,11 +85,10 @@ def stored_consent(row, versions=None) -> dict:
     raw = row.publication_consent
     if not isinstance(raw, dict) or not raw:
         return {}
-    version = (versions if versions is not None else latest_text_versions([row.id])).get(row.id)
-    return raw if version in CONSENT_TEXT_VERSIONS else {}
+    return raw if row.id in (counted if counted is not None else counted_answers([row.id])) else {}
 
 
-def effective_consent(row, versions=None) -> dict[str, bool]:
+def effective_consent(row, counted=None) -> dict[str, bool]:
     """Normalize stored JSONB to the full-key boolean shape used by consumers.
 
     v2: takes the Membership row — publication consent governs the matrikel
@@ -75,7 +99,7 @@ def effective_consent(row, versions=None) -> dict[str, bool]:
     blob must not publish either — `bool("false")` is True, and the Koharen
     export would print the e-mail.
     """
-    raw = stored_consent(row, versions)
+    raw = stored_consent(row, counted)
     return {k: raw.get(k) is True for k in CONSENT_KEYS}
 
 
@@ -99,10 +123,11 @@ def set_consent(membership, value, *, source, text_version, user=None, report=No
     """
     Writes `value` as the membership's publication consent, with one publication_consent_change row (D9, art. 7.1),
     when it differs from the stored answer to this question, `{}` included: the same answer to an older text is new.
-    Consent only: never the whole row. A report's write names its `report` and `submission` ids. The caller holds the
-    membership's lock. Returns whether it wrote.
+    A Nej is written also when unchanged: an explicit Nej wins over an older Ja, so a form signed before it must see
+    it (later_fields). Consent only: never the whole row. A report's write names its `report` and `submission` ids.
+    The caller holds the membership's lock. Returns whether it wrote.
     """
-    if value == stored_consent(membership):
+    if value == stored_consent(membership) and value != NEJ:
         return False
     membership.publication_consent = value
     membership.save(only=[Membership.publication_consent, Membership.updated_at])

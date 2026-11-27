@@ -116,8 +116,10 @@ from utils.matrikel import (
 from utils.members import (
     CONSENT_TEXT_VERSION,
     CONSENT_TEXT_VERSIONS,
+    NEJ,
     consent_from_answer,
     effective_consent,
+    holder_since,
     set_consent,
     stored_consent,
 )
@@ -2577,10 +2579,14 @@ def apply_paper_matrikel(herd, membership, member, submission, item, user, matri
             changes[name] = differ
     answer = (matrikel or {}).get("publicering")
     consent = consent_from_answer(answer["ja"], answer["utom"]) if answer is not None else None
-    consent = None if consent == stored_consent(membership) else consent
+    consent = None if consent == stored_consent(membership) and consent != NEJ else consent  # a Nej always counts
+    # The answer is the signer's: a form signed on or before the day the main member changed is the former one's (5.11)
+    since = holder_since([membership.id]).get(membership.id)
+    former = consent is not None and since is not None and since.astimezone(STOCKHOLM).date() >= signed_on
+    consent = None if former else consent
     asked = changes or consent is not None
     later = later_fields(stored, membership, member, signed_on, {row.id for row in own}) if asked else set()
-    skipped = [name for name in PAPER_FIELDS if name in changes and name in later]
+    skipped = [name for name in PAPER_FIELDS if name in changes and name in later] + (["publicering"] if former else [])
     written = {name: changes[name] for name in PAPER_FIELDS if name in changes and name not in later}
     if consent is not None and "publicering" in later:  # only what the form adds waits for the member
         current = effective_consent(membership)

@@ -14,6 +14,7 @@ from datetime import time as clock
 import utils.arsrapport as arsrapport
 import utils.database as db
 import utils.mail as mail
+from utils.matrikel import swap_main_member
 from utils.members import CONSENT_KEYS, CONSENT_TEXT_VERSION, effective_consent, stored_consent
 
 from tests.test_arsrapport_kontakt import (
@@ -162,6 +163,39 @@ class MatrikelTest(PaperTest):
         again = self.form(self.manager)
         receipt = self.answer(again, JA, received_on="2026-01-20", revision=1, reason="Ny blankett")
         self.assertEqual((self.stored(), receipt["matrikel"], receipt["warnings"]), (ALL, ["publicering"], []))
+
+    def test_a_form_signed_before_the_holder_changed_never_counts(self):
+        """An answer belongs to the holder who gave it: a form signed on or before the day the main member changed is
+        the former holder's, so its Ja never reaches the export with the new holder's details (5.11)."""
+        family = db.Member.create(
+            membership=self.member.membership_id, first_name="Fia", last_name="Familj", role="familjemedlem"
+        )
+        swap_main_member(db.Membership.get_by_id(self.member.membership_id), family, self.manager)
+        db.MatrikelAudit.update(created_at=datetime(2026, 1, 5, 9)).where(  # the form's own day: the old holder's
+            db.MatrikelAudit.action == "main_member_changed"
+        ).execute()
+        self.login("man")
+        receipt = self.answer(self.form(self.manager), JA, received_on="2026-01-12")
+        self.assertEqual((self.stored(), receipt["matrikel"], receipt["warnings"]), ({}, [], [later("publicering")]))
+        self.assertEqual(self.changes(), [])
+
+    def test_a_repeated_nej_is_recorded_and_wins_over_an_older_ja(self):
+        """An explicit Nej always wins over an older Ja: saved again unchanged, from the profile or on paper, it is
+        recorded, so a form with a Ja signed before it cannot expand the answer when it is entered later."""
+        db.Membership.update(publication_consent=NONE).where(db.Membership.id == self.member.membership_id).execute()
+        first = {"value": NONE, "text_version": CONSENT_TEXT_VERSION, "source": "profil"}
+        db.PublicationConsentChange.create(membership=self.member.membership_id, at=datetime(2025, 6, 1), **first)
+        self.profile(date(2026, 1, 10), **NONE)
+        self.assertEqual([change.at.date() for change in self.changes()], [date(2025, 6, 1), date(2026, 1, 10)])
+        self.login("man")
+        receipt = self.answer(self.form(self.manager), JA, received_on="2026-01-12")
+        self.assertEqual((self.stored(), receipt["matrikel"], receipt["warnings"]), (NONE, [], [later("publicering")]))
+
+        # On paper: a Nej signed 12 January is recorded, and a Ja signed on the 11th entered after it waits
+        nej = self.answer(self.form(self.manager), NEJ, signed_on="2026-01-12", revision=1, reason="Ny blankett")
+        self.assertEqual(nej["matrikel"], ["publicering"])
+        receipt = self.answer(self.form(self.manager), JA, signed_on="2026-01-11", revision=2, reason="Äldre blankett")
+        self.assertEqual((self.stored(), receipt["warnings"]), (NONE, [later("publicering")]))
 
     def test_fewer_details_go_at_once_after_a_later_change(self):  # Jonas 2026-11-14, fråga 27
         self.at(date(2026, 1, 20))
