@@ -434,6 +434,48 @@ describe("paper omissions", () => {
     expect(local()).toBe(theirs);
   });
 
+  it("takes another tab's newer copy at the same stamps back to the full form", async () => {
+    vi.useFakeTimers();
+    const a = completionActions();
+    const v = missingView();
+    const copyOf = (message: string, writer: string) =>
+      JSON.stringify({
+        data: toDraft({ ...fromBody(v.draft!.data), message }),
+        updated_at: v.draft!.updated_at,
+        revision: 4,
+        writer,
+      });
+    window.localStorage.setItem(
+      "arsrapport:demo:G9001:2026",
+      copyOf("Kopia från början", "this tab"),
+    );
+    render(<ReportForm env="demo" view={v} actions={a} />); // adopts it at mount
+    choose(2, "Finns kvar"); // typed here, not sent
+    fireEvent.change(within(row(2)).getByLabelText("Vikt"), {
+      target: { value: "3,1" },
+    });
+    // another tab replaces the copy at the same server stamps
+    window.localStorage.setItem(
+      "arsrapport:demo:G9001:2026",
+      copyOf("Nyare i den andra fliken", "another tab"),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Visa hela rapporten" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Fortsätt ändra" }));
+    expect(screen.getByDisplayValue("Nyare i den andra fliken")).toBeTruthy();
+    expect(
+      within(row(2)).getByRole("radio", { name: "Finns kvar", checked: true }),
+    ).toBeTruthy();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    const [, , data] = a.saveDraft.mock.calls[0];
+    expect((data as { message: string }).message).toBe(
+      "Nyare i den andra fliken",
+    );
+  });
+
   it("sends only the rows answered on the focused page, never a draft's", async () => {
     const a = completionActions();
     const v = missingView();

@@ -1279,27 +1279,25 @@ export function ReportForm({
   };
 
   const startChange = () => {
-    // The browser copy as it is now, also one this or another tab wrote after the mount: a copy at the server's
-    // version is taken up and sent, an older one is offered (#275's "Osparade ändringar på den här enheten").
+    // The browser copy as it is now, also one this or another tab wrote after the mount (the same stamps too): a copy
+    // at the server's version is the base and sent, an older one is offered (#275's "Osparade ändringar på den här
+    // enheten"). Only answers typed on the focused page and not sent go on top.
     const local = localChoice(view, store, isPaper);
-    if (!(localCopy && local?.adopt)) {
-      // the refreshed draft (or the copy) and its version together; answers typed on the focused page go on top
-      const next =
-        local?.adopt ??
-        fromBody(view.draft?.data ?? view.report?.submitted ?? {});
-      if (keepMissingEdits.current)
-        for (const id of view.report?.not_stated ?? []) {
-          const e = state.rabbits[id];
-          if (answeredHere.has(id) && e?.val && e.val !== "ej_angiven")
-            next.rabbits[id] = e;
-        }
-      setState(next);
-      updatedAt.current = view.draft?.updated_at ?? null;
-      if (local?.older) {
-        setOlderCopy(local.older);
-        setVersion(0); // nothing is saved before the choice
-      } else if (local?.adopt) setVersion((n) => n + 1); // autosave sends it
-    }
+    const next =
+      local?.adopt ??
+      fromBody(view.draft?.data ?? view.report?.submitted ?? {});
+    if (keepMissingEdits.current)
+      for (const id of view.report?.not_stated ?? []) {
+        const e = state.rabbits[id];
+        if (answeredHere.has(id) && e?.val && e.val !== "ej_angiven")
+          next.rabbits[id] = e;
+      }
+    setState(next);
+    updatedAt.current = view.draft?.updated_at ?? null;
+    if (local?.older) {
+      setOlderCopy(local.older);
+      setVersion(0); // nothing is saved before the choice
+    } else if (local?.adopt) setVersion((n) => n + 1); // autosave sends it
     keepMissingEdits.current = false;
     setLocalCopy(false);
     setMode("form");
