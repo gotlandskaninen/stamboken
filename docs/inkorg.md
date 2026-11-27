@@ -768,7 +768,7 @@ nummer i Stamboken.
 }
 ```
 
-Raderna är fälten i kroppen, med `pappersintyg` och `individual` först. `registry` är registrets
+Raderna är fälten i kroppen; med `pappersintyg` kommer `individual` först. `registry` är registrets
 värde för raden: ett nummer med kaninens namn, ett datum ÅÅÅÅ-MM-DD, ett antal, kön som `female` eller
 `male`, eller `null`. `status` är
 
