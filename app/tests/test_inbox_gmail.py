@@ -993,7 +993,7 @@ class TestAskBreeder(GmailTest):
         # Straightened again since: the question shows the part the handler framed, from the photo as it was then.
         db.InboxDocument.update(straighten=0).where(db.InboxDocument.id == self.document.id).execute()
         with Image.open(os.path.join(self.folder, self.document.original_path)) as original:
-            width, height = inbox.turned(original, 0, 5).size
+            width, height = original.rotate(-5, expand=True).size
 
         def attachment():
             params = {"item_id": self.item_id, "event_id": event.id}

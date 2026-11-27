@@ -569,7 +569,7 @@ class TestStraighten(CopyTest):
         item, document = self.saved_document()
         self.assertEqual(self.patch(item, document, straighten=3).status_code, 200)
         with Image.open(self.stored(document)) as photo:
-            three, two = inbox.turned(photo, 0, 3).size, inbox.turned(photo, 0, -2).size
+            three, two = photo.rotate(-3, expand=True).size, photo.rotate(2, expand=True).size
         rects = [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
         self.assertEqual(self.mask(item, document, mask_rects=rects).status_code, 200)
         self.assertEqual((db.InboxDocument.get_by_id(document.id).straighten, self.copy(document).size), (3, three))
