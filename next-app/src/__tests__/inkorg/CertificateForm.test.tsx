@@ -557,6 +557,21 @@ describe("CertificateForm's table for a rabbit in Stamboken", () => {
 });
 
 describe("CertificateForm saves a paper certificate as before the table", () => {
+  it("leaves the rows only compared out of the form, so they never stop Spara", () => {
+    show(doc({ proposal: FOUND }));
+    const owner = (label: string) =>
+      (screen.getByLabelText(label) as HTMLInputElement).form;
+    for (const label of ["Individnummer i Stamboken", "Intygsnummer"])
+      expect(owner(label)).not.toBeNull();
+    for (const label of ["Antal födda", "Födelsedatum", "Kön", "Mormor"])
+      expect(owner(label)).toBeNull();
+    cleanup();
+    show(doc());
+    for (const label of ["Antal födda", "Födelsedatum", "Kön"])
+      expect(owner(label)).not.toBeNull();
+    expect(owner("Mormor")).toBeNull();
+  });
+
   it("sends the rabbit, the paper's number and the certificate, nothing compared only", async () => {
     vi.mocked(saveCertificate).mockResolvedValue({
       ok: true,

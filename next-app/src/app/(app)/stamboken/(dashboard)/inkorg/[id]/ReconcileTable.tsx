@@ -49,6 +49,11 @@ const REQUIRED: Record<SaveMode, RowKey[]> = {
     "father",
   ],
 };
+/** Whether …/spara sends the row: in "kanin som finns" only the three numbers, never a grandparent. */
+const saved = (mode: SaveMode, key: RowKey) =>
+  mode === "pappersintyg"
+    ? REQUIRED.pappersintyg.includes(key)
+    : !GRANDPARENTS.has(key);
 const WORD: Record<RowStatus, string> = {
   stammer: "stämmer",
   skiljer: "skiljer sig",
@@ -120,6 +125,8 @@ export function ReconcileTable({
       className: styles.reconcileInput,
       value: values[key],
       required: REQUIRED[mode].includes(key),
+      // Compared only, never saved: owned by no form, so it never stops Spara.
+      form: saved(mode, key) ? undefined : `${id}-compared`,
       "aria-invalid": error ? true : undefined,
       "aria-describedby": error ? `${id}-${key}-error` : undefined,
       onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
