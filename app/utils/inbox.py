@@ -41,7 +41,7 @@ from utils.database import (
     not_voided,
 )
 from utils.herd_tracking import HerdTrackingError
-from utils.inbox_proposal import build_proposal
+from utils.inbox_proposal import SALE_READING, build_proposal
 from utils.individual_commands import lock_individual_for_edit
 from utils.individual_number_v2 import NUMBER_PATTERN, parse_number
 from utils.individual_policy import Role
@@ -270,9 +270,15 @@ def create_upload(user, herd, message, stored, *, kind="upload", ref_type=None, 
         ref_type=ref_type,
         ref_data={PURPOSE: held} if held else None,
     )
-    off = {"interpretation_status": "av"} if held else {}
     documents = [
-        InboxDocument.create(item=item, original_path=path, mime="image/jpeg", sha256=sha256, quality=quality, **off)
+        InboxDocument.create(
+            item=item,
+            original_path=path,
+            mime="image/jpeg",
+            sha256=sha256,
+            quality=quality,
+            interpretation_status="av" if held else interpreter.initial_status(quality),
+        )
         for path, sha256, quality in stored
     ]
     log_event(item, user, "inkommen", documents=len(documents), **detail)
@@ -425,6 +431,48 @@ def require_handler(item, user):
 def _set_state(item, state):
     item.state, item.state_changed_at = state, now()
     item.closed_at = item.state_changed_at if state in CLOSED_STATES else None
+    if item.closed_at is not None:  # a closed item saves no sale: the seller and buyer read off its photos go
+        for document in item.documents:
+            if drop_sale_reading(document):
+                document.save(only=[InboxDocument.interpretation, InboxDocument.proposal])
+
+
+def drop_sale_reading(document):
+    """
+    The seller and buyer read off the photo (rule 5 b) leave its reading and proposal, on `document` for the caller
+    to save, once no sale is saved from it any more: a sale was (its buyer is then in BuyerContact, under its own
+    rules), the document is done, dismissed or no longer a certificate, or its item closed. Returns whether there were
+    any.
+    """
+    found = False
+    for name, key in (("interpretation", SALE_READING), ("proposal", "sale")):
+        value = getattr(document, name)
+        if isinstance(value, dict) and key in value:
+            setattr(document, name, {k: v for k, v in value.items() if k != key})
+            found = True
+    return found
+
+
+def sale_ended_since(item_id, document_id, since):
+    """
+    Whether the item's history since `since` holds something that removes the seller and buyer read off the document
+    (drop_sale_reading), also if it was undone: the item closed, the document retyped, dismissed, done or sold. A
+    reading made meanwhile is then not stored (inbox_interpreter.interpret_next).
+    """
+    events = InboxEvent.select(InboxEvent.kind, InboxEvent.detail).where(
+        (InboxEvent.item == item_id) & (InboxEvent.at >= since)
+    )
+    for kind, detail in events.tuples():
+        detail = detail or {}
+        if kind == "lage" and detail.get("to") in CLOSED_STATES:
+            return True
+        if detail.get("document") == document_id and (
+            kind == "kopia"
+            or (kind == "dokument" and {"dismissed", "doc_type"} & set(detail.get("fields", [])))
+            or (kind == "sparad" and detail.get("action") in ("overlatelse", "bevis"))
+        ):
+            return True
+    return False
 
 
 def take(item, user, *, over, expected=None):
@@ -798,9 +846,10 @@ def update_document(item, document, user, changes):
     if "dismissed" in changes and not isinstance(changes["dismissed"], bool):
         raise InboxError(400, "dismissed är true eller false.")
     if changes.get("doc_type", document.doc_type) != document.doc_type:  # only certificates are read, never a notice's
-        read = changes["doc_type"] == "intyg" and not unread(item)
-        document.interpretation_status = interpreter.initial_status() if read else "av"
+        read = changes["doc_type"] == "intyg" and not unread(item) and document.original_path is not None
+        document.interpretation_status = interpreter.initial_status(document.quality) if read else "av"
         document.attempts = 0
+        drop_sale_reading(document)  # retyped: read again as a certificate, or not at all
     for key in ("doc_type", "cert_format", "rotation"):
         if key in changes:
             setattr(document, key, changes[key])
@@ -810,6 +859,7 @@ def update_document(item, document, user, changes):
         document.waiting_for = _waiting_for(changes["waiting_for"])
     if changes.get("dismissed"):
         document.done_at = document.done_at or now()
+        drop_sale_reading(document)
     elif changes.get("dismissed") is False and document.public_path is None and document.herd_tracking_id is None:
         document.done_at = None
     document.save()
@@ -918,6 +968,7 @@ def confirm_mask(item, document, user, rotation, rects, no_personal_data=None, m
     document.rotation, document.mask_rects = rotation, rects
     document.verified_at, document.verified_by = (now(), user.id) if matches_registry else (None, None)
     document.done_at = document.done_at or now()
+    drop_sale_reading(document)
     replaced = document.public_path
     make_copy(document)
     document.save()
@@ -998,7 +1049,21 @@ def _document_status(document, report=False):
     return "vantar_foralder" if document.waiting_for else "ny"
 
 
-def documents_json(documents, report=False):
+def _proposal_shown(document, user):
+    """
+    The stored proposal, for someone who works the item's genebank; for anyone else in the queue (who may see the
+    item but not work it) only what the photo shows: each field's source and what was read, no checks.
+    """
+    proposal = document.proposal
+    if user is None or not isinstance(proposal, dict) or can_handle(user, document.item.genebank_id):
+        return proposal
+    fields = proposal.get("fields") if isinstance(proposal.get("fields"), dict) else {}
+    seen = {key: {k: f[k] for k in ("source", "read") if k in f} for key, f in fields.items() if isinstance(f, dict)}
+    return {"fields": seen, "checks": []}
+
+
+def documents_json(documents, report=False, user=None):
+    """The documents as the API answers them; with `user`, the proposal as that user may see it (_proposal_shown)."""
     rabbits = {}
     individual_ids = {d.individual_id for d in documents if d.individual_id}
     if individual_ids:
@@ -1026,7 +1091,7 @@ def documents_json(documents, report=False):
             "mask_suggestion": HANDWRITTEN_MASK if d.cert_format == "handskrivet" and not d.mask_rects else None,
             "waiting_for": d.waiting_for,
             "interpretation_status": d.interpretation_status,
-            "proposal": d.proposal,
+            "proposal": _proposal_shown(d, user),
             "individual": rabbits[d.individual_id].number if d.individual_id in rabbits else None,
             "individual_genebank_id": genebanks.get(d.individual_id),
             "herd_tracking_id": d.herd_tracking_id,
@@ -1154,7 +1219,7 @@ def item_detail(item, user):
         "message": item.message,
         "mentioned_individuals": _rabbit_numbers(item, events, user),
         "sender_address": item.sender_address,
-        "documents": documents_json(documents, report_photo(item)),
+        "documents": documents_json(documents, report_photo(item), user),
         "events": [
             {"id": e.id, "at": _iso(e.at), "kind": e.kind, "user": _person(e.user_id, names), "detail": e.detail}
             for e in events
@@ -1389,7 +1454,7 @@ def bind_report_photo(item, document, user, individual):
     item.ref_id, item.ref_data = individual.id, None  # held for a purchase no longer: a rabbit's photo is read
     saved(item, document, user, individual, "ny_kanin")
     if document.interpretation_status == "av":  # uploaded for a purchase notice (unread): a rabbit's photo is read (G5)
-        document.interpretation_status = interpreter.initial_status()
+        document.interpretation_status = interpreter.initial_status(document.quality)
         document.save()
     if document.interpretation_status == "klar" and document.interpretation is not None:
         document.proposal = build_proposal(document.interpretation, item.genebank_id, item.herd_id, individual)
@@ -1492,6 +1557,7 @@ def transferred(item, document, user, individual, row, *, linked=False):
     document.herd_tracking_id = row.id
     if proof:
         document.individual, document.done_at = individual, now()
+    drop_sale_reading(document)
     document.save()
     proven = item.documents.select(InboxDocument.herd_tracking_id).where(
         (InboxDocument.doc_type == "bevis") & InboxDocument.herd_tracking_id.is_null(False)
