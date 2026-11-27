@@ -218,11 +218,37 @@ class TestPedigree(ProposalTest):
         )
         self.assertNotIn("far- och morföräldrarna på intyget", " ".join(self.texts(proposal)))
         self.assertEqual(self.source(proposal, "father"), ("läst", "G9003-2311"))  # the other branch stands
-        # The mother read is still found: her litter with the father born the date read gives her as härlett.
+        # Her litter with the confirmed father, born the date read, is listed; she is not taken from it.
         self.litter("G9001", "G9001-2211", "G9003-2311", date(2025, 5, 10), [], size=5)
         proposal = self.propose(reading(mormor=ancestor("G9001", "2211")))
-        self.assertEqual(self.source(proposal, "mother"), ("härlett", "G9001-2211"))
-        self.assertIn("Mor och far är hämtade ur Stamboken, ur kullen född 2025-05-10.", self.texts(proposal))
+        self.assertEqual(self.source(proposal, "mother"), ("osäker", None))
+        self.assertIn(
+            "Kull i Stamboken: född 2025-05-10, mor G9001-2211, far G9003-2311, 5 födda.", self.texts(proposal)
+        )
+
+    def test_a_misread_box_does_not_lead_to_another_rabbits_litter(self):
+        # The mother misread as Maja, whose mormor box repeats her: morfar, read right, is not Maja's father.
+        # Maja's one litter born that day must not fill in the parents.
+        self.litter("G9003", "G9003-2313", "G9002-2311", date(2025, 5, 10), [], size=5)
+        proposal = self.propose(
+            reading(mor=ancestor("G9003", "2313"), mormor=ancestor("G9003", "2313"), far=ancestor())
+        )
+        for key in ("mother", "father"):
+            self.assertNotIn(self.source(proposal, key), [("härlett", "G9003-2313"), ("härlett", "G9002-2311")], key)
+        self.assertNotIn("Mor och far är hämtade ur Stamboken, ur kullen född 2025-05-10.", self.texts(proposal))
+
+    def test_a_parent_only_found_does_not_overrule_a_confirmed_one(self):
+        # Maja's (or G9002-2311's) litter born that day is not the confirmed parent's: it may not make that one avviker.
+        self.litter("G9003", "G9003-2313", "G9002-2311", date(2025, 5, 10), [], size=5)
+        for role, changes in (
+            ("father", {"mor": ancestor("G9003", "2313"), "morfar": ancestor(), "mormor": ancestor()}),
+            ("mother", {"far": ancestor("G9002", "2311"), "farfar": ancestor(), "farmor": ancestor()}),
+        ):
+            with self.subTest(confirmed=role):
+                proposal = self.propose(reading(**changes))
+                confirmed = {"father": "G9003-2311", "mother": "G9001-2211"}[role]
+                self.assertEqual(self.source(proposal, role), ("läst", confirmed))
+                self.assertNotIn("avviker", [f["source"] for f in proposal["fields"].values()])
 
     def test_grandparents_are_never_proposed_without_their_parent(self):
         proposal = self.propose(reading(far=ancestor()))

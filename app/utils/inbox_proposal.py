@@ -310,7 +310,8 @@ def _branch(registry, raw, struck, role, fields, checks):
             if gp_text:
                 fields[gp_key] = _field(UNSURE, read=gp_text)
         checks.append(_check(False, f"{label}: {'; '.join(doubts)}."))
-        return None, rabbit if len(doubts) == 1 and not compared else None
+        # A branch whose boxes were misread confirms nothing, and its parent is not the registry's way in either.
+        return None, rabbit if len(doubts) == 1 and not compared and not itself else None
 
     fields[role] = _field(how, rabbit.number, read=text)
     for gp_key, gp_text, theirs, result in grandparents:
@@ -337,7 +338,9 @@ def _registry_litter(registry, raw, struck, found, birth, herd_id, year, fields,
     certificate fits it: one read otherwise is a disagreement, and one struck through or ruled out by the checks
     is not taken back here. Otherwise the litters are listed for the handler. Returns the litter that filled it.
     """
-    anchor = next(((role, found[role]) for role in ("mother", "father") if found[role] is not None), None)
+    # A parent the checks confirmed before one only found: the litter of an unconfirmed one may not overrule it.
+    roles = sorted(("mother", "father"), key=lambda role: fields.get(role, {}).get("source") not in (READ, DERIVED))
+    anchor = next(((role, found[role]) for role in roles if found[role] is not None), None)
     if anchor is not None:
         query = Breeding.select().where(getattr(Breeding, anchor[0]) == anchor[1].id)
     elif not any(role in fields for role in found) and herd_id is not None:
