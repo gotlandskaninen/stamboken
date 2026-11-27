@@ -126,7 +126,16 @@ export const checksPass = (doc: InboxDocument): boolean => {
   );
   // The certificate number too: a rabbit read with a digital certificate has none compared.
   const certificate = proposal.fields.paper_certificate?.source === "läst";
-  return same && certificate && !proposal.checks.some((c) => c.ok === false);
+  // Any row of the paper that is not the rabbit's (a grandparent, the colour) speaks against it.
+  const deviates = Object.values(proposal.fields).some(
+    (f) => f?.source === "avviker",
+  );
+  return (
+    same &&
+    certificate &&
+    !deviates &&
+    !proposal.checks.some((c) => c.ok === false)
+  );
 };
 
 export interface InboxEvent {
