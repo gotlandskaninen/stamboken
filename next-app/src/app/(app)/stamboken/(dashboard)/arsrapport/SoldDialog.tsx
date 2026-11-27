@@ -1,5 +1,6 @@
 "use client";
 
+import { useLeaveWarning } from "./useLeaveWarning";
 import React from "react";
 import {
   Dialog,
@@ -58,6 +59,7 @@ interface Props {
   // Registered at once (Jonas 2026-11-26): ticked as in Sälj, then `onRegister`, whose error stays in the dialog.
   onRegister?: (s: SaldState) => Promise<React.ReactNode>;
   undoable?: boolean; // the seller may Ångra it for 7 days, as on the rabbit page
+  guardTyping?: boolean; // the link page: a buyer typed here lives only in memory, so the tab asks before it closes
   onSave: (s: SaldState) => void;
   onClose: () => void;
 }
@@ -179,6 +181,7 @@ function Body({
   addressRequired,
   onRegister,
   undoable,
+  guardTyping,
   onSave,
   onClose,
 }: Props) {
@@ -202,6 +205,17 @@ function Body({
   const [buyer, setBuyer] = React.useState<BuyerDraft>(() =>
     buyerDraft(existing?.kopare),
   );
+  const [asking, setAsking] = React.useState(false);
+  const close = () => {
+    const initial = buyerDraft(existing?.kopare);
+    if (
+      (Object.keys(initial) as (keyof BuyerDraft)[]).some(
+        (k) => buyer[k] !== initial[k],
+      )
+    )
+      setAsking(true);
+    else onClose();
+  };
   // K1: a buyer kept across Dra tillbaka, which the seller never reads back. A
   // proposal cannot take it (F1), so a role that may not sell types the buyer.
   const keptId = existing?.kopare_id != null && !existing.kopare;
@@ -220,6 +234,7 @@ function Body({
     buyer.email,
     buyer.phone,
   ].some((v) => v.trim());
+  useLeaveWarning(!!guardTyping && outside && typed);
   const correction =
     rabbit?.registered_buyer_date &&
     (stored || date === rabbit.registered_buyer_date);
@@ -301,7 +316,7 @@ function Body({
   return (
     <Dialog
       open
-      onClose={onClose}
+      onClose={close}
       fullScreen={mobile}
       fullWidth
       maxWidth="sm"
@@ -309,15 +324,29 @@ function Body({
     >
       <DialogTitle id="sold-title" sx={{ pr: 6 }}>
         Såld: {number}
-        <IconButton
-          aria-label="Stäng"
-          onClick={onClose}
-          sx={{ position: "absolute", right: 8, top: 8 }}
-        >
-          <CloseIcon />
-        </IconButton>
+        {!asking && (
+          <IconButton
+            aria-label="Stäng"
+            onClick={close}
+            sx={{ position: "absolute", right: 8, top: 8 }}
+          >
+            <CloseIcon />
+          </IconButton>
+        )}
       </DialogTitle>
-      <DialogContent ref={content} dividers={mobile} className={styles.detail}>
+      {asking && (
+        <DialogContent>
+          <p role="alertdialog" aria-label="Anmälan är inte skickad">
+            Anmälan är inte skickad. Stäng ändå?
+          </p>
+        </DialogContent>
+      )}
+      <DialogContent
+        ref={content}
+        dividers={mobile}
+        className={styles.detail}
+        style={asking ? { display: "none" } : undefined}
+      >
         <div className={styles.choices} role="radiogroup" aria-label="Köparen">
           <label className={styles.choice}>
             <input
@@ -494,17 +523,17 @@ function Body({
         <button
           type="button"
           className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
-          onClick={onClose}
+          onClick={asking ? () => setAsking(false) : close}
         >
-          Avbryt
+          {asking ? "Fortsätt" : "Avbryt"}
         </button>
         <button
           type="button"
           className={`sb-btn ${styles.btn}`}
-          onClick={() => void save()}
+          onClick={asking ? onClose : () => void save()}
           disabled={busy}
         >
-          Spara försäljningen
+          {asking ? "Stäng" : "Spara försäljningen"}
         </button>
       </DialogActions>
     </Dialog>

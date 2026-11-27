@@ -41,6 +41,7 @@ from utils.database import (
     not_voided,
 )
 from utils.herd_tracking import HerdTrackingError
+from utils.inbox_paper import MAX_STRAIGHTEN, turned
 from utils.inbox_proposal import SALE_READING, build_proposal
 from utils.individual_commands import lock_individual_for_edit
 from utils.individual_number_v2 import NUMBER_PATTERN, parse_number
@@ -101,8 +102,10 @@ INCOMPLETE_MONTHS = 12
 REMIND_MONTHS = 11
 MAX_NOTE = 2000
 MAX_RECTS = 20
-# The masking a handwritten certificate (format 1) is offered: its lower third, where seller and buyer write.
-HANDWRITTEN_MASK = [{"x": 0.0, "y": 0.6667, "w": 1.0, "h": 0.3333}]
+# The frame a handwritten certificate (format 1) is offered: all but its lower third, where seller and buyer write.
+HANDWRITTEN_FRAME = {"x": 0.0, "y": 0.0, "w": 1.0, "h": 0.6667}
+MIN_FRAME = 0.1  # the copy keeps at least a tenth of the photo's width and height
+FULL_FRAME = 0.99  # a frame over this share of the photo or more leaves nothing out
 
 
 class InboxError(Exception):
@@ -816,14 +819,22 @@ def _waiting_for(value):
     return sorted(set(value))
 
 
-DOCUMENT_FIELDS = ("doc_type", "cert_format", "rotation", "mask_rects", "waiting_for", "dismissed")
-COPY_FIELDS = {"rotation", "mask_rects", "doc_type"}  # fixed once the copy is made: only …/maskning remakes it
+DOCUMENT_FIELDS = ("doc_type", "cert_format", "rotation", "straighten", "mask_rects", "waiting_for", "dismissed")
+# fixed once the copy is made: only …/maskning remakes it
+COPY_FIELDS = {"rotation", "straighten", "mask_rects", "doc_type"}
 
 
 def _rotation(value):
     if isinstance(value, bool) or value not in (0, 90, 180, 270):
         raise InboxError(400, "rotation är 0, 90, 180 eller 270 grader medurs.")
     return value
+
+
+def _straighten(value):
+    """The degrees the photo is straightened by after its quarter turns: -15 to 15 clockwise, to a tenth."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not abs(value) <= MAX_STRAIGHTEN:
+        raise InboxError(400, f"straighten är ett tal från -{MAX_STRAIGHTEN} till {MAX_STRAIGHTEN} grader medurs.")
+    return round(value, 1) + 0.0  # never -0.0
 
 
 def update_document(item, document, user, changes):
@@ -843,14 +854,21 @@ def update_document(item, document, user, changes):
         raise InboxError(400, f"cert_format är null eller en av {', '.join(CERT_FORMATS)}.")
     if "rotation" in changes:
         _rotation(changes["rotation"])
+    if "straighten" in changes:
+        changes = {**changes, "straighten": _straighten(changes["straighten"])}
     if "dismissed" in changes and not isinstance(changes["dismissed"], bool):
         raise InboxError(400, "dismissed är true eller false.")
+    # Turned while it waits: a reading of the old turn is dropped when it ends, and was no attempt.
+    if document.interpretation_status == "vantar" and any(
+        key in changes and changes[key] != getattr(document, key) for key in ("rotation", "straighten")
+    ):
+        document.attempts = 0
     if changes.get("doc_type", document.doc_type) != document.doc_type:  # only certificates are read, never a notice's
         read = changes["doc_type"] == "intyg" and not unread(item) and document.original_path is not None
         document.interpretation_status = interpreter.initial_status(document.quality) if read else "av"
         document.attempts = 0
         drop_sale_reading(document)  # retyped: read again as a certificate, or not at all
-    for key in ("doc_type", "cert_format", "rotation"):
+    for key in ("doc_type", "cert_format", "rotation", "straighten"):
         if key in changes:
             setattr(document, key, changes[key])
     if "mask_rects" in changes:
@@ -904,15 +922,16 @@ def reinterpret(item, document, user):
 
 def make_copy(document):
     """
-    The copy shown on the rabbit, made from the original: turned `rotation` degrees clockwise, its mask_rects
-    (fractions of the turned image) painted black, saved without metadata under a new name in inkorg/kopia/, so a
-    transaction rolled back after it leaves the copy it had. Only confirm_mask makes it, from the pair it was given,
-    which needs the original.
+    The copy shown on the rabbit, made from the original: turned `rotation` + `straighten` degrees clockwise
+    (inbox_paper.turned), its mask_rects (fractions of the turned image) painted black, then cropped to its
+    copy_frame (a fraction of the same turned image) when it has one, saved without metadata under a new name in
+    inkorg/kopia/, so a transaction rolled back after it leaves the copy it had. Only confirm_mask makes it, from
+    what it was given, which needs the original.
     """
     if document.original_path is None:
         raise InboxError(409, "Originalet är raderat, så kopian kan inte göras om.")
     with Image.open(private_path(document.original_path)) as original:
-        image = original.convert("RGB").rotate(-document.rotation, expand=True)
+        image = turned(original, document.rotation, document.straighten)
     width, height = image.size
     draw = ImageDraw.Draw(image)
     for r in document.mask_rects or []:
@@ -920,14 +939,25 @@ def make_copy(document):
         draw.rectangle(
             [math.floor(box[0]), math.floor(box[1]), math.ceil(box[2]) - 1, math.ceil(box[3]) - 1], fill="black"
         )
+    if document.copy_frame:  # rounded inwards, as the boxes are outwards: a pixel partly outside the frame is out
+        f = document.copy_frame
+        left, top = math.ceil(f["x"] * width), math.ceil(f["y"] * height)
+        right = min(width, math.floor((f["x"] + f["w"]) * width))
+        bottom = min(height, math.floor((f["y"] + f["h"]) * height))
+        if right <= left or bottom <= top:  # a photo of a few pixels: nothing whole inside the frame
+            raise InboxError(400, "Fotot är för litet för en ram. Ta bort ramen och täck med svarta rutor.")
+        image = image.crop((left, top, right, bottom))
     document.public_path, _ = store_jpeg(image, "kopia")
 
 
-def confirm_mask(item, document, user, rotation, rects, no_personal_data=None, matches_registry=None):
+def confirm_mask(
+    item, document, user, rotation, rects, no_personal_data=None, matches_registry=None, frame=None, straighten=None
+):
     """
-    POST …/maskning: the rotation and the rectangles covering the seller and the buyer, stored together, and the copy
-    made from exactly that pair goes on the rabbit; the document is done. The item's handler, while the item is open;
-    a copy already made can be made again by a manager of the item's genebank or an admin at any time. Either way
+    POST …/maskning: the rotation and the straighten (None: the document's), and the rectangles covering the seller
+    and the buyer, stored together with the frame the copy is cropped to (None: the whole photo), and the copy made
+    from exactly those goes on the rabbit; the document is done. The item's handler, while the item is open; a copy
+    already made can be made again by a manager of the item's genebank or an admin at any time. Either way
     the caller must be allowed to put a copy on the rabbit (may_publish). With matches_registry true the caller
     found the certificate and the registry in agreement: the rabbit's badge. Each call sets it anew, as it does the
     pair. Returns the copy it replaced, for the caller to remove after the commit.
@@ -947,10 +977,19 @@ def confirm_mask(item, document, user, rotation, rects, no_personal_data=None, m
     if not may_publish(user, rabbit):
         raise InboxError(403, f"Du får inte lägga kopian på {rabbit.number}.")
     rotation, rects = _rotation(rotation), _rects(rects)
+    if straighten is None and document.straighten:  # the boxes may have been drawn at another angle
+        raise InboxError(400, "Ange straighten: vinkeln som rutorna och ramen ritades i.")
+    straighten = document.straighten if straighten is None else _straighten(straighten)
     if rects is None:
         raise InboxError(400, "Ange mask_rects: rektanglarna som täcker säljaren och köparen.")
-    if not rects and no_personal_data is not True:
-        raise InboxError(400, 'En tom mask_rects kräver "no_personal_data": true: intyget visar ingen säljare.')
+    frame = None if frame is None else _rects([frame])[0]
+    if frame and min(frame["w"], frame["h"]) < MIN_FRAME:
+        raise InboxError(400, "Ramen runt kopian måste vara minst en tiondel av fotots bredd och höjd.")
+    crops = frame is not None and frame["w"] * frame["h"] < FULL_FRAME
+    if not rects and not crops and no_personal_data is not True:
+        raise InboxError(
+            400, 'En tom mask_rects kräver en copy_frame som lämnar något utanför, eller "no_personal_data": true.'
+        )
     if matches_registry is not None and not isinstance(matches_registry, bool):
         raise InboxError(400, "matches_registry är true eller false.")
     if matches_registry and document.saved_certificate is None:
@@ -965,7 +1004,8 @@ def confirm_mask(item, document, user, rotation, rects, no_personal_data=None, m
             f"{rabbit.number} har ett annat intyg eller individnummer i Stamboken än fotot sparades med "
             f"({document.saved_certificate}, {document.saved_number}). Kontrollera kaninen igen.",
         )
-    document.rotation, document.mask_rects = rotation, rects
+    document.rotation, document.straighten = rotation, straighten
+    document.mask_rects, document.copy_frame = rects, frame
     document.verified_at, document.verified_by = (now(), user.id) if matches_registry else (None, None)
     document.done_at = document.done_at or now()
     drop_sale_reading(document)
@@ -973,7 +1013,15 @@ def confirm_mask(item, document, user, rotation, rects, no_personal_data=None, m
     make_copy(document)
     document.save()
     log_event(
-        item, user, "kopia", document=document.id, rects=len(rects), rotation=rotation, stammer=bool(matches_registry)
+        item,
+        user,
+        "kopia",
+        document=document.id,
+        rects=len(rects),
+        frame=bool(frame),
+        rotation=rotation,
+        straighten=straighten,
+        stammer=bool(matches_registry),
     )
     close_if_done(item, user)
     return replaced
@@ -1087,8 +1135,15 @@ def documents_json(documents, report=False, user=None):
             "doc_type": d.doc_type,
             "cert_format": d.cert_format,
             "rotation": d.rotation,
+            "straighten": d.straighten,
             "mask_rects": d.mask_rects,
-            "mask_suggestion": HANDWRITTEN_MASK if d.cert_format == "handskrivet" and not d.mask_rects else None,
+            "copy_frame": d.copy_frame,
+            "frame_suggestion": (
+                # never masked: a copy made with no boxes and nothing to hide is redone as it was made
+                HANDWRITTEN_FRAME
+                if d.cert_format == "handskrivet" and not d.copy_frame and d.mask_rects is None
+                else None
+            ),
             "waiting_for": d.waiting_for,
             "interpretation_status": d.interpretation_status,
             "proposal": _proposal_shown(d, user),

@@ -272,6 +272,8 @@ test("Ett intyg går från uppladdning till pappersintyg på kaninen", async ({
           .first()
           .evaluate((c: HTMLCanvasElement) => c.width > c.height),
       ).toBe(true);
+      // The box on the whole photo: the frame the step starts with would crop the copy (pytest covers the frame).
+      await desk.getByRole("button", { name: "Ta bort ramen" }).click();
       await desk.getByRole("button", { name: "Lägg till ruta" }).click();
       await desk
         .getByRole("button", { name: "Bekräfta maskningen och nästa" })

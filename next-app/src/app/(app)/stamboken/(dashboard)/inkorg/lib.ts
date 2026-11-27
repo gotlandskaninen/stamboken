@@ -62,8 +62,13 @@ export interface InboxDocument {
   doc_type: DocType;
   cert_format: string | null;
   rotation: number;
+  /** Degrees clockwise the photo is straightened by after its rotation, -15 to 15. */
+  straighten: number;
   mask_rects: Rect[] | null;
-  mask_suggestion: Rect[] | null;
+  /** The part of the turned photo the copy keeps, or null: the whole photo. */
+  copy_frame: Rect | null;
+  /** The frame a handwritten certificate starts from: all but its lower third. */
+  frame_suggestion: Rect | null;
   waiting_for: string[] | null;
   interpretation_status: InterpretationStatus;
   proposal: Proposal | null;

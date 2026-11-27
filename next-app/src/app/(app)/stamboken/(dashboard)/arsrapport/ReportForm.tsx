@@ -59,6 +59,7 @@ import { RabbitRow } from "./RabbitRow";
 import { Receipt } from "./Receipt";
 import { ReportStatus, type StatusKind } from "./ReportStatus";
 import { SoldDialog } from "./SoldDialog";
+import { useLeaveWarning } from "./useLeaveWarning";
 import { ConfirmCountDialog, LitterDialog } from "./LitterDialog";
 import {
   ADD_FROM_CERTIFICATE,
@@ -319,6 +320,7 @@ export function ReportForm({
   actions,
   contactSlot,
   link,
+  loginTip,
   stickyTop = 56,
   post,
   env,
@@ -328,8 +330,10 @@ export function ReportForm({
   view: ReportView;
   actions: ReportActions;
   contactSlot?: React.ReactNode;
-  // The page behind the personal link (/rapport): no sign-in, so no mode cookie, profile or sign-in link.
+  // The page behind the personal link (/rapport) uses its code session.
   link?: true;
+  // The link page can recommend sign-in when /v2/rapport/mina returns login_tip for this report.
+  loginTip?: true;
   stickyTop?: number;
   post?: number;
   paper?: PaperProps;
@@ -405,6 +409,16 @@ export function ReportForm({
   const [mode, setMode] = React.useState<"form" | "receipt">(
     view.report && !isPaper ? "receipt" : "form",
   );
+  // On the link page a typed buyer and changed member details live only in memory until Skicka:
+  // closing the tab, or following the sign-in tip, would lose them.
+  useLeaveWarning(
+    !!link &&
+      mode === "form" &&
+      (Object.values(state.rabbits).some(
+        (e) => e.val === "sald" && e.sald?.kopare,
+      ) ||
+        !!detailsBody(view.member_details, fields)),
+  );
   const [version, setVersion] = React.useState(0);
   const [retry, setRetry] = React.useState(0);
   const [saveState, setSaveState] = React.useState<SaveState>("saved");
@@ -476,7 +490,7 @@ export function ReportForm({
   const visibleIds = React.useRef<number[]>([]);
   const boxRef = React.useRef<HTMLDivElement>(null);
   const stopped = React.useRef(false);
-  const saving = React.useRef(false);
+  const saving = React.useRef<Promise<boolean> | null>(null);
   const again = React.useRef(false);
   const resync = React.useRef(false);
   // the view a reload started from, and whether the local copy waits for the new one
@@ -621,22 +635,19 @@ export function ReportForm({
   // One save in flight at a time: a change made meanwhile is sent after it
   // has been answered, with the version it returned.
   const flush = async () => {
-    if (submitting.current) return;
-    autosavePending.current = false;
+    if (submitting.current) return false;
     if (saving.current) {
       again.current = true;
-      return;
+      return saving.current;
     }
-    saving.current = true;
-    let loopDone = () => {};
-    hold(key, new Promise<void>((resolve) => (loopDone = resolve)));
-    try {
+    const saveChanges = async () => {
       do {
+        autosavePending.current = false;
         again.current = false;
-        if (submitting.current) break;
+        if (submitting.current) return false;
         if (!link && readModeCookieClient() !== env) {
           stopped.current = true; // never save into the other environment
-          break;
+          return false;
         }
         const mine = versionRef.current;
         const sentAt = submissions.current;
@@ -665,7 +676,7 @@ export function ReportForm({
         // Skicka started while this save was on its way: its answer says nothing about the form any more.
         if (!autosaveAnswerKept(sentAt, submissions.current)) {
           setSaveState((s) => (s === "saving" ? "saved" : s));
-          break;
+          return false;
         }
         if (res.ok) {
           setSavedAt(fmtTime(res.data.updated_at));
@@ -692,21 +703,28 @@ export function ReportForm({
           setSaveState("conflict");
         } else if (p.status === 409 && ext.code === "rundan_stangd") {
           stopped.current = true;
+          autosavePending.current = true;
           setSaveState("closed");
         } else if (gone(p)) {
           stopped.current = true;
           router.replace("/rapport/ogiltig");
-        } else if (p.status === 401) setSaveState("loggedout");
-        else {
-          setSaveState("offline");
-          setTimeout(() => setRetry((n) => n + 1), 5000); // the page tries again
+        } else {
+          autosavePending.current = true;
+          if (p.status === 401) setSaveState("loggedout");
+          else {
+            setSaveState("offline");
+            setTimeout(() => setRetry((n) => n + 1), 5000); // the page tries again
+          }
         }
-        again.current = false;
+        return false;
       } while (again.current);
-    } finally {
-      saving.current = false;
-      loopDone();
-    }
+      return true;
+    };
+    saving.current = saveChanges().finally(() => {
+      saving.current = null;
+    });
+    hold(key, saving.current);
+    return saving.current;
   };
   const flushRef = React.useRef(flush);
   React.useEffect(() => {
@@ -738,6 +756,21 @@ export function ReportForm({
     );
     return () => clearTimeout(autosaveTimer.current);
   }, [version, retry, mode, canEdit, env, store, herd.herd, year, writer]);
+
+  const signIn = async (event: React.MouseEvent<HTMLAnchorElement>) => {
+    const anchor = event.currentTarget;
+    if (submitting.current || syncing || olderCopy) {
+      event.preventDefault();
+      return;
+    }
+    if (!saving.current && (!version || !autosavePending.current)) return;
+    event.preventDefault();
+    do {
+      clearTimeout(autosaveTimer.current);
+      if (stopped.current || !(await (saving.current ?? flush()))) return;
+    } while (anchor.isConnected && autosavePending.current);
+    if (anchor.isConnected) window.location.assign(anchor.href);
+  };
 
   const rabbits = view.rabbits;
   const lastId = rabbits.length ? rabbits[rabbits.length - 1].id : null;
@@ -1158,7 +1191,8 @@ export function ReportForm({
     }
     frozen.current = body; // never stored: it may hold a buyer or a matrikel
     clearTimeout(autosaveTimer.current); // a pending autosave must not reach the server after the submission
-    resumeAutosave.current = autosavePending.current;
+    // a save on its way may fail, and Skicka drops its answer: save again if Skicka is refused
+    resumeAutosave.current = autosavePending.current || saving.current !== null;
     submitting.current = true;
     submissions.current += 1;
     setPhase("checking");
@@ -1633,6 +1667,19 @@ export function ReportForm({
       <p className={styles.lead}>
         {`Rapporten gäller kaninerna som fanns i ${isPaper ? "besättningen" : "din besättning"} den 31 december ${year}.`}
       </p>
+      {link && loginTip && (
+        <p className={styles.lead}>
+          Logga gärna in i Stamboken, så kan du sälja direkt och ändra dina
+          uppgifter.{" "}
+          <a
+            href={`/auth/sign-in?return_to=/stamboken/arsrapport/${herd.herd}/${year}`}
+            onClick={signIn}
+          >
+            Logga in
+          </a>{" "}
+          Rapporterar du åt någon annan? Fortsätt då här utan att logga in.
+        </p>
+      )}
       {link && (
         <p className={styles.lead}>
           <a
@@ -2530,6 +2577,7 @@ export function ReportForm({
             : null
         }
         canSell={view.can_sell}
+        guardTyping={!!link}
         rabbit={soldRabbit}
         onRegister={direct ? register : undefined}
         undoable={view.access === "owner" && !isPaper}

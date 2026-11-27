@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useTranslation } from "react-i18next";
 import Link from "next/link";
 import { formatTime } from "@/lib/inkorg";
@@ -10,6 +10,7 @@ import {
   changeState,
   confirmMask,
   checkReportPhoto,
+  findPaper,
   reinterpretDocument,
   takeItem,
   updateDocument,
@@ -17,11 +18,16 @@ import {
   type ActionResult,
 } from "../actions";
 import {
+  crops,
+  degrees,
+  initialFrame,
   initialRects,
   MAX_RECTS,
+  paperFrame,
   rotateRect,
   toApiRects,
   turn,
+  UPPER_TWO_THIRDS,
 } from "../image";
 import {
   ACTION_LABEL,
@@ -225,13 +231,40 @@ export function WorkView({
   const [rects, setRects] = useState<Rect[]>(() =>
     doc ? initialRects(doc) : [],
   );
+  // The frame the copy is cropped to, first in the photo's layer before the black boxes.
+  const [copyFrame, setCopyFrame] = useState<Rect | null>(() =>
+    doc ? initialFrame(doc) : null,
+  );
+  const shift = copyFrame ? 1 : 0;
   const [selectedRect, setSelectedRect] = useState<number | null>(null);
   // "Bifoga utsnitt": the frame on the photo, in the view's rotation.
   const [crop, setCrop] = useState<Rect | null>(null);
+  // "Räta upp": unsaved until the handler saves it, and carried into the masking step, which stores it.
+  // Reset when the document or the handler changes, as the rotation is.
+  const [straighten, setStraighten] = useState(doc?.straighten ?? 0);
+  const [angleNote, setAngleNote] = useState<string | null>(null);
+  const angleKey = `${doc?.id}:${item.assigned_to?.id ?? ""}`;
+  const [shownAngleKey, setShownAngleKey] = useState(angleKey);
+  if (angleKey !== shownAngleKey) {
+    setShownAngleKey(angleKey);
+    setStraighten(doc?.straighten ?? 0);
+    setAngleNote(null);
+  }
+  const unsavedAngle = !!doc && straighten !== doc.straighten;
+  // The masking card: a registered report photo is compared with its rabbit instead, and has no masking.
+  const maskStep = masking && !(item.registered && doc?.doc_type === "intyg");
+  // What a "Hitta pappret" answer is for, and what is shown now (after the render that showed it).
+  // A frame moved, resized or removed meanwhile is the handler's: the answer is dropped too.
+  const paperFor = `${doc?.id}:${maskStep}:${rotation}:${straighten}:${JSON.stringify(copyFrame)}`;
+  const shownPaperFor = useRef(paperFor);
+  useEffect(() => {
+    shownPaperFor.current = paperFor;
+  });
   if (step !== shownStep) {
     setShownStep(step);
     setRotation(doc?.rotation ?? 0);
     setRects(doc ? initialRects(doc) : []);
+    setCopyFrame(doc ? initialFrame(doc) : null);
     setSelectedRect(null);
     setCrop(null);
     setRedo(false);
@@ -266,8 +299,69 @@ export function WorkView({
 
   const turnView = (quarterTurns: number) => {
     setRotation((r) => turn(r, quarterTurns));
-    if (masking) setRects((rs) => rs.map((r) => rotateRect(r, quarterTurns)));
+    if (masking) {
+      setRects((rs) => rs.map((r) => rotateRect(r, quarterTurns)));
+      setCopyFrame((f) => f && rotateRect(f, quarterTurns));
+    }
     setCrop((c) => c && rotateRect(c, quarterTurns));
+  };
+
+  // A part framed for the question is of the photo at the old angle: it goes.
+  const straightenView = (value: number) => {
+    setStraighten(value);
+    setCrop(null);
+    setAngleNote(null);
+  };
+
+  const saveAngle = () => {
+    if (!doc) return;
+    run(
+      () => updateDocument(item.id, doc.id, { straighten }),
+      () =>
+        setAngleNote(
+          doc.doc_type === "intyg" &&
+            doc.interpretation_status !== "av" &&
+            !purchase
+            ? "Vinkeln är sparad. Klicka Tolka igen om fotot ska läsas om med den."
+            : "Vinkeln är sparad.",
+        ),
+    );
+  };
+
+  // "Hitta pappret": the angle. In the masking step the angle is fixed: the paper is looked for at it, and the
+  // frame goes round its upper two thirds. An answer that comes after another document, step, turn, angle or
+  // frame is shown is dropped.
+  const findPaperOnPhoto = () => {
+    if (!doc) return;
+    const asked = paperFor;
+    const stale = () => shownPaperFor.current !== asked;
+    // The paper is in the turn the view shows: the API refuses any other.
+    if (maskStep)
+      return run(
+        () => findPaper(item.id, doc.id, rotation, straighten),
+        ({ paper, paper_tight }) => {
+          if (stale()) return;
+          if (paper && paper_tight)
+            setCopyFrame(paperFrame(paper, paper_tight));
+          setAngleNote(
+            paper && paper_tight
+              ? "Ramen ligger runt pappret utom dess nedre tredjedel."
+              : "Pappret hittades inte, så ramen är kvar.",
+          );
+        },
+      );
+    run(
+      () => findPaper(item.id, doc.id, rotation),
+      ({ angle }) => {
+        if (stale()) return;
+        straightenView(angle);
+        setAngleNote(
+          angle
+            ? `Fotot lutar ${degrees(angle)}, och vinkeln är satt till det.`
+            : "Ingen tydlig lutning hittades, så vinkeln är 0°.",
+        );
+      },
+    );
   };
 
   const rotate = (quarterTurns: number) => {
@@ -512,7 +606,8 @@ export function WorkView({
             item.assigned_to?.id === user.id && (
               <AskBreeder
                 itemId={item.id}
-                documentId={doc && !masking ? doc.id : null}
+                // A part of the photo at an unsaved angle would be cut at the saved one.
+                documentId={doc && !masking && !unsavedAngle ? doc.id : null}
                 crop={
                   crop && doc
                     ? toApiRects([
@@ -520,6 +615,7 @@ export function WorkView({
                       ])[0]
                     : null
                 }
+                turn={doc && { rotation: doc.rotation, straighten }}
                 onFrame={(on) =>
                   setCrop(on ? { x: 0.2, y: 0.2, w: 0.6, h: 0.3 } : null)
                 }
@@ -563,16 +659,33 @@ export function WorkView({
                 src={`${apiBase}/v2/inkorg/${item.id}/dokument/${doc.id}/original`}
                 rotation={rotation}
                 onRotate={rotate}
+                straighten={straighten}
+                onStraighten={straightenView}
+                straightenLocked={maskStep}
+                onFindPaper={editable ? findPaperOnPhoto : undefined}
+                busy={pending}
                 mask={
                   masking && mayMask
                     ? {
-                        rects,
-                        selected: selectedRect,
-                        onSelect: setSelectedRect,
+                        rects: copyFrame ? [copyFrame, ...rects] : rects,
+                        frameAt: copyFrame ? 0 : undefined,
+                        // selectedRect counts the black boxes only: the frame is never "Ta bort vald ruta"'s
+                        selected:
+                          selectedRect === null ? null : selectedRect + shift,
+                        onSelect: (i) =>
+                          setSelectedRect(i < shift ? null : i - shift),
                         onChange: (i, r) =>
-                          setRects((rs) => rs.map((x, j) => (j === i ? r : x))),
+                          i < shift
+                            ? setCopyFrame(r)
+                            : setRects((rs) =>
+                                rs.map((x, j) => (j === i - shift ? r : x)),
+                              ),
                         onRemove: (i) => {
-                          setRects((rs) => rs.filter((_, j) => j !== i));
+                          if (i < shift) setCopyFrame(null);
+                          else
+                            setRects((rs) =>
+                              rs.filter((_, j) => j !== i - shift),
+                            );
                           setSelectedRect(null);
                         },
                       }
@@ -588,6 +701,35 @@ export function WorkView({
                       : undefined
                 }
               />
+              {maskStep && unsavedAngle ? (
+                <p className={styles.note}>
+                  Vinkeln {degrees(straighten)} sparas när du bekräftar
+                  maskningen.
+                </p>
+              ) : (
+                unsavedAngle &&
+                editable &&
+                !doc.has_copy && (
+                  <p className={styles.note}>
+                    Vinkeln {degrees(straighten)} är inte sparad. Kopian,
+                    tolkningen och utsnittet till uppfödaren får den först när
+                    du sparar den.{" "}
+                    <button
+                      type="button"
+                      className="sb-btn sb-btn-sm"
+                      disabled={pending}
+                      onClick={saveAngle}
+                    >
+                      Spara vinkeln
+                    </button>
+                  </p>
+                )
+              )}
+              {angleNote && (
+                <p role="status" className={styles.muted}>
+                  {angleNote}
+                </p>
+              )}
               {(doc.warnings.length > 0 || doc.duplicates.length > 0) && (
                 <div className={styles.badges}>
                   {doc.warnings.map((w) => (
@@ -681,7 +823,9 @@ export function WorkView({
                         type="button"
                         className="sb-btn sb-btn-secondary sb-btn-sm"
                         disabled={
-                          pending || doc.interpretation_status === "vantar"
+                          pending ||
+                          doc.interpretation_status === "vantar" ||
+                          unsavedAngle
                         }
                         onClick={() =>
                           run(
@@ -783,6 +927,7 @@ export function WorkView({
               registered={item.registered}
               canCheck={checking && doc.status === "sparad"}
               pending={pending}
+              angleUnsaved={unsavedAngle}
               onCheck={(outcome) =>
                 run(
                   () => checkReportPhoto(item.id, doc.id, outcome),
@@ -827,7 +972,9 @@ export function WorkView({
                     onClick={() => {
                       // From the stored pair, not from a turn made for reading.
                       setRotation(doc.rotation);
+                      setStraighten(doc.straighten);
                       setRects(initialRects(doc));
+                      setCopyFrame(initialFrame(doc));
                       setSelectedRect(null);
                       setMatches(false);
                       setRedo(true);
@@ -844,14 +991,34 @@ export function WorkView({
                 <h2 className={styles.cardTitle}>Dölj säljare och köpare</h2>
                 <p className={styles.muted}>
                   {doc.individual} är sparad.
-                  {redo && " Kopian på kaninen ersätts när du bekräftar."} Täck
-                  säljarens och köparens uppgifter med svarta rutor innan kopian
-                  läggs på kaninen. Dra en ruta eller dess hörn, eller välj den
-                  och använd piltangenterna (Skift ändrar storleken).
+                  {redo && " Kopian på kaninen ersätts när du bekräftar."}{" "}
+                  Kopian på kaninen är det som syns innanför ramen; utan ram är
+                  den hela fotot. Dra ramen och dess hörn så att säljarens och
+                  köparens uppgifter hamnar utanför. Täck det som ändå syns
+                  innanför ramen med svarta rutor. Du kan också välja ramen
+                  eller en ruta och använda piltangenterna (Skift ändrar
+                  storleken).
                 </p>
                 {mayMask ? (
                   <>
                     <div className={styles.row}>
+                      {copyFrame ? (
+                        <button
+                          type="button"
+                          className="sb-btn sb-btn-secondary sb-btn-sm"
+                          onClick={() => setCopyFrame(null)}
+                        >
+                          Ta bort ramen
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="sb-btn sb-btn-secondary sb-btn-sm"
+                          onClick={() => setCopyFrame(UPPER_TWO_THIRDS)}
+                        >
+                          Lägg till ram
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="sb-btn sb-btn-secondary sb-btn-sm"
@@ -880,7 +1047,7 @@ export function WorkView({
                         Ta bort vald ruta
                       </button>
                     </div>
-                    {rects.length === 0 && (
+                    {rects.length === 0 && !crops(copyFrame) && (
                       <label className={styles.row}>
                         <input
                           type="checkbox"
@@ -909,7 +1076,10 @@ export function WorkView({
                         type="button"
                         className="sb-btn"
                         disabled={
-                          pending || (rects.length === 0 && !noPersonalData)
+                          pending ||
+                          (rects.length === 0 &&
+                            !crops(copyFrame) &&
+                            !noPersonalData)
                         }
                         onClick={() =>
                           run(
@@ -918,7 +1088,9 @@ export function WorkView({
                                 item.id,
                                 doc.id,
                                 rotation,
+                                straighten,
                                 toApiRects(rects),
+                                copyFrame,
                                 noPersonalData,
                                 matches,
                               ),
