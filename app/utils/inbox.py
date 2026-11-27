@@ -872,11 +872,11 @@ def make_copy(document):
         draw.rectangle(
             [math.floor(box[0]), math.floor(box[1]), math.ceil(box[2]) - 1, math.ceil(box[3]) - 1], fill="black"
         )
-    if document.copy_frame:  # as inbox_gmail._cropped, but never past the edge: _rects lets x + w reach 1.0001
+    if document.copy_frame:  # rounded inwards, as the boxes are outwards: a pixel partly outside the frame is out
         f = document.copy_frame
-        left, top = math.floor(f["x"] * width), math.floor(f["y"] * height)
-        right = min(width, math.ceil((f["x"] + f["w"]) * width))
-        image = image.crop((left, top, right, min(height, math.ceil((f["y"] + f["h"]) * height))))
+        left, top = math.ceil(f["x"] * width), math.ceil(f["y"] * height)
+        right = min(width, math.floor((f["x"] + f["w"]) * width))
+        image = image.crop((left, top, right, min(height, math.floor((f["y"] + f["h"]) * height))))
     document.public_path, _ = store_jpeg(image, "kopia")
 
 
@@ -1046,7 +1046,10 @@ def documents_json(documents, report=False):
             "mask_rects": d.mask_rects,
             "copy_frame": d.copy_frame,
             "frame_suggestion": (
-                HANDWRITTEN_FRAME if d.cert_format == "handskrivet" and not d.copy_frame and not d.mask_rects else None
+                # never masked: a copy made with no boxes and nothing to hide is redone as it was made
+                HANDWRITTEN_FRAME
+                if d.cert_format == "handskrivet" and not d.copy_frame and d.mask_rects is None
+                else None
             ),
             "waiting_for": d.waiting_for,
             "interpretation_status": d.interpretation_status,

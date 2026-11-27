@@ -5,6 +5,8 @@ import type { InboxDocument, Rect } from "./lib";
 
 export const MAX_RECTS = 20;
 const MIN_SIZE = 0.02;
+/** The frame around the copy keeps at least a tenth of the photo each way, as the API requires. */
+export const MIN_FRAME = 0.1;
 /** The copy of the green certificate: all but its lower third, the seller and buyer block. */
 export const UPPER_TWO_THIRDS: Rect = { x: 0, y: 0, w: 1, h: 0.6667 };
 
@@ -18,11 +20,16 @@ export const moveRect = (r: Rect, dx: number, dy: number): Rect => ({
   y: clamp(r.y + dy, 0, 1 - r.h),
 });
 
-/** The lower right corner moved by (dw, dh); never smaller than MIN_SIZE nor outside the image. */
-export const resizeRect = (r: Rect, dw: number, dh: number): Rect => ({
+/** The lower right corner moved by (dw, dh); never smaller than `min` nor outside the image. */
+export const resizeRect = (
+  r: Rect,
+  dw: number,
+  dh: number,
+  min = MIN_SIZE,
+): Rect => ({
   ...r,
-  w: clamp(r.w + dw, MIN_SIZE, 1 - r.x),
-  h: clamp(r.h + dh, MIN_SIZE, 1 - r.y),
+  w: clamp(r.w + dw, min, 1 - r.x),
+  h: clamp(r.h + dh, min, 1 - r.y),
 });
 
 /** The same area after the image is turned `quarterTurns` × 90° clockwise (negative: counter-clockwise). */
@@ -64,8 +71,7 @@ export const initialFrame = (
   doc: Pick<InboxDocument, "copy_frame" | "frame_suggestion" | "mask_rects">,
 ): Rect | null =>
   doc.copy_frame ??
-  doc.frame_suggestion ??
-  (doc.mask_rects ? null : UPPER_TWO_THIRDS);
+  (doc.mask_rects ? null : (doc.frame_suggestion ?? UPPER_TWO_THIRDS));
 
 /** A frame over (almost) the whole photo leaves nothing out: it is no cover for the seller and the buyer. */
 export const crops = (frame: Rect | null): boolean =>

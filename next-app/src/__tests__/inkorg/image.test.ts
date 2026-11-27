@@ -5,6 +5,7 @@ import {
   initialFrame,
   initialRects,
   MAX_RECTS,
+  MIN_FRAME,
   moveRect,
   resizeRect,
   rotateRect,
@@ -34,6 +35,7 @@ describe("resizeRect", () => {
   it("never past the image, never below the minimum", () => {
     close(resizeRect(r, 5, 5), { w: 0.9, h: 0.8 });
     close(resizeRect(r, -5, -5), { w: 0.02, h: 0.02 });
+    close(resizeRect(r, -5, -5, MIN_FRAME), { w: 0.1, h: 0.1 });
   });
 });
 
@@ -101,6 +103,14 @@ describe("initialFrame", () => {
     // A copy made with boxes only, or with nothing to hide, is redone as it was made: without a frame.
     expect(initialFrame({ ...none, mask_rects: [r] })).toBe(null);
     expect(initialFrame({ ...none, mask_rects: [] })).toBe(null);
+    // even when the API offers its frame for a handwritten certificate
+    expect(
+      initialFrame({
+        ...none,
+        mask_rects: [],
+        frame_suggestion: UPPER_TWO_THIRDS,
+      }),
+    ).toBe(null);
   });
 });
 

@@ -3,7 +3,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useMode } from "@/lib/mode-context";
-import { enhancePencil, moveRect, resizeRect } from "../image";
+import { enhancePencil, MIN_FRAME, moveRect, resizeRect } from "../image";
 import type { InboxDocument, Rect } from "../lib";
 import styles from "../inkorg.module.css";
 
@@ -196,6 +196,9 @@ export function PhotoViewer({
     vp.scrollTop = pan.current.top - (e.clientY - pan.current.y);
   };
 
+  // The frame around the copy keeps a tenth each way (the API refuses less); boxes the default minimum.
+  const smallest = (i: number) => (i === mask?.frameAt ? MIN_FRAME : undefined);
+
   const drag = (e: React.PointerEvent, i: number, kind: "move" | "resize") => {
     const stage = stageRef.current;
     if (!mask || !stage) return;
@@ -213,7 +216,7 @@ export function PhotoViewer({
         i,
         kind === "move"
           ? moveRect(start.rect, dx, dy)
-          : resizeRect(start.rect, dx, dy),
+          : resizeRect(start.rect, dx, dy, smallest(i)),
       );
     };
     const end = () => {
@@ -234,7 +237,9 @@ export function PhotoViewer({
       const r = mask.rects[i];
       mask.onChange(
         i,
-        e.shiftKey ? resizeRect(r, d[0], d[1]) : moveRect(r, d[0], d[1]),
+        e.shiftKey
+          ? resizeRect(r, d[0], d[1], smallest(i))
+          : moveRect(r, d[0], d[1]),
       );
     } else if (e.key === "Delete" || e.key === "Backspace") {
       e.preventDefault();

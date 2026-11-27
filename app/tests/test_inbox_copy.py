@@ -129,13 +129,20 @@ class TestCopy(CopyTest):
             self.assertTrue(close(copy.getpixel((x, 600)), (0, 0, 0)))
         self.assertTrue(close(copy.getpixel((1000, 100)), RED))  # above the box
 
+    def test_the_frame_is_rounded_inwards_so_no_pixel_partly_outside_it_is_kept(self):
+        item, document = self.saved_document()
+        frame = {"x": 0.0004, "y": 0.0003, "w": 0.5, "h": 0.5}  # 0.48 px in from the left and top of 1200 x 1600
+        resp = self.mask(item, document, mask_rects=[], copy_frame=frame)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertEqual(self.copy(document).size, (599, 799))  # columns 1-599, rows 1-799
+
     def test_only_a_handwritten_certificate_without_a_frame_or_boxes_is_offered_its_frame(self):
         _, document = self.saved_document()
         document = db.InboxDocument.get_by_id(document.id)
         frame = {"x": 0, "y": 0, "w": 1, "h": 0.5}
         for changes, suggestion in (
             ({"cert_format": "handskrivet"}, inbox.HANDWRITTEN_FRAME),
-            ({"cert_format": "handskrivet", "mask_rects": []}, inbox.HANDWRITTEN_FRAME),
+            ({"cert_format": "handskrivet", "mask_rects": []}, None),  # confirmed with nothing to hide
             ({"cert_format": "handskrivet", "mask_rects": [frame]}, None),
             ({"cert_format": "handskrivet", "copy_frame": frame}, None),
             ({"cert_format": "datorskrivet"}, None),
