@@ -64,7 +64,9 @@ def _null_originals(where):
     rows = list(rows.where(where & InboxDocument.original_path.is_null(False)).tuples())
     if rows:
         waiting = Case(
-            None, [(InboxDocument.interpretation_status == "vantar", "av")], InboxDocument.interpretation_status
+            None,
+            [(InboxDocument.interpretation_status.in_(("vantar", "for_litet")), "av")],
+            InboxDocument.interpretation_status,
         )
         # The model's reading and the proposal from it are a transcription of the photo: they go with it.
         query = InboxDocument.update(
@@ -339,13 +341,15 @@ def purge_gmail_processed(now):
 
 def purge_change_requests(now):
     """
-    The yearly report's member_change_request 30 days after it was confirmed, expired or revoked (spec 6): a paper
-    e-mail change holds the old and the new address. A mail still queued to it finds no address, as at an erasure.
+    The values of the yearly report's member_change_request 30 days after it was confirmed, expired or revoked
+    (spec 6): the addresses, phone, account and answer go, and the row stays with its kind, dates and revoked_reason,
+    so the status view and the export still say "kontobyte förföll" or "det var inte jag" (U14). A mail still queued
+    to an old address finds none, as at an erasure.
     """
     since = now - CHANGE_REQUEST_AFTER
     request = MemberChangeRequest
     closed = (request.confirmed_at < since) | (request.expires_at < since) | (request.revoked_at < since)
-    return request.delete().where(closed).execute()
+    return request.update(value={}).where(closed & (request.value != {})).execute()
 
 
 def mark_stalled(now):

@@ -966,6 +966,29 @@ Säljer en skötare en kanin, eller den som rapporterar via länken i inbjudan, 
 försäljningen på genbanksansvarig. Raden visar "Försäljningen väntar på genbanksansvarig.
 Kaninen står kvar hos dig tills den är godkänd."
 
+**Dina uppgifter** står sist före Skicka. Är ditt konto kopplat till huvudmedlemmen i
+besättningens medlemskap ser du adress, telefon, kontot för stödet (bara de fyra sista
+siffrorna) och svaret om Koharen. Det du ändrar sparas när du skickar rapporten, och ändras
+kontot får du ett mejl om det. **Byt e-postadress** skickar en kod till den nya adressen;
+när adressen är bytt loggas du ut, så skicka rapporten först. Är du ägare eller skötare
+men inte huvudmedlem står bara att huvudmedlemmen ändrar uppgifterna.
+
+Via länken i inbjudan heter avsnittet **Har något ändrats?**, och sidan visar inte dina
+uppgifter. Knapparna **Ny adress eller telefon**, **Ny e-postadress**, **Nytt konto för
+stödet** och **Svar om Koharen** öppnar tomma fält. Ett Nej om Koharen, eller färre
+uppgifter i listan, gäller direkt. Allt annat gäller först när det bekräftats på sidan
+som kvittomejlet länkar till, senast 14 dagar efter inskicket. Kvittomejlet har då ämnet
+"Årsrapporten är inskickad, bekräfta dina ändringar" och går till medlemmens adress i
+matrikeln, aldrig till en ny adress som inte har bekräftats. Sidan **Bekräfta dina
+ändringar** visar varje ändring med nuvarande och nytt värde (kontot med fyra siffror).
+**Bekräfta** sparar dem; kontot ändras bara om rutan **Jag bekräftar det nya kontot för
+stödet.** är ikryssad. **Det var inte jag** stoppar ändringarna, och genbanksansvarig ser
+det i statusen. En ny e-postadress gäller för inloggning efter sju dagar, och den gamla
+adressen får ett meddelande. En ändring som inte bekräftats i tid står på kvittot med
+"gällde till"; fyll i den igen med **Ändra**. Sist på kvittot, när inloggning med kod är
+på, står **Skapa konto**: du loggar in med en kod som mejlas till din adress, och ett konto
+skapas som är kopplat till ditt medlemskap.
+
 Det du fyller i sparas medan du skriver. **Skicka årsrapporten** visar ett kvitto.
 Därefter kan du **Ändra** och skicka ändringarna, eller klicka **Dra tillbaka** (det
 går till och med det datum som står bredvid knappen). Rutan **Dra tillbaka rapporten**
@@ -1027,7 +1050,12 @@ besättningen (koden öppnar rapporten), läget, villkoren för stöd (**Hane**,
 **Kull**, **I tid**, med bock eller kryss), flaggor, när rapporten togs emot och åtgärder.
 Flaggorna är **Ingen e-post**, **Preliminärt antal**, till exempel **3 ej angivna** (med
 "(påverkar stödet)" när det gäller), **Försäljning väntar**, **Försäljning avvisad,
-medlemmen väljer igen**, **Köpt efter inskick** och **Köp anmält**. Under läget står
+medlemmen väljer igen**, **Köpt efter inskick**, **Köp anmält**, **Ändring väntar på bekräftelse**, **Kontobyte väntar
+på bekräftelse**, **Kontobyte förföll** (stödet går då till det gamla kontot), **Det var inte
+jag** och **Nytt konto**. **Nytt konto** betyder att huvudmedlemmen har skapat ett konto med
+inloggning med kod sedan rundan öppnade. Genbanksansvarig och administratör kan **Koppla bort
+kontot**; kontot finns kvar, men kopplingen till medlemskapet och dess besättningar tas bort.
+Under läget står
 inbjudans läge: **Inbjudan skickad**, **Inbjudan studsade**, **Inbjudan misslyckades** eller
 **Länken öppnad**. Studsade och misslyckade inbjudningar kommer också under **Att ringa** tills
 besättningen har rapporterat. **Mata in blankett** öppnar inkorgen
@@ -1272,8 +1300,26 @@ administratörer, genbanksansvariga och genbankshjälpare, och alla tre kan se h
    rullhjul zoomar du in och ut där pekaren står. Ange **Typ**
    (Intyg, Bevis, Årsblankett eller Annat) och **Format**.
 3. Ett intyg: välj **Ny kanin** eller **Pappersintyg på en kanin som finns** och skriv av
-   fälten. Under **Mor** och **Far** visar Stamboken registrets uppgifter, så att du kan
-   jämföra dem med fotot. Klicka **Spara och nästa**. Ett fel visas vid fältet det gäller.
+   pappret i tabellen. Varje rad har kolumnerna **Inläst** (det bildtolkningen läste),
+   **Pappret** (det du skriver av från fotot) och **Registret** (det Stamboken har), och en
+   status i ord: **stämmer**, **skiljer sig**, **osäker** (inget ifyllt, men tolkningen läste
+   något där) eller **inget att jämföra**. Statusen räknas om medan du skriver, och överst står
+   hur många rader som stämmer, är osäkra, skiljer sig eller är utan jämförelse. Under **Mor**
+   står **Morfar** och **Mormor**, under **Far** **Farfar** och **Farmor**. Dem skriver du av
+   bara för att jämföra; de sparas inte.
+   - **Ny kanin**: Registret visar mor och far med namn och deras föräldrar. Har mor och far en
+     kull född den dagen visas kullens antal, och vid **Individnummer på pappret** numret som
+     Stamboken ger kaninen. Vid **Intygsnummer** står "ledigt" när numret är ledigt.
+   - **Pappersintyg på en kanin som finns**: skriv kaninens nummer vid **Individnummer i
+     Stamboken**. Då visar Registret det Stamboken har om kaninen, rad för rad, så att du ser om
+     pappret stämmer med den. Bara de tre numren överst sparas.
+
+   Finns ett nummer du skrivit inte i genbanken står "Menar du:" med de kaniner vars nummer är
+   ett tecken ifrån; klicka en för att fylla i den. På en osäker rad fyller **Ta inläst** i det
+   tolkningen läste, med numret skrivet som i Stamboken (G1 2511 blir G1-2511). Under tabellen
+   står kontrollerna, till exempel "Mor och far finns i Stamboken", "Numret stämmer med kullen"
+   och "Intygsnumret är ledigt". De räknas också om medan du skriver.
+   Klicka **Spara och nästa**. Ett fel visas vid raden det gäller.
    Stämmer inte individnumret på pappret med Stambokens öppnas samma ruta som för
    uppfödaren, se [När pappret och Stamboken har olika individnummer](#när-pappret-och-stamboken-har-olika-individnummer).
    Stämmer pappret lämnar du ärendet till genbanksansvarig.
@@ -1281,17 +1327,16 @@ administratörer, genbanksansvariga och genbankshjälpare, och alla tre kan se h
    registret, ändras ingenting i registret: fotot kopplas till kaninen så att kopian kan läggas
    på den. Det får också en genbankshjälpare göra.
 
-   Är bildtolkningen på har Stamboken redan läst fotot, och formuläret är ifyllt med ett förslag.
-   Varje fält är märkt med varifrån värdet kommer: **läst** (läst på intyget; mor, far och
-   individnumret är dessutom kontrollerade mot registret, men namn, kön, färg och intygsnummer, och
-   för en ny kull födelsedatum och antal, är bara lästa), **härlett** (hämtat ur registret),
-   **avviker** (intyget och registret säger olika) eller **osäker**. Fält som avviker eller är osäkra är tomma, med det som lästes bredvid: skriv av
-   dem från fotot. Under fälten står kontrollerna, till exempel "Mor och far finns i Stamboken med
-   intyg", "Numret stämmer med kullen" och "Intygsnumret är ledigt". Jämför alltid förslaget med
-   fotot innan du sparar; inget sparas förrän du klickar **Spara och nästa**. Har du vridit fotot
-   rätt efteråt klickar du **Tolka igen**, så kommer ett nytt förslag några minuter senare.
-   Det du har skrivit skrivs aldrig över: har du redan börjat fylla i när förslaget kommer står
-   "Det finns ett förslag från tolkningen", och först när du klickar **Fyll i förslaget** läggs
+   Är bildtolkningen på har Stamboken redan läst fotot. Det som lästes och som registret
+   bekräftar är ifyllt. Rader där tolkningen var osäker, eller där det lästa avviker från
+   registret, är tomma med det som lästes under **Inläst**: skriv av dem från fotot. Jämför alltid
+   varje rad med fotot innan du sparar; inget sparas förrän du klickar **Spara och nästa**. Har du
+   vridit fotot rätt efteråt klickar du **Tolka igen**, så läses det igen några minuter senare.
+   Ett foto som är för litet (under 1000 bildpunkter på kortsidan) tolkas inte av sig självt:
+   be uppfödaren om ett större foto, skriv av fälten, eller klicka **Tolka igen** för att tolka det
+   ändå.
+   Det du har skrivit skrivs aldrig över: har du redan börjat fylla i när tolkningen blir klar
+   står "Bildtolkningen har läst fotot", och först när du klickar **Fyll i det inlästa** läggs
    det in.
 4. Dölj säljaren och köparen. En svart ruta täcker intygets nedre tredjedel. Dra rutan
    eller dess hörn, eller välj den och använd piltangenterna (Skift ändrar storleken,
@@ -1315,6 +1360,14 @@ administratörer, genbanksansvariga och genbankshjälpare, och alla tre kan se h
    Är köparen utanför föreningen fyller du i köparen med samma fält som när du säljer,
    se [Sälja eller flytta en kanin](#sälja-eller-flytta-en-kanin).
    Utan bevis märks ärendet "bevis saknas".
+   Har tolkningen läst köparen på fotot står det under **Från fotot**. Klicka **Fyll i från
+   fotot**, så läggs köparens besättning in om den finns i Stamboken, annars köparen utanför
+   föreningen med namn, postadress och ort, och datumet. Finns besättningen på fotot inte i
+   Stamboken fylls ingen köpare i: välj besättningen eller **Köparen är utanför föreningen**.
+   E-posten fylls bara i för en försäljning till och med 2027, så att föreningen kan mejla
+   köparen. Telefon och köparens kryss fylls aldrig i. Jämför med fotot innan du sparar.
+   Uppgifterna från fotot tas bort när försäljningen sparas, när dokumentet är klart, avfärdat
+   eller byter typ och när ärendet stängs.
 6. Ett bevis: välj typen **Bevis** och fyll i försäljningen. Beviset blir klart med den.
 7. Ett foto som inte ska sparas: **Avfärda**. **Hoppa över** går till nästa dokument utan
    att spara.

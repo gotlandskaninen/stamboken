@@ -333,6 +333,23 @@ export async function newLink(herd: string, year: number, env: Mode) {
   return call<{ sent: boolean }>(env, path(herd, year, "/ny-lank"), "POST", {});
 }
 
+// "Koppla bort" (5.1): undo the account link a main member made with a code to the matrikel's e-mail.
+export async function undoAccountLink(
+  herd: string,
+  year: number,
+  linkId: number,
+  env: Mode,
+) {
+  return call<{ ok: boolean }>(
+    env,
+    Number.isSafeInteger(linkId) && linkId > 0
+      ? path(herd, year, `/kontokoppling/${linkId}/hav`)
+      : null,
+    "POST",
+    {},
+  );
+}
+
 // "Skicka provmejl till mig": the invitation without a link, to the manager's own address.
 export async function sendTestMail(
   year: number,

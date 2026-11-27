@@ -38,6 +38,7 @@ from utils.database import (
     BILLING_FIELDS,
     DB_PROXY,
     OUTSIDE_GENEBANK_HERDS,
+    SUPPORT_ACCOUNT_FIELDS,
     Herd,
     HerdAccessGrant,
     LoginCode,
@@ -49,6 +50,7 @@ from utils.database import (
     MemberPreviousAddress,
     Membership,
     User,
+    redact_herd_account_audits,
     snapshot_read,
 )
 from utils.herd_contact import (
@@ -94,6 +96,8 @@ HOUSEHOLD_PII_FIELDS = (
     "organization_name",
     "organization_number",
     *BILLING_FIELDS,
+    # the support account (migration 58): no payout without a person (U14)
+    *SUPPORT_ACCOUNT_FIELDS,
 )
 # postal_address is the pre-v29 spelling, still present in old payloads.
 HOUSEHOLD_PII_KEYS = frozenset((*HOUSEHOLD_PII_FIELDS, "postal_address"))
@@ -249,7 +253,17 @@ def raise_counter_to(value: int) -> None:
 
 
 def write_matrikel_audit(actor: User | None, action: str, membership: Membership, payload: dict) -> MatrikelAudit:
-    """Append one matrikel audit row. Payloads carry before/after values. No actor: the nightly job wrote it."""
+    """
+    Append one matrikel audit row. Payloads carry before/after values. No actor: the nightly job wrote it. Every
+    write logs here, so a write that names contact columns (profile, logged-in report, paper, matrikel staff) also
+    revokes the older changes of those fields that wait for the report link's receipt mail (5.11), except the
+    link's own confirmation, which revokes only older ones.
+    """
+    if payload.get("source") != "link":
+        import utils.member_changes as member_changes  # pylint: disable=import-outside-toplevel  # it imports this
+
+        columns = payload.get("fields") or list(payload.get("after") or ())
+        member_changes.revoke_for_direct_write(getattr(membership, "id", membership), payload.get("person_id"), columns)
     return MatrikelAudit.create(actor=actor, action=action, membership=membership, payload=payload)
 
 
@@ -375,13 +389,14 @@ def _masked_actor_rows():
         else:  # linked before the log began
             pair.append((a.membership_id, None, a.id))
     source = MatrikelAudit.payload["source"]
-    # What the member's own routes write: /members/me (kontakt_andrad, source profil), /my-membership (persons and
-    # grants) and her own link (oauth, matrikel_epost). The rest is a handler's, as are unlinks, also inside a span.
+    # What the member's own routes write: /members/me (kontakt_andrad, source profil), her own herd page's change of
+    # the support account (kontakt_andrad, source herd), /my-membership (persons and grants) and her own link (oauth,
+    # matrikel_epost). The rest is a handler's, as are unlinks, also inside a span.
     # shortcut: the admin routes write person_added, person_removed and grant_* too, without a source; a handler
     # whose account was linked to her in the same span is masked there. Add a source if that ever matters.
     self_service = (
         MatrikelAudit.action.in_(("person_added", "person_removed", "grant_created", "grant_renewed", "grant_revoked"))
-        | ((MatrikelAudit.action == "kontakt_andrad") & (source == "profil"))
+        | ((MatrikelAudit.action == "kontakt_andrad") & source.in_(("profil", "herd")))
         | ((MatrikelAudit.action == "person_user_linked") & source.in_(("oauth", "matrikel_epost")))
     )
     condition = None
@@ -549,6 +564,17 @@ def _new_person_names(data, *, optional):
     return {"first_name": first, "last_name": last}
 
 
+def _new_holder(membership, actor):
+    """A new huvudmedlem has not answered the Koharen question: the answer was the previous holder's (5.11).
+    In the caller's transaction, under the membership lock."""
+    from utils.members import (  # pylint: disable=import-outside-toplevel  # utils.members imports this module
+        CONSENT_TEXT_VERSION,
+        set_consent,
+    )
+
+    set_consent(membership, {}, source="admin", text_version=CONSENT_TEXT_VERSION, user=actor.id if actor else None)
+
+
 def add_person(membership, data, actor):
     """Create a person row under `membership` and audit it.
 
@@ -579,6 +605,8 @@ def add_person(membership, data, actor):
         )
         if role == "huvudmedlem" and locked.membership_status != Status.FRIEXEMPLAR:
             reserve_login_address(person.email, person.id)
+        if role == "huvudmedlem":
+            _new_holder(locked, actor)
         write_matrikel_audit(
             actor,
             "person_added",
@@ -686,6 +714,7 @@ def reactivate_person(member, actor):
             queue_member_added(person)
         if person.role == "huvudmedlem":
             reserve_holder(person.id)
+            _new_holder(membership, actor)
             write_matrikel_audit(
                 actor,
                 "main_member_changed",
@@ -743,6 +772,7 @@ def swap_main_member(membership, new_main, actor):
         new_main.save()
         reserve_holder(new_main.id)
         cancel_member_added([new_main.id])
+        _new_holder(membership, actor)
         write_matrikel_audit(
             actor,
             "main_member_changed",
@@ -780,6 +810,10 @@ def _applications_of(person):
             & (fn.LOWER(MemberApplication.last_name) == last_name.strip().lower())
         )
     return where
+
+
+def _has_active_person(membership):
+    return Member.select().where(Member.membership == membership, Member.end_date.is_null(True)).exists()
 
 
 def anonymize_person(member, actor, deferred_originals=None, deferred_accounts=None):
@@ -858,10 +892,20 @@ def anonymize_person(member, actor, deferred_originals=None, deferred_accounts=N
         # until then, and rows added after that erasure stay
         if not erased_before and all(map(is_anonymized, Member.select().where(Member.membership == membership))):
             on_household_erased(membership.id)
-        if not Member.select().where(Member.membership == membership, Member.end_date.is_null(True)).exists():
+        payload = {"person_id": person.id}
+        clear_household = not _has_active_person(membership)
+        if clear_household:
             # Last active person gone: erase household details. payment_note stays for accounting.
+            cleared = [field for field in SUPPORT_ACCOUNT_FIELDS if getattr(membership, field) is not None]
+            if cleared:
+                payload["fields"] = cleared
             Membership.update(**dict.fromkeys(HOUSEHOLD_PII_FIELDS), updated_at=now).where(
                 Membership.id == membership.id
+            ).execute()
+            # and an account migration 58 left on its herds (no safe target), which the herd audit does not copy
+            Herd.update(bank_account_number=None, bank_name=None).where(
+                Herd.membership == membership.id,
+                Herd.bank_account_number.is_null(False) | Herd.bank_name.is_null(False),
             ).execute()
             redact_household_from_audits(membership)
         application_ids = [
@@ -888,7 +932,7 @@ def anonymize_person(member, actor, deferred_originals=None, deferred_accounts=N
             .returning(MemberApplication.id)
             .execute()
         ]
-        applications_redacted = len(application_ids)
+        payload["applications_redacted"] = len(application_ids)
         forget_recipient("member", person.id)  # the queue keeps no address hash or dedupe key of the erased
         if user is not None:
             forget_recipient("user", user.id)  # nor of the account's mail (notices, applications, the intake queue)
@@ -902,12 +946,7 @@ def anonymize_person(member, actor, deferred_originals=None, deferred_accounts=N
             forget_recipient("login_code", code.id)
         for application_id in application_ids:
             forget_recipient("application", application_id)
-        write_matrikel_audit(
-            actor,
-            "person_anonymized",
-            membership,
-            {"person_id": person.id, "applications_redacted": applications_redacted},
-        )
+        write_matrikel_audit(actor, "person_anonymized", membership, payload)
         if user is not None:
             erase_account(user)  # `user` keeps the values read under the lock
         lost = before - User.get_by_id(user.id).effective_herd_ids() if user is not None else set()
@@ -920,6 +959,8 @@ def anonymize_person(member, actor, deferred_originals=None, deferred_accounts=N
         if user is not None and deferred_accounts is None:
             pictures = profile_pictures_of(user)  # before the purge takes their names
             purge_user_audit_pii(user.id, user.username, user.email)  # last: it locks audit_log until the commit
+        if clear_household and deferred_accounts is None:
+            redact_herd_account_audits([membership.id])
     if deferred_originals is None:
         remove_originals(originals)  # only after the commit: a row never names a removed file
     else:
@@ -1072,6 +1113,8 @@ def anonymize_ended_persons(now):
                     pictures |= profile_pictures_of(account)  # before the purge takes their names
                 for account in erased:  # last: the purge locks audit_log until the commit
                     purge_user_audit_pii(account.id, account.username, account.email)
+                if due and not _has_active_person(membership):
+                    redact_herd_account_audits([membership.id])
         except Exception:  # pylint: disable=broad-exception-caught
             logger.exception("Automatic anonymization failed for membership=%s", membership.id)
             failed += 1
@@ -1688,20 +1731,35 @@ def _detach_user_locked(person: Member, *, actor: User | None, mode: str) -> int
     return user_id
 
 
-def unlink_member_user(person_id, *, actor, mode="admin"):
+def unlink_member_user(person_id, *, actor, mode="admin", link_audit_id=None, invalidate=True):
     """Detach the account — allowed on ended persons too (the release valve
-    for the blocked-relink case). Returns (person, lost_genebank_ids)."""
+    for the blocked-relink case). With `link_audit_id` (the status view's
+    "nytt konto", spec 5.1) only the link that audit row recorded: refused
+    under the locks once the person was linked or unlinked since, or holds
+    another account. A caller with an outer transaction passes
+    invalidate=False and invalidates the lost genebanks after its commit.
+    Returns (person, lost_genebank_ids)."""
     with DB_PROXY.atomic():
         person, user = _lock_for_detach(person_id)
         if user is None:
             raise LinkError("Personen har inget kopplat konto", "Det finns inget konto att koppla bort")
+        if link_audit_id is not None:
+            since = MatrikelAudit.select().where(
+                MatrikelAudit.membership == person.membership_id,
+                MatrikelAudit.action.in_(("person_user_linked", "person_user_unlinked")),
+                MatrikelAudit.id >= link_audit_id,
+            )
+            rows = [row for row in since if (row.payload or {}).get("person_id") == person.id]
+            if [row.id for row in rows] != [link_audit_id] or rows[0].payload.get("user_id") != user.id:
+                raise LinkError("Kopplingen har ändrats", "Kontot har redan kopplats om. Läs in sidan igen.")
         before = user.effective_herd_ids()
         _detach_user_locked(person, actor=actor, mode=mode)
         lost = before - User.get_by_id(user.id).effective_herd_ids()
         lost_genebanks = (
             {h.genebank_id for h in Herd.select(Herd.genebank).where(Herd.id.in_(list(lost)))} if lost else set()
         )
-    _invalidate_genebanks(lost_genebanks)
+    if invalidate:
+        _invalidate_genebanks(lost_genebanks)
     return person, lost_genebanks
 
 

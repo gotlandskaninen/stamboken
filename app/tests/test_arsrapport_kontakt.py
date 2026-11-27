@@ -14,6 +14,7 @@ from datetime import time as clock
 from unittest import mock
 
 import utils.arsrapport as arsrapport
+import utils.data_access as da
 import utils.database as db
 import utils.inbox as inbox
 import utils.inbox_purge as inbox_purge
@@ -61,7 +62,7 @@ def later(field):
     return {
         "individual_id": None,
         "code": "senare_andring",
-        "message": f"Matrikeln har ändrats efter blankettens datum ({field}). Fråga medlemmen.",
+        "message": f"Kontrollera blankettens uppgift om {field} med medlemmen.",
     }
 
 
@@ -72,25 +73,19 @@ class PaperTest(ArsrapportTest):
         super().setUp()
         self.at(NOW)
         self.round_ = self.round(2025)
-        self.h = db.Herd.create(
-            genebank=self.gotland,
-            herd="G9001",
-            herd_name="Testbesättning",
-            is_active=True,
-            bank_account_number=OLD_ACCOUNT,
-            bank_name="Gamla banken",
-        )
-        self.g9002 = db.Herd.create(
-            genebank=self.gotland, herd="G9002", is_active=True, bank_account_number="6161-9393 7474"
-        )
+        self.h = db.Herd.create(genebank=self.gotland, herd="G9001", herd_name="Testbesättning", is_active=True)
+        self.g9002 = db.Herd.create(genebank=self.gotland, herd="G9002", is_active=True)
         db.Herd.create(genebank=self.gotland, herd="GX1", is_active=True)
         self.member = self.main_member(self.h, EMAIL)
         self.other = self.main_member(self.g9002, "g9002@example.invalid")
-        for member, address in ((self.member, "Gamla vägen 1"), (self.other, "Andra vägen 3")):
+        for member, address, account, bank in (
+            (self.member, "Gamla vägen 1", OLD_ACCOUNT, "Gamla banken"),
+            (self.other, "Andra vägen 3", "6161-9393 7474", None),
+        ):
             db.Member.update(phone=PHONE).where(db.Member.id == member.id).execute()
-            db.Membership.update(address=address, postal_code="621 41", city="Slite").where(
-                db.Membership.id == member.membership_id
-            ).execute()
+            db.Membership.update(
+                address=address, postal_code="621 41", city="Slite", bank_account_number=account, bank_name=bank
+            ).where(db.Membership.id == member.membership_id).execute()
         (self.rabbit,) = self.rabbits(self.h, 1)
 
     def form(self, taker, herd=None):
@@ -133,6 +128,11 @@ class PaperTest(ArsrapportTest):
         query = db.InboxEvent.select().where(db.InboxEvent.item == item.id, db.InboxEvent.kind == "matrikel_andrad")
         return list(query)
 
+    def account(self, member=None):
+        """The support account of `member`'s (G9001's) membership: (type, number, bank)."""
+        ms = db.Membership.get_by_id(db.Member.get_by_id((member or self.member).id).membership_id)
+        return ms.bank_account_type, ms.bank_account_number, ms.bank_name
+
     def contact_audits(self):
         return list(db.MatrikelAudit.select().where(db.MatrikelAudit.action == "kontakt_andrad"))
 
@@ -162,8 +162,9 @@ class KontaktTest(PaperTest):
         receipt = self.ok(item, body)
         sid = receipt["submission_id"]
 
+        self.assertEqual(self.account(), ("bankkonto", "9420-46180377", "Nya banken"))
         herd = db.Herd.get_by_id(self.h.id)
-        self.assertEqual((herd.bank_account_number, herd.bank_name), ("9420-46180377", "Nya banken"))
+        self.assertEqual((herd.bank_account_number, herd.bank_name), (None, None))  # never the herd's (migration 58)
         self.assertEqual((receipt["matrikel"], receipt["warnings"]), (["konto"], []))
 
         (row,) = self.a23()
@@ -187,35 +188,106 @@ class KontaktTest(PaperTest):
         for secret in ("9420", "4618", "adress", "telefon", "e-post"):
             self.assertNotIn(secret, text)
 
-        # The log: the helper, the item and the field name, never a value; the herd's audit trigger has the account,
-        # and the matrikel's row ties it to the submission by its transaction (I1).
+        # The log: the helper, the item and the field names, never a value, and no copy in the herd's audit_log.
         (event,) = self.events(item)
         self.assertEqual(
             (event.user_id, event.detail), (self.helper.id, {"falt": ["konto"], "hoppade": [], "submission_id": sid})
         )
         (audit,) = self.contact_audits()
-        (herd_audit,) = db.AuditLog.select().where(
-            db.AuditLog.table_name == "herd",
-            db.AuditLog.record_id == str(self.h.id),
-            db.AuditLog.operation == "UPDATE",
-            db.AuditLog.changed_fields.contains_any("bank_account_number"),
-        )
         self.assertEqual(
             (audit.actor_id, audit.payload),
             (
                 self.helper.id,
                 {
                     "person_id": self.member.id,
-                    "fields": ["bank_account_number", "bank_name"],
+                    "fields": ["bank_account_type", "bank_account_number", "bank_name"],
                     "source": "paper",
                     "inbox_item_id": item.id,
                     "submission_id": sid,
-                    "transaction_id": herd_audit.transaction_id,
                 },
             ),
         )
+        herd_audit = db.AuditLog.select().where(
+            db.AuditLog.table_name == "herd", db.AuditLog.record_id == str(self.h.id), db.AuditLog.operation == "UPDATE"
+        )
+        self.assertFalse(herd_audit.where(db.AuditLog.changed_fields.contains_any("bank_account_number")).exists())
         self.assertEqual(self.ok(item, body), receipt)  # the retry reads the same back
         self.assertEqual(len(self.a23()), 1)
+
+    def test_bankgiro_and_plusgiro_have_no_clearing_number(self):  # Jonas 2026-11-18, drift #53
+        self.login("man")
+        for revision, (konto, stored) in enumerate(
+            (
+                ({"typ": "bankgiro", "konto": "123 4567", "bank": "Banken"}, ("bankgiro", "123-4567", "Banken")),
+                ({"typ": "plusgiro", "konto": "12 34 56-7"}, ("plusgiro", "123456-7", None)),
+                ({"typ": "bankkonto", **NEW_KONTO}, ("bankkonto", "9420-46180377", "Nya banken")),
+            )
+        ):
+            with self.subTest(konto["typ"]):
+                item = self.form(self.manager)
+                extra = {"revision": revision, "reason": "Ny blankett"} if revision else {}
+                self.assertEqual(self.ok(item, self.paper(item, matrikel(konto=konto), **extra))["matrikel"], ["konto"])
+                self.assertEqual(self.account(), stored)
+
+    def test_account_box_rules_are_checked(self):
+        item = self.form(self.manager)
+        self.login("man")
+        for konto in (
+            {"typ": "bankgiro", "clearing": "8327", "konto": "1234567"},  # no clearing number for a bankgiro
+            {"typ": "plusgiro", "clearing": "8327", "konto": "1234567"},
+            {"typ": "bankgiro", "konto": "123456"},  # 7–8 digits
+            {"typ": "bankgiro", "konto": "123456789"},
+            {"typ": "plusgiro", "konto": "1"},  # 2–8 digits
+            {"typ": "plusgiro", "konto": "123456789"},
+            {"typ": "bankkonto", "konto": "46180377"},  # a bankkonto needs its clearing number
+            {"typ": "swish", "konto": "1234567"},
+        ):
+            with self.subTest(konto=konto):
+                dry = self.skicka(item, self.paper(item, matrikel(konto=konto)), route="torrkorning")
+                self.assertEqual(dry.status_code, 200, dry.get_data(as_text=True))
+                self.assertEqual(codes(dry), {"konto_ogiltigt"})
+        self.assertEqual(self.account(), (None, OLD_ACCOUNT, "Gamla banken"))
+
+    def test_a_ticked_box_types_a_migrated_account(self):
+        """Migration 58 left the type NULL; a form with the same account and a ticked box stores the type, and a form
+        without a ticked box changes nothing (test_no_change_no_event_and_no_mail)."""
+        self.login("man")
+        cases = (
+            ("8327-4471 5512", {"typ": "bankkonto", "clearing": "8327", "konto": "4471 5512"}, "bankkonto"),
+            ("123-4567", {"typ": "bankgiro", "konto": "1234567"}, "bankgiro"),
+        )
+        for revision, (number, konto, typ) in enumerate(cases):
+            with self.subTest(typ):
+                db.Membership.update(bank_account_type=None, bank_account_number=number).where(
+                    db.Membership.id == self.member.membership_id
+                ).execute()
+                item = self.form(self.manager)
+                extra = {"revision": revision, "reason": "Ny blankett"} if revision else {}
+                receipt = self.ok(item, self.paper(item, matrikel(konto=konto), **extra))
+                self.assertEqual(receipt["matrikel"], ["konto"])
+                self.assertEqual(self.account()[:2], (typ, number))  # the number stays as it was written
+
+    def test_a_ticked_box_for_another_destination_replaces_the_whole_account(self):
+        """Same digits, but BG and a plusgiro's dash: another destination, so type, number and bank go together."""
+        db.Membership.update(bank_account_type=None, bank_account_number="BG 123-4566", bank_name="Gamla").where(
+            db.Membership.id == self.member.membership_id
+        ).execute()
+        item = self.form(self.manager)
+        self.login("man")
+        konto = {"typ": "plusgiro", "konto": "123456-6"}
+        self.assertEqual(self.ok(item, self.paper(item, matrikel(konto=konto)))["matrikel"], ["konto"])
+        self.assertEqual(self.account(), ("plusgiro", "123456-6", None))
+
+    def test_same_digits_as_another_type_is_a_new_account(self):
+        """A stored type keeps a bankgiro and a plusgiro of the same digits apart; a stored NULL type does not."""
+        db.Membership.update(bank_account_type="plusgiro", bank_account_number="1234567-8").where(
+            db.Membership.id == self.member.membership_id
+        ).execute()
+        item = self.form(self.manager)
+        self.login("man")
+        receipt = self.ok(item, self.paper(item, matrikel(konto={"typ": "bankgiro", "konto": "1234-5678"})))
+        self.assertEqual(receipt["matrikel"], ["konto"])
+        self.assertEqual(self.account(), ("bankgiro", "1234-5678", None))
 
     def test_self_uploaded_item_is_logged(self):  # beslut 4, Fable 1, P24 reversed
         db.Member.update(email=None).where(db.Member.id == self.member.id).execute()
@@ -230,7 +302,7 @@ class KontaktTest(PaperTest):
         notices, mails = {n.id for n in db.Notice.select()}, {m.id for m in db.MailMessage.select()}
 
         self.ok(item, self.paper(item, matrikel(konto=NEW_KONTO, epost="forsta@example.invalid")))
-        self.assertEqual(db.Herd.get_by_id(self.h.id).bank_account_number, "9420-46180377")
+        self.assertEqual(self.account()[1], "9420-46180377")
         self.assertEqual(db.Member.get_by_id(self.member.id).email, "forsta@example.invalid")
         (event,) = self.events(item)
         self.assertEqual((event.user_id, event.detail["falt"]), (self.helper.id, ["konto", "epost"]))
@@ -292,9 +364,9 @@ class KontaktTest(PaperTest):
         receipt = self.ok(item, self.paper(item, contact))
         self.assertEqual(receipt["matrikel"], ["konto", "adress", "telefon", "epost"])
         self.assertEqual(self.matrikel_rows(self.other), others)
-        member, herd = db.Member.get_by_id(self.member.id), db.Herd.get_by_id(self.h.id)
+        member = db.Member.get_by_id(self.member.id)
         self.assertEqual(
-            (member.phone, member.email, herd.bank_account_number), (NEW_PHONE, "ny@example.invalid", "9420-46180377")
+            (member.phone, member.email, self.account()[1]), (NEW_PHONE, "ny@example.invalid", "9420-46180377")
         )
 
     def test_changed_email_goes_to_the_old_address(self):  # case 9
@@ -406,14 +478,59 @@ class KontaktTest(PaperTest):
         ).where(db.YearlyReportRound.id == self.round_.id).execute()
         return today
 
+    def later_account(self):
+        """An account written on the herd page (the legacy herd PATCH), which lands on the membership and its log."""
+        revision = da.support_account_revision(self.member.membership_id)  # the form was read just now
+        form = {"id": self.h.id, "bank_account_number": "1111-2222333", "bank_account_revision": revision}
+        return da.update_herd(form, self.admin.uuid, legacy=True)
+
+    def test_later_herd_audit_from_before_migration_58_still_counts(self):  # D19
+        """An account change in a herd's audit_log, from before the account moved to the membership: on any herd of
+        the membership, since the account a sibling herd held may be the one the membership got."""
+        today = self.real_clock()
+        sibling = db.Herd.create(genebank=self.gotland, herd="G9005", membership=self.member.membership_id)
+        db.AuditLog.create(
+            table_name="herd", record_id=str(sibling.id), operation="UPDATE", changed_fields=["bank_account_number"],
+            old_data={}, new_data={},
+        )  # fmt: skip
+        item = self.form(self.manager)
+        self.login("man")
+        signed = (today - timedelta(days=10)).isoformat()
+        body = self.paper(item, matrikel(konto=NEW_KONTO), received_on=today.isoformat(), signed_on=signed)
+        receipt = self.ok(item, body)
+        self.assertEqual((receipt["matrikel"], receipt["warnings"]), ([], [later("konto")]))
+        self.assertEqual(self.account()[1], OLD_ACCOUNT)
+
+    def test_a_sibling_herd_inserted_with_an_account_after_the_form_counts(self):  # Codex #278 r2
+        """Before 58 add_herd could insert a herd with an account; linked later, its account may be the one the
+        membership got. Its INSERT row counts as an account change; one without an account does not."""
+        today = self.real_clock()
+        sibling = db.Herd.create(genebank=self.gotland, herd="G9006", membership=self.member.membership_id)
+        new_data = {"herd_id": sibling.id, "herd": "G9006", "bank_account_number": "5555-12345", "bank_name": None}
+        signed = (today - timedelta(days=10)).isoformat()
+        self.login("man")
+        item = self.form(self.manager)
+        body = self.paper(item, matrikel(konto=NEW_KONTO), received_on=today.isoformat(), signed_on=signed)
+        self.assertEqual(self.ok(item, body)["matrikel"], ["konto"])  # the sibling's own INSERT had no account
+        db.AuditLog.create(
+            table_name="herd", record_id=str(sibling.id), operation="INSERT",
+            changed_fields=list(new_data), old_data=None, new_data=new_data,
+        )  # fmt: skip
+        again = self.form(self.manager)
+        retyped = matrikel(konto={**NEW_KONTO, "konto": "4618 0378"})
+        body = self.paper(again, retyped, received_on=today.isoformat(), signed_on=signed, revision=1, reason="Ny")
+        receipt = self.ok(again, body)
+        self.assertEqual((receipt["matrikel"], receipt["warnings"]), ([], [later("konto")]))
+        self.assertEqual(self.account()[1], "9420-46180377")
+
     def test_later_matrikel_change_wins(self):  # Review Focus 5, D19
         today = self.real_clock()  # audit_log cannot be backdated
-        # A phone through the profile and an account on the herd, both now
+        # A phone through the profile and an account on the herd page, both now
         db.Member.update(user=self.owner.id).where(db.Member.id == self.member.id).execute()
         self.login("owner")
         patched = self.client.patch("/api/v2/members/me/contact", json={"phone": "0709-555 666"})
         self.assertEqual(patched.status_code, 200, patched.get_data(as_text=True))
-        db.Herd.update(bank_account_number="1111-2222333").where(db.Herd.id == self.h.id).execute()
+        self.assertEqual(self.later_account(), {"status": "updated"})
 
         item = self.form(self.manager)
         self.login("man")
@@ -424,8 +541,8 @@ class KontaktTest(PaperTest):
         self.assertEqual(receipt["matrikel"], ["adress"])
         self.assertEqual(receipt["warnings"], [later("konto"), later("telefon")])
         self.assertEqual(self.events(item)[0].detail["hoppade"], ["konto", "telefon"])
-        member, herd = db.Member.get_by_id(self.member.id), db.Herd.get_by_id(self.h.id)
-        self.assertEqual((member.phone, herd.bank_account_number), ("0709-555 666", "1111-2222333"))
+        member = db.Member.get_by_id(self.member.id)
+        self.assertEqual((member.phone, self.account()[1]), ("0709-555 666", "1111-2222333"))
         self.assertEqual(db.Membership.get_by_id(self.member.membership_id).address, "Nya gatan 2")
         self.assertEqual([row.params["konto"] for row in self.a23()], [0])
 
@@ -434,8 +551,8 @@ class KontaktTest(PaperTest):
         body = self.paper(again, contact, received_on=today.isoformat(), revision=1, reason="Ny blankett")
         receipt = self.ok(again, body)
         self.assertEqual((receipt["matrikel"], receipt["warnings"]), (["konto", "telefon"], []))
-        member, herd = db.Member.get_by_id(self.member.id), db.Herd.get_by_id(self.h.id)
-        self.assertEqual((member.phone, herd.bank_account_number), (NEW_PHONE, "9420-46180377"))
+        member = db.Member.get_by_id(self.member.id)
+        self.assertEqual((member.phone, self.account()[1]), (NEW_PHONE, "9420-46180377"))
 
     def test_change_from_paper_corrects_its_own_typo(self):  # I1
         today = self.real_clock()
@@ -445,7 +562,7 @@ class KontaktTest(PaperTest):
         typo = matrikel(konto={**NEW_KONTO, "konto": "4618 0378"}, telefon="0709-777 889")
         first = self.ok(item, self.paper(item, typo, received_on=received, signed_on=signed))
         self.assertEqual(first["matrikel"], ["konto", "telefon"])
-        self.assertEqual(db.Herd.get_by_id(self.h.id).bank_account_number, "9420-46180378")
+        self.assertEqual(self.account()[1], "9420-46180378")
 
         # Ändra from paper with the same form's date: the report's own writes are no later change.
         again = self.form(self.manager)
@@ -453,17 +570,17 @@ class KontaktTest(PaperTest):
         body = self.paper(again, fixed, received_on=received, signed_on=signed, revision=1, reason="Fel konto")
         receipt = self.ok(again, body)
         self.assertEqual((receipt["matrikel"], receipt["warnings"]), (["konto", "telefon"], []))
-        member, herd = db.Member.get_by_id(self.member.id), db.Herd.get_by_id(self.h.id)
-        self.assertEqual((member.phone, herd.bank_account_number), (NEW_PHONE, "9420-46180377"))
+        member = db.Member.get_by_id(self.member.id)
+        self.assertEqual((member.phone, self.account()[1]), (NEW_PHONE, "9420-46180377"))
         self.assertEqual([(row.params["konto"], row.params["telefon"]) for row in self.a23()], [(1, 1), (1, 1)])
 
         # A change from another source after the form's date still wins.
-        db.Herd.update(bank_account_number="1111-2222333").where(db.Herd.id == self.h.id).execute()
+        self.assertEqual(self.later_account(), {"status": "updated"})
         third = self.form(self.manager)
         body = self.paper(third, typo, received_on=received, signed_on=signed, revision=2, reason="Fel igen")
         receipt = self.ok(third, body)
         self.assertEqual((receipt["matrikel"], receipt["warnings"]), (["telefon"], [later("konto")]))
-        self.assertEqual(db.Herd.get_by_id(self.h.id).bank_account_number, "1111-2222333")
+        self.assertEqual(self.account()[1], "1111-2222333")
 
     def test_matrikel_is_checked_in_the_dry_run(self):
         item = self.form(self.manager)
@@ -588,8 +705,9 @@ class KontaktTest(PaperTest):
 
         lock = first('FROM "herd"', "FOR NO KEY UPDATE")
         self.assertIsNotNone(lock)
-        self.assertLess(lock, first('FROM "audit_log"'))  # later_fields reads the account's changes under it
-        self.assertLess(lock, first('UPDATE "herd"'))
+        self.assertLess(lock, first('FROM "audit_log"'))  # read the account's changes under the lock
+        self.assertLess(lock, first('UPDATE "membership"', "bank_account_number"))  # the account is the membership's
+        self.assertIsNone(first('UPDATE "herd"'))
 
     def test_profile_contact_change_is_logged(self):  # D19
         db.Member.update(user=self.owner.id).where(db.Member.id == self.member.id).execute()
@@ -620,6 +738,45 @@ class KontaktTest(PaperTest):
             (audit.payload["before"], audit.payload["after"]), ({"email": "[borttagen]"}, {"email": "[borttagen]"})
         )
 
+    def test_a_paper_no_equal_to_the_stored_answer_revokes_a_waiting_yes(self):  # PR #280 review 1, 3
+        import uuid  # pylint: disable=import-outside-toplevel
+
+        import utils.report_code as report_code  # pylint: disable=import-outside-toplevel
+        from utils.members import CONSENT_TEXT_VERSION, set_consent  # pylint: disable=import-outside-toplevel
+
+        membership = db.Membership.get_by_id(self.member.membership_id)
+        no = {"name": False, "phone": False, "email": False, "address": False}
+        with db.DB_PROXY.atomic():
+            set_consent(membership, no, source="profil", text_version=CONSENT_TEXT_VERSION)
+        code = report_code.issue_code(self.h, self.round_, self.member, now=arsrapport.now())
+        report = db.YearlyHerdReport.create(
+            herd=self.h,
+            round=self.round_,
+            report_date=date(2026, 1, 10),
+            data="{}",
+            status="voided",  # withdrawn, so the form is a first entry; its link change still waits
+            source="link",
+            voided_at=NOW,
+            voided_by_access_code_id=code.id,
+        )
+        link = db.YearlyReportSubmission.create(
+            report=report, submission_key=uuid.uuid4(), source="link", access_code=code, data={}, request_hash="x"
+        )
+        waiting = db.MemberChangeRequest.create(  # a link's Ja that waits for its receipt mail
+            member=self.member.id,
+            submission=link,
+            kind="publicering",
+            value={"new": {**no, "name": True}},
+            access_code=code,
+            expires_at=NOW + timedelta(days=14),
+        )
+        item = self.form(self.manager)
+        self.login("man")
+        self.ok(item, self.paper(item, matrikel(publicering={"ja": False, "utom": []})))
+        self.assertEqual(db.MemberChangeRequest.get_by_id(waiting.id).revoked_reason, "nyare")
+        history = db.PublicationConsentChange.select().order_by(db.PublicationConsentChange.id)
+        self.assertEqual([(row.source, row.value) for row in history], [("profil", no), ("paper", no)])
+
     def test_change_request_is_purged_30_days_after_it_was_confirmed(self):  # Opus 7, spec 6
         item = self.form(self.manager)
         self.login("man")
@@ -630,7 +787,11 @@ class KontaktTest(PaperTest):
         self.assertIn(rule, inbox_purge.RULES)  # the nightly inbox_purge runs it
         self.assertEqual(rule(NOW + timedelta(days=30)), 0)
         self.assertEqual(rule(NOW + timedelta(days=30, seconds=1)), 1)
-        self.assertFalse(db.MemberChangeRequest.select().exists())
+        # U14: the values go and the row stays with its kind and dates; a second night changes nothing
+        purged = db.MemberChangeRequest.get_by_id(request.id)
+        self.assertEqual((purged.value, purged.kind, purged.confirmed_at), ({}, "epost", NOW))
+        self.assertEqual(rule(NOW + timedelta(days=31)), 0)
+        self.assertIsNone(mail.RECIPIENT_KINDS["email_change_old"](request.id))  # a queued Å23 finds no address
 
     def test_address_writes_all_three_fields(self):  # Codex 13
         item = self.form(self.manager)

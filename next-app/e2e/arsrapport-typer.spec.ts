@@ -284,7 +284,10 @@ test("3b. Tillbaka från profilen behåller det sparade", async ({
   let saved = saveOf();
   await kvar(rabbit(page, "M9006-2411")).check();
   await saved;
-  await page.getByRole("link", { name: "Gå till profilen" }).click();
+  // "Dina uppgifter" are in the report now (step 5): the menu's profile link leaves it the same way.
+  // The tests run at phone width, where the menu sits behind its button.
+  await page.getByRole("button", { name: "Meny" }).click();
+  await page.locator('a[href="/stamboken/profil"]:visible').first().click();
   await page.waitForURL("**/stamboken/profil");
   await page.goBack();
   await expect(kvar(rabbit(page, "M9006-2411"))).toBeChecked();
@@ -838,4 +841,32 @@ test("11. Genbanksansvarig ser rätt status för alla typer", async ({
 
   await page.goto("/stamboken/arsrapport/status/2025?filter=att_ringa");
   await expect(page.getByText("Inga besättningar att ringa.")).toBeVisible();
+});
+
+test("12. Dina uppgifter: huvudmedlemmen ändrar i rapporten, andra ser vem som gör det", async ({
+  page,
+  context,
+}) => {
+  await loginInline(page, context, USERS.owner);
+  // M9001's main member is this account (5.11, D1): the details are filled in and saved with Skicka
+  await page.goto("/stamboken/arsrapport/M9001/2025");
+  await page.getByRole("button", { name: /^(Ändra|Fortsätt ändra)$/ }).click();
+  await expect(page.getByText(/^E-post: /)).toBeVisible();
+  await page.getByLabel("Telefon").fill("0709-555 666");
+  // test 9 sold M9007-2412 to M9001 on 31 December, so the report now asks about her too
+  const bought = rabbit(page, "M9007-2412");
+  await kvar(bought).check();
+  await weight(bought).fill("2,8");
+  await page.getByRole("button", { name: SEND }).click();
+  await submitted(page);
+  await expect(page.getByText("Sparat i matrikeln: telefon.")).toBeVisible();
+  // M9002 is the account's herd, but its main member is someone else
+  await page.goto("/stamboken/arsrapport/M9002/2025");
+  await page.getByRole("button", { name: /^(Ändra|Fortsätt ändra)$/ }).click();
+  await expect(
+    page.getByText(
+      "Huvudmedlemmen ändrar kontaktuppgifterna, kontot för stödet och svaret om Koharen.",
+    ),
+  ).toBeVisible();
+  await expect(page.getByLabel("Telefon")).toHaveCount(0);
 });

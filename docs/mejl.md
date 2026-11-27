@@ -153,6 +153,14 @@ eller, i läget `log`, loggats.
   adressen: att adressen är bytt och av vem (medlemmen själv, matrikelansvarig
   eller någon annan). Den som inte känner igen bytet svarar på mejlet, som
   hamnar i brevlådan som inläsningskön läser. Ingen adress står i mejlet.
+- `kontakt.konto_andrat` (prioritet 0) går till huvudmedlemmens inloggningsadress när
+  kontot för stödet har ändrats i årsrapporten, inloggad eller bekräftat via länken. Det
+  säger vilka två siffror kontot slutar på när mejlet går.
+- `arsrapport.kvitto` och `arsrapport.andrad` hämtar adressen när mejlet går. Ett kvitto
+  för ett inskick via länken går till inloggningsadressen, så att en ny adress som väntar
+  inte får länken. Väntar ändringar från länken på bekräftelse har kvittot ämnet
+  "Årsrapporten är inskickad, bekräfta dina ändringar" och en länk till
+  `/rapport/andringar#<kod>`, som gäller inskicket i 14 dagar.
 
 ## Engångskoder och inloggningsadresser
 

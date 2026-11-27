@@ -101,7 +101,7 @@ class TorrkorningTest(ArsrapportTest):
 
         paper = arsrapport.parse_submission(self.paper_body(), paper=True).paper
         self.assertEqual(paper["received_on"], date(2026, 1, 10))
-        self.assertEqual(paper["signed_on"], date(2026, 1, 10))  # P40: the form's date defaults to received_on
+        self.assertIsNone(paper["signed_on"])
 
         bad = {
             "unknown key": self.body(extra=1),

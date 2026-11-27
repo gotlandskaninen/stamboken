@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import Link from "next/link";
 import {
   Dialog,
   DialogActions,
@@ -8,6 +9,7 @@ import {
   DialogTitle,
 } from "@mui/material";
 import {
+  MATRIKEL_LABEL,
   PENDING_SALE_TEXT,
   fmtDate,
   fmtTime,
@@ -45,6 +47,7 @@ export function Receipt({
   onWithdraw,
   focusOnMount = false,
   refreshed = false,
+  accountOffer = false,
 }: {
   view: ReportView;
   receipt: ReceiptData | null;
@@ -56,6 +59,8 @@ export function Receipt({
   focusOnMount?: boolean; // right after a Skicka: show the receipt and read it out
   // the view has been fetched again since the receipt came: it alone says what waits
   refreshed?: boolean;
+  // the personal link where code login is on (5.1, fråga 9): offer an account, last
+  accountOffer?: boolean;
 }) {
   const report = view.report; // null until the refreshed view arrives after the first Skicka
   const editor = view.access === "manager" || view.access === "admin";
@@ -89,6 +94,13 @@ export function Receipt({
       ? ` · ändrad ${fmtDate(report.report_date)}`
       : "";
   const v = report?.villkor;
+  // 5.11: the link's changes that wait for the receipt mail, and those that expired
+  const details = view.member_details;
+  const changes = details?.mode === "link" ? details.changes : [];
+  const waiting = changes.filter((c) => c.state === "vantar");
+  const expired = changes.filter((c) => c.state === "forfallen");
+  const labels = (list: typeof changes) =>
+    [...new Set(list.map((c) => MATRIKEL_LABEL[c.falt] ?? c.falt))].join(", ");
   const mark = (ok: boolean, label: string) => (
     <span key={label} className={ok ? styles.yes : styles.no}>
       {ok ? "✓" : "✗"} {label}
@@ -124,6 +136,25 @@ export function Receipt({
         ))}
       </div>
       {pendingSale && <p className={styles.meta}>{PENDING_SALE_TEXT}</p>}
+      {receipt && receipt.source !== "paper" && receipt.matrikel.length > 0 && (
+        <p className={styles.meta}>
+          Sparat i matrikeln:{" "}
+          {receipt.matrikel.map((f) => MATRIKEL_LABEL[f] ?? f).join(", ")}.
+        </p>
+      )}
+      {waiting.length > 0 && (
+        <p className={styles.meta}>
+          Du har ändringar att bekräfta i mejlet ({labels(waiting)}). Bekräfta
+          senast {fmtDate(waiting.map((c) => c.expires_at).sort()[0])}.
+        </p>
+      )}
+      {expired.length > 0 && (
+        <p className={styles.meta}>
+          Ändringen av {labels(expired)} gällde till{" "}
+          {fmtDate(expired.map((c) => c.expires_at).sort()[0])}. Vill du ändå
+          ändra? Tryck Ändra och fyll i den igen.
+        </p>
+      )}
       {v && (
         <p className={styles.line}>
           Villkor för stödet: {mark(v.hane, "Hane")} {mark(v.hona, "Hona")}{" "}
@@ -188,6 +219,20 @@ export function Receipt({
               ? `till och med ${fmtDate(report?.withdraw_until)}`
               : ""}
           </span>
+        </div>
+      )}
+      {accountOffer && (
+        <div className={styles.detail}>
+          <p style={{ margin: 0 }}>
+            Gör det löpande nästa år: skapa ett konto i Stamboken. Du loggar in
+            med en kod som vi mejlar till din e-postadress hos föreningen.
+          </p>
+          <Link
+            href="/auth/sign-in"
+            className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
+          >
+            Skapa konto
+          </Link>
         </div>
       )}
       <Dialog
