@@ -21,7 +21,15 @@ def ask_breeder(item_id):
     body = _body()
 
     def ask(item):
-        inbox_gmail.ask_breeder(item, current_user, body.get("text"), body.get("document"), body.get("crop"))
+        inbox_gmail.ask_breeder(
+            item,
+            current_user,
+            body.get("text"),
+            body.get("document"),
+            body.get("crop"),
+            body.get("rotation"),
+            body.get("straighten"),
+        )
 
     return _locked(item_id, _then_item(ask))
 

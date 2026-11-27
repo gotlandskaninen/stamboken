@@ -3,7 +3,14 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useMode } from "@/lib/mode-context";
-import { enhancePencil, moveRect, resizeRect } from "../image";
+import {
+  degrees,
+  enhancePencil,
+  MIN_FRAME,
+  moveRect,
+  resizeRect,
+  turnedSize,
+} from "../image";
 import type { InboxDocument, Rect } from "../lib";
 import styles from "../inkorg.module.css";
 
@@ -24,27 +31,50 @@ export type MaskLayer = {
   rects: Rect[];
   /** An open frame around a part of the photo ("Bifoga utsnitt") instead of black boxes. */
   frame?: boolean;
+  /** The index of the rectangle that is the frame around the copy: the photo outside it is left out. */
+  frameAt?: number;
   selected: number | null;
   onSelect: (i: number) => void;
   onChange: (i: number, r: Rect) => void;
   onRemove: (i: number) => void;
 };
 
+/** "Svart ruta 2 av 3", counting the black boxes only, not the frame around the copy. */
+function boxLabel(i: number, { rects, frameAt }: MaskLayer) {
+  const framed = frameAt === undefined ? 0 : 1;
+  const after = frameAt !== undefined && i > frameAt ? 1 : 0;
+  return `Svart ruta ${i + 1 - after} av ${rects.length - framed}`;
+}
+
 /**
- * The original, drawn on a canvas: turned by `rotation`, with zoom, pan,
- * contrast and "Förstärk blyerts". Only the rotation is saved (by the
+ * The original, drawn on a canvas: turned by `rotation` and `straighten`
+ * (frame F: the bounding box of the turned photo, white in the corners), with
+ * zoom, pan, contrast and "Förstärk blyerts". Only the turn is saved (by the
  * caller); the rest is for reading. With `mask`, the masking rectangles lie
  * on top in fractions of the turned image.
  */
 export function PhotoViewer({
   src,
   rotation,
+  straighten = 0,
   onRotate,
+  onStraighten,
+  straightenLocked = false,
+  onFindPaper,
+  busy = false,
   mask,
 }: {
   src: string;
   rotation: number;
+  straighten?: number;
   onRotate?: (quarterTurns: number) => void;
+  /** "Räta upp": the angle in degrees, -15 to 15. */
+  onStraighten?: (degrees: number) => void;
+  /** The angle cannot change (the masking step). */
+  straightenLocked?: boolean;
+  /** "Hitta pappret", for the item's handler. */
+  onFindPaper?: () => void;
+  busy?: boolean;
   mask?: MaskLayer;
 }) {
   const { t } = useTranslation();
@@ -91,11 +121,18 @@ export function PhotoViewer({
     );
     const w = Math.round(image.naturalWidth * scale);
     const h = Math.round(image.naturalHeight * scale);
-    const sideways = rotation % 180 !== 0;
-    canvas.width = sideways ? h : w;
-    canvas.height = sideways ? w : h;
+    // F's size, from the original's: the overlays are fractions of it.
+    const size = turnedSize(
+      image.naturalWidth,
+      image.naturalHeight,
+      rotation + straighten,
+    );
+    canvas.width = Math.round(size.width * scale);
+    canvas.height = Math.round(size.height * scale);
+    ctx.fillStyle = "white";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.translate(canvas.width / 2, canvas.height / 2);
-    ctx.rotate((rotation * Math.PI) / 180);
+    ctx.rotate(((rotation + straighten) * Math.PI) / 180);
     ctx.drawImage(image, -w / 2, -h / 2, w, h);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     if (pencil) {
@@ -103,7 +140,7 @@ export function PhotoViewer({
       enhancePencil(pixels.data);
       ctx.putImageData(pixels, 0, 0);
     }
-  }, [image, rotation, pencil]);
+  }, [image, rotation, straighten, pencil]);
 
   // The wheel zooms a step at a time. A wheel past the last step (down at 100 %, up at 600 %),
   // a sideways swipe and a pinch (ctrlKey) are the page's. Our own listener: React's onWheel is passive.
@@ -187,6 +224,9 @@ export function PhotoViewer({
     vp.scrollTop = pan.current.top - (e.clientY - pan.current.y);
   };
 
+  // The frame around the copy keeps a tenth each way (the API refuses less); boxes the default minimum.
+  const smallest = (i: number) => (i === mask?.frameAt ? MIN_FRAME : undefined);
+
   const drag = (e: React.PointerEvent, i: number, kind: "move" | "resize") => {
     const stage = stageRef.current;
     if (!mask || !stage) return;
@@ -204,7 +244,7 @@ export function PhotoViewer({
         i,
         kind === "move"
           ? moveRect(start.rect, dx, dy)
-          : resizeRect(start.rect, dx, dy),
+          : resizeRect(start.rect, dx, dy, smallest(i)),
       );
     };
     const end = () => {
@@ -225,7 +265,9 @@ export function PhotoViewer({
       const r = mask.rects[i];
       mask.onChange(
         i,
-        e.shiftKey ? resizeRect(r, d[0], d[1]) : moveRect(r, d[0], d[1]),
+        e.shiftKey
+          ? resizeRect(r, d[0], d[1], smallest(i))
+          : moveRect(r, d[0], d[1]),
       );
     } else if (e.key === "Delete" || e.key === "Backspace") {
       e.preventDefault();
@@ -305,6 +347,42 @@ export function PhotoViewer({
         >
           +
         </button>
+        {onStraighten && (
+          <>
+            <label>
+              Räta upp
+              <input
+                type="range"
+                min={-15}
+                max={15}
+                step={0.1}
+                value={straighten}
+                disabled={straightenLocked}
+                aria-valuetext={`${degrees(straighten)} medurs`}
+                onChange={(e) => onStraighten(Number(e.target.value))}
+              />
+              <output>{degrees(straighten)}</output>
+            </label>
+            <button
+              type="button"
+              className="sb-btn sb-btn-secondary sb-btn-sm"
+              disabled={straightenLocked || straighten === 0}
+              onClick={() => onStraighten(0)}
+            >
+              Nollställ
+            </button>
+          </>
+        )}
+        {onFindPaper && (
+          <button
+            type="button"
+            className="sb-btn sb-btn-secondary sb-btn-sm"
+            disabled={busy}
+            onClick={onFindPaper}
+          >
+            Hitta pappret
+          </button>
+        )}
         <label>
           Kontrast
           <input
@@ -348,11 +426,17 @@ export function PhotoViewer({
             {image &&
               mask?.rects.map((r, i) => (
                 <button
-                  key={i}
+                  // The frame keeps its own key: when it is removed, focus does not land on a box Delete would take.
+                  key={
+                    i === mask.frameAt
+                      ? "frame"
+                      : i -
+                        (mask.frameAt !== undefined && i > mask.frameAt ? 1 : 0)
+                  }
                   type="button"
-                  className={`${styles.rect} ${mask.frame ? styles.frame : ""}`}
+                  className={`${styles.rect} ${mask.frame ? styles.frame : ""} ${i === mask.frameAt ? styles.copyFrame : ""}`}
                   aria-pressed={mask.selected === i}
-                  aria-label={`${mask.frame ? "Ramen runt utsnittet" : `Svart ruta ${i + 1} av ${mask.rects.length}`}. Piltangenterna flyttar, Skift och piltangenterna ändrar storleken, Delete tar bort.`}
+                  aria-label={`${mask.frame ? "Ramen runt utsnittet" : i === mask.frameAt ? "Ramen runt kopian" : boxLabel(i, mask)}. Piltangenterna flyttar, Skift och piltangenterna ändrar storleken, Delete tar bort.`}
                   style={{
                     left: `${r.x * 100}%`,
                     top: `${r.y * 100}%`,
@@ -407,6 +491,7 @@ export function CasePhotos({
           key={photo.id}
           src={`${apiBase}/v2/inkorg/${itemId}/dokument/${photo.id}/original`}
           rotation={photo.rotation}
+          straighten={photo.straighten}
         />
       )}
       <div className={styles.photoNav}>

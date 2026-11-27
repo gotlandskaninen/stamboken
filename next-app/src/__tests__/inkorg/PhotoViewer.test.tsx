@@ -1,10 +1,20 @@
 import "@/i18n";
 import "@testing-library/jest-dom/vitest";
-import { afterEach, describe, expect, it } from "vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { PhotoViewer } from "@/app/(app)/stamboken/(dashboard)/inkorg/[id]/PhotoViewer";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 const WIDTH = 400;
 const HEIGHT = 300;
@@ -170,5 +180,137 @@ describe("PhotoViewer: the mouse wheel zooms", () => {
     wheel(region, 100, { x: 200, y: 150 });
     // 600 px wide now (at most 200 px of scroll): 375 px into it under the pointer.
     expect(region.scrollLeft).toBe(175);
+  });
+});
+
+describe("PhotoViewer: the frame around the copy", () => {
+  it("is named apart from the black boxes, which are counted without it", async () => {
+    // The rectangles lie on the photo once it has loaded; jsdom draws nothing.
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+    vi.stubGlobal(
+      "Image",
+      class {
+        onload = () => {};
+        set src(_: string) {
+          queueMicrotask(() => this.onload());
+        }
+      },
+    );
+    const noop = () => {};
+    render(
+      <PhotoViewer
+        src="/foto.jpg"
+        rotation={0}
+        onRotate={noop}
+        mask={{
+          rects: [
+            { x: 0, y: 0, w: 1, h: 0.6667 },
+            { x: 0.35, y: 0.45, w: 0.3, h: 0.1 },
+          ],
+          frameAt: 0,
+          selected: null,
+          onSelect: noop,
+          onChange: noop,
+          onRemove: noop,
+        }}
+      />,
+    );
+    const frame = await screen.findByRole("button", {
+      name: /^Ramen runt kopian\./,
+    });
+    const box = screen.getByRole("button", { name: /^Svart ruta 1 av 1\./ });
+    expect(frame.className).toMatch(/copyFrame/);
+    expect(box.className).not.toMatch(/copyFrame/);
+  });
+});
+
+/** A loaded photo of `width` × `height` px, drawn on a canvas that records nothing. */
+function loadedPhoto(width: number, height: number) {
+  const ctx = {
+    fillRect: vi.fn(),
+    translate: vi.fn(),
+    rotate: vi.fn(),
+    drawImage: vi.fn(),
+    setTransform: vi.fn(),
+  };
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
+    ctx as unknown as CanvasRenderingContext2D,
+  );
+  vi.stubGlobal(
+    "Image",
+    class {
+      naturalWidth = width;
+      naturalHeight = height;
+      onload = () => {};
+      set src(_: string) {
+        queueMicrotask(() => this.onload());
+      }
+    },
+  );
+  return ctx;
+}
+
+describe("PhotoViewer: straightening", () => {
+  it("draws the photo turned by its rotation and angle on a canvas the size of the turned photo", async () => {
+    const ctx = loadedPhoto(400, 300);
+    render(
+      <PhotoViewer
+        src="/foto.jpg"
+        rotation={90}
+        straighten={30}
+        onRotate={() => {}}
+        onStraighten={() => {}}
+      />,
+    );
+    const canvas = await screen.findByRole("img", { name: "Originalet" });
+    await vi.waitFor(() => expect(ctx.drawImage).toHaveBeenCalled());
+    // 120° in all: Pillow turns 400 × 300 into 460 × 498, white where the photo does not reach.
+    expect([
+      (canvas as HTMLCanvasElement).width,
+      (canvas as HTMLCanvasElement).height,
+    ]).toEqual([460, 498]);
+    expect(ctx.fillRect).toHaveBeenCalledWith(0, 0, 460, 498);
+    expect(ctx.rotate).toHaveBeenCalledWith((120 * Math.PI) / 180);
+  });
+
+  it("changes, resets and finds the angle, and none of it while the masking locks it", () => {
+    const onStraighten = vi.fn();
+    const onFindPaper = vi.fn();
+    const { rerender } = render(
+      <PhotoViewer
+        src="/foto.jpg"
+        rotation={0}
+        straighten={2.5}
+        onRotate={() => {}}
+        onStraighten={onStraighten}
+        onFindPaper={onFindPaper}
+      />,
+    );
+    const slider = screen.getByRole("slider", { name: /Räta upp/ });
+    expect(screen.getByText("2,5°")).toBeInTheDocument();
+    fireEvent.change(slider, { target: { value: "-4" } });
+    expect(onStraighten).toHaveBeenLastCalledWith(-4);
+    fireEvent.change(slider, { target: { value: "2.3" } }); // a tenth of a degree, as the API keeps it
+    expect(onStraighten).toHaveBeenLastCalledWith(2.3);
+    expect(slider).toHaveAttribute("step", "0.1"); // jsdom neither snaps to the step nor reports a mismatch
+    fireEvent.click(screen.getByRole("button", { name: "Nollställ" }));
+    expect(onStraighten).toHaveBeenLastCalledWith(0);
+    fireEvent.click(screen.getByRole("button", { name: "Hitta pappret" }));
+    expect(onFindPaper).toHaveBeenCalledTimes(1);
+    rerender(
+      <PhotoViewer
+        src="/foto.jpg"
+        rotation={0}
+        straighten={2.5}
+        onRotate={() => {}}
+        onStraighten={onStraighten}
+        straightenLocked
+        onFindPaper={onFindPaper}
+      />,
+    );
+    expect(slider).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Nollställ" })).toBeDisabled();
+    // The masking finds the paper at the locked angle.
+    expect(screen.getByRole("button", { name: "Hitta pappret" })).toBeEnabled();
   });
 });
