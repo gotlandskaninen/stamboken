@@ -62,7 +62,7 @@ def later(field):
     return {
         "individual_id": None,
         "code": "senare_andring",
-        "message": f"Matrikeln har ändrats efter blankettens datum ({field}). Fråga medlemmen.",
+        "message": f"Kontrollera blankettens uppgift om {field} med medlemmen.",
     }
 
 
@@ -705,7 +705,7 @@ class KontaktTest(PaperTest):
 
         lock = first('FROM "herd"', "FOR NO KEY UPDATE")
         self.assertIsNotNone(lock)
-        self.assertLess(lock, first('FROM "audit_log"'))  # later_fields reads the account's changes under it
+        self.assertLess(lock, first('FROM "audit_log"'))  # read the account's changes under the lock
         self.assertLess(lock, first('UPDATE "membership"', "bank_account_number"))  # the account is the membership's
         self.assertIsNone(first('UPDATE "herd"'))
 
@@ -738,6 +738,45 @@ class KontaktTest(PaperTest):
             (audit.payload["before"], audit.payload["after"]), ({"email": "[borttagen]"}, {"email": "[borttagen]"})
         )
 
+    def test_a_paper_no_equal_to_the_stored_answer_revokes_a_waiting_yes(self):  # PR #280 review 1, 3
+        import uuid  # pylint: disable=import-outside-toplevel
+
+        import utils.report_code as report_code  # pylint: disable=import-outside-toplevel
+        from utils.members import CONSENT_TEXT_VERSION, set_consent  # pylint: disable=import-outside-toplevel
+
+        membership = db.Membership.get_by_id(self.member.membership_id)
+        no = {"name": False, "phone": False, "email": False, "address": False}
+        with db.DB_PROXY.atomic():
+            set_consent(membership, no, source="profil", text_version=CONSENT_TEXT_VERSION)
+        code = report_code.issue_code(self.h, self.round_, self.member, now=arsrapport.now())
+        report = db.YearlyHerdReport.create(
+            herd=self.h,
+            round=self.round_,
+            report_date=date(2026, 1, 10),
+            data="{}",
+            status="voided",  # withdrawn, so the form is a first entry; its link change still waits
+            source="link",
+            voided_at=NOW,
+            voided_by_access_code_id=code.id,
+        )
+        link = db.YearlyReportSubmission.create(
+            report=report, submission_key=uuid.uuid4(), source="link", access_code=code, data={}, request_hash="x"
+        )
+        waiting = db.MemberChangeRequest.create(  # a link's Ja that waits for its receipt mail
+            member=self.member.id,
+            submission=link,
+            kind="publicering",
+            value={"new": {**no, "name": True}},
+            access_code=code,
+            expires_at=NOW + timedelta(days=14),
+        )
+        item = self.form(self.manager)
+        self.login("man")
+        self.ok(item, self.paper(item, matrikel(publicering={"ja": False, "utom": []})))
+        self.assertEqual(db.MemberChangeRequest.get_by_id(waiting.id).revoked_reason, "nyare")
+        history = db.PublicationConsentChange.select().order_by(db.PublicationConsentChange.id)
+        self.assertEqual([(row.source, row.value) for row in history], [("profil", no), ("paper", no)])
+
     def test_change_request_is_purged_30_days_after_it_was_confirmed(self):  # Opus 7, spec 6
         item = self.form(self.manager)
         self.login("man")
@@ -748,7 +787,11 @@ class KontaktTest(PaperTest):
         self.assertIn(rule, inbox_purge.RULES)  # the nightly inbox_purge runs it
         self.assertEqual(rule(NOW + timedelta(days=30)), 0)
         self.assertEqual(rule(NOW + timedelta(days=30, seconds=1)), 1)
-        self.assertFalse(db.MemberChangeRequest.select().exists())
+        # U14: the values go and the row stays with its kind and dates; a second night changes nothing
+        purged = db.MemberChangeRequest.get_by_id(request.id)
+        self.assertEqual((purged.value, purged.kind, purged.confirmed_at), ({}, "epost", NOW))
+        self.assertEqual(rule(NOW + timedelta(days=31)), 0)
+        self.assertIsNone(mail.RECIPIENT_KINDS["email_change_old"](request.id))  # a queued Å23 finds no address
 
     def test_address_writes_all_three_fields(self):  # Codex 13
         item = self.form(self.manager)

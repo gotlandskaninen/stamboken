@@ -32,6 +32,12 @@ NO_SALES = {
     "forsaljning_avvisad_paverkar": False,
     "kopt_efter_inskick": 0,
     "kop_anmalt": 0,
+    # step 5: no change through the link and no new account
+    "andring_vantar": 0,
+    "kontobyte_vantar": False,
+    "kontobyte_forfoll": False,
+    "inte_jag": False,
+    "nytt_konto": None,
 }
 
 

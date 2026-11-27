@@ -129,7 +129,7 @@ export async function verifyEmailCode(code: string): Promise<Result> {
 }
 
 export async function updateConsent(
-  consent: Partial<Consent>,
+  consent: Partial<Consent> & { text_version: string },
 ): Promise<ConsentResult> {
   try {
     const me = await fetchApi<{

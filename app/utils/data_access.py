@@ -2060,10 +2060,11 @@ def update_herd(form, user_uuid, *, legacy=False):
                 Membership.update(**account, updated_at=datetime.now()).where(
                     Membership.id == herd.membership_id
                 ).execute()
+                from utils.matrikel import write_matrikel_audit  # pylint: disable=import-outside-toplevel
+
                 payload = {"fields": list(account), "source": "herd", "herd_id": herd.id}
-                MatrikelAudit.create(
-                    actor=user, action="kontakt_andrad", membership=herd.membership_id, payload=payload
-                )
+                # the matrikel's one writer of its log: it also revokes an older account change waiting for the link
+                write_matrikel_audit(user, "kontakt_andrad", herd.membership_id, payload)
         logger.info(f"User:{user.id} Updated herd: {herd.id}")
         return {"status": "updated"}
     except DoesNotExist:
@@ -3888,7 +3889,7 @@ def get_yearly_reports(round_id: int, genebank_id: int, full_account: bool = Fal
 
                 # Format publish information based on allowPublication array
                 publish_info = "Nej, ingen publicering"
-                allow_publication = form_data.get("allowPublication", [])
+                allow_publication = form_data.get("allowPublication") or []
 
                 if "noPublication" in allow_publication:
                     publish_info = "Nej, ingen publicering"
@@ -3918,7 +3919,8 @@ def get_yearly_reports(round_id: int, genebank_id: int, full_account: bool = Fal
                     if excluded:
                         publish_info = f"Ja, men inte {' och '.join(excluded)}"
                     else:
-                        publish_info = "Ja för publicering i Koharen"
+                        # No tick is no answer: a legacy answer is never consent (GDPR session, Jonas 2026-11-23)
+                        publish_info = "Ej angivet"
 
                 membership = r.herd.membership if r.herd.membership_id else None
                 number = membership and membership.bank_account_number

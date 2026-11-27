@@ -253,7 +253,17 @@ def raise_counter_to(value: int) -> None:
 
 
 def write_matrikel_audit(actor: User | None, action: str, membership: Membership, payload: dict) -> MatrikelAudit:
-    """Append one matrikel audit row. Payloads carry before/after values. No actor: the nightly job wrote it."""
+    """
+    Append one matrikel audit row. Payloads carry before/after values. No actor: the nightly job wrote it. Every
+    write logs here, so a write that names contact columns (profile, logged-in report, paper, matrikel staff) also
+    revokes the older changes of those fields that wait for the report link's receipt mail (5.11), except the
+    link's own confirmation, which revokes only older ones.
+    """
+    if payload.get("source") != "link":
+        import utils.member_changes as member_changes  # pylint: disable=import-outside-toplevel  # it imports this
+
+        columns = payload.get("fields") or list(payload.get("after") or ())
+        member_changes.revoke_for_direct_write(getattr(membership, "id", membership), payload.get("person_id"), columns)
     return MatrikelAudit.create(actor=actor, action=action, membership=membership, payload=payload)
 
 
@@ -554,6 +564,17 @@ def _new_person_names(data, *, optional):
     return {"first_name": first, "last_name": last}
 
 
+def _new_holder(membership, actor):
+    """A new huvudmedlem has not answered the Koharen question: the answer was the previous holder's (5.11).
+    In the caller's transaction, under the membership lock."""
+    from utils.members import (  # pylint: disable=import-outside-toplevel  # utils.members imports this module
+        CONSENT_TEXT_VERSION,
+        set_consent,
+    )
+
+    set_consent(membership, {}, source="admin", text_version=CONSENT_TEXT_VERSION, user=actor.id if actor else None)
+
+
 def add_person(membership, data, actor):
     """Create a person row under `membership` and audit it.
 
@@ -584,6 +605,8 @@ def add_person(membership, data, actor):
         )
         if role == "huvudmedlem" and locked.membership_status != Status.FRIEXEMPLAR:
             reserve_login_address(person.email, person.id)
+        if role == "huvudmedlem":
+            _new_holder(locked, actor)
         write_matrikel_audit(
             actor,
             "person_added",
@@ -691,6 +714,7 @@ def reactivate_person(member, actor):
             queue_member_added(person)
         if person.role == "huvudmedlem":
             reserve_holder(person.id)
+            _new_holder(membership, actor)
             write_matrikel_audit(
                 actor,
                 "main_member_changed",
@@ -748,6 +772,7 @@ def swap_main_member(membership, new_main, actor):
         new_main.save()
         reserve_holder(new_main.id)
         cancel_member_added([new_main.id])
+        _new_holder(membership, actor)
         write_matrikel_audit(
             actor,
             "main_member_changed",
@@ -1706,20 +1731,35 @@ def _detach_user_locked(person: Member, *, actor: User | None, mode: str) -> int
     return user_id
 
 
-def unlink_member_user(person_id, *, actor, mode="admin"):
+def unlink_member_user(person_id, *, actor, mode="admin", link_audit_id=None, invalidate=True):
     """Detach the account — allowed on ended persons too (the release valve
-    for the blocked-relink case). Returns (person, lost_genebank_ids)."""
+    for the blocked-relink case). With `link_audit_id` (the status view's
+    "nytt konto", spec 5.1) only the link that audit row recorded: refused
+    under the locks once the person was linked or unlinked since, or holds
+    another account. A caller with an outer transaction passes
+    invalidate=False and invalidates the lost genebanks after its commit.
+    Returns (person, lost_genebank_ids)."""
     with DB_PROXY.atomic():
         person, user = _lock_for_detach(person_id)
         if user is None:
             raise LinkError("Personen har inget kopplat konto", "Det finns inget konto att koppla bort")
+        if link_audit_id is not None:
+            since = MatrikelAudit.select().where(
+                MatrikelAudit.membership == person.membership_id,
+                MatrikelAudit.action.in_(("person_user_linked", "person_user_unlinked")),
+                MatrikelAudit.id >= link_audit_id,
+            )
+            rows = [row for row in since if (row.payload or {}).get("person_id") == person.id]
+            if [row.id for row in rows] != [link_audit_id] or rows[0].payload.get("user_id") != user.id:
+                raise LinkError("Kopplingen har ändrats", "Kontot har redan kopplats om. Läs in sidan igen.")
         before = user.effective_herd_ids()
         _detach_user_locked(person, actor=actor, mode=mode)
         lost = before - User.get_by_id(user.id).effective_herd_ids()
         lost_genebanks = (
             {h.genebank_id for h in Herd.select(Herd.genebank).where(Herd.id.in_(list(lost)))} if lost else set()
         )
-    _invalidate_genebanks(lost_genebanks)
+    if invalidate:
+        _invalidate_genebanks(lost_genebanks)
     return person, lost_genebanks
 
 

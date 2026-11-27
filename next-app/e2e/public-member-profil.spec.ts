@@ -1,8 +1,6 @@
 import { test, expect } from "@playwright/test";
 
-test("linked member can toggle Koharen publication consent", async ({
-  page,
-}) => {
+test("linked member answers the Koharen question", async ({ page }) => {
   await page.request.post("/api/login", {
     data: { username: "test-member", password: "test-member-pass" },
     headers: { "Content-Type": "application/json" },
@@ -14,20 +12,23 @@ test("linked member can toggle Koharen publication consent", async ({
     page.getByRole("heading", { name: "Publicering i Koharen" }),
   ).toBeVisible();
 
-  // Scoped to the Koharen card — "E-post" also labels the Kontakt input.
+  // Scoped to the Koharen card — every card has its own "Spara".
   const koharen = page.locator("section", {
     has: page.getByRole("heading", { name: "Publicering i Koharen" }),
   });
-  const toggle = koharen.getByLabel("E-post", { exact: true });
+  // Never answered, Nej or Ja: after Ja the e-mail box can be flipped.
+  await koharen.getByLabel("Ja", { exact: true }).check();
+  const toggle = koharen.getByLabel("e-postadress", { exact: true });
   const before = await toggle.isChecked();
   await toggle.click();
   await koharen.getByRole("button", { name: "Spara", exact: true }).click();
   await expect(page.getByText("Publiceringsval sparade")).toBeVisible();
 
   await page.reload();
-  expect(await koharen.getByLabel("E-post", { exact: true }).isChecked()).toBe(
-    !before,
-  );
+  await expect(koharen.getByLabel("Ja", { exact: true })).toBeChecked();
+  expect(
+    await koharen.getByLabel("e-postadress", { exact: true }).isChecked(),
+  ).toBe(!before);
 });
 
 test("the old member profile URL is gone", async ({ page }) => {

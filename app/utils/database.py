@@ -78,8 +78,9 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # acceptance of the account rules (54) + each history year's realised Ne (55) +
 # a paper certificate's copy checked against the registry, inbox_document.saved_certificate and saved_number,
 # verified_at and verified_by (56) + a buyer's e-mail kept only for the notice, buyer_contact.email_notice_only (57) +
-# the support account on the membership, with its type (58).
-CURRENT_SCHEMA_VERSION = 58
+# the support account on the membership, with its type (58) + why a report link's change was revoked,
+# member_change_request.revoked_reason (59).
+CURRENT_SCHEMA_VERSION = 59
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -2784,6 +2785,12 @@ class YearlyReportDraft(BaseModel):
         indexes = ((("herd", "round"), True),)
 
 
+# Why a change from the report link was revoked: a newer change of the field was confirmed, the member pressed "Det
+# var inte jag", the report was withdrawn, or the e-mail it replaces is not the matrikel's any more.
+CHANGE_REVOKED = ("nyare", "inte_jag", "tillbaka", "andrad")
+CHANGE_REVOKED_CHECK = "member_change_request_revoked_reason_check"
+
+
 class MemberChangeRequest(BaseModel):
     """A pending matrikel change from the report link (step 5), or a confirmed e-mail change from paper."""
 
@@ -2798,6 +2805,7 @@ class MemberChangeRequest(BaseModel):
     old_confirmed_at = TimestampTZField(null=True)
     confirmed_at = TimestampTZField(null=True)
     revoked_at = TimestampTZField(null=True)
+    revoked_reason = TextField(null=True)  # CHANGE_REVOKED: kept after the purge blanks `value` (U14)
 
     class Meta:
         table_name = "member_change_request"
@@ -2805,7 +2813,8 @@ class MemberChangeRequest(BaseModel):
             SQL(
                 "CONSTRAINT member_change_request_kind_check "
                 f"CHECK ({_sql_in('kind', ('kontakt', 'epost', 'konto', 'publicering'))})"
-            )
+            ),
+            SQL(f"CONSTRAINT {CHANGE_REVOKED_CHECK} CHECK ({_sql_in('revoked_reason', CHANGE_REVOKED)})"),
         ]
 
 
@@ -5719,6 +5728,40 @@ def migrate_26_to_27():
         ).execute()
 
 
+CHANGE_REVOKED_59 = "member_change_request.revoked_reason"  # migration 59's schema_history comment
+
+
+def migrate_58_to_59():
+    """
+    Why a change from the report link was revoked (step 5), so the status view keeps "Det var inte jag"; and the
+    member each queued receipt goes to, which the receipt's address now follows.
+    """
+    with DATABASE.atomic():
+        if "member_change_request" in DATABASE.get_tables():
+            if "revoked_reason" not in {c.name for c in DATABASE.get_columns("member_change_request")}:
+                migrate(DATABASE_MIGRATOR.add_column("member_change_request", "revoked_reason", TextField(null=True)))
+            if (
+                not isinstance(DATABASE, SqliteDatabase)
+                and not DATABASE.execute_sql(
+                    "SELECT 1 FROM pg_constraint WHERE conname = %s", (CHANGE_REVOKED_CHECK,)
+                ).fetchone()
+            ):
+                DATABASE.execute_sql(
+                    f'ALTER TABLE "member_change_request" ADD CONSTRAINT "{CHANGE_REVOKED_CHECK}"'
+                    f" CHECK ({_sql_in('revoked_reason', CHANGE_REVOKED)})"
+                )
+        if "mail_message" in DATABASE.get_tables() and not isinstance(DATABASE, SqliteDatabase):
+            # A receipt is now sent to the member it was queued for: the queue row has always said who.
+            DATABASE.execute_sql(
+                "UPDATE mail_message SET params = params || jsonb_build_object('member_id', recipient_id)"
+                " WHERE kind IN ('arsrapport.kvitto', 'arsrapport.andrad') AND recipient_kind = 'member'"
+                " AND NOT params ? 'member_id'"
+            )
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=59, comment=CHANGE_REVOKED_59, applied=datetime.now()
+        ).execute()
+
+
 MIGRATIONS = {
     (None, 1): migrate_none_to_1,
     (1, 2): migrate_1_to_2,
@@ -5778,6 +5821,7 @@ MIGRATIONS = {
     (55, 56): migrate_55_to_56,  # inbox_document.verified_at, verified_by, saved_certificate
     (56, 57): migrate_56_to_57,  # buyer_contact.email_notice_only
     (57, 58): migrate_57_to_58,  # the support account on the membership
+    (58, 59): migrate_58_to_59,  # member_change_request.revoked_reason
 }
 
 
