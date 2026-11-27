@@ -431,6 +431,25 @@ def require_handler(item, user):
 def _set_state(item, state):
     item.state, item.state_changed_at = state, now()
     item.closed_at = item.state_changed_at if state in CLOSED_STATES else None
+    if item.closed_at is not None:  # a closed item saves no sale: the seller and buyer read off its photos go
+        for document in item.documents:
+            if drop_sale_reading(document):
+                document.save(only=[InboxDocument.interpretation, InboxDocument.proposal])
+
+
+def drop_sale_reading(document):
+    """
+    The seller and buyer read off the photo (rule 5 b) leave its reading and proposal, on `document` for the caller
+    to save, once no sale is saved from it any more: a sale was (its buyer is then in BuyerContact, under its own
+    rules), the document is done or dismissed, or its item closed. Returns whether there were any.
+    """
+    found = False
+    for name, key in (("interpretation", interpreter.SALE_READING), ("proposal", "sale")):
+        value = getattr(document, name)
+        if isinstance(value, dict) and key in value:
+            setattr(document, name, {k: v for k, v in value.items() if k != key})
+            found = True
+    return found
 
 
 def take(item, user, *, over, expected=None):
@@ -816,6 +835,7 @@ def update_document(item, document, user, changes):
         document.waiting_for = _waiting_for(changes["waiting_for"])
     if changes.get("dismissed"):
         document.done_at = document.done_at or now()
+        drop_sale_reading(document)
     elif changes.get("dismissed") is False and document.public_path is None and document.herd_tracking_id is None:
         document.done_at = None
     document.save()
@@ -924,6 +944,7 @@ def confirm_mask(item, document, user, rotation, rects, no_personal_data=None, m
     document.rotation, document.mask_rects = rotation, rects
     document.verified_at, document.verified_by = (now(), user.id) if matches_registry else (None, None)
     document.done_at = document.done_at or now()
+    drop_sale_reading(document)
     replaced = document.public_path
     make_copy(document)
     document.save()
@@ -1498,6 +1519,7 @@ def transferred(item, document, user, individual, row, *, linked=False):
     document.herd_tracking_id = row.id
     if proof:
         document.individual, document.done_at = individual, now()
+    drop_sale_reading(document)
     document.save()
     proven = item.documents.select(InboxDocument.herd_tracking_id).where(
         (InboxDocument.doc_type == "bevis") & InboxDocument.herd_tracking_id.is_null(False)

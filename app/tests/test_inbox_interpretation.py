@@ -5,6 +5,7 @@ The interpreter is a fake that returns canned dicts; no model runs.
 isort:skip_file
 """
 
+from datetime import date
 from unittest import mock
 
 import utils.database as db  # noqa: E402
@@ -249,6 +250,89 @@ class TestSaleReading(InterpretationTest):
         interpreter.interpret_next()
         self.assertEqual((len(self.calls), len(self.sale_calls)), (2, 2))
         self.assertEqual(self.doc(document).interpretation["forsaljning"]["kopare_namn"], "Andra Testsson")
+
+
+class TestSaleReadingGoes(InterpretationTest):
+    """
+    The seller and buyer read off the photo are kept only while the queue may still save a sale from the document,
+    and only the queue's workers, who see the photo itself, are served them.
+    """
+
+    def read(self, files=2):
+        """An upload of `files` certificates, each read with its seller and buyer."""
+        item, documents = self.uploaded(files=files)
+        self.sale = SALE
+        for _ in documents:
+            interpreter.interpret_next()
+        self.assertTrue(all("sale" in self.doc(d).proposal for d in documents))
+        return item, documents
+
+    def assertGone(self, document):  # pylint: disable=invalid-name
+        """The sale part is gone from the reading and the proposal; the rabbit's stays."""
+        gone = self.doc(document)
+        self.assertEqual(gone.interpretation, READING)
+        self.assertEqual(set(gone.proposal), {"fields", "checks"})
+
+    def test_a_sale_saved_from_the_document(self):
+        item, (sold, other) = self.read()
+        inbox.take(item, self.manager, over=False)
+        self.login("man")
+        body = {"individual": "G1-2111", "herd": "G2", "date": date.today().isoformat()}
+        resp = self.client.post(f"/api/v2/inkorg/{item.id}/dokument/{sold.id}/overlat", json=body)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertNotIn("sale", resp.get_json()["document"]["proposal"])
+        self.assertGone(sold)
+        self.assertIn("sale", self.doc(other).proposal)  # another document of the item may still show a sale
+
+    def test_a_document_dismissed(self):
+        item, (dismissed, other) = self.read()
+        inbox.take(item, self.helper, over=False)
+        self.login("hjalp")
+        resp = self.client.patch(f"/api/v2/inkorg/{item.id}/dokument/{dismissed.id}", json={"dismissed": True})
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertGone(dismissed)
+        self.assertIn("sale", self.doc(other).proposal)
+
+    def test_a_document_done_without_a_sale(self):
+        item, (masked, other) = self.read()
+        inbox.take(item, self.helper, over=False)
+        self.login("hjalp")
+        body = {
+            "action": "pappersintyg",
+            "individual": "G1-2112",
+            "paper_certificate": "P-1",
+            "paper_number": "G1-2112",
+        }
+        resp = self.client.post(f"/api/v2/inkorg/{item.id}/dokument/{masked.id}/spara", json=body)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertIn("sale", self.doc(masked).proposal)  # saved, not done: the sale may still be registered
+        body = {"rotation": 0, "mask_rects": [], "no_personal_data": True}
+        resp = self.client.post(f"/api/v2/inkorg/{item.id}/dokument/{masked.id}/maskning", json=body)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertGone(masked)
+        self.assertIn("sale", self.doc(other).proposal)
+
+    def test_the_item_closed(self):
+        item, documents = self.read()
+        inbox.take(item, self.helper, over=False)
+        self.login("hjalp")
+        resp = self.client.post(f"/api/v2/inkorg/{item.id}/lage", json={"state": "skrap"})
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        for document in documents:
+            self.assertGone(document)
+
+    def test_only_the_queue_is_served_it(self):
+        item, _ = self.read(files=1)
+        self.login("hjalp")
+        resp = self.client.get(f"/api/v2/inkorg/{item.id}")
+        self.assertEqual(resp.get_json()["documents"][0]["proposal"]["sale"]["buyer"]["name"], "Köpa Testsson")
+        self.login("owner")  # the sender: her own list, and never the item
+        for path, status in ((f"/api/v2/inkorg/{item.id}", 403), ("/api/v2/inkorg/mina-inskick", 200)):
+            with self.subTest(path):
+                resp = self.client.get(path)
+                self.assertEqual(resp.status_code, status)
+                self.assertNotIn("Testsson", resp.get_data(as_text=True))
+                self.assertNotIn("kopa@example.com", resp.get_data(as_text=True))
 
 
 class TestTooSmall(InterpretationTest):

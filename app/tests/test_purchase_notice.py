@@ -956,6 +956,17 @@ class PurchaseNoticeTest(ArsrapportTest):
         self.assertEqual(len(read), 2)  # the certificate, then its seller and buyer
         self.assertEqual(db.InboxDocument.get_by_id(proof["document_id"]).interpretation_status, "av")
 
+    def test_the_report_shows_nothing_of_the_seller_and_buyer_read_off_sent_photos(self):
+        self.reading_on()
+        self.login("owner")
+        uploaded = self.upload(purpose="inskick")
+        item_id = self.send(uploaded).get_json()["id"]
+        self.assertEqual(interpreter.interpret_next(), uploaded["document_id"])
+        self.assertIn("sale", db.InboxDocument.get_by_id(uploaded["document_id"]).proposal)
+        view = self.view()
+        self.assertIn(item_id, [row["id"] for row in view["arenden"]])
+        self.assertNotIn("Testsson", str(view))
+
     def test_the_photo_limit_is_the_report_uploads(self):
         limiter.reset()
         limiter.enabled = True
