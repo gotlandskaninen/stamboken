@@ -60,7 +60,8 @@ def _row_score(dark, angle):
 def _tilt(grey):
     """
     The straighten that lines the writing up in rows, in steps of 0.1 degrees, or 0.0 when no angle clearly beats
-    leaving the photo as it is: the best score must beat the score at 0 by CLEAR_GAIN and be at least MIN_TILT.
+    leaving the photo as it is: the best score must beat the score at 0 by CLEAR_GAIN, and the angle must be at
+    least MIN_TILT.
     """
     dark = Image.fromarray(((grey < _otsu(grey)) * 255).astype(np.uint8))
     straight = _row_score(dark, 0)
