@@ -601,7 +601,7 @@ class PurchaseNoticeTest(ArsrapportTest):
     # to the notice under the photo's item lock and the session's own uploads, as a rabbit's photo is (FC1)
 
     def upload(self, client=None, purpose=None, year=2025):
-        data = {"file": (io.BytesIO(encoded(photo((600, 800)))), "bevis.jpg")}
+        data = {"file": (io.BytesIO(encoded(photo())), "bevis.jpg")}
         query = f"?syfte={purpose}" if purpose else ""
         response = (client or self.client).post(
             f"/api/v2/arsrapport/besattning/G9001/{year}/foto{query}", data=data, content_type="multipart/form-data"

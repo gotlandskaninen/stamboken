@@ -249,6 +249,40 @@ class TestSaleReading(InterpretationTest):
         self.assertEqual(self.doc(document).interpretation["forsaljning"]["kopare_namn"], "Andra Testsson")
 
 
+class TestTooSmall(InterpretationTest):
+    """A photo too small for the handwriting is not read by itself (MIN_READ_SIDE); "Tolka igen" reads it anyway."""
+
+    def test_a_small_photo_waits_for_the_handler(self):
+        self.login("owner")
+        small = encoded(photo(size=(800, 1600)))  # the longer side is enough, the shorter is not
+        resp = self.upload(("intyg.jpg", small), ("stort.jpg", encoded(photo())), accept_warnings="1")
+        self.assertEqual(resp.status_code, 201, resp.get_json())
+        item = db.InboxItem.get_by_id(resp.get_json()["item"]["id"])
+        document, large = item.documents.order_by(db.InboxDocument.id)
+        self.assertEqual((document.interpretation_status, large.interpretation_status), ("for_litet", "vantar"))
+        self.assertEqual(interpreter.interpret_next(), large.id)
+        self.assertIsNone(interpreter.interpret_next())
+        self.assertEqual(len(self.calls), 1)
+        inbox.take(item, self.helper, over=False)
+        self.login("hjalp")
+        # Turned into another type and back, it is still too small: the type does not decide it.
+        for doc_type, status in (("bevis", "av"), ("intyg", "for_litet")):
+            self.client.patch(f"/api/v2/inkorg/{item.id}/dokument/{document.id}", json={"doc_type": doc_type})
+            self.assertEqual(self.doc(document).interpretation_status, status)
+        resp = self.client.post(f"/api/v2/inkorg/{item.id}/dokument/{document.id}/tolka-igen")
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertEqual(interpreter.interpret_next(), document.id)
+        self.assertEqual(self.doc(document).interpretation_status, "klar")
+
+    def test_the_limit_is_the_shorter_side(self):
+        sides = (interpreter.MIN_READ_SIDE - 1, interpreter.MIN_READ_SIDE)
+        self.assertEqual(interpreter.initial_status({"short_side": sides[0]}), "for_litet")
+        self.assertEqual(interpreter.initial_status({"short_side": sides[1]}), "vantar")
+        self.assertEqual(interpreter.initial_status(None), "vantar")  # not measured: read as before
+        with mock.patch.object(settings.interpretation, "interpreter", "av"):
+            self.assertEqual(interpreter.initial_status({"short_side": 10}), "av")
+
+
 class TestStatus(InterpretationTest):
     def test_waiting_last_done_and_the_alarm(self):
         _, documents = self.uploaded(files=4)

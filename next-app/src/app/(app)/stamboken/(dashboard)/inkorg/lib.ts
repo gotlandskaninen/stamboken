@@ -80,7 +80,13 @@ export interface InboxDocument {
 
 // The image reading (docs/inkorg.md, "Tolkning"): its status on a document and
 // its proposal, fields with where each value came from and the checks in words.
-export type InterpretationStatus = "av" | "vantar" | "klar" | "misslyckad";
+export type InterpretationStatus =
+  | "av"
+  | "vantar"
+  | "klar"
+  | "misslyckad"
+  /** Too small to read by itself (inbox_interpreter.MIN_READ_SIDE): Tolka igen reads it anyway. */
+  | "for_litet";
 export type Source = "läst" | "härlett" | "avviker" | "osäker";
 export type ProposedField = {
   /** null for avviker and osäker: those are read off the photo. */

@@ -2471,7 +2471,7 @@ class InboxDocument(BaseModel):
     cert_format = TextField(null=True)
     rotation = SmallIntegerField(default=0)
     mask_rects = BinaryJSONField(null=True, index=False)
-    interpretation_status = TextField(default=_initial_interpretation)  # av, vantar, klar or misslyckad
+    interpretation_status = TextField(default=_initial_interpretation)  # av, vantar, klar, misslyckad or for_litet
     attempts = SmallIntegerField(default=0)
     interpreter = TextField(null=True)
     interpretation = BinaryJSONField(null=True, index=False)

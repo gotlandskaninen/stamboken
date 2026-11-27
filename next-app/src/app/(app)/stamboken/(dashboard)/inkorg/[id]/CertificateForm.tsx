@@ -113,6 +113,13 @@ export function CertificateForm({
               och klicka Tolka igen.
             </p>
           )}
+          {doc.interpretation_status === "for_litet" && (
+            <p className={styles.muted}>
+              Fotot är för litet för att tolkas av sig självt.
+              {canSave &&
+                " Be uppfödaren om ett större foto, skriv av fälten, eller klicka Tolka igen för att tolka det ändå."}
+            </p>
+          )}
           {latest && !applied && (
             <p className={styles.note}>
               Det finns ett förslag från tolkningen.{" "}
@@ -178,6 +185,12 @@ export function CertificateForm({
                 </ul>
               )}
             <ProposalChecks checks={proposal.checks} />
+            {proposal.checks.length > 0 && (
+              <p className={styles.muted}>
+                Kontrollerna gäller det som lästes från fotot och räknas inte om
+                när du skriver. Spara prövar det du har skrivit.
+              </p>
+            )}
           </>
         )
       }
