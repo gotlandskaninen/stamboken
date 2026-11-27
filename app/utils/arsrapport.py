@@ -87,10 +87,10 @@ from utils.herd_tracking import (
     drop_kept_buyers,
     latest_death_op,
     reject_contact_details,
+    removed_sale_buyers,
     report_owners,
     report_void_denial,
     sale_undo_denial,
-    sold_on,
     void_herd_tracking,
 )
 from utils.individual_commands import (
@@ -600,6 +600,20 @@ def _listed_5_2(herd, last):
     return {row["id"] for row in rows.dicts() if _alive_by_note(row, last)}
 
 
+def _year_sales(herd, year):
+    return HerdTracking.select().where(
+        HerdTracking.from_herd == herd.id,
+        HerdTracking.kind == "TRANSFER",
+        ht_not_voided(),
+        HerdTracking.herd_tracking_date.between(date(year, 1, 1), date(year, 12, 31)),
+    )
+
+
+def _listed_or_sold(herd, year, listed):
+    sold = _year_sales(herd, year).select(HerdTracking.individual).distinct()
+    return set(listed) | {rabbit for (rabbit,) in sold.tuples()}
+
+
 def report_list(herd, year, report=None):
     """
     ReportView.rabbits, sorted on number: the 5.2 list plus every rabbit in the report's latest submission (D3b).
@@ -902,8 +916,14 @@ def save_draft(herd, round_, access, user, data, updated_at, submission_key, rev
         _recheck_code(access, herd, day)
         draft = _draft(herd, round_)
         report = current_report(herd, round_)
+        listed = report_list(herd, round_.report_year, report)
+        choosing = {str(row["id"]) for row in listed if row["state"] == "att_valja"}
+        if report is not None and (submissions := _submissions(report)):
+            # Skicka also accepts an unchanged submitted entry after a later event.
+            choosing.update(submissions[-1].data.get("rabbits") or {})
+        # After a buyback the rabbit is eligible again, but the draft still cannot replay the earlier sale.
+        stored = _without_registered(herd, _pruned(stored, choosing))
         stored, gone = _with_kept(stored, _kept_claims(draft.data) if draft is not None else {})
-        stored = _without_registered(herd, stored)
         if draft is None and updated_at is None and revision == (report.revision if report else None):
             try:
                 with DB_PROXY.atomic():  # a savepoint: a racing first save leaves the transaction usable
@@ -2179,63 +2199,7 @@ def _removed_buyers(herd, round_, rabbits, current_ops):
     reports = YearlyHerdReport.select(YearlyHerdReport.id).where(
         YearlyHerdReport.herd == herd.id, YearlyHerdReport.round == round_.id
     )
-    ops = YearlyReportSubmission.select(fn.jsonb_array_elements_text(YearlyReportSubmission.operation_ids)).where(
-        YearlyReportSubmission.report.in_(reports)
-    )
-    own_sale = HerdTracking.operation_id.cast("text").in_(ops)
-    # The FK is now NULL. The tracking audit still names the contact id it lost, and the contact audit says why.
-    deleted = AuditLog.select(AuditLog.record_id).where(
-        AuditLog.table_name == BuyerContact._meta.table_name,
-        AuditLog.operation == "DELETE",
-        AuditLog.new_data["action"].in_(
-            ("radering", "invandning", "gallring_fem_ar", "gallring_dod", "studs", "ej_informerad")
-        ),
-    )
-    history = AuditLog.select(AuditLog.transaction_id).where(
-        AuditLog.table_name == HerdTracking._meta.table_name, AuditLog.record_id == HerdTracking.id.cast("text")
-    )
-    erased_contact = history.where(
-        AuditLog.operation == "UPDATE",
-        AuditLog.new_data["holder_contact_id"].is_null(),
-        AuditLog.old_data["holder_contact_id"].in_(deleted),
-    )
-    born_removed = history.where(AuditLog.operation == "INSERT", AuditLog.new_data["buyer_removed"] == "true")
-    voided = (
-        history.where(AuditLog.changed_fields.contains("voided_at"), AuditLog.new_data["voided_at"].is_null(False))
-        .order_by(AuditLog.id.desc())
-        .limit(1)
-    )
-    returned = HerdTracking.alias()
-    bought_back = returned.select(returned.id).where(
-        returned.individual == HerdTracking.individual, returned.herd == herd.id, sold_on(HerdTracking, returned)
-    )
-    sales = (
-        HerdTracking.select(
-            HerdTracking.individual,
-            HerdTracking.herd_tracking_date,
-            HerdTracking.created_at,
-            HerdTracking.operation_id,
-            HerdTracking.voided_at,
-            own_sale.alias("from_report"),
-            fn.EXISTS(erased_contact).alias("erased"),
-            born_removed.alias("removed_transaction"),
-            voided.alias("void_transaction"),
-        )
-        .join(Herd, on=(HerdTracking.herd == Herd.id))
-        .where(
-            HerdTracking.individual.in_(rabbits),
-            HerdTracking.kind == "TRANSFER",
-            HerdTracking.from_herd == herd.id,
-            HerdTracking.buyer_removed,
-            Herd.genebank == herd.genebank_id,
-            Herd.herd.in_(OUTSIDE_GENEBANK_HERDS),
-            # an erasure on request counts on a voided sale too: Ångra of a direct sale, or one undone elsewhere
-            ht_not_voided() | own_sale | fn.EXISTS(erased_contact),
-            ~fn.EXISTS(bought_back),
-        )
-        .order_by(HerdTracking.id)
-        .objects()
-    )
+    current, dates = removed_sale_buyers(herd.id, herd.genebank_id, rabbits, current_ops)
     # Closing a proposal clears its buyer too. The audit distinguishes a buyer already missing at that point.
     erased_proposals = AuditLog.select(AuditLog.record_id).where(
         AuditLog.table_name == SaleProposal._meta.table_name,
@@ -2248,20 +2212,6 @@ def _removed_buyers(herd, round_, rabbits, current_ops):
         SaleProposal.to_herd.is_null(),
         SaleProposal.buyer.is_null(),
     )
-    current = set()
-    dates, replaced = {}, set()
-    for sale in sales:
-        rabbit, day = sale.individual_id, sale.herd_tracking_date
-        if not sale.erased:
-            # A report can write a buyer_removed transfer on resubmission even if its inferred day has moved.
-            carried = sale.from_report or (rabbit, sale.removed_transaction) in replaced or day in dates.get(rabbit, ())
-            if sale.removed_transaction is None or (not carried and BuyerContact.purge_at_for(day) > sale.created_at):
-                continue
-        dates.setdefault(rabbit, set()).add(day)
-        if sale.void_transaction is not None:
-            replaced.add((rabbit, sale.void_transaction))
-        if sale.voided_at is None and str(sale.operation_id) in current_ops:
-            current.add(rabbit)
     for rabbit, day in cleared.tuples():
         dates.setdefault(rabbit, set()).add(day)
     return current, dates
@@ -2404,14 +2354,8 @@ def check(
     rows = {row["id"]: row for row in report_list(herd, year, report)}
     strangers = [rabbit for rabbit in sub.rabbits if rabbit not in rows]
     # a rabbit sold out of the herd in the year (the sale dialog's, or Sälj) leaves the list, not its defect
-    sold = HerdTracking.select(HerdTracking.individual).where(
-        HerdTracking.from_herd == herd.id,
-        HerdTracking.kind == "TRANSFER",
-        ht_not_voided(),
-        HerdTracking.herd_tracking_date.between(date(year, 1, 1), last),
-    )
-    sold = {rabbit for (rabbit,) in sold.tuples()}
-    strangers += [d["individual_id"] for d in sub.report["defects"] if d["individual_id"] not in rows.keys() | sold]
+    eligible = _listed_or_sold(herd, year, rows)
+    strangers += [d["individual_id"] for d in sub.report["defects"] if d["individual_id"] not in eligible]
     refusals += [_refusal(rabbit, "okand_kanin") for rabbit in strangers]
     # Only the report's own rabbits: another herd's rabbit would make the refusal an oracle on its buyer's name.
     own = [rabbit for rabbit in sub.rabbits if rabbit in rows]
@@ -2926,15 +2870,10 @@ def _sold_besides(herd, year, sub):
     till, ar, manad, dag}, the day None when the dialog was given none.
     """
     rows = list(
-        HerdTracking.select(HerdTracking, Herd)
+        _year_sales(herd, year)
+        .select(HerdTracking, Herd)
         .join(Herd, on=(HerdTracking.herd == Herd.id))
-        .where(
-            HerdTracking.from_herd == herd.id,
-            HerdTracking.kind == "TRANSFER",
-            ht_not_voided(),
-            HerdTracking.herd_tracking_date.between(date(year, 1, 1), date(year, 12, 31)),
-            HerdTracking.individual.not_in(list(sub.rabbits)),
-        )
+        .where(HerdTracking.individual.not_in(list(sub.rabbits)))
         .order_by(HerdTracking.herd_tracking_date, HerdTracking.id)
     )
     owned, dayless_ = report_owners([r.operation_id for r in rows]), month_only([r.operation_id for r in rows])
@@ -3320,7 +3259,9 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
         report = YearlyHerdReport.select().where(same & (YearlyHerdReport.status == "submitted")).for_update().first()
         draft = _draft(herd, round_)  # K1: its kept buyers are linked again or deleted, under the rabbits' locks
         kept = {int(key): claim["kopare_id"] for key, claim in (_kept_claims(draft.data) if draft else {}).items()}
-        ids = sorted(set(sub.rabbits) | set(kept))
+        # Ångra can put a sold rabbit back on the list. Hold it from the completeness check through the receipt.
+        listed_or_sold = _listed_or_sold(herd, year, _listed_5_2(herd, last))
+        ids = sorted(listed_or_sold | sub.rabbits.keys() | kept.keys())
         items = _lock_items(ids, access.item.id if paper else None, report, kept.values())
         item, pages = _lock_form(access, user, herd) if paper else (None, [])
         _lock_rabbits(ids, items)
@@ -3521,18 +3462,14 @@ def sell_now(herd, round_, access, user, rabbit_id, sald, *, now=None):
         return grant.operation_ids[0]
 
 
-def _pruned(data, choosing, listed):
-    """
-    FB1: a withdrawn report's draft without what Skicka would refuse now (okand_kanin, senare_handelse): the entries
-    of rabbits not left to choose (`choosing`, ids as text) and the defects of rabbits off the list (`listed`), in the
-    body and in the form's copy.
-    """
+def _pruned(data, choosing, defect_ids=None):
+    """Keep eligible rabbit entries in both draft copies. On withdrawal also prune defects by their own list."""
 
     def prune(body):
         if isinstance(body.get("rabbits"), dict):
             body = {**body, "rabbits": {key: e for key, e in body["rabbits"].items() if key in choosing}}
-        if isinstance(body.get("defects"), list):
-            kept = [d for d in body["defects"] if isinstance(d, dict) and d.get("individual_id") in listed]
+        if defect_ids is not None and isinstance(body.get("defects"), list):
+            kept = [d for d in body["defects"] if isinstance(d, dict) and d.get("individual_id") in defect_ids]
             body = {**body, "defects": kept}
         return body
 
@@ -3636,7 +3573,8 @@ def withdraw(herd, round_, access, user, *, revision, reason=None, now=None) -> 
         # D10: the submission's data is already stored_body
         # not the form's
         latest = {k: v for k, v in submissions[-1].data.items() if k not in ("litters_added", "salda_direkt")}
-        data = _pruned(latest if draft is None else draft.data, choosing, {row["id"] for row in listed})
+        eligible = _listed_or_sold(herd, round_.report_year, (row["id"] for row in listed))
+        data = _pruned(latest if draft is None else draft.data, choosing, eligible)
         data, gone = _with_kept(data, kept)
         drop_kept_buyers(gone, user)  # FB6; Skicka's locks hold the items and the rabbits
         if draft is None:
