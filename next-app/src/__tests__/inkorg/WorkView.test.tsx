@@ -890,6 +890,18 @@ describe("ReportPhotoCheck's buttons", () => {
     );
   });
 
+  it("lets the handler straighten it, and reads it again only once the angle is saved: it has no masking", () => {
+    render(view(photoItem()));
+    const straighten = screen.getByRole("button", { name: "Räta" });
+    expect(straighten).toBeEnabled();
+    fireEvent.click(straighten);
+    expect(screen.getByRole("button", { name: "Tolka igen" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Spara vinkeln" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/bekräftar maskningen/)).toBeNull();
+  });
+
   it("before it is taken: no closing, and the take button where the note is", () => {
     render(view(photoItem({ assigned_to: null, state: "ny" }), boss));
     expect(screen.queryByRole("button", { name: "Stämmer" })).toBeNull();

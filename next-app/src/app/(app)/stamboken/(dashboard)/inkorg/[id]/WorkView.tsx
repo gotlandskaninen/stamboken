@@ -250,6 +250,8 @@ export function WorkView({
     setAngleNote(null);
   }
   const unsavedAngle = !!doc && straighten !== doc.straighten;
+  // The masking card: a registered report photo is compared with its rabbit instead, and has no masking.
+  const maskStep = masking && !(item.registered && doc?.doc_type === "intyg");
   if (step !== shownStep) {
     setShownStep(step);
     setRotation(doc?.rotation ?? 0);
@@ -331,7 +333,7 @@ export function WorkView({
             ? `Fotot lutar ${degrees(angle)}, och vinkeln är satt till det.`
             : "Ingen tydlig lutning hittades, så vinkeln är 0°.",
         ];
-        if (masking) {
+        if (maskStep) {
           const found =
             paper && rotateRect(paper, (rotation - doc.rotation) / 90);
           if (found) {
@@ -647,7 +649,7 @@ export function WorkView({
                 onRotate={rotate}
                 straighten={straighten}
                 onStraighten={straightenView}
-                straightenLocked={masking}
+                straightenLocked={maskStep}
                 onFindPaper={editable ? findPaperOnPhoto : undefined}
                 busy={pending}
                 mask={
@@ -687,7 +689,7 @@ export function WorkView({
                       : undefined
                 }
               />
-              {masking && unsavedAngle ? (
+              {maskStep && unsavedAngle ? (
                 <p className={styles.note}>
                   Vinkeln {degrees(straighten)} sparas när du bekräftar
                   maskningen.
@@ -913,6 +915,7 @@ export function WorkView({
               registered={item.registered}
               canCheck={checking && doc.status === "sparad"}
               pending={pending}
+              angleUnsaved={unsavedAngle}
               onCheck={(outcome) =>
                 run(
                   () => checkReportPhoto(item.id, doc.id, outcome),

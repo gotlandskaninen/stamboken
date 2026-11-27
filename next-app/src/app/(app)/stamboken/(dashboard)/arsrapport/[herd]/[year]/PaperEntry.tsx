@@ -85,6 +85,7 @@ export function PaperEntry({
               key={doc.id}
               src={`${apiBase}/v2/inkorg/${item.id}/dokument/${doc.id}/original`}
               rotation={turns[doc.id] ?? doc.rotation}
+              straighten={doc.straighten}
               onRotate={(q) =>
                 setTurns((t) => ({
                   ...t,
