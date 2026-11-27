@@ -110,6 +110,23 @@ class TestJob(InterpretationTest):
         stale = self.doc(document)
         self.assertEqual((stale.interpretation_status, stale.proposal), ("vantar", None))
 
+    def test_the_photo_is_read_straightened_and_a_reading_straightened_meanwhile_is_dropped(self):
+        _, (document,) = self.uploaded()
+        db.InboxDocument.update(straighten=2.5).where(db.InboxDocument.id == document.id).execute()
+
+        def straightened_meanwhile(image, schema):  # nothing else changes: the turn and the attempts stay
+            db.InboxDocument.update(straighten=3).where(db.InboxDocument.id == document.id).execute()
+            return READING
+
+        with mock.patch.object(interpreter, "prepare_image", wraps=interpreter.prepare_image) as prepare:
+            with mock.patch.dict(interpreter.INTERPRETERS, {"gemma": straightened_meanwhile}):
+                interpreter.interpret_next()
+            stale = self.doc(document)
+            self.assertEqual((stale.interpretation_status, stale.proposal), ("vantar", None))
+            interpreter.interpret_next()
+        self.assertEqual(self.doc(document).interpretation_status, "klar")
+        self.assertEqual([call.args[1:] for call in prepare.call_args_list], [(0, 2.5), (0, 3)])
+
     def test_off_reads_nothing(self):
         with mock.patch.object(settings.interpretation, "interpreter", "av"):
             _, (document,) = self.uploaded()

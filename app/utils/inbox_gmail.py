@@ -696,7 +696,7 @@ def ask_breeder(item, user, text, document_id=None, crop=None):
             raise inbox.InboxError(400, "Ange dokumentet som utsnittet är ur.")
         document = inbox.document_of(item, document_id)
         crop = inbox._rects([crop])[0]  # pylint: disable=protected-access  # as a masking rectangle
-        detail.update(document=document.id, rotation=document.rotation, crop=crop)
+        detail.update(document=document.id, rotation=document.rotation, straighten=document.straighten, crop=crop)
     holder = inbox.herd_holder(item.herd_id)
     if holder is None or _normalize(holder.email) is None:
         raise inbox.InboxError(409, "Besättningen har ingen innehavare med e-post i matrikeln.")
@@ -715,10 +715,10 @@ def ask_breeder(item, user, text, document_id=None, crop=None):
     item.save()
 
 
-def _cropped(document, rect, rotation):
+def _cropped(document, rect, rotation, straighten):
     """The framed part of the original, turned as the handler saw it, as a JPEG at most CROP_SIDE a side."""
     with Image.open(inbox.private_path(document.original_path)) as original:
-        image = original.convert("RGB").rotate(-rotation, expand=True)
+        image = inbox.turned(original, rotation, straighten)
     width, height = image.size
     left, top = math.floor(rect["x"] * width), math.floor(rect["y"] * height)
     part = image.crop(
@@ -740,5 +740,7 @@ def _question_mail(params):
     detail, attachments = event.detail, []
     document = InboxDocument.get_or_none(InboxDocument.id == detail["document"]) if "crop" in detail else None
     if document is not None and document.original_path is not None:
-        attachments.append(("utsnitt.jpg", "image/jpeg", _cropped(document, detail["crop"], detail["rotation"])))
+        # A question asked before the photo could be straightened has no straighten: it was 0.
+        cut = _cropped(document, detail["crop"], detail["rotation"], detail.get("straighten", 0))
+        attachments.append(("utsnitt.jpg", "image/jpeg", cut))
     return {"item_id": event.item_id, "text": detail["text"], "crop": bool(attachments), "attachments": attachments}

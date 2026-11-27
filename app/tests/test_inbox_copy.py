@@ -10,13 +10,15 @@ from unittest import mock
 
 import utils.database as db  # noqa: E402
 import utils.inbox as inbox  # noqa: E402
-from PIL import Image  # noqa: E402
+import utils.inbox_gmail as inbox_gmail  # noqa: E402
+import utils.inbox_interpreter as interpreter  # noqa: E402
+from PIL import Image, ImageDraw  # noqa: E402
 
 from tests.database_test import rewind_migrations  # noqa: E402
 from tests.ht_helpers import ht_row  # noqa: E402
 from tests.inbox_fixtures import InboxTest, encoded  # noqa: E402
 
-RED, BLUE = (220, 30, 30), (30, 30, 220)
+RED, BLUE, GREEN = (220, 30, 30), (30, 30, 220), (30, 200, 30)
 
 
 def red_over_blue():
@@ -326,6 +328,9 @@ class TestCopy(CopyTest):
             {"rotation": 0, "mask_rects": rects, "copy_frame": {}},
             {"rotation": 0, "mask_rects": rects, "copy_frame": False},
             {"rotation": 0, "mask_rects": rects, "copy_frame": [{"x": 0, "y": 0, "w": 1, "h": 0.5}]},
+            {"rotation": 0, "mask_rects": rects, "straighten": 15.1},
+            {"rotation": 0, "mask_rects": rects, "straighten": True},
+            {"rotation": 0, "mask_rects": rects, "straighten": "2"},
         ):
             with self.subTest(body=body):
                 resp = self.post(f"/{item.id}/dokument/{document.id}/maskning", **body)
@@ -401,7 +406,13 @@ class TestCopyIsFixed(CopyTest):
         self.assertEqual(resp.status_code, 200, resp.get_json())
         self.post(f"/{item.id}/lage", state="tagen")  # reopened: its handler again
         before = open(os.path.join(self.folder, db.InboxDocument.get_by_id(document.id).public_path), "rb").read()
-        for body in ({"rotation": 90}, {"mask_rects": None}, {"mask_rects": []}, {"doc_type": "bevis"}):
+        for body in (
+            {"rotation": 90},
+            {"straighten": 2},
+            {"mask_rects": None},
+            {"mask_rects": []},
+            {"doc_type": "bevis"},
+        ):
             with self.subTest(body=body):
                 self.assertEqual(self.patch(item, document, **body).status_code, 409)
         stored = db.InboxDocument.get_by_id(document.id)
@@ -463,3 +474,123 @@ class TestCopyIsFixed(CopyTest):
             [(self.helper.id, 0), (self.manager.id, 180), (self.admin.id, 180)],
         )
         self.assertEqual(self.reload(item).state, "klar")
+
+
+def old_turn(image, rotation, straighten=0):
+    """The quarter turn the copy, the reading and the cut-out were made with before the photo could be straightened."""
+    return image.convert("RGB").rotate(-rotation, expand=True)
+
+
+def tilted_paper():
+    """
+    White paper, 1200 x 1600, with a red row near its top and a green one near its bottom, photographed turned 5°
+    counter-clockwise: straightened by 5° clockwise the rows lie level again.
+    """
+    paper = Image.new("RGB", (1200, 1600), "white")
+    draw = ImageDraw.Draw(paper)
+    draw.rectangle([100, 380, 1099, 419], fill=RED)
+    draw.rectangle([100, 1180, 1099, 1219], fill=GREEN)
+    return paper.rotate(5, expand=True, resample=Image.Resampling.BICUBIC, fillcolor="white")
+
+
+class TestStraighten(CopyTest):
+    """The photo straightened a few degrees after its quarter turns: F, the frame the copy, reading and cut-out use."""
+
+    def patch(self, item, document, **body):
+        return self.client.patch(f"/api/v2/inkorg/{item.id}/dokument/{document.id}", json=body)
+
+    def test_no_straighten_is_the_old_quarter_turn_byte_for_byte_and_a_tenth_of_a_degree_is_not(self):
+        _, document = self.saved_document()
+        document = db.InboxDocument.get_by_id(document.id)
+        source = self.stored(document)
+        document.rotation, document.mask_rects = 90, [{"x": 0, "y": 0.5, "w": 1, "h": 0.25}]
+        document.copy_frame = {"x": 0, "y": 0, "w": 1, "h": 0.6667}
+        crop = {"x": 0.1, "y": 0.2, "w": 0.5, "h": 0.25}
+
+        def made(straighten, turn=inbox.turned):
+            """The copy, the reading and the cut-out with the photo turned by `turn`."""
+            document.straighten = straighten
+            with mock.patch.object(inbox, "turned", turn), mock.patch.object(interpreter, "turned", turn):
+                inbox.make_copy(document)
+                with open(os.path.join(self.folder, document.public_path), "rb") as copy:
+                    return (
+                        copy.read(),
+                        interpreter.prepare_image(source, 90, straighten),
+                        inbox_gmail._cropped(document, crop, 90, straighten),  # pylint: disable=protected-access
+                    )
+
+        before = made(0, old_turn)
+        self.assertEqual(made(0), before)
+        for now, then in zip(made(0.1), before, strict=True):
+            self.assertNotEqual(now, then)
+
+    def test_a_straightened_copy_masks_the_marked_row_and_is_cropped_in_the_straightened_photo(self):
+        item, document = self.saved_document()
+        tilted_paper().save(self.stored(document), "JPEG", quality=95)
+        with Image.open(self.stored(document)) as photo:
+            width, height = inbox.turned(photo, 0, 5).size
+        # Straightened, the paper lies level in the middle of F: its red row at 380-420 of the paper's 1600.
+        left, top = (width - 1200) / 2, (height - 1600) / 2
+        row = {"x": (left + 80) / width, "y": (top + 370) / height, "w": 1040 / width, "h": 60 / height}
+        frame = {"x": 0, "y": 0, "w": 1, "h": (top + 800) / height}  # the top half of the paper: no green row
+        resp = self.mask(item, document, straighten=5, mask_rects=[row], copy_frame=frame)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertEqual(resp.get_json()["document"]["straighten"], 5)
+        self.assertEqual(db.InboxDocument.get_by_id(document.id).straighten, 5)
+
+        copy = self.copy(document)
+        self.assertEqual(copy.width, width)
+        self.assertLessEqual(abs(copy.height - (top + 800)), 1)
+        for x in range(int(left) + 120, int(left) + 1090, 30):  # the row, level from end to end, is covered
+            self.assertTrue(close(copy.getpixel((x, round(top + 400))), (0, 0, 0)), x)
+            self.assertTrue(close(copy.getpixel((x, round(top + 355))), (255, 255, 255)), x)  # and nothing above it
+        colours = [copy.getpixel((x, y)) for x in range(0, copy.width, 10) for y in range(0, copy.height, 10)]
+        self.assertFalse(any(close(c, RED, 60) or close(c, GREEN, 60) for c in colours))
+
+    def test_patch_straightens_by_up_to_15_degrees_either_way_to_a_tenth(self):
+        self.login("owner")
+        item = db.InboxItem.get_by_id(self.upload().get_json()["item"]["id"])
+        document = item.documents.get()
+        self.login("hjalp")
+        self.post(f"/{item.id}/ta")
+        for value, kept in ((4.04, 4.0), (-15, -15.0), (15, 15.0), (3.7, 3.7), (-0.04, 0.0)):
+            with self.subTest(value):
+                resp = self.patch(item, document, straighten=value)
+                self.assertEqual(resp.status_code, 200, resp.get_json())
+                self.assertEqual(resp.get_json()["document"]["straighten"], kept)
+                self.assertEqual(db.InboxDocument.get_by_id(document.id).straighten, kept)  # as the REAL column has it
+        self.assertEqual(str(db.InboxDocument.get_by_id(document.id).straighten), "0.0")  # never -0.0
+        for value in (15.1, -16, True, None, "3", [1], float("nan"), float("inf")):
+            with self.subTest(value):
+                self.assertEqual(self.patch(item, document, straighten=value).status_code, 400)
+        self.assertEqual(db.InboxDocument.get_by_id(document.id).straighten, 0)
+
+    def test_masking_keeps_the_straighten_it_is_given_and_without_one_the_documents(self):
+        item, document = self.saved_document()
+        self.assertEqual(self.patch(item, document, straighten=3).status_code, 200)
+        with Image.open(self.stored(document)) as photo:
+            three, two = inbox.turned(photo, 0, 3).size, inbox.turned(photo, 0, -2).size
+        rects = [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+        self.assertEqual(self.mask(item, document, mask_rects=rects).status_code, 200)
+        self.assertEqual((db.InboxDocument.get_by_id(document.id).straighten, self.copy(document).size), (3, three))
+        self.login("man")
+        self.assertEqual(self.mask(item, document, mask_rects=rects, straighten=-2).status_code, 200)
+        self.assertEqual((db.InboxDocument.get_by_id(document.id).straighten, self.copy(document).size), (-2, two))
+        self.assertEqual(self.mask(item, document, mask_rects=rects, straighten=0).status_code, 200)
+        self.assertEqual(
+            (db.InboxDocument.get_by_id(document.id).straighten, self.copy(document).size), (0, (1200, 1600))
+        )
+        events = self.reload(item).events.where(db.InboxEvent.kind == "kopia").order_by(db.InboxEvent.id)
+        self.assertEqual([e.detail["straighten"] for e in events], [3, -2, 0])
+
+    def test_migration_59_adds_the_straighten_and_replays(self):
+        self.addCleanup(db.check_migrations)
+        db.DATABASE.execute_sql("ALTER TABLE inbox_document DROP COLUMN straighten")
+        for _ in range(2):  # replay-safe
+            rewind_migrations(59)
+            db.check_migrations()
+        column = db.DATABASE.execute_sql(
+            "SELECT data_type, is_nullable, column_default FROM information_schema.columns "
+            "WHERE table_name = 'inbox_document' AND column_name = 'straighten'"
+        ).fetchone()
+        self.assertEqual(column, ("real", "NO", "0"))

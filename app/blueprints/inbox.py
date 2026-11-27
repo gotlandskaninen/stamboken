@@ -1000,6 +1000,7 @@ def confirm_mask(item_id, document_id):
                 body.get("no_personal_data"),
                 body.get("matches_registry"),
                 body.get("copy_frame"),
+                body.get("straighten"),
             )
         ]
         return jsonify({"item": inbox.items_json([item])[0], "document": inbox.documents_json([document])[0]})
