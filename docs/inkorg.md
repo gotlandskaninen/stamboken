@@ -336,8 +336,11 @@ för en post med `ref_type` `sale_proposal`, vars statusvy avgör förslaget, oc
   `härlett` har ett `value` att fylla i formuläret med; `avviker` och `osäker` har `value: null` och
   skrivs av från fotot. `read` är det tolkningen läste på intyget och `registry` registrets värde där
   de skiljer sig. Ett intygsnummer som redan finns på en annan kanin har inget `registry`: kontrollen
-  säger vilken kanin det finns på. `checks` är kontrollerna i ord; `ok` är `true`, `false` eller
-  `null` (upplysning).
+  säger vilken kanin det finns på. Finns kaninen redan i Stamboken (`individual`) ställs varje fält som
+  lästes bredvid kaninen: mor och far, far- och morföräldrarna, födelsedatum, antal, namn, kön och färg
+  är `läst` (eller `härlett`) när de är kaninens, annars `avviker` med kaninens värde som `registry`.
+  Med digitalt intyg och allt i ordning finns bara `individual`. `checks` är kontrollerna i ord; `ok` är
+  `true`, `false` eller `null` (upplysning).
   Förslaget sparas aldrig av sig självt: det är handläggarens `…/spara` som skriver.
 - `individual`: kaninens nummer när dokumentet är sparat, annars `null`.
 - `herd_tracking_id`: raden i besättningshistoriken för försäljningen som registrerats genom
@@ -723,7 +726,8 @@ Avstämningstabellen i intygsformuläret: det handläggaren har skrivit av från
 bredvid registret, och kontrollerna i ord. Formuläret anropar den medan handläggaren skriver. Den
 läser bara: inget skrivs och posten låses inte.
 
-**Vem:** som för [Kön](#kön): admin, genbanksansvarig och genbankshjälpare.
+**Vem:** den som arbetar i postens genbank: admin, eller genbanksansvarig eller genbankshjälpare i den.
+En post utan genbank: admin eller genbanksansvarig. Högst 600 anrop i minuten per användare (429).
 
 Kroppen har formulärets fält och far- och morföräldrarna, som strängar (antalen får vara tal). Alla
 är valfria:
@@ -797,10 +801,11 @@ genbank söker i den genbank vars besättningar börjar med bokstaven i det insk
 
 Kontrollerna säger bland annat om individnumrets bokstav inte är genbankens, om en far- eller
 morförälder har samma nummer som föräldern, om mor och far finns, om numret stämmer med kullen och om
-intygsnumret är ledigt.
+intygsnumret är ledigt. Kontrollen av numret mot kullen nämner de kaniner och kullar som anroparen
+skulle se i 409-svaret från `…/spara`; andra står utan nummer ("En kanin i kullen saknar intyg.").
 
-**Fel:** 403 för den som inte arbetar i kön; 404 när posten inte finns eller dokumentet inte hör
-till den.
+**Fel:** 403 för den som inte arbetar i postens genbank; 404 när posten inte finns eller dokumentet
+inte hör till den; 429 vid för många anrop.
 
 ## Spara det intyget visar
 
