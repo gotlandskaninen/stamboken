@@ -434,9 +434,9 @@ def purge_uninformed(now):
     """
     #273: a buyer without a försäljningsbevis is kept only if the association can tell them within a month. A
     pending proposal's e-mail buyer becomes "såld utanför genbanken", and a buyer whose notice has not gone in that
-    time goes: its mail still waits or fails, or a withdrawn report has not been sent again. Never a registered
-    sale's buyer, which an active row holds, nor one whose address waits for a manager's check: the sale would lose
-    its buyer for good (buyer_removed) for a mail the association has not sent (review of #276).
+    time goes: its address waits for a manager's check, its mail fails, or a withdrawn report has not been sent
+    again (art. 14: told within a month, or not kept). A registered sale's buyer whose notice is on its way
+    (queued or sending) stays: the sale would lose its buyer for good (buyer_removed) for a mail about to go.
     """
     late = now - NOTICE_WITHIN
 
@@ -461,8 +461,8 @@ def purge_uninformed(now):
         held = HerdTracking.select(HerdTracking.holder_contact).where(
             HerdTracking.holder_contact.is_null(False), HerdTracking.voided_at.is_null()
         )
-        waits = BuyerContact.email_review_pending | BuyerContact.id.in_(held)
-        return BuyerContact.email_notice_only & BuyerContact.email.is_null(False) & ~told & (got < late) & ~waits
+        going = BuyerContact.id.in_(held) & BuyerContact.id.in_(_notices(MailMessage.status.in_(("queued", "sending"))))
+        return BuyerContact.email_notice_only & BuyerContact.email.is_null(False) & ~told & (got < late) & ~going
 
     with DB_PROXY.atomic():
         deleted, paths = _delete_under_locks(

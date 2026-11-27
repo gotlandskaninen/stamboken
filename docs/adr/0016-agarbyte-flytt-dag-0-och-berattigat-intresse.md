@@ -291,8 +291,10 @@ vänta i rapporten till Skicka.
 * Är rapporten redan inskickad (Ändra) går försäljningen med Skicka som
   förut. Detsamma gäller ett försäljningsförslag från en skötare eller
   den personliga länken, tills förslag kan finnas före första Skicka.
-* `purge_uninformed` tar aldrig köparen från en registrerad försäljning
-  eller en köpare vars adress väntar på genbanksansvarigs kontroll.
+* `purge_uninformed` tar inte köparen från en registrerad försäljning
+  medan mejlet till köparen är på väg. En köpare vars adress väntar på
+  genbanksansvarigs kontroll raderas när månaden har gått, som förut:
+  köparen ska få veta inom en månad, annars sparas inget.
 
 ## Mer information
 
