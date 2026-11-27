@@ -51,6 +51,8 @@ export function PubliceringClient({
   // its next save must be partial even before the props catch up.
   const [baseline, setBaseline] = useState(initial);
   const [hasAnswered, setHasAnswered] = useState(answered);
+  // A Ja or Nej chosen since the last save: the answer is new and goes whole.
+  const [chose, setChose] = useState(false);
   const [pending, start] = useTransition();
   const { showSnackbar } = useSnackbar();
   const { addNotification } = useNotifications();
@@ -62,7 +64,7 @@ export function PubliceringClient({
       // A Ja or Nej, and the first answer, is whole: all four keys go up, so
       // nothing another tab allowed stays in an answer the member did not give.
       const consent = toConsent(chosen);
-      const partial = hasAnswered && baseline.name && chosen.ja;
+      const partial = hasAnswered && baseline.name && chosen.ja && !chose;
       const changed = CONSENT_KEYS.filter((k) => consent[k] !== baseline[k]);
       if (partial && changed.length === 0) {
         showSnackbar("Publiceringsval sparade", "success");
@@ -82,6 +84,7 @@ export function PubliceringClient({
         setAnswer(toAnswer(result.consent, result.answered));
         setBaseline(result.consent);
         setHasAnswered(result.answered);
+        setChose(false);
         showSnackbar("Publiceringsval sparade", "success");
       } else {
         showSnackbar(result.error, "error");
@@ -106,7 +109,10 @@ export function PubliceringClient({
         )}
         <PublicationFields
           value={answer}
-          onChange={setAnswer}
+          onChange={(next) => {
+            if (next?.ja !== answer?.ja) setChose(true); // a radio, not a tick
+            setAnswer(next);
+          }}
           disabled={readOnly}
         />
         <p className={styles.note}>
