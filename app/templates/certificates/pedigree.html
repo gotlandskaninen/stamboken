@@ -94,8 +94,10 @@ body {
   color: var(--ink);
   margin: 0;
 }
-.head-mid .breed {
-  font-size: 9pt; color: var(--ink-2); margin: 1.2mm 0 0 0;
+.head-mid .breed {  /* bold like the rabbit's and parents' names, without a label (Anders 2026-11-24) */
+  font-family: var(--serif);
+  font-size: 15pt; font-weight: 600;
+  color: var(--ink-2); margin: 1.2mm 0 0 0;
 }
 .cert-nr {
   text-align: center;
@@ -116,13 +118,12 @@ body {
   line-height: 1.1;
 }
 .fields td.vname { font-family: var(--serif); font-size: 11pt; font-weight: 600; }  /* as the parents' names */
-.head-mid .breed { font-family: var(--serif); font-size: 15pt; font-weight: 600; margin-top: 1.2mm; }  /* bold like the rabbit's and parents' names, without a label (Anders 2026-11-24) */
 .cert-nr .lbl { font-family: var(--sans); font-size: 8.5pt; font-weight: 600; text-transform: none; letter-spacing: 0; color: var(--ink); }
 .cert-nr .sub { font-size: 7.5pt; color: var(--ink-2); margin-top: .8mm; }
 
 /* microtext security line between two equally thin rules — hard to reproduce with copier/scanner */
 .rule { height: 0; border-top: 0.4pt solid var(--line-strong); margin-top: 0.8mm; }
-.rule.top { margin-top: 3.5mm; }
+.rule.top { margin-top: 1.4mm; }  /* 1.4 not 3.5: the bold breed line made the header 2.1 mm taller */
 .microline {
   font-family: var(--mono);
   font-size: 3.2pt; font-weight: 400;

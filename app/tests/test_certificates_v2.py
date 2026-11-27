@@ -222,6 +222,18 @@ class TestPedigreeTemplateV2(unittest.TestCase):
         self.assertIn('<p class="breed">Mellerudskanin</p>', html)
         self.assertNotIn("Ras:", html)
 
+    def test_long_notes_keep_one_page(self):
+        """The header must not grow: 136 words of notes still fit on one A4 page with the footer (main fits 140)."""
+        from weasyprint import HTML  # pylint: disable=import-outside-toplevel
+
+        gen = CertificateGeneratorV2()
+        data = _sample_data()
+        data.update(breed="Gotlandskanin", notes=" ".join(["Ord"] * 136))
+        html = gen.env.get_template("pedigree.html").render(  # nosemgrep: direct-use-of-jinja2
+            qr_svg=gen.generate_qr_svg("https://example.com/verify/abc"), **data
+        )
+        self.assertEqual(len(HTML(string=html, base_url=gen.env.loader.searchpath[0]).render().pages), 1)
+
     def test_individual_number_in_one_field(self):
         # the whole number in one weight, the letter without a coloured box
         self.assertIn('<div class="num">G1274-2301</div>', self._html())
