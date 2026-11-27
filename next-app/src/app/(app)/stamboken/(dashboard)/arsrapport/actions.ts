@@ -13,6 +13,7 @@ import {
   type Father,
   type Litter,
   type LitterBody,
+  type Matrikel,
   type PurchaseBody,
   type PurchasePhotosBody,
   type PurchaseNotice,
@@ -100,6 +101,23 @@ export async function saveDraft(
     path(herd, year, "/utkast", post),
     "PUT",
     { data, updated_at: updatedAt, submission_key: key, revision },
+  );
+}
+
+export async function saveAccount(
+  herd: string,
+  year: number,
+  konto: NonNullable<Matrikel["konto"]>,
+  env: Mode,
+) {
+  return call<{ konto: string }>(
+    env,
+    path(herd, year, "/konto"),
+    "PUT",
+    konto,
+    {
+      isolateDemo: true,
+    },
   );
 }
 

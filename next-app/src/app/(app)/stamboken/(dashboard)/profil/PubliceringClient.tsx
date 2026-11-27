@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import {
   PublicationFields,
+  toConsent,
   type Publication,
 } from "@/components/member/PublicationFields";
 import { useSnackbar } from "@/components/SnackbarProvider";
@@ -23,12 +24,6 @@ const toAnswer = (c: Consent, answered: boolean): Publication | null =>
   answered
     ? { ja: c.name, utom: c.name ? UTOM_ALL.filter((k) => !c[k]) : [] }
     : null;
-const toConsent = ({ ja, utom }: Publication): Consent => ({
-  name: ja,
-  phone: ja && !utom.includes("phone"),
-  email: ja && !utom.includes("email"),
-  address: ja && !utom.includes("address"),
-});
 
 export function PubliceringClient({
   readOnly = false,

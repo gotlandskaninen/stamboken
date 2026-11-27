@@ -354,6 +354,7 @@ function Row({
   onUnlink: (link: { herd: string; id: number }) => void;
 }) {
   const reported = row.received_at !== null;
+  const canSendLink = canEdit && !row.ingen_epost && !!row.report_link;
   const reminder = reminderText(row.last_reminder);
   // The state already says "Ingen e-post" when nothing else is going on.
   const flagNoEmail = row.ingen_epost && row.state !== "ingen_epost";
@@ -511,7 +512,7 @@ function Row({
               Mata in blankett
             </Link>
           )}
-          {canEdit && !row.ingen_epost && (
+          {canSendLink && (
             <button
               type="button"
               className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
@@ -521,7 +522,7 @@ function Row({
               Ny länk
             </button>
           )}
-          {canEdit && row.needs_report && !row.ingen_epost && (
+          {canSendLink && row.report_link === "current" && row.needs_report && (
             <button
               type="button"
               className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}

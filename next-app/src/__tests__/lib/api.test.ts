@@ -72,6 +72,20 @@ describe("fetchApi mode-aware base URL selection", () => {
     expect(url).toBe(`${PROD_HOST}/api/user`);
   });
 
+  it("refuses a report edit after a mode switch or without its demo backend", async () => {
+    const { fetchApi } = await import("@/lib/api");
+    const save = () =>
+      fetchApi("/v2/members/me/contact", {
+        method: "PATCH",
+        expectedMode: "demo",
+      });
+    cookieGetMock.mockReturnValue({ value: "prod" });
+    await expect(save()).rejects.toMatchObject({ status: 400 });
+    cookieGetMock.mockReturnValue({ value: "demo" });
+    await expect(save()).rejects.toMatchObject({ status: 503 });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it("mode=demo + API_TEST_INTERNAL_URL set -> api-test host", async () => {
     process.env.API_TEST_INTERNAL_URL = TEST_HOST;
     const url = await fetchedUrlFor("demo");

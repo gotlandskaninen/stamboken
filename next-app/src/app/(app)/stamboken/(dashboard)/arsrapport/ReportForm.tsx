@@ -15,7 +15,7 @@ import {
   DISEASES,
   EMPTY_ENTRY,
   detailsBody,
-  detailsFields,
+  emptyPaperFields,
   emptyState,
   fmtDate,
   fmtDayOrMonth,
@@ -55,7 +55,7 @@ import {
   type Submission,
 } from "./lib";
 import { NumberRow } from "./NumberRow";
-import { MemberDetails } from "./MemberDetails";
+import { MemberDetails, type RemainingDetails } from "./MemberDetails";
 import { PaperChanges } from "./PaperChanges";
 import { PurchaseDialog } from "./PurchaseDialog";
 import { RabbitRow } from "./RabbitRow";
@@ -390,16 +390,18 @@ export function ReportForm({
     startFrom(view, isPaper),
   );
   const [gate, setGate] = React.useState<Gate>(() => gateOf(view, isPaper));
-  // "Dina uppgifter": the paper form's, or the report's (5.11), in memory only
-  const [fields, setFields] = React.useState<PaperFields>(() =>
-    detailsFields(view.member_details),
-  );
+  const remainingDetails = React.useRef<RemainingDetails>(null);
+  // Paper and link input lives outside the report draft. MainDetails owns its early saves.
+  const [fields, setFields] = React.useState<PaperFields>(emptyPaperFields);
   // Sent or changed elsewhere: the fields start again from what the server holds now (U15).
-  const detailsKey = JSON.stringify(view.member_details ?? null);
+  const detailsKey =
+    view.member_details?.mode === "link"
+      ? JSON.stringify(view.member_details)
+      : view.member_details?.mode;
   const [shownDetails, setShownDetails] = React.useState(detailsKey);
   if (shownDetails !== detailsKey) {
     setShownDetails(detailsKey);
-    setFields(detailsFields(view.member_details));
+    setFields(emptyPaperFields());
   }
   const [receivedOn, setReceivedOn] = React.useState(() =>
     item ? stockholmDay(item.received_at) : "",
@@ -1173,7 +1175,7 @@ export function ReportForm({
       // On paper the submit has closed the item: ReportView is not read again
       // (with ?post= it would be refused), and the Receipt is the answer.
       if (!isPaper) {
-        setFields(detailsFields(view.member_details)); // sent: the private fields leave memory (U15)
+        setFields(emptyPaperFields()); // sent: the private fields leave memory (U15)
         // a first Skicka replaced nothing: Receipt shows no actions until the view has the report
         setReplaced(body.revision ?? undefined);
         refreshView();
@@ -1210,7 +1212,7 @@ export function ReportForm({
         ...(signedOn ? { signed_on: signedOn, signed_on_confirmed: true } : {}),
         ...(matrikel ? { matrikel } : {}),
       };
-    } else {
+    } else if (view.member_details?.mode === "link") {
       const matrikel = detailsBody(view.member_details, fields);
       if (matrikel) body = { ...body, matrikel };
     }
@@ -1269,15 +1271,19 @@ export function ReportForm({
     if (!link && readModeCookieClient() !== env) return fail(ENV_TEXT);
     const body = missing ? prepareCompletion() : prepareReport();
     if (!body) return;
-    const full = "ending_genbank" in body;
-    // Held only in memory: a retry may include a buyer or matrikel details.
-    if (full) frozen.current = body;
-    else frozenCompletion.current = body;
     clearTimeout(autosaveTimer.current); // a pending autosave must not reach the server after the submission
     resumeAutosave.current = autosavePending.current;
     submitting.current = true;
     submissions.current += 1;
     setPhase("checking");
+    if ("ending_genbank" in body && remainingDetails.current) {
+      const matrikel = await remainingDetails.current();
+      if (matrikel) body.matrikel = matrikel;
+    }
+    // Held only in memory: a retry may include a buyer or matrikel details.
+    const full = "ending_genbank" in body;
+    if (full) frozen.current = body;
+    else frozenCompletion.current = body;
     const dry = await safe(
       full
         ? actionsRef.current.dryRun(herd.herd, year, body, env, post)
@@ -2687,11 +2693,19 @@ export function ReportForm({
             {!isPaper &&
               (contactSlot ?? (
                 <MemberDetails
+                  key={
+                    view.member_details?.mode === "main" && syncing
+                      ? "syncing"
+                      : key
+                  }
                   details={view.member_details}
                   fields={fields}
                   onChange={setFields}
                   track={(call) => track(key, call)}
-                  returnTo={`/stamboken/arsrapport/${herd.herd}/${year}`}
+                  herd={herd.herd}
+                  year={year}
+                  env={env}
+                  remaining={remainingDetails}
                 />
               ))}
 

@@ -11,6 +11,13 @@ import styles from "@/app/(app)/stamboken/(dashboard)/arsrapport/arsrapport.modu
 // The answer to the Koharen question (spec 5.11): Ja or Nej, and at Ja what is left out.
 export type Publication = { ja: boolean; utom: Utom[] };
 
+export const toConsent = ({ ja, utom }: Publication) => ({
+  name: ja,
+  phone: ja && !utom.includes("phone"),
+  email: ja && !utom.includes("email"),
+  address: ja && !utom.includes("address"),
+});
+
 const UTOM_LABEL: Record<Utom, string> = {
   phone: "telefonnummer",
   email: "e-postadress",

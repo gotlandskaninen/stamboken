@@ -1243,6 +1243,7 @@ export interface StatusRow {
   state: RowState;
   needs_report: boolean; // active herd without a submitted report this round
   inbjudan: Invitation | null;
+  report_link: "current" | "revoked" | null; // last issued link, excluding invitations still in the mail queue
   // The herd's latest reminder in the mail queue.
   last_reminder: {
     queued_at: string;

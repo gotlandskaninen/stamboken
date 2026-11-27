@@ -13,6 +13,17 @@ import {
 const refresh = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
 
+const updateContact = vi.fn();
+const updateConsent = vi.fn();
+const saveAccount = vi.fn();
+vi.mock("@/app/(app)/stamboken/(dashboard)/profil/actions", () => ({
+  updateContact: (...args: unknown[]) => updateContact(...args),
+  updateConsent: (...args: unknown[]) => updateConsent(...args),
+}));
+vi.mock("@/app/(app)/stamboken/(dashboard)/arsrapport/actions", () => ({
+  saveAccount: (...args: unknown[]) => saveAccount(...args),
+}));
+
 import {
   ReportForm,
   type ReportActions,
@@ -896,55 +907,130 @@ describe("ReportForm", () => {
     expect(a.saveDraft).toHaveBeenCalled();
   });
 
-  it("lets the main member change Dina uppgifter and sends only what changed (5.11)", async () => {
+  it("waits for blur, omits saved details from Skicka and keeps private input out of drafts", async () => {
+    vi.useFakeTimers();
     const a = actions();
-    const details = {
-      mode: "main" as const,
-      contact: {
-        address: "Gamla vägen 1",
-        postal_code: "621 41",
-        city: "Slite",
-        phone: "0709-111 222",
-        email: "g9001@example.invalid",
-      },
-      publicering: { ja: false, utom: [] },
-      publicering_version: 7,
-      konto: "••••5512",
-    };
+    let finish!: () => void;
+    updateContact.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = () => resolve({ ok: true });
+      }),
+    );
+    updateConsent.mockResolvedValueOnce({ ok: true, version: 8 });
+    saveAccount.mockResolvedValueOnce({
+      ok: true,
+      data: { konto: "••67" },
+    });
     render(
       <ReportForm
         env="demo"
-        view={view({ member_details: details })}
+        view={view({
+          member_details: {
+            mode: "main",
+            contact: {
+              address: "Testvägen 1",
+              postal_code: "123 45",
+              city: "Testort",
+              phone: "",
+              email: "test@example.org",
+            },
+            publicering: null,
+            publicering_version: null,
+            konto: "••••5512",
+          },
+        })}
         actions={a}
       />,
     );
-    expect(
-      (screen.getByLabelText("Gatuadress") as HTMLInputElement).value,
-    ).toBe("Gamla vägen 1");
+    expect(screen.getByDisplayValue("Testvägen 1")).toBeTruthy();
+    expect(screen.getByText("E-post: test@example.org")).toBeTruthy();
     expect(screen.getByText("Konto för stödet: ••••5512")).toBeTruthy();
-    expect(screen.getByText("E-post: g9001@example.invalid")).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("Telefon"), {
-      target: { value: "0709-777 888" },
-    });
     fireEvent.click(screen.getByRole("radio", { name: "Ja" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Nytt konto för stödet" }),
+    );
+    fireEvent.click(screen.getByRole("radio", { name: "Bankgiro" }));
+    fireEvent.change(screen.getByLabelText("Kontonummer"), {
+      target: { value: "123-4567" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Byt e-postadress" }));
+    fireEvent.change(screen.getByLabelText("Ny e-postadress"), {
+      target: { value: "ny@example.org" },
+    });
+    const phone = screen.getByLabelText("Telefon");
+    fireEvent.change(phone, { target: { value: "010-000 00 01" } });
+    fillAll();
+    const privateData =
+      /matrikel|Testvägen|Testort|123 45|123-4567|010-000|example\.org/;
+    expect(local()).toBeTruthy();
+    expect(local()).not.toMatch(privateData);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2500);
+    });
+    expect(a.saveDraft).toHaveBeenCalled();
+    expect(JSON.stringify(a.saveDraft.mock.calls)).not.toMatch(privateData);
+    expect(JSON.stringify({ ...window.sessionStorage })).not.toMatch(
+      privateData,
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Spara kontot" }));
+    });
+    expect(screen.getByText("Sparat i matrikeln: konto.")).toBeTruthy();
+    expect(screen.getByText("Publiceringsval sparade")).toBeTruthy();
+    fireEvent.blur(phone);
+    send();
+    expect(a.dryRun).not.toHaveBeenCalled();
+    await act(async () => {
+      finish();
+    });
+    for (const action of [a.dryRun, a.submitReport]) {
+      expect(action).toHaveBeenCalledTimes(1);
+      expect(action.mock.calls[0][2]).not.toHaveProperty("matrikel");
+    }
+  });
+
+  it("sends a failed contact edit and an unsaved account with Skicka", async () => {
+    const a = actions();
+    updateContact.mockResolvedValueOnce({ ok: false, error: "Försök igen." });
+    render(
+      <ReportForm
+        env="demo"
+        view={view({
+          member_details: {
+            mode: "main",
+            contact: {
+              address: "",
+              postal_code: "",
+              city: "",
+              phone: "",
+              email: "",
+            },
+            publicering: null,
+            publicering_version: null,
+            konto: null,
+          },
+        })}
+        actions={a}
+      />,
+    );
+    const city = screen.getByLabelText("Ort");
+    fireEvent.change(city, { target: { value: "Testort" } });
+    fireEvent.blur(city);
+    expect(await screen.findByText("Försök igen.")).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Nytt konto för stödet" }),
+    );
+    fireEvent.click(screen.getByRole("radio", { name: "Plusgiro" }));
+    fireEvent.change(screen.getByLabelText("Kontonummer"), {
+      target: { value: "12345-6" },
+    });
     fillAll();
     send();
     await waitFor(() => expect(a.submitReport).toHaveBeenCalled());
-    const body = a.submitReport.mock.calls[0][2] as Submission;
-    expect(body.matrikel).toEqual({
-      telefon: "0709-777 888",
-      publicering: {
-        ja: true,
-        utom: ["phone", "email", "address"],
-        version: 7,
-        text_version: "2026-11-20",
-      },
+    expect(a.submitReport.mock.calls[0][2].matrikel).toEqual({
+      adress: { city: "Testort" },
+      konto: { typ: "plusgiro", konto: "12345-6" },
     });
-    // never in the draft or the browser
-    expect(JSON.stringify(a.saveDraft.mock.calls)).not.toContain("0709-777");
-    expect(JSON.stringify({ ...window.localStorage })).not.toContain(
-      "0709-777",
-    );
   });
 
   it("sends nothing of Dina uppgifter when the main member changed nothing", async () => {

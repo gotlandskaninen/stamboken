@@ -1,6 +1,6 @@
 import { cookies, headers } from "next/headers";
 import { forwardedFor } from "@/lib/forwardedFor";
-import { MODE_COOKIE, parseMode } from "@/lib/mode";
+import { MODE_COOKIE, parseMode, type Mode } from "@/lib/mode";
 
 const API_BASE = process.env.API_INTERNAL_URL || "http://api:9090";
 // No hardcoded fallback host: leaving this undefined is what keeps base dev
@@ -18,6 +18,7 @@ type FetchApiOptions = RequestInit & {
   forceProd?: boolean;
   /** Keep submissions and their notices in the selected environment. */
   isolateDemo?: boolean;
+  expectedMode?: Mode; // a report opened before an environment switch
 };
 
 // WR-04 guard: warn once per server process when a demo-mode request must fall
@@ -34,7 +35,8 @@ export async function fetchApi<T>(
   const {
     timeout = 10000,
     forceProd = false,
-    isolateDemo = false,
+    expectedMode,
+    isolateDemo = expectedMode !== undefined,
     ...fetchOptions
   } = options ?? {};
 
@@ -43,6 +45,12 @@ export async function fetchApi<T>(
   // base dev (API_TEST_BASE unset) normally falls back to prod.
   const modeCookie = cookieStore?.get(MODE_COOKIE)?.value;
   const mode = parseMode(modeCookie);
+  if (expectedMode !== undefined && expectedMode !== mode)
+    throw new ApiError({
+      status: 400,
+      title: "Miljön har bytts",
+      detail: "Miljön har bytts. Ladda om sidan.",
+    });
   // parseMode(undefined) is "demo", so a visitor with no sb_mode cookie reads as
   // demo. Only a signed-in user (login sets sb_mode together with the session)
   // can be in demo; an anonymous request must reach prod or it lands in the

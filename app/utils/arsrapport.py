@@ -118,10 +118,12 @@ from utils.matrikel import (
     write_matrikel_audit,
 )
 from utils.members import (
+    CONSENT_CHANGED,
     CONSENT_TEXT_VERSION,
     CONSENT_TEXT_VERSIONS,
     STOCKHOLM,
     consent_from_answer,
+    consent_version,
     counted_answers,
     effective_consent,
     holder_since,
@@ -1467,26 +1469,36 @@ def _invitations(herds, round_):
     """
     Each herd's invitation state from its active code: `oppnad` once the link has been opened, else the state of the
     mail that carries it (`skickad`, `studsade`, `misslyckades`); a herd with no active code or no such mail is None.
+    Also track invited herds whose link was revoked so the manager can still send them a replacement.
     """
-    codes = {
-        code.herd_id: code
-        for code in ReportAccessCode.select().where(
+    codes = list(
+        ReportAccessCode.select().where(
             ReportAccessCode.round == round_.id,
             ReportAccessCode.herd.in_([herd.id for herd in herds]),
-            ReportAccessCode.revoked_at.is_null(),
         )
-    }
+    )
     mail = {
         row.ref_id: _MAIL_INVITATION.get(row.status)
         for row in MailMessage.select(MailMessage.ref_id, MailMessage.status)
         .where(
             MailMessage.ref_type == "access_code",
-            MailMessage.ref_id.in_([code.id for code in codes.values()]),
+            MailMessage.ref_id.in_([code.id for code in codes]),
             MailMessage.kind.in_(("arsrapport.inbjudan", "arsrapport.ny_lank")),
         )
         .order_by(MailMessage.id)  # the newest mail of a code decides
     }
-    return {herd_id: "oppnad" if code.last_opened_at else mail.get(code.id) for herd_id, code in codes.items()}
+    states, links = {}, {}
+    for code in codes:
+        state = "oppnad" if code.last_opened_at else mail.get(code.id)
+        if code.revoked_at is None:
+            states[code.herd_id] = state
+        # An issued link can outlive its mail row. A first invitation still in the queue has not gone out yet.
+        if state or code.id not in mail:
+            if code.revoked_at is None:
+                links[code.herd_id] = "current"
+            else:
+                links.setdefault(code.herd_id, "revoked")
+    return states, links
 
 
 def _only_with(more, counted, villkor, stat, report, deadline):
@@ -1610,7 +1622,7 @@ def status_view(round_, genebank_id, with_phone=False):
         .order_by(Herd.herd)
     )
     items, drafts, emails = _row_states(herds, round_)
-    invitations = _invitations(herds, round_)
+    invitations, links = _invitations(herds, round_)
     reminded = {row.herd_id: row for row in filter(remind.counts, remind.reminders(round_, [h.id for h in herds]))}
     held, stats, pending = innehav(genebank_id, year), statistik(genebank_id, year), _pending_sales(last)
     data = {herd_id: json.loads(report.data) for herd_id, report in reports.items()}
@@ -1669,6 +1681,7 @@ def status_view(round_, genebank_id, with_phone=False):
                 "herd_name": herd.herd_name,
                 "state": state,
                 "inbjudan": invitations.get(herd.id),
+                "report_link": links.get(herd.id),
                 "ingen_epost": not emails.get(herd.id),
                 "needs_report": herd.is_active and report is None,  # Å5 and "Ej svarat" (P12)
                 "last_reminder": _reminder_json(reminded.get(herd.id)),
@@ -2202,7 +2215,7 @@ REFUSALS = {  # the copy the client shows (P44)
     "epost_ogiltig": "Kontrollera e-postadressen.",
     "epost_kan_inte_anvandas": "E-postadressen kan inte användas. Kontrollera den med medlemmen.",
     "koharen_ny_fraga": "Frågan om Koharen har ändrats. Ladda om sidan och svara igen.",
-    "koharen_andrad": "Svaret om Koharen har ändrats sedan sidan visades. Ladda om sidan och svara igen.",
+    "koharen_andrad": CONSENT_CHANGED,
     "epost_via_kod": "Den nya e-postadressen bekräftar du med en kod. Byt den under Dina uppgifter.",
     "konto_ogiltigt": (
         "Ett bankkonto har clearingnummer med 4–5 siffror och kontonummer med 5–12 siffror. "
@@ -2658,12 +2671,6 @@ def _contact_cleared(matrikel) -> tuple[dict, list[Refusal]]:
     return contact, refusals
 
 
-def consent_version(membership_id):
-    """The stored Koharen answer's version: its latest publication_consent_change row, None before any."""
-    change = PublicationConsentChange
-    return change.select(fn.MAX(change.id)).where(change.membership == membership_id).scalar()
-
-
 def _details_refusals(herd, access, matrikel):
     """
     check's refusals of a digital "Dina uppgifter": bad values, an e-mail outside the link (D1, 5.11), and logged in
@@ -2889,7 +2896,10 @@ def save_contact(membership, member, written, actor, payload):
             row.save(only=[getattr(model, column) for column in columns] + stamp)
     if written:
         fields = [column for columns in written.values() for column in columns]
-        write_matrikel_audit(actor, "kontakt_andrad", membership, {"person_id": member.id, "fields": fields, **payload})
+        return write_matrikel_audit(
+            actor, "kontakt_andrad", membership, {"person_id": member.id, "fields": fields, **payload}
+        )
+    return None
 
 
 def apply_login_matrikel(herd, membership, member, submission, user, matrikel):
@@ -2898,8 +2908,6 @@ def apply_login_matrikel(herd, membership, member, submission, user, matrikel):
     differs. The caller holds the membership's lock and checked D1 under it. A new account is told to the matrikel's
     e-mail (account_notice). The e-mail is not here: it goes through the profile's code flow.
     """
-    typed = bool((matrikel.get("konto") or {}).get("typ"))
-    changes = _changes(membership, member, _contact_cleared(matrikel)[0], typed=typed)
     answer = matrikel.get("publicering")
     if answer is not None:
         set_consent(
@@ -2912,9 +2920,32 @@ def apply_login_matrikel(herd, membership, member, submission, user, matrikel):
             submission=submission.id,
             at=submission.created_at,
         )
-    save_contact(membership, member, changes, user, {"source": "login", "submission_id": submission.id})
+    contact, _ = _contact_cleared(matrikel)
+    typed = bool((matrikel.get("konto") or {}).get("typ"))
+    _save_login_contact(herd, membership, member, user, contact, typed=typed, submission=submission)
+
+
+def _save_login_contact(herd, membership, member, user, contact, *, typed, submission=None):
+    changes = _changes(membership, member, contact, typed=typed)
+    payload = {"source": "login", "submission_id": submission.id} if submission else {"source": "profil"}
+    audit = save_contact(membership, member, changes, user, payload)
     if "konto" in changes:
-        account_notice(herd, member, f"submission:{submission.id}", created_by=user.id)
+        key = f"submission:{submission.id}" if submission else f"audit:{audit.id}"
+        account_notice(herd, member, key, created_by=user.id)
+
+
+def save_report_account(herd, round_, access, user, konto):
+    with DB_PROXY.atomic():
+        require_open(_lock_round(round_), herd, access, today())
+        membership, member = _lock_matrikel(herd)
+        if access.source != "login" or not _own_details(member, access, user):
+            raise ArsrapportError(403, NOT_MAIN)
+        matrikel = _matrikel({"matrikel": {"konto": konto}})
+        contact, refusals = _contact(matrikel)
+        if refusals or "konto" not in contact:
+            raise ArsrapportError(422, REFUSALS["konto_ogiltigt"])
+        _save_login_contact(herd, membership, member, user, contact, typed=bool(konto.get("typ")))
+        return {"konto": shown_account(membership.bank_account_number)}
 
 
 ACCOUNT_NOTICE = "kontakt.konto_andrat"
