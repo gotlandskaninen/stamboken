@@ -225,6 +225,13 @@ class SellNowTest(ArsrapportTest):
         pages = db.InboxDocument.select().where(db.InboxDocument.item == item.id)
         self.assertEqual([page.original_path for page in pages], [None, None])
 
+    def test_a_rabbit_sold_in_the_year_keeps_its_defect(self):  # review r1 (Opus 1): it left the list
+        self.sold(kopare=BUYER)
+        defects = [{"individual_id": self.a.id, "beskrivning": "Skev tand"}]
+        sent = self.skicka(self.kvar(self.b, vikt=2.8), health="ja", defects=defects)
+        self.assertEqual(sent.status_code, 200, sent.get_data(as_text=True))
+        self.assertEqual(json.loads(db.YearlyHerdReport.get().data)["defects"], [{**defects[0], "foto": None}])
+
     def test_paper_rechecks_the_item_under_the_locks(self):
         item, _ = inbox.create_upload(self.owner, self.h, None, [("inkorg/original/x.jpg", "0" * 64, QUALITY)])
         db.InboxDocument.update(doc_type="arsblankett").where(db.InboxDocument.item == item.id).execute()

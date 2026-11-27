@@ -709,6 +709,8 @@ export function toBody(
   revision: number | null,
   // Skicka sends only the rabbits on the current list: a sold one may linger in a local copy (FB1)
   listed?: readonly number[],
+  // and the year's sold rabbits (view.sales), whose defects still go with the report
+  sold: readonly number[] = [],
 ): Submission {
   const rabbits: Record<string, BodyEntry> = {};
   for (const [id, e] of Object.entries(state.rabbits)) {
@@ -738,7 +740,12 @@ export function toBody(
     defects:
       state.health === "ja"
         ? state.defects
-            .filter((d) => !listed || listed.includes(d.individual_id))
+            .filter(
+              (d) =>
+                !listed ||
+                listed.includes(d.individual_id) ||
+                sold.includes(d.individual_id),
+            )
             .map((d) => ({
               individual_id: d.individual_id,
               beskrivning: d.beskrivning.trim() || null,

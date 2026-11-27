@@ -1144,6 +1144,7 @@ export function ReportForm({
       keyRef.current!,
       view.report?.revision ?? null,
       view.rabbits.map((r) => r.id),
+      view.sales.map((s) => s.individual_id),
     );
     if (isPaper) {
       const signed = signedOn ?? receivedOn;
@@ -2307,6 +2308,19 @@ export function ReportForm({
                               {r.number} {r.name}
                             </option>
                           ))}
+                          {view.sales // sold in the year: off the list, but its defect still counts
+                            .filter(
+                              (s) =>
+                                !rabbits.some((r) => r.id === s.individual_id),
+                            )
+                            .map((s) => (
+                              <option
+                                key={s.individual_id}
+                                value={s.individual_id}
+                              >
+                                {s.number}
+                              </option>
+                            ))}
                         </select>
                         <input
                           className={styles.field}

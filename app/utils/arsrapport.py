@@ -2333,7 +2333,15 @@ def check(
         refusals.append(_refusal(None, "halsa_saknas"))
     rows = {row["id"]: row for row in report_list(herd, year, report)}
     strangers = [rabbit for rabbit in sub.rabbits if rabbit not in rows]
-    strangers += [d["individual_id"] for d in sub.report["defects"] if d["individual_id"] not in rows]
+    # a rabbit sold out of the herd in the year (the sale dialog's, or Sälj) leaves the list, not its defect
+    sold = HerdTracking.select(HerdTracking.individual).where(
+        HerdTracking.from_herd == herd.id,
+        HerdTracking.kind == "TRANSFER",
+        ht_not_voided(),
+        HerdTracking.herd_tracking_date.between(date(year, 1, 1), last),
+    )
+    sold = {rabbit for (rabbit,) in sold.tuples()}
+    strangers += [d["individual_id"] for d in sub.report["defects"] if d["individual_id"] not in rows.keys() | sold]
     refusals += [_refusal(rabbit, "okand_kanin") for rabbit in strangers]
     # Only the report's own rabbits: another herd's rabbit would make the refusal an oracle on its buyer's name.
     own = [rabbit for rabbit in sub.rabbits if rabbit in rows]
