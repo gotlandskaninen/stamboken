@@ -161,6 +161,7 @@ export async function sellNow(
     path(herd, year, "/forsaljning", post),
     "POST",
     { individual_id: individualId, sald },
+    { isolateDemo: true }, // a demo sale never reaches production, nor its buyer mail
   );
 }
 
@@ -180,6 +181,7 @@ export async function undoSale(
       reason: "Ångrad av den som registrerade den",
       operation_id: operationId,
     },
+    { isolateDemo: true },
   );
 }
 
