@@ -105,6 +105,7 @@ export function ReconcileTable({
   onChange,
   proposal,
   answer,
+  waiting,
   colors,
   errors,
 }: {
@@ -113,6 +114,8 @@ export function ReconcileTable({
   onChange: (key: RowKey, value: string) => void;
   proposal: Proposal | null;
   answer: Reconciliation | null;
+  /** No answer for this mode yet. */
+  waiting: boolean;
   colors: string[];
   errors: Partial<Record<keyof CertForm, string>>;
 }) {
@@ -190,11 +193,13 @@ export function ReconcileTable({
         Inläst är det bildtolkningen läste. Pappret skriver du av från fotot.
         Registret är det Stamboken har.
       </p>
-      {answer && (
-        <p className={styles.reconcileSummary} aria-live="polite">
-          {summaryText(answer, mode)}
-        </p>
-      )}
+      <p className={styles.reconcileSummary} aria-live="polite">
+        {answer
+          ? summaryText(answer, mode)
+          : waiting
+            ? "Jämför med registret …"
+            : null}
+      </p>
       <div className={styles.reconcileFrame}>
         <table>
           <thead>
@@ -213,6 +218,15 @@ export function ReconcileTable({
               const take =
                 row?.status === "osaker" && read
                   ? takeRead(key, read, colors)
+                  : null;
+              // A colour in another case than the genebank's list: registration takes only the list's spelling.
+              const spelled =
+                key === "color" &&
+                row?.status === "skiljer" &&
+                typeof row.registry === "string" &&
+                row.registry !== values.color &&
+                row.registry.toLowerCase() === values.color.toLowerCase()
+                  ? row.registry
                   : null;
               const gp = GRANDPARENTS.has(key) || undefined;
               return [
@@ -248,6 +262,15 @@ export function ReconcileTable({
                         onClick={() => onChange(key, take)}
                       >
                         Ta inläst
+                      </button>
+                    )}
+                    {spelled !== null && (
+                      <button
+                        type="button"
+                        className="sb-btn sb-btn-secondary sb-btn-sm"
+                        onClick={() => onChange(key, spelled)}
+                      >
+                        Skriv {spelled}
                       </button>
                     )}
                   </td>

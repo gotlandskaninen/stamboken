@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { CoatChoice } from "@/components/herd/CoatChoice";
 import {
   ProposalChecks,
@@ -12,6 +12,7 @@ import {
   initialCertForm,
   initialGrandparents,
   initialSaveMode,
+  normalNumber,
   shownProposal,
   type CertForm,
   type Grandparents,
@@ -27,6 +28,17 @@ import styles from "../inkorg.module.css";
 const RECOMPUTE_MS = 250; // after the last keystroke
 // The table looks the registry up through …/avstamning, not number by number.
 const noLookup: Lookup = async () => undefined;
+// The numbers as the table matched them ("g9001 2411" is G9001-2411), so what stämmer is what Spara sends.
+const NUMBERS = ["individual", "paper_number", "mother", "father"];
+const asMatched = (payload: Record<string, unknown>) =>
+  Object.fromEntries(
+    Object.entries(payload).map(([key, value]) => [
+      key,
+      NUMBERS.includes(key) && typeof value === "string"
+        ? (normalNumber(value) ?? value)
+        : value,
+    ]),
+  );
 
 /**
  * What a certificate shows, saved with …/spara: a new rabbit, or the paper
@@ -83,23 +95,46 @@ export function CertificateForm({
   if (!latest && applied) setApplied(false);
   if (latest && !applied && !touched) fill(latest);
 
-  // The table's rows and checks, recomputed by the API from what is typed. An
-  // answer to an earlier request than the latest is dropped; a failed one
-  // keeps the last answer and says so.
-  const [answer, setAnswer] = useState<Reconciliation | null>(null);
+  // The table's rows and checks, recomputed by the API from what is typed.
+  // Server Actions run one at a time, so at most one recompute is in flight:
+  // changes meanwhile ask once more, for the latest values, and an answer to
+  // values since changed is dropped. While Spara saves nothing is asked, so
+  // the save never waits behind a recompute it does not need. An answer is
+  // its mode's: after a switch the table waits for the new one. A failed
+  // recompute keeps the last answer and says so.
+  const [answer, setAnswer] = useState<{
+    mode: SaveMode;
+    result: Reconciliation;
+  } | null>(null);
   const [failed, setFailed] = useState(false);
-  const asked = useRef(0);
+  const typed = useRef<Record<string, string>>({});
+  const inFlight = useRef(false);
+  const saving = useRef(false);
+  const dirty = useRef(false);
+  const ask = useCallback(async () => {
+    if (inFlight.current || saving.current) {
+      dirty.current = true;
+      return;
+    }
+    inFlight.current = true;
+    let sent: Record<string, string>;
+    let result: Reconciliation | null;
+    do {
+      dirty.current = false;
+      sent = typed.current;
+      result = await reconcileDocument(itemId, doc.id, sent);
+    } while (dirty.current && !saving.current);
+    inFlight.current = false;
+    if (dirty.current) return; // asked again once the save is done
+    setFailed(result === null);
+    if (result) setAnswer({ mode: sent.mode as SaveMode, result });
+  }, [itemId, doc.id]);
   useEffect(() => {
-    const request = ++asked.current;
-    const timer = setTimeout(async () => {
-      const typed = { mode, ...form, ...grandparents };
-      const result = await reconcileDocument(itemId, doc.id, typed);
-      if (request !== asked.current) return;
-      setFailed(result === null);
-      if (result) setAnswer(result);
-    }, RECOMPUTE_MS);
+    typed.current = { mode, ...form, ...grandparents };
+    const timer = setTimeout(ask, RECOMPUTE_MS);
     return () => clearTimeout(timer);
-  }, [mode, form, grandparents, latest, itemId, doc.id]);
+  }, [mode, form, grandparents, latest, ask]);
+  const shown = answer?.mode === mode ? answer.result : null;
 
   return (
     <RegisterFromCertificate
@@ -113,8 +148,11 @@ export function CertificateForm({
       submitLabel="Spara och nästa"
       conflictHint="Stämmer pappret? Lämna ärendet till genbanksansvarig."
       onSave={async (payload) => {
-        const res = await saveCertificate(itemId, doc.id, payload);
+        saving.current = true;
+        const res = await saveCertificate(itemId, doc.id, asMatched(payload));
+        saving.current = false;
         if (res.ok) onSaved(res.data.document);
+        else if (dirty.current) void ask();
         return res;
       }}
       header={
@@ -189,7 +227,8 @@ export function CertificateForm({
             values={{ ...form, ...grandparents }}
             onChange={set}
             proposal={latest}
-            answer={answer}
+            answer={shown}
+            waiting={!shown && !failed}
             colors={colors}
             errors={errors}
           />
@@ -211,7 +250,7 @@ export function CertificateForm({
               Kontrollerna kunde inte räknas om just nu.
             </p>
           )}
-          {answer && <ProposalChecks checks={answer.checks} />}
+          {shown && <ProposalChecks checks={shown.checks} />}
         </>
       }
       buttons={

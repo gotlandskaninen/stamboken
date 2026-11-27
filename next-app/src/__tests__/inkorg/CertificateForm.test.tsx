@@ -312,6 +312,46 @@ describe("CertificateForm's table for a new rabbit", () => {
     expect(input("Far")).toHaveValue("G9003-2311");
   });
 
+  it("offers the genebank's spelling of a colour in another case", async () => {
+    vi.mocked(reconcileDocument).mockResolvedValue({
+      rows: { color: { registry: "viltgrå", status: "skiljer" } },
+      checks: [],
+    });
+    render(
+      <CertificateForm
+        itemId={12}
+        doc={doc()}
+        colors={[]}
+        canSave
+        onSaved={() => undefined}
+        onSkip={() => undefined}
+      />,
+    );
+    type("Färg", "Viltgrå");
+    await wait(250);
+    fireEvent.click(screen.getByRole("button", { name: "Skriv viltgrå" }));
+    expect(input("Färg")).toHaveValue("viltgrå");
+  });
+
+  it("sends a new rabbit's parents as the table matched them", async () => {
+    vi.mocked(saveCertificate).mockResolvedValue({
+      ok: true,
+      data: { item: {} as never, document: doc() },
+    });
+    show(doc());
+    type("Intygsnummer", "P-1");
+    type("Mor", "g9001 2211");
+    type("Far", "G9002 2311");
+    type("Födelsedatum", "2025-05-10");
+    fireEvent.click(screen.getByRole("button", { name: "Spara och nästa" }));
+    await wait(0);
+    expect(saveCertificate).toHaveBeenCalledWith(
+      12,
+      31,
+      expect.objectContaining({ mother: "G9001-2211", father: "G9002-2311" }),
+    );
+  });
+
   it("Ta inläst fills a number normalised, and is not offered for a date it cannot take", async () => {
     vi.mocked(reconcileDocument).mockResolvedValue({
       rows: {
@@ -495,23 +535,65 @@ describe("CertificateForm's table for a rabbit in Stamboken", () => {
     );
   });
 
-  it("drops an answer to an earlier request", async () => {
-    let late: (answer: Reconciliation) => void = () => undefined;
+  it("keeps one recompute in flight, asks again for the latest values, and never makes Spara wait", async () => {
+    let first: (answer: Reconciliation) => void = () => undefined;
     vi.mocked(reconcileDocument)
-      .mockImplementationOnce(() => new Promise((answer) => (late = answer)))
-      .mockResolvedValueOnce(ANSWER);
+      .mockImplementationOnce(() => new Promise((answer) => (first = answer)))
+      .mockResolvedValue(ANSWER);
+    let saved: (
+      result: Awaited<ReturnType<typeof saveCertificate>>,
+    ) => void = () => undefined;
+    vi.mocked(saveCertificate).mockImplementationOnce(
+      () => new Promise((result) => (saved = result)),
+    );
     show(doc({ proposal: FOUND }));
+    await wait(250);
+    type("Individnummer i Stamboken", "G9001-2411");
     await wait(250);
     type("Namn", "Elsa");
     await wait(250);
-    expect(registryOf("Namn")).toHaveTextContent("Elsa");
+    expect(reconcileDocument).toHaveBeenCalledTimes(1); // still the first
+    fireEvent.click(screen.getByRole("button", { name: "Spara och nästa" }));
+    await wait(0);
+    expect(saveCertificate).toHaveBeenCalledTimes(1); // not behind the recompute
     await act(async () =>
-      late({
+      first({
         rows: { name: { registry: "Lova", status: "skiljer" } },
         checks: [],
       }),
     );
+    expect(registryOf("Namn")).not.toHaveTextContent("Lova"); // for values since changed
+    expect(reconcileDocument).toHaveBeenCalledTimes(1); // nothing asked while saving
+    const refused = { status: 400, title: "Ogiltig begäran", detail: "Nej." };
+    await act(async () => saved({ ok: false, problem: refused }));
+    await wait(0);
+    expect(reconcileDocument).toHaveBeenCalledTimes(2); // once, for the latest values
+    expect(reconcileDocument).toHaveBeenLastCalledWith(
+      12,
+      31,
+      expect.objectContaining({ individual: "G9001-2411", name: "Elsa" }),
+    );
     expect(registryOf("Namn")).toHaveTextContent("Elsa");
+  });
+
+  it("waits for the new mode's answer after a switch, and shows no rows of the old one", async () => {
+    vi.mocked(reconcileDocument)
+      .mockResolvedValueOnce(ANSWER)
+      .mockResolvedValueOnce(null);
+    show(doc({ proposal: FOUND }));
+    await wait(250);
+    expect(screen.getAllByText("stämmer").length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "Ny kanin" }));
+    expect(screen.getByText("Jämför med registret …")).toBeInTheDocument();
+    expect(screen.queryByText("stämmer")).toBeNull();
+    expect(screen.queryByRole("list", { name: "Kontroller" })).toBeNull();
+    await wait(250); // the new mode's recompute fails
+    expect(
+      screen.getByText("Kontrollerna kunde inte räknas om just nu."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("stämmer")).toBeNull();
+    expect(screen.queryByText("Jämför med registret …")).toBeNull();
+    expect(screen.queryByText(/utan jämförelse/)).toBeNull();
   });
 
   it("keeps the last answer when a recompute fails, and says so quietly", async () => {
@@ -589,6 +671,26 @@ describe("CertificateForm saves a paper certificate as before the table", () => 
     for (const label of ["Antal födda", "Födelsedatum", "Kön"])
       expect(owner(label)).not.toBeNull();
     expect(owner("Mormor")).toBeNull();
+  });
+
+  it("sends the numbers as the table matched them", async () => {
+    vi.mocked(saveCertificate).mockResolvedValue({
+      ok: true,
+      data: { item: {} as never, document: doc() },
+    });
+    show(doc({ proposal: FOUND }));
+    type("Individnummer i Stamboken", "g9001 2411");
+    type("Individnummer på pappret", " G9001 - 2411 ");
+    type("Intygsnummer", " AB 12 ");
+    fireEvent.click(screen.getByRole("button", { name: "Spara och nästa" }));
+    await waitFor(() =>
+      expect(saveCertificate).toHaveBeenCalledWith(12, 31, {
+        action: "pappersintyg",
+        individual: "G9001-2411",
+        paper_number: "G9001-2411",
+        paper_certificate: "AB 12", // trimmed only, as saving compares it
+      }),
+    );
   });
 
   it("sends the rabbit, the paper's number and the certificate, nothing compared only", async () => {
