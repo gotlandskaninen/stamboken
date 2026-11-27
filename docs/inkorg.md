@@ -716,10 +716,15 @@ redan är sparad, eftersom tolkningen jämförs med det uppfödaren registrerade
 visar vinkeln, och handläggaren sparar den med `PATCH` (`straighten`) eller med maskningen. Ingen
 händelse loggas.
 
+Kroppen är tom, eller `{"straighten": 2.5}` (som i `PATCH`). Med `straighten` letas ingen lutning:
+`angle` är den vinkeln och pappret letas i fotot vridet med den. Det gör arbetsvyn i
+maskningssteget, där vinkeln är låst.
+
 **Svar 200:** `{"angle": 4.0, "paper": {"x": 0.18, "y": 0.14, "w": 0.64, "h": 0.72}}`.
 
 - `angle`: den `straighten` som lägger fotots skrift vågrätt, i steg om 0,1 grad. 0,0 när ingen
-  vinkel tydligt slår fotot som det är, och när lutningen är under 0,3 grader.
+  vinkel tydligt slår fotot som det är, och när lutningen är under 0,3 grader. Med `straighten` i
+  kroppen: den.
 - `paper`: pappret, i bråkdelar av fotot vridet dokumentets `rotation` plus `angle`, med 1,5 %
   marginal; `null` när inget ljust område av rimlig storlek (20–97 % av fotot) sticker ut, till
   exempel på ett ljust bord eller när fotot bara är papper.
@@ -733,8 +738,9 @@ längsta följden av rader och kolumner där andelen ljust är minst hälften av
 
 **Vem:** handläggaren (posten i ett läge med handläggare).
 
-**Fel:** 403 för den som inte arbetar i kön eller i postens genbank; 404 när posten eller
-dokumentet inte finns; 409 när anroparen inte är handläggare eller originalet är raderat.
+**Fel:** 400 när `straighten` är ogiltig; 403 för den som inte arbetar i kön eller i postens
+genbank; 404 när posten eller dokumentet inte finns; 409 när anroparen inte är handläggare eller
+originalet är raderat.
 
 ### `POST /api/v2/inkorg/{id}/dokument/{dok}/kontrollerad`
 

@@ -1308,9 +1308,8 @@ administratörer, genbanksansvariga och genbankshjälpare, och alla tre kan se h
    tar bort den). Inne i ramen flyttar du fotot som vanligt när det är inzoomat. **Ta bort ramen** tar bort den; utan ram blir hela fotot kopian. Syns något mer innanför ramen täcker du det med
    en svart ruta: **Lägg till ruta**, och flytta den på samma sätt. Klicka **Bekräfta
    maskningen och nästa**. Ramen, rutorna och fotots vridning och vinkel skickas tillsammans, så
-   kopian görs som du ser fotot. Vinkeln går inte att ändra med reglaget här, men **Hitta
-   pappret** sätter den och lägger ramen runt pappret utom dess nedre tredjedel. Ändras
-   vinkeln tas de svarta rutorna bort, så lägg dem efter. Visar intyget ingen säljare eller köpare tar du bort ramen och
+   kopian görs som du ser fotot. Vinkeln går inte att ändra här. **Hitta pappret** lägger
+   ramen runt pappret utom dess nedre tredjedel, med fotot vridet som du ser det. Visar intyget ingen säljare eller köpare tar du bort ramen och
    rutorna, kryssar i **Fotot visar inga säljar- eller köparuppgifter** och klickar
    **Bekräfta maskningen och nästa**. Har du
    jämfört intyget med registret och de stämmer, kryssa i **Jag har jämfört intyget med
