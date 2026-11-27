@@ -269,6 +269,8 @@ export async function registerSale(
     herd: string;
     date: string;
     buyer?: SaleBuyer;
+    /** Filled from the photo's reading (rule 5 b): refused once the document no longer has it. */
+    from_photo?: true;
   },
 ) {
   if (!isId(id) || !isId(doc)) return refused("Ogiltigt dokument.");
