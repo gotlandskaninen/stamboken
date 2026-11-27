@@ -260,6 +260,30 @@ class TestRegistration(BuyerBase):
             self.assertIn("Postadress får inte innehålla", response.get_json()["detail"])
         self.assertEqual(db.BuyerContact.select().count(), 0)
 
+    def test_a_phone_number_written_any_way_is_found_and_nothing_else_is(self):
+        for address in (
+            "Väg 1, 0046 70 123 45 67",  # international with 00
+            "Väg 1, 070\u2010123 45 67",  # a Unicode hyphen
+            "Väg 1, 070\u2013123\u00a045\u00a067",  # an en dash and no-break spaces
+            "Väg 1, +46\u221270\u2212123 45 67",  # minus signs
+        ):
+            with self.subTest(address):
+                with self.assertRaises(HerdTrackingInvalid) as raised:
+                    buyer_contact_fields({**BUYER, "postal_address": address}, SALE_DATE, address_required=True)
+                self.assertIn("Postadress får inte innehålla", str(raised.exception))
+                self.assertTrue(herd_tracking.has_phone(address))
+        # Addresses as before, with the same characters: a range of numbers, a postcode, a flat, a date.
+        for address in (
+            "Storgatan 1\u20133, 623\u00a055",
+            "Lgh 0046 1201",
+            "Box 12, 2025\u201009\u201030",
+            "SE\u2010623 55",
+        ):
+            with self.subTest(address):
+                fields = buyer_contact_fields({**BUYER, "postal_address": address}, SALE_DATE)
+                self.assertEqual(fields["postal_address"], address)
+                self.assertFalse(herd_tracking.has_phone(address))
+
     def test_a_correction_needs_no_address(self):
         event = {"kind": "TRANSFER", "date": SALE_DATE, "herd": "GX1", "buyer": NO_ADDRESS}
         (written,) = correct_herd_tracking(self.rabbit, self.manager, None, [], [event])

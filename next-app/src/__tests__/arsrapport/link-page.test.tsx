@@ -7,6 +7,9 @@ const fetchApi = vi.fn();
 vi.mock("next/headers", () => ({ headers: async () => requestHeaders }));
 vi.mock("@/lib/api", () => ({ fetchApi, ApiError: Error }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({}) }));
+vi.mock("@/lib/code-login-enabled", () => ({
+  codeLoginEnabled: async () => false,
+}));
 
 afterEach(() => {
   cleanup();

@@ -57,7 +57,7 @@ export const COUNT_LEFT_EMPTY =
 export function proposalHint(field?: ProposedField) {
   if (!field || field.source === "läst") return null;
   const parts = [
-    field.read && `Intyget: ${field.read}`,
+    field.read && `Inläst: ${field.read}`,
     field.registry != null && `Registret: ${field.registry}`,
   ].filter(Boolean);
   return parts.length ? (
@@ -201,6 +201,7 @@ export function RegisterFromCertificate({
   onAddParent,
   suggest,
   header,
+  table,
   afterFields,
   buttons,
   footer,
@@ -228,6 +229,8 @@ export function RegisterFromCertificate({
   /** The individual number Stamboken would give a certificate of the litter, or null. */
   suggest?: (litterId: number) => Promise<string | null>;
   header?: React.ReactNode;
+  /** In place of the fields (the queue's reconciliation table), with the refusals placed at their field. */
+  table?: (errors: Partial<Record<keyof CertForm, string>>) => React.ReactNode;
   afterFields?: React.ReactNode;
   /** Beside Spara; a function gets whether a save is in progress. */
   buttons?: React.ReactNode | ((pending: boolean) => React.ReactNode);
@@ -399,148 +402,157 @@ export function RegisterFromCertificate({
       {header}
       {photo}
 
-      <div className={styles.fields}>
-        {mode === "pappersintyg" &&
-          number("individual", "Individnummer i Stamboken")}
-        {text("paper_number", "Individnummer på pappret", {
-          required: true,
-          placeholder: "G1274-2512",
-          helperText: suggestion
-            ? `Som det står på intyget. Stamboken föreslår ${suggestion}.`
-            : "Som det står på intyget.",
-        })}
-        {text("paper_certificate", "Intygsnummer", {
-          required: true,
-          slotProps: { htmlInput: { maxLength: 20 } },
-        })}
-        {mode === "ny_kanin" && (
-          <>
-            {text("name", "Namn", {
-              slotProps: { htmlInput: { maxLength: 50 } },
-            })}
-            {member ? (
-              // the report's choices, not a menu: Hona and Hane at a tap
-              <Field source={sources.sex}>
-                <fieldset className={report.choiceSet}>
-                  <legend className={report.label}>Kön</legend>
-                  <div className={report.choices}>
-                    {SEXES.map(([value, label]) => (
-                      <label key={value} className={report.choice}>
-                        <input
-                          type="radio"
-                          name={sexName}
-                          checked={form.sex === value}
-                          onChange={() => onChange("sex", value)}
-                        />
-                        <span>{label}</span>
-                      </label>
-                    ))}
-                  </div>
-                </fieldset>
+      {table ? (
+        table(errors)
+      ) : (
+        <div className={styles.fields}>
+          {mode === "pappersintyg" &&
+            number("individual", "Individnummer i Stamboken")}
+          {text("paper_number", "Individnummer på pappret", {
+            required: true,
+            placeholder: "G1274-2512",
+            // Under what the reading saw, "as on the certificate" reads as a caption of it.
+            helperText: [
+              !proposalHint(proposed.paper_number) &&
+                "Som det står på intyget.",
+              suggestion && `Stamboken föreslår ${suggestion}.`,
+            ]
+              .filter(Boolean)
+              .join(" "),
+          })}
+          {text("paper_certificate", "Intygsnummer", {
+            required: true,
+            slotProps: { htmlInput: { maxLength: 20 } },
+          })}
+          {mode === "ny_kanin" && (
+            <>
+              {text("name", "Namn", {
+                slotProps: { htmlInput: { maxLength: 50 } },
+              })}
+              {member ? (
+                // the report's choices, not a menu: Hona and Hane at a tap
+                <Field source={sources.sex}>
+                  <fieldset className={report.choiceSet}>
+                    <legend className={report.label}>Kön</legend>
+                    <div className={report.choices}>
+                      {SEXES.map(([value, label]) => (
+                        <label key={value} className={report.choice}>
+                          <input
+                            type="radio"
+                            name={sexName}
+                            checked={form.sex === value}
+                            onChange={() => onChange("sex", value)}
+                          />
+                          <span>{label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+                </Field>
+              ) : (
+                text("sex", "Kön", {
+                  select: true,
+                  children: [
+                    <MenuItem key="" value="">
+                      Inte angivet
+                    </MenuItem>,
+                    <MenuItem key="female" value="female">
+                      Hona
+                    </MenuItem>,
+                    <MenuItem key="male" value="male">
+                      Hane
+                    </MenuItem>,
+                  ],
+                })
+              )}
+              {onRexChange && <CoatChoice rex={rex} onChange={onRexChange} />}
+              {text("birth_date", "Födelsedatum", {
+                required: true,
+                type: "date",
+                slotProps: { inputLabel: { shrink: true } },
+              })}
+              <Field source={sources.color}>
+                <Autocomplete
+                  options={colors}
+                  freeSolo={colors.length === 0}
+                  value={form.color || null}
+                  onChange={(_, v) => onChange("color", v ?? "")}
+                  onInputChange={
+                    colors.length === 0
+                      ? (_, v) => onChange("color", v)
+                      : undefined
+                  }
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Färg"
+                      size="small"
+                      error={!!errors.color}
+                      helperText={errors.color ?? proposalHint(proposed.color)}
+                    />
+                  )}
+                />
               </Field>
-            ) : (
-              text("sex", "Kön", {
-                select: true,
-                children: [
-                  <MenuItem key="" value="">
-                    Inte angivet
-                  </MenuItem>,
-                  <MenuItem key="female" value="female">
-                    Hona
-                  </MenuItem>,
-                  <MenuItem key="male" value="male">
-                    Hane
-                  </MenuItem>,
-                ],
-              })
-            )}
-            {onRexChange && <CoatChoice rex={rex} onChange={onRexChange} />}
-            {text("birth_date", "Födelsedatum", {
-              required: true,
-              type: "date",
-              slotProps: { inputLabel: { shrink: true } },
-            })}
-            <Field source={sources.color}>
-              <Autocomplete
-                options={colors}
-                freeSolo={colors.length === 0}
-                value={form.color || null}
-                onChange={(_, v) => onChange("color", v ?? "")}
-                onInputChange={
-                  colors.length === 0
-                    ? (_, v) => onChange("color", v)
-                    : undefined
-                }
-                renderInput={(params) => (
+              {number("mother", "Mor")}
+              {litters.length > 0 && (
+                <Field>
                   <TextField
-                    {...params}
-                    label="Färg"
+                    select
+                    label="Kull"
                     size="small"
-                    error={!!errors.color}
-                    helperText={errors.color ?? proposalHint(proposed.color)}
-                  />
-                )}
-              />
-            </Field>
-            {number("mother", "Mor")}
-            {litters.length > 0 && (
-              <Field>
-                <TextField
-                  select
-                  label="Kull"
-                  size="small"
-                  fullWidth
-                  value={picked ? String(picked.id) : ""}
-                  onChange={(e) => pickLitter(e.target.value)}
-                  helperText="En vald kull fyller i födelsedatum, far och antal."
-                >
-                  <MenuItem value="">Annan kull</MenuItem>
-                  {litters.map((l) => (
-                    <MenuItem key={l.id} value={String(l.id)}>
-                      {litterLabel(l)}
-                    </MenuItem>
-                  ))}
-                </TextField>
-              </Field>
-            )}
-            {number("father", "Far")}
-            {text("litter_size", "Antal födda", {
-              type: "number",
-              slotProps: { htmlInput: { min: 1 } },
-            })}
-            {text("litter_size6w", "Levande i kullen efter 6 veckor", {
-              type: "number",
-              slotProps: { htmlInput: { min: 1 } },
-              required: !!picked?.preliminary,
-              helperText: picked?.preliminary
-                ? "Kullens antal är preliminärt. Skriv antalet som står på intyget."
-                : variant === "member" && !picked
-                  ? COUNT_LEFT_EMPTY // a new litter's empty count is the count born, preliminary (as Lägg till kull)
-                  : "Står inte alltid på intyget.",
-            })}
-            {onWhere && (
-              <Field wide>
-                <fieldset className={report.choiceSet}>
-                  <legend className={report.label}>Var är kaninen nu?</legend>
-                  <div className={report.choices}>
-                    {WHERE.map(([value, label]) => (
-                      <label key={value} className={report.choice}>
-                        <input
-                          type="radio"
-                          name="where"
-                          checked={where === value}
-                          onChange={() => onWhere(value)}
-                        />
-                        <span>{label}</span>
-                      </label>
+                    fullWidth
+                    value={picked ? String(picked.id) : ""}
+                    onChange={(e) => pickLitter(e.target.value)}
+                    helperText="En vald kull fyller i födelsedatum, far och antal."
+                  >
+                    <MenuItem value="">Annan kull</MenuItem>
+                    {litters.map((l) => (
+                      <MenuItem key={l.id} value={String(l.id)}>
+                        {litterLabel(l)}
+                      </MenuItem>
                     ))}
-                  </div>
-                </fieldset>
-              </Field>
-            )}
-          </>
-        )}
-      </div>
+                  </TextField>
+                </Field>
+              )}
+              {number("father", "Far")}
+              {text("litter_size", "Antal födda", {
+                type: "number",
+                slotProps: { htmlInput: { min: 1 } },
+              })}
+              {text("litter_size6w", "Levande i kullen efter 6 veckor", {
+                type: "number",
+                slotProps: { htmlInput: { min: 1 } },
+                required: !!picked?.preliminary,
+                helperText: picked?.preliminary
+                  ? "Kullens antal är preliminärt. Skriv antalet som står på intyget."
+                  : variant === "member" && !picked
+                    ? COUNT_LEFT_EMPTY // a new litter's empty count is the count born, preliminary (as Lägg till kull)
+                    : "Står inte alltid på intyget.",
+              })}
+              {onWhere && (
+                <Field wide>
+                  <fieldset className={report.choiceSet}>
+                    <legend className={report.label}>Var är kaninen nu?</legend>
+                    <div className={report.choices}>
+                      {WHERE.map(([value, label]) => (
+                        <label key={value} className={report.choice}>
+                          <input
+                            type="radio"
+                            name="where"
+                            checked={where === value}
+                            onChange={() => onWhere(value)}
+                          />
+                          <span>{label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+                </Field>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       {afterFields}
 

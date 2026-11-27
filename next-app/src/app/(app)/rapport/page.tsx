@@ -1,6 +1,7 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { isTestHost } from "@/lib/mode";
+import { codeLoginEnabled } from "@/lib/code-login-enabled";
 import { LinkGate, type Missing } from "./LinkGate";
 import {
   addLitter,
@@ -89,6 +90,7 @@ export default async function RapportPage({
     const missing: Missing = status === 401 ? "ute" : "fel";
     return <LinkGate missing={missing} />;
   }
+  const accountOffer = await codeLoginEnabled(); // off in the demo API (fråga 9)
   return (
     <LinkGate>
       <ReportForm
@@ -98,6 +100,7 @@ export default async function RapportPage({
           (entry.login_tip && !isTestHost(await headers())) || undefined
         }
         env="prod"
+        accountOffer={accountOffer}
         view={report.data}
         actions={{
           ...actions,

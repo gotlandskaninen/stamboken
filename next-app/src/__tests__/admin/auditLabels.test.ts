@@ -73,6 +73,9 @@ describe("export rows (log_export)", () => {
       rowTitle("membership", "export-address-list-2026-11-25T08:00:00+00:00"),
     ).toBe("Uttag: adresslistan till tryckeriet");
     expect(
+      rowTitle("membership", "export-koharen-2026-11-26T08:00:00+00:00"),
+    ).toBe("Uttag: Koharens lista över besättningar");
+    expect(
       rowTitle("membership", "export-nytt-2026-11-25T08:00:00+00:00"),
     ).toBe("Uttag: nytt");
   });

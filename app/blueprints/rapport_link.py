@@ -11,10 +11,12 @@ from datetime import datetime, timedelta
 
 import utils.arsrapport as arsrapport
 import utils.arsrapport_invite as arsrapport_invite
+import utils.member_changes as member_changes
 import utils.report_code as report_code
 import utils.settings as settings
 from extensions import limiter
 from flask import Blueprint, current_app, g, jsonify, make_response, request, session
+from utils.arsrapport import ArsrapportError
 from utils.database import Herd, ReportAccessCode
 
 from .common import problem
@@ -146,3 +148,46 @@ def mine():
 @rapport_link_bp.route("/v2/rapport/kontakt", methods=["GET"])
 def contacts():
     return jsonify(settings.arsrapport.kontakt)
+
+
+# The receipt mail's confirmation page, /rapport/andringar#<token> (5.11): the page posts the token in the JSON body
+# of each call, so it is never in a URL or a session. Showing never writes; Bekräfta and "Det var inte jag" do.
+# JSON only, as the exchange above; none in the demo, where the mails never go.
+def _changes(action):
+    if request.mimetype != "application/json":
+        return _answer(problem(415, "Fel innehållstyp", "Skicka JSON."))
+    body = request.get_json(silent=True)
+    token = body.get("token") if isinstance(body, dict) else None
+    if settings.service.demo_instance or not isinstance(token, str) or not _CANONICAL.fullmatch(token):
+        return _answer(_invalid())
+    try:
+        return _answer(jsonify(action(token, body)))
+    except ArsrapportError as exc:
+        return _answer(problem(exc.status, exc.title, exc.detail, **exc.extra))
+
+
+# [Next.js] The changes of one submission, the stored and the asked value of each waiting one (the account masked).
+@rapport_link_bp.route("/v2/rapport/andringar", methods=["POST"])
+@limiter.limit("20 per minute")
+def show_changes():
+    return _changes(lambda token, _: member_changes.view(token))
+
+
+# [Next.js] Bekräfta: body {token, version, konto}; the account change only with `konto` true, its own tick.
+@rapport_link_bp.route("/v2/rapport/andringar/bekrafta", methods=["POST"])
+@limiter.limit("20 per minute")
+def confirm_changes():
+    def confirm(token, body):
+        version = body.get("version")
+        if not isinstance(version, str) or not isinstance(body.get("konto"), bool):
+            raise ArsrapportError(400, "Ange version och konto.")
+        return member_changes.confirm(token, account=body["konto"], version=version)
+
+    return _changes(confirm)
+
+
+# [Next.js] "Det var inte jag": the submission's changes that wait are revoked.
+@rapport_link_bp.route("/v2/rapport/andringar/inte-jag", methods=["POST"])
+@limiter.limit("20 per minute")
+def not_me():
+    return _changes(lambda token, _: member_changes.not_me(token))
