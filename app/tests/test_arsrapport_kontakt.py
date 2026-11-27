@@ -62,7 +62,7 @@ def later(field):
     return {
         "individual_id": None,
         "code": "senare_andring",
-        "message": f"Matrikeln har ändrats efter blankettens datum ({field}). Fråga medlemmen.",
+        "message": f"Kontrollera blankettens uppgift om {field} med medlemmen.",
     }
 
 
@@ -705,7 +705,7 @@ class KontaktTest(PaperTest):
 
         lock = first('FROM "herd"', "FOR NO KEY UPDATE")
         self.assertIsNotNone(lock)
-        self.assertLess(lock, first('FROM "audit_log"'))  # later_fields reads the account's changes under it
+        self.assertLess(lock, first('FROM "audit_log"'))  # read the account's changes under the lock
         self.assertLess(lock, first('UPDATE "membership"', "bank_account_number"))  # the account is the membership's
         self.assertIsNone(first('UPDATE "herd"'))
 
@@ -774,7 +774,8 @@ class KontaktTest(PaperTest):
         self.login("man")
         self.ok(item, self.paper(item, matrikel(publicering={"ja": False, "utom": []})))
         self.assertEqual(db.MemberChangeRequest.get_by_id(waiting.id).revoked_reason, "nyare")
-        self.assertEqual(db.PublicationConsentChange.select().count(), 1)  # the same No: no new history row
+        history = db.PublicationConsentChange.select().order_by(db.PublicationConsentChange.id)
+        self.assertEqual([(row.source, row.value) for row in history], [("profil", no), ("paper", no)])
 
     def test_change_request_is_purged_30_days_after_it_was_confirmed(self):  # Opus 7, spec 6
         item = self.form(self.manager)

@@ -158,6 +158,23 @@ describe("PubliceringClient", () => {
     );
   });
 
+  it("sends a re-selected Ja whole, after Nej and back", async () => {
+    // Another tab allowed e-post meanwhile; this tab's Nej-then-Ja is a new
+    // answer with nothing ticked, so e-post must go up as false.
+    const nameOnly = { ...NEJ, name: true };
+    acknowledge(nameOnly);
+    renderIt(nameOnly);
+    fireEvent.click(radio("Nej"));
+    fireEvent.click(radio("Ja"));
+    save();
+    await waitFor(() =>
+      expect(updateConsent).toHaveBeenCalledWith({
+        ...nameOnly,
+        text_version: V,
+      }),
+    );
+  });
+
   it("does not PATCH an untouched answer", async () => {
     renderIt(JA_EMAIL);
     save();

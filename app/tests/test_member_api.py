@@ -1114,6 +1114,18 @@ class TestKoharenExport(MatrikelApiTest):
                 self.assertEqual(db.Membership.get_by_id(membership.id).publication_consent, {})
         self.assertEqual(self._rows()[1:], [])
 
+    def test_an_answer_from_before_the_holder_never_counts(self):
+        """An answer belongs to the holder who gave it. A main member changed after the answer, also before this
+        check existed (no reset row), or added to a membership without one: no row until the new holder answers."""
+        for membership, action, payload in (
+            (self.full, "main_member_changed", {"previous_person_id": None, "new_person_id": 1}),
+            (self.partial, "person_added", {"person_id": 1, "role": "huvudmedlem"}),
+        ):
+            db.MatrikelAudit.create(membership=membership, action=action, payload=payload)
+        self.assertEqual(self._rows()[1:], [])
+        _answer(self.full, EVERYTHING)  # the new holder's own answer
+        self.assertEqual([r[0] for r in self._rows()[1:]], ["G9001", "M9201"])
+
     def test_family_member_never_stands_in_for_the_holder(self):
         db.Member.update(end_date=date.today()).where(db.Member.email == "anna@example.com").execute()
         self.assertEqual([r[0] for r in self._rows()[1:]], ["G9002"])

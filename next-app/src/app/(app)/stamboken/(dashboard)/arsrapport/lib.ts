@@ -226,6 +226,7 @@ export interface Submission extends DraftData {
   inbox_item_id?: number;
   received_on?: string;
   signed_on?: string;
+  signed_on_confirmed?: boolean; // distinguishes an entered receipt-day signature from the old form's default
   matrikel?: Matrikel;
 }
 
