@@ -721,7 +721,9 @@ class PurchaseNoticeTest(ArsrapportTest):
 
         def model(image, schema):
             read.append(image)
-            return {"genbanksnr": "G9002", "ar_kull_individ": "2501", "namn": "Läst"}
+            if schema is interpreter.SCHEMA:
+                return {"genbanksnr": "G9002", "ar_kull_individ": "2501", "namn": "Läst"}
+            return {"kopare_namn": "Köpa Testsson"}  # the seller and buyer, read in a second call
 
         for patcher in (
             mock.patch.object(settings.interpretation, "interpreter", "gemma"),
@@ -951,7 +953,7 @@ class PurchaseNoticeTest(ArsrapportTest):
         self.assertEqual(self.send(certificate, proof, year=2027).status_code, 200)
         self.assertEqual(interpreter.interpret_next(), certificate["document_id"])
         self.assertIsNone(interpreter.interpret_next())  # a transfer proof is not read
-        self.assertEqual(len(read), 1)
+        self.assertEqual(len(read), 2)  # the certificate, then its seller and buyer
         self.assertEqual(db.InboxDocument.get_by_id(proof["document_id"]).interpretation_status, "av")
 
     def test_the_photo_limit_is_the_report_uploads(self):

@@ -69,6 +69,30 @@ PROMPT = (
     "rättat: skriv det som gäller. Gissa aldrig: lämna en tom sträng när "
     "fältet är tomt eller oläsligt. Säljarens och köparens uppgifter ska inte skrivas av."
 )
+SALE_READING = "forsaljning"  # the seller and buyer's key in a document's interpretation
+_SALE = (
+    "saljare_namn",
+    "saljare_besattning",
+    "kopare_namn",
+    "kopare_utdelningsadress",
+    "kopare_postnummer",
+    "kopare_ort",
+    "kopare_epost",
+    "kopare_besattning",
+    "datum",
+)
+# Rule 5 b (Jonas 2026-11-27): the seller and buyer at the bottom of a queue certificate, read in a second call of
+# their own so that a sale can be filled in. Not in SCHEMA: a longer schema made Gemma repeat a field until the
+# answer was cut (the list of struck-through fields, above), and a failure here must not cost the rabbit's reading.
+# Flat strings, and never a phone number.
+SALE_SCHEMA = {"type": "object", "properties": {key: {"type": "string"} for key in _SALE}, "required": list(_SALE)}
+SALE_PROMPT = (
+    "Fotot visar ett svenskt genbanksintyg för en kanin. Läs bara rutorna för säljaren och köparen längst ner på "
+    "intyget, och skriv av dem precis som de står. Säljaren: namn och besättningsnummer (en bokstav och siffror). "
+    "Köparen: namn, utdelningsadress (gata eller box), postnummer, ort, e-postadress och "
+    "besättningsnummer. Datum: dagen då kaninen såldes. Gissa aldrig: lämna en tom sträng när fältet är tomt eller "
+    "oläsligt. Tryckt text, rubriker och tryckta exempel på blanketten är aldrig svar. Skriv inte av telefonnumret."
+)
 
 
 class InterpretationError(Exception):
@@ -130,7 +154,13 @@ def _gemma(image, schema):
         "format": schema,
         # num_thread matches the ollama service's 6 CPUs in the compose files.
         "options": {"temperature": 0, "num_ctx": 8192, "num_predict": 1500, "num_thread": 6},
-        "messages": [{"role": "user", "content": PROMPT, "images": [base64.b64encode(image).decode()]}],
+        "messages": [
+            {
+                "role": "user",
+                "content": SALE_PROMPT if schema is SALE_SCHEMA else PROMPT,
+                "images": [base64.b64encode(image).decode()],
+            }
+        ],
     }
     url = f"{settings.interpretation.ollama_url}/api/chat"
     response = requests.post(url, json=body, timeout=TIMEOUT)
@@ -142,8 +172,9 @@ def _gemma(image, schema):
 
 
 # The interpreters INLASNING_TOLKARE can name. Extension point: a second interpreter is one more entry, a
-# function (JPEG bytes, JSON schema) -> dict. One that sends photos off the server needs the board's decision
-# and an agreement with the provider first (docs/inkorg.md, "Tolkning").
+# function (JPEG bytes, JSON schema) -> dict that asks what the schema's prompt asks (SCHEMA or SALE_SCHEMA). One that
+# sends photos off the server needs the board's decision and an agreement with the provider first (docs/inkorg.md,
+# "Tolkning").
 INTERPRETERS = {"gemma": _gemma}
 
 
@@ -195,6 +226,16 @@ def _locked(document_id, item_id):
     return InboxDocument.get_or_none(InboxDocument.id == document_id)
 
 
+def _sale_reading(image):
+    """The seller and buyer read off the photo, or None: a failure or an empty answer leaves the main reading alone."""
+    try:
+        sale = interpret(image, SALE_SCHEMA)
+    except Exception as exc:  # pylint: disable=broad-except  # the rabbit's reading stands whatever failed here
+        logger.warning("Reading the seller and buyer failed: %s", exc)
+        return None
+    return sale if any(value.strip() for value in sale.values()) else None
+
+
 def _finish(document, status, **values):
     document.interpretation_status, document.interpreted_at = status, datetime.now(timezone.utc)
     document.interpreter = settings.interpretation.interpreter
@@ -235,6 +276,8 @@ def interpret_next():
     except Exception as exc:  # pylint: disable=broad-except  # whatever failed, it was an attempt
         logger.warning("Interpreting inbox document %s failed (attempt %s): %s", document_id, claimed[1], exc)
         raw = None
+    # Only the queue saves a sale from a document (inbox.require_saving): never a report photo's or a notice's.
+    sale = _sale_reading(image) if raw is not None and item.ref_type is None else None
     with DB_PROXY.atomic():
         document = _locked(document_id, item.id)
         if document is None or (
@@ -242,6 +285,10 @@ def interpret_next():
         ):
             return document_id
         if raw is not None:
+            # Not on a document finished or sold meanwhile, nor in a closed item: what removes it has run (inbox).
+            finished = document.done_at or document.herd_tracking_id or InboxItem.get_by_id(item.id).closed_at
+            if sale is not None and not finished:
+                raw = {**raw, SALE_READING: sale}
             # A report photo (utils/inbox.report_photo, which imports this module) is set beside the rabbit registered
             # from it: the document re-read under the item's lock, as the registration binds it under that lock.
             report_photo = item.kind == "kontroll" and item.ref_type == "individual"

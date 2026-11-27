@@ -43,6 +43,34 @@ class TestInterpreter(unittest.TestCase):
         self.assertEqual(body["messages"][0]["images"], [base64.b64encode(b"jpeg-bytes").decode()])
         self.assertGreaterEqual(kwargs["timeout"], 600)
 
+    def test_the_seller_and_buyer_have_a_schema_and_a_prompt_of_their_own(self):
+        with mock.patch.object(requests, "post", return_value=_answer(json.dumps({"datum": "240601"}))) as post:
+            self.assertEqual(interpreter.interpret(b"jpeg-bytes", interpreter.SALE_SCHEMA), {"datum": "240601"})
+            interpreter.interpret(b"jpeg-bytes")
+        sale, main = [call.kwargs["json"] for call in post.call_args_list]
+        self.assertEqual(
+            (sale["format"], sale["messages"][0]["content"]), (interpreter.SALE_SCHEMA, interpreter.SALE_PROMPT)
+        )
+        self.assertEqual((main["format"], main["messages"][0]["content"]), (interpreter.SCHEMA, interpreter.PROMPT))
+        self.assertIn("Säljarens och köparens uppgifter ska inte skrivas av.", interpreter.PROMPT)
+        self.assertIn("Skriv inte av telefonnumret.", interpreter.SALE_PROMPT)
+        self.assertNotIn("kopare", json.dumps(interpreter.SCHEMA))
+        # Flat strings, and never a phone number.
+        self.assertEqual({p["type"] for p in interpreter.SALE_SCHEMA["properties"].values()}, {"string"})
+        self.assertNotIn("telefon", json.dumps(interpreter.SALE_SCHEMA))
+
+    def test_the_sale_answer_is_held_to_its_schema(self):
+        answer = {
+            "kopare_namn": "Köpa Testsson\x00",
+            "kopare_postnummer": 62355,  # a number where a string belongs: missing
+            "kopare_telefon": "0701234567",  # not asked for: dropped
+            "saljare_namn": {"namn": "x"},
+            "datum": "1/6-24",
+        }
+        self.assertEqual(
+            interpreter.conform(answer, interpreter.SALE_SCHEMA), {"kopare_namn": "Köpa Testsson", "datum": "1/6-24"}
+        )
+
     def test_the_schema_asks_for_the_certificate_number_and_for_no_list(self):
         self.assertIn("intygsnummer", interpreter.SCHEMA["required"])
         # A list has no end in the model's grammar: Gemma filled one until the answer was cut (trial 2026-11-15).
