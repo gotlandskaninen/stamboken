@@ -165,9 +165,19 @@ def interpret(image, schema=SCHEMA):
     return conform(answer, schema)
 
 
-def initial_status():
-    """A certificate's interpretation_status when it comes in or becomes a certificate: waiting, or off."""
-    return "vantar" if enabled() else "av"
+# A photo whose shorter side has fewer pixels than this is not sent to the model by itself: too few for the
+# handwriting. The handler sees why, and "Tolka igen" reads it anyway.
+MIN_READ_SIDE = 1000
+
+
+def initial_status(quality=None):
+    """
+    A certificate's interpretation_status when it comes in or becomes a certificate: waiting, off, or for_litet when
+    its photo (`quality`, inbox.measure) is smaller than MIN_READ_SIDE.
+    """
+    if not enabled():
+        return "av"
+    return "for_litet" if quality and quality.get("short_side", MIN_READ_SIDE) < MIN_READ_SIDE else "vantar"
 
 
 def _waiting():

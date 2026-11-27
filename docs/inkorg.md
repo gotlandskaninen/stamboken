@@ -305,8 +305,10 @@ för en post med `ref_type` `sale_proposal`, vars statusvy avgör förslaget, oc
   nedre tredjedelen, `[{"x": 0.0, "y": 0.6667, "w": 1.0, "h": 0.3333}]`. Annars `null`.
 - `waiting_for`: `null` eller en lista med de föräldranummer dokumentet väntar på.
 - `interpretation_status`: bildtolkningen av fotot, se [Tolkning](#tolkning). `av` (tolkningen är
-  avstängd, eller dokumentet är inget intyg), `vantar` (i kö), `klar` (förslaget finns) eller
-  `misslyckad` (två försök gick fel; handläggaren skriver av fälten själv).
+  avstängd, eller dokumentet är inget intyg), `vantar` (i kö), `klar` (förslaget finns),
+  `misslyckad` (två försök gick fel; handläggaren skriver av fälten själv) eller `for_litet`
+  (fotots kortsida är under 1000 pixlar, `MIN_READ_SIDE`, så det tolkas inte av sig självt;
+  "Tolka igen" tolkar det ändå).
 - `proposal`: `null`, eller förslaget från tolkningen när `interpretation_status` är `klar`:
 
   ```json
@@ -1269,6 +1271,9 @@ formuläret. Förslaget är bara ifyllda fält: inget sparas förrän handlägga
 
 - Ett nytt dokument av typen `intyg` väntar (`vantar`) när tolkningen är på, liksom ett dokument
   som byter typ till `intyg` och ett som får "Tolka igen".
+- Ett foto vars kortsida är under 1000 bildpunkter (`MIN_READ_SIDE`) är för litet för handskriften
+  och får `for_litet` i stället. Det tolkas inte av sig självt. Handläggaren ser varför och kan be om
+  ett större foto, skriva av fälten eller klicka "Tolka igen", som tolkar det ändå.
 - Schemaläggarens jobb `inbox_interpret` tar varje minut det äldsta väntande intyget i en öppen
   post, om inget sparats från det: ett dokument per körning. Fotot vrids som handläggaren vridit
   det, skalas ned till högst 2 000 bildpunkter på längsta sidan och förstärks (grön kanal, delad
