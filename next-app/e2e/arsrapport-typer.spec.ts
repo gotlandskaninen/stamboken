@@ -645,6 +645,10 @@ test("9. Typ G: död och försäljning vid årsskiftet", async ({
   await male.getByLabel("Dag (frivillig)").fill("31");
   // Her sale is the register's: Ångra it, then sell her in the report, which goes with Skicka now.
   await female.getByRole("button", { name: "Ångra" }).click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Ångra försäljning" })
+    .click(); // Ångra asks first
   await expect(female.getByRole("radio", { name: "Såld" })).toBeVisible();
   await markSold(
     page,
