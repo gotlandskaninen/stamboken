@@ -173,7 +173,7 @@ def reconcile(item, document, body):
             row["status"] = MATCH if theirs is not None else NOTHING
         parts = re.fullmatch(r"[A-Z]+(\d+)-(\d+)", numbers[key] or "")
         if typed_rabbit is None and parts and (near := registry.near(parts[1], parts[2])):
-            row["near"] = [{"number": r.number, "name": r.name, "sex": r.sex} for r in near]
+            row["near"] = [{"number": r.number, "name": r.name, "sex": _sex(r.sex)} for r in near]
         return row
 
     paper = numbers["paper_number"]

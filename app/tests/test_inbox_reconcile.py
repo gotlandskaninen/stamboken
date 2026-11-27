@@ -152,6 +152,8 @@ class TestNearMatches(ReconcileTest):
         self.assertEqual(self.row(answer, "father"), ("skiljer", "finns inte"))
         self.assertEqual(self.near(answer, "father"), ["G9003-2311"])
         self.assertEqual(self.row(answer, "farfar"), ("ingen", "G9003-2011"))  # no father, nothing to compare
+        db.Individual.update(sex="eunuch").where(db.Individual.number == "G9003-2311").execute()
+        self.assertEqual(self.answer(father="G9013-2311")["rows"]["father"]["near"][0]["sex"], "male")
         answer = self.answer(father="G7777-2311")
         self.assertEqual(self.row(answer, "father"), ("skiljer", "finns inte"))
         self.assertNotIn("near", answer["rows"]["father"])
