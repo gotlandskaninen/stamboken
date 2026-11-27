@@ -46,6 +46,59 @@ export function rotateRect(r: Rect, quarterTurns: number): Rect {
 export const turn = (rotation: number, quarterTurns: number) =>
   (((rotation + quarterTurns * 90) % 360) + 360) % 360;
 
+/**
+ * The size of a w × h image turned `angle` degrees clockwise, as the API turns
+ * the photo (frame F): Pillow's own sum in Image.rotate with expand, step by
+ * step (app/utils/inbox_paper.turned_size), so the preview has F's shape. A
+ * quarter turn swaps width and height.
+ */
+export function turnedSize(w: number, h: number, angle: number) {
+  const m = -angle % 360;
+  const a = m < 0 ? m + 360 : m;
+  if (a === 0 || a === 180) return { width: w, height: h };
+  if (a === 90 || a === 270) return { width: h, height: w };
+  const r = -(a * (Math.PI / 180));
+  const round15 = (v: number) => Number(v.toFixed(15));
+  const [cos, sin] = [round15(Math.cos(r)), round15(Math.sin(r))];
+  const matrix = [cos, sin, 0, round15(-Math.sin(r)), cos, 0];
+  const transform = (x: number, y: number) => [
+    matrix[0] * x + matrix[1] * y + matrix[2],
+    matrix[3] * x + matrix[4] * y + matrix[5],
+  ];
+  [matrix[2], matrix[5]] = transform(-w / 2, -h / 2);
+  matrix[2] += w / 2;
+  matrix[5] += h / 2;
+  const corners = [
+    [0, 0],
+    [w, 0],
+    [w, h],
+    [0, h],
+  ].map(([x, y]) => transform(x, y));
+  const xs = corners.map(([x]) => x);
+  const ys = corners.map(([, y]) => y);
+  return {
+    width: Math.ceil(Math.max(...xs)) - Math.floor(Math.min(...xs)),
+    height: Math.ceil(Math.max(...ys)) - Math.floor(Math.min(...ys)),
+  };
+}
+
+/**
+ * The frame round the paper "Hitta pappret" found, all but its lower third:
+ * the margin round the paper on three sides, and the bottom at two thirds of
+ * the tight paper, so that the margin never reaches into the seller and buyer
+ * block.
+ */
+export const paperFrame = (paper: Rect, tight: Rect): Rect => ({
+  x: paper.x,
+  y: paper.y,
+  w: paper.w,
+  h: tight.y + tight.h * UPPER_TWO_THIRDS.h - paper.y,
+});
+
+/** "4,5°", "−2,0°": the straighten as the handler reads it. */
+export const degrees = (value: number) =>
+  `${value.toLocaleString("sv-SE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}°`;
+
 const round4 = (v: number) => Math.round(v * 10000) / 10000;
 
 /** The API's form: at most 20, four decimals, and never past the edge after rounding. */

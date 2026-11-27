@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  degrees,
   enhancePencil,
   crops,
   initialFrame,
@@ -8,10 +9,12 @@ import {
   MIN_FRAME,
   toApiFrame,
   moveRect,
+  paperFrame,
   resizeRect,
   rotateRect,
   toApiRects,
   turn,
+  turnedSize,
   UPPER_TWO_THIRDS,
 } from "@/app/(app)/stamboken/(dashboard)/inkorg/image";
 
@@ -168,5 +171,49 @@ describe("enhancePencil", () => {
     const px = new Uint8ClampedArray([100, 100, 100, 255, 100, 100, 100, 255]);
     enhancePencil(px);
     expect(px[0]).toBe(0);
+  });
+});
+
+describe("turnedSize", () => {
+  it("swaps width and height for a quarter turn and keeps them for a half", () => {
+    expect(turnedSize(400, 300, 0)).toEqual({ width: 400, height: 300 });
+    expect(turnedSize(400, 300, 90)).toEqual({ width: 300, height: 400 });
+    expect(turnedSize(400, 300, 180)).toEqual({ width: 400, height: 300 });
+    expect(turnedSize(400, 300, 270)).toEqual({ width: 300, height: 400 });
+  });
+
+  it("is the size Pillow turns the photo to, as F is", () => {
+    // Image.new("1", (w, h)).rotate(-angle, expand=True).size, as app/tests/test_inbox_paper.py checks them.
+    const pillow: [number, number, number, number, number][] = [
+      [1200, 1600, 5, 1336, 1700],
+      [1200, 1600, -3.7, 1302, 1676],
+      [4000, 3000, 102.5, 3796, 4556],
+      [3024, 4032, -15, 3966, 4678],
+      [401, 301, 7.3, 437, 351],
+      [1200, 1600, 270.4, 1610, 1212],
+      [400, 300, 30, 498, 460],
+      [400, 300, -30, 498, 460],
+      [400, 300, 120, 460, 498],
+    ];
+    for (const [w, h, angle, width, height] of pillow)
+      expect(turnedSize(w, h, angle)).toEqual({ width, height });
+  });
+});
+
+describe("degrees", () => {
+  it("writes the angle with a decimal comma and a minus sign", () => {
+    expect(degrees(4)).toBe("4,0°");
+    expect(degrees(-2.5)).toBe("−2,5°");
+  });
+});
+
+describe("paperFrame", () => {
+  it("keeps the margin on three sides and cuts at two thirds of the tight paper", () => {
+    const tight = { x: 0.2, y: 0.15, w: 0.6, h: 0.72 };
+    const padded = { x: 0.185, y: 0.135, w: 0.63, h: 0.75 };
+    // The padded box's own two thirds would end at 0.635, inside the tight paper's lower third (from 0.63).
+    const frame = paperFrame(padded, tight);
+    expect(frame).toMatchObject({ x: 0.185, y: 0.135, w: 0.63 });
+    expect(frame.y + frame.h).toBeCloseTo(0.15 + 0.72 * 0.6667, 9);
   });
 });
