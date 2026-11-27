@@ -2,6 +2,7 @@ import "@/i18n";
 import "@testing-library/jest-dom/vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -643,6 +644,68 @@ describe("WorkView: straightening the photo", () => {
       ),
     );
     expect(screen.getByTestId("turn")).toHaveTextContent("90:2.5");
+  });
+
+  describe("a late answer to 'Hitta pappret'", () => {
+    let answer: (value: unknown) => void = () => {};
+    const late = () =>
+      actions.findPaper.mockReturnValue(
+        new Promise((resolve) => (answer = resolve)),
+      );
+    const arrives = (angle: number) =>
+      act(async () => answer({ ok: true, data: { angle, paper } }));
+
+    it("is dropped after another document is chosen", async () => {
+      late();
+      render(
+        view(
+          item({
+            documents: [
+              doc({ status: "ny" }),
+              doc({ id: 32, status: "ny", straighten: 1.5 }),
+            ],
+          }),
+        ),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Hitta pappret" }));
+      fireEvent.click(screen.getByRole("button", { name: /^2\. / }));
+      await arrives(4);
+      expect(screen.getByTestId("straighten")).toHaveTextContent("1.5");
+      expect(screen.queryByText(/Fotot lutar/)).toBeNull();
+    });
+
+    it("is dropped after a turn, outside the masking and in it", async () => {
+      late();
+      const { unmount } = render(
+        view(item({ documents: [doc({ status: "ny" })] })),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Hitta pappret" }));
+      fireEvent.click(screen.getByRole("button", { name: "Vrid" }));
+      await arrives(4);
+      expect(screen.getByTestId("straighten")).toHaveTextContent("0");
+      unmount();
+
+      late();
+      render(view(item({ documents: [doc()] })));
+      fireEvent.click(screen.getByRole("button", { name: "Hitta pappret" }));
+      fireEvent.click(screen.getByRole("button", { name: "Vrid" }));
+      await arrives(0);
+      expect(screen.queryByText(/Ramen ligger runt pappret/)).toBeNull();
+      fireEvent.click(
+        screen.getByRole("button", { name: "Bekräfta maskningen och nästa" }),
+      );
+      // The frame the step started with, turned with the view: not the paper's.
+      expect(actions.confirmMask).toHaveBeenCalledWith(
+        12,
+        31,
+        90,
+        0,
+        [],
+        { x: expect.closeTo(0.3333, 4), y: 0, w: 0.6667, h: 1 },
+        false,
+        false,
+      );
+    });
   });
 
   it("'Hitta pappret' without a clear tilt sets 0°, and is only the handler's", async () => {

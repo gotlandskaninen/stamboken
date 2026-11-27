@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useTranslation } from "react-i18next";
 import Link from "next/link";
 import { formatTime } from "@/lib/inkorg";
@@ -252,6 +252,12 @@ export function WorkView({
   const unsavedAngle = !!doc && straighten !== doc.straighten;
   // The masking card: a registered report photo is compared with its rabbit instead, and has no masking.
   const maskStep = masking && !(item.registered && doc?.doc_type === "intyg");
+  // What a "Hitta pappret" answer is for, and what is shown now (after the render that showed it).
+  const paperFor = `${doc?.id}:${maskStep}:${rotation}:${straighten}`;
+  const shownPaperFor = useRef(paperFor);
+  useEffect(() => {
+    shownPaperFor.current = paperFor;
+  });
   if (step !== shownStep) {
     setShownStep(step);
     setRotation(doc?.rotation ?? 0);
@@ -321,13 +327,17 @@ export function WorkView({
   };
 
   // "Hitta pappret": the angle. In the masking step the angle is fixed: the paper is looked for at it, and the
-  // frame goes round its upper two thirds. The paper is in the stored rotation.
+  // frame goes round its upper two thirds. The paper is in the stored rotation. An answer that comes after
+  // another document, step, turn or angle is shown is dropped.
   const findPaperOnPhoto = () => {
     if (!doc) return;
+    const asked = paperFor;
+    const stale = () => shownPaperFor.current !== asked;
     if (maskStep)
       return run(
         () => findPaper(item.id, doc.id, straighten),
         ({ paper }) => {
+          if (stale()) return;
           const found =
             paper && rotateRect(paper, (rotation - doc.rotation) / 90);
           if (found) setCopyFrame({ ...found, h: found.h * 0.6667 });
@@ -341,6 +351,7 @@ export function WorkView({
     run(
       () => findPaper(item.id, doc.id),
       ({ angle }) => {
+        if (stale()) return;
         straightenView(angle);
         setAngleNote(
           angle

@@ -121,9 +121,14 @@ export function PhotoViewer({
     );
     const w = Math.round(image.naturalWidth * scale);
     const h = Math.round(image.naturalHeight * scale);
-    const size = turnedSize(w, h, rotation + straighten);
-    canvas.width = size.width;
-    canvas.height = size.height;
+    // F's size, from the original's: the overlays are fractions of it.
+    const size = turnedSize(
+      image.naturalWidth,
+      image.naturalHeight,
+      rotation + straighten,
+    );
+    canvas.width = Math.round(size.width * scale);
+    canvas.height = Math.round(size.height * scale);
     ctx.fillStyle = "white";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.translate(canvas.width / 2, canvas.height / 2);
@@ -350,7 +355,7 @@ export function PhotoViewer({
                 type="range"
                 min={-15}
                 max={15}
-                step={0.5}
+                step={0.1}
                 value={straighten}
                 disabled={straightenLocked}
                 aria-valuetext={`${degrees(straighten)} medurs`}

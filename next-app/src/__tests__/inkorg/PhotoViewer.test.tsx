@@ -264,12 +264,12 @@ describe("PhotoViewer: straightening", () => {
     );
     const canvas = await screen.findByRole("img", { name: "Originalet" });
     await vi.waitFor(() => expect(ctx.drawImage).toHaveBeenCalled());
-    // 120° in all: the bounding box of 400 × 300 is 460 × 496, white where the photo does not reach.
+    // 120° in all: Pillow turns 400 × 300 into 460 × 498, white where the photo does not reach.
     expect([
       (canvas as HTMLCanvasElement).width,
       (canvas as HTMLCanvasElement).height,
-    ]).toEqual([460, 496]);
-    expect(ctx.fillRect).toHaveBeenCalledWith(0, 0, 460, 496);
+    ]).toEqual([460, 498]);
+    expect(ctx.fillRect).toHaveBeenCalledWith(0, 0, 460, 498);
     expect(ctx.rotate).toHaveBeenCalledWith((120 * Math.PI) / 180);
   });
 
@@ -290,6 +290,9 @@ describe("PhotoViewer: straightening", () => {
     expect(screen.getByText("2,5°")).toBeInTheDocument();
     fireEvent.change(slider, { target: { value: "-4" } });
     expect(onStraighten).toHaveBeenLastCalledWith(-4);
+    fireEvent.change(slider, { target: { value: "2.3" } }); // a tenth of a degree, as the API keeps it
+    expect(onStraighten).toHaveBeenLastCalledWith(2.3);
+    expect(slider).toHaveAttribute("step", "0.1"); // jsdom neither snaps to the step nor reports a mismatch
     fireEvent.click(screen.getByRole("button", { name: "Nollställ" }));
     expect(onStraighten).toHaveBeenLastCalledWith(0);
     fireEvent.click(screen.getByRole("button", { name: "Hitta pappret" }));
@@ -302,10 +305,12 @@ describe("PhotoViewer: straightening", () => {
         onRotate={() => {}}
         onStraighten={onStraighten}
         straightenLocked
+        onFindPaper={onFindPaper}
       />,
     );
     expect(slider).toBeDisabled();
     expect(screen.getByRole("button", { name: "Nollställ" })).toBeDisabled();
-    expect(screen.queryByRole("button", { name: "Hitta pappret" })).toBeNull();
+    // The masking finds the paper at the locked angle.
+    expect(screen.getByRole("button", { name: "Hitta pappret" })).toBeEnabled();
   });
 });

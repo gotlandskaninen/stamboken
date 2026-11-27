@@ -181,11 +181,21 @@ describe("turnedSize", () => {
     expect(turnedSize(400, 300, 270)).toEqual({ width: 300, height: 400 });
   });
 
-  it("is the bounding box of the photo turned by any other angle", () => {
-    // 400 cos 30° + 300 sin 30° = 496.4, and 400 sin 30° + 300 cos 30° = 459.8.
-    expect(turnedSize(400, 300, 30)).toEqual({ width: 496, height: 460 });
-    expect(turnedSize(400, 300, -30)).toEqual({ width: 496, height: 460 });
-    expect(turnedSize(400, 300, 90 + 30)).toEqual({ width: 460, height: 496 });
+  it("is the size Pillow turns the photo to, as F is", () => {
+    // Image.new("1", (w, h)).rotate(-angle, expand=True).size, as app/tests/test_inbox_paper.py checks them.
+    const pillow: [number, number, number, number, number][] = [
+      [1200, 1600, 5, 1336, 1700],
+      [1200, 1600, -3.7, 1302, 1676],
+      [4000, 3000, 102.5, 3796, 4556],
+      [3024, 4032, -15, 3966, 4678],
+      [401, 301, 7.3, 437, 351],
+      [1200, 1600, 270.4, 1610, 1212],
+      [400, 300, 30, 498, 460],
+      [400, 300, -30, 498, 460],
+      [400, 300, 120, 460, 498],
+    ];
+    for (const [w, h, angle, width, height] of pillow)
+      expect(turnedSize(w, h, angle)).toEqual({ width, height });
   });
 });
 

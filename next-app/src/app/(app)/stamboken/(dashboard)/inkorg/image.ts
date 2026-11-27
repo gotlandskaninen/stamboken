@@ -47,17 +47,38 @@ export const turn = (rotation: number, quarterTurns: number) =>
   (((rotation + quarterTurns * 90) % 360) + 360) % 360;
 
 /**
- * The size of a w × h image turned `angle` degrees clockwise: its bounding
- * box, as the API turns the photo (frame F). A quarter turn swaps width and
- * height.
+ * The size of a w × h image turned `angle` degrees clockwise, as the API turns
+ * the photo (frame F): Pillow's own sum in Image.rotate with expand, step by
+ * step (app/utils/inbox_paper.turned_size), so the preview has F's shape. A
+ * quarter turn swaps width and height.
  */
 export function turnedSize(w: number, h: number, angle: number) {
-  const a = (angle * Math.PI) / 180;
-  const cos = Math.abs(Math.cos(a));
-  const sin = Math.abs(Math.sin(a));
+  const m = -angle % 360;
+  const a = m < 0 ? m + 360 : m;
+  if (a === 0 || a === 180) return { width: w, height: h };
+  if (a === 90 || a === 270) return { width: h, height: w };
+  const r = -(a * (Math.PI / 180));
+  const round15 = (v: number) => Number(v.toFixed(15));
+  const [cos, sin] = [round15(Math.cos(r)), round15(Math.sin(r))];
+  const matrix = [cos, sin, 0, round15(-Math.sin(r)), cos, 0];
+  const transform = (x: number, y: number) => [
+    matrix[0] * x + matrix[1] * y + matrix[2],
+    matrix[3] * x + matrix[4] * y + matrix[5],
+  ];
+  [matrix[2], matrix[5]] = transform(-w / 2, -h / 2);
+  matrix[2] += w / 2;
+  matrix[5] += h / 2;
+  const corners = [
+    [0, 0],
+    [w, 0],
+    [w, h],
+    [0, h],
+  ].map(([x, y]) => transform(x, y));
+  const xs = corners.map(([x]) => x);
+  const ys = corners.map(([, y]) => y);
   return {
-    width: Math.round(w * cos + h * sin),
-    height: Math.round(w * sin + h * cos),
+    width: Math.ceil(Math.max(...xs)) - Math.floor(Math.min(...xs)),
+    height: Math.ceil(Math.max(...ys)) - Math.floor(Math.min(...ys)),
   };
 }
 
