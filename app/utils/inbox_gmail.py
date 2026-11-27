@@ -29,6 +29,7 @@ from PIL import Image
 from psycopg2.errors import LockNotAvailable
 
 import utils.inbox as inbox
+import utils.inbox_interpreter as interpreter
 import utils.mail as mail
 import utils.settings as settings
 from utils.database import (
@@ -421,7 +422,15 @@ def _store(attachments):
 
 def _documents(item, stored):
     return [
-        InboxDocument.create(item=item, original_path=path, mime="image/jpeg", sha256=sha256, quality=quality)
+        InboxDocument.create(
+            item=item,
+            original_path=path,
+            mime="image/jpeg",
+            sha256=sha256,
+            quality=quality,
+            # a reply to a purchase notice brings photos that are never read, as the notice's own are not
+            interpretation_status="av" if inbox.unread(item) else interpreter.initial_status(quality),
+        )
         for path, sha256, quality in stored
     ]
 
