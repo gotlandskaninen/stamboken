@@ -618,7 +618,7 @@ def build_proposal(raw, genebank_id, herd_id=None, registered=None):
     interpreter's answer `raw` (inbox_interpreter.SCHEMA, untrusted): {"fields": {key: {value, source, read?,
     registry?}}, "checks": [{ok, text}]}. The keys are the registration form's (docs/inkorg.md, "Spara det intyget
     visar") and the grandparents': farfar, farmor, morfar, mormor. A report photo's rabbit, once registered from it
-    (`registered`), is what every field is set beside.
+    (`registered`), is what every field is set beside. A reading of the seller and buyer adds a "sale" (_sale).
     """
     raw = raw if isinstance(raw, dict) else {}
     struck = raw.get("overstruket")
@@ -636,7 +636,49 @@ def build_proposal(raw, genebank_id, herd_id=None, registered=None):
                 f"Individnumret börjar med {letter} på intyget, men genbankens nummer börjar med {registry.letter}.",
             ),
         )
+    if sale := _sale(registry, raw, proposal["fields"]):
+        proposal["sale"] = sale
     return proposal
+
+
+def _herd_of(registry, text):
+    """The genebank's herd a number read names as it stands (G1274, 1274 or G 1274), or None."""
+    match = re.fullmatch(r"([A-Za-z]?)\s*(\d{1,5})", text)
+    herd = match and f"{registry.letter}{match[2]}"
+    return herd if herd in registry.herds and match[1].upper() in ("", registry.letter) else None
+
+
+def _sale(registry, raw, fields):
+    """
+    The seller and buyer read at the bottom of a queue certificate (inbox_interpreter.SALE_READING, rule 5 b), for the
+    sale panel, or None: {"buyer_herd": {"herd"} | None, "buyer": {name, postal_address, town, email} | None, "date":
+    ISO | None, "seller": {name, herd}, "checks"}. Nothing in it is confident: the handler fills the sale with a click
+    and checks it against the photo. The buyer's herd only when it is one of the genebank's as read; the buyer as
+    read, its postal address the street and the postcode (the town is a field of its own, as in the sale).
+    """
+    read = raw.get("forsaljning")
+    read = {key: _text(read.get(key)) for key in read} if isinstance(read, dict) else {}
+    if not any(read.values()):
+        return None
+    buyer = {
+        "name": read.get("kopare_namn", ""),
+        "postal_address": ", ".join(filter(None, (read.get("kopare_utdelningsadress"), read.get("kopare_postnummer")))),
+        "town": read.get("kopare_ort", ""),
+        "email": read.get("kopare_epost", ""),
+    }
+    herd, day = _herd_of(registry, read.get("kopare_besattning", "")), _date(read.get("datum", ""))
+    checks = []
+    number = (fields.get("individual") or fields.get("paper_number") or {}).get("value")
+    origin, seller = number and number.split("-")[0], _herd_of(registry, read.get("saljare_besattning", ""))
+    if origin and seller and seller != origin:
+        checks.append(_check(False, f"Säljarens besättning {seller} är inte kaninens ursprungsbesättning {origin}."))
+    return {
+        "buyer_herd": {"herd": herd} if herd else None,
+        "buyer": buyer if any(buyer.values()) else None,
+        "date": day.isoformat() if day else None,
+        "seller": {"name": read.get("saljare_namn") or None, "herd": read.get("saljare_besattning") or None},
+        "checks": checks,
+    }
 
 
 def _proposal(registry, raw, struck, herd_id, registered):

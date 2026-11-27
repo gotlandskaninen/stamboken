@@ -194,6 +194,8 @@ class TestSaleReading(InterpretationTest):
         (main_image, _), (sale_image, schema) = self.calls[0], self.sale_calls[0]
         self.assertEqual((sale_image, schema), (main_image, interpreter.SALE_SCHEMA))
         self.assertEqual(self.doc(document).interpretation, {**READING, "forsaljning": SALE})
+        sale = self.doc(document).proposal["sale"]  # the seller and buyer for the sale panel (inbox_proposal)
+        self.assertEqual((sale["buyer"]["name"], sale["date"]), ("Köpa Testsson", "2024-06-01"))
 
     def test_a_report_photo_is_read_once(self):
         item, (document,) = self.uploaded()
@@ -262,7 +264,7 @@ class TestTooSmall(InterpretationTest):
         self.assertEqual((document.interpretation_status, large.interpretation_status), ("for_litet", "vantar"))
         self.assertEqual(interpreter.interpret_next(), large.id)
         self.assertIsNone(interpreter.interpret_next())
-        self.assertEqual(len(self.calls), 1)
+        self.assertEqual((len(self.calls), len(self.sale_calls)), (1, 1))  # nor its seller and buyer
         inbox.take(item, self.helper, over=False)
         self.login("hjalp")
         # Turned into another type and back, it is still too small: the type does not decide it.
