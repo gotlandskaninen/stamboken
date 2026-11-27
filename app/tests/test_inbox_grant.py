@@ -459,7 +459,7 @@ class TestSaveEndpoint(GrantTest):
 
     def refused(self, resp, detail, field):
         self.assertEqual(resp.status_code, 400, resp.get_json())
-        self.assertEqual((resp.get_json()["detail"], resp.get_json()["field"]), (detail, field))
+        self.assertEqual((resp.get_json()["detail"], resp.get_json().get("field")), (detail, field), resp.get_json())
 
     def unsaved(self, document):
         self.assertIsNone(db.InboxDocument.get_by_id(document.id).individual_id)
@@ -529,9 +529,45 @@ class TestSaveEndpoint(GrantTest):
         item, document = self.taken(self.helper)
         self.login("hjalp")
         litter = self.paper_litter()
-        self.assertEqual(self.save(item, document, **NEW_RABBIT).status_code, 201)
+        resp = self.save(item, document, **NEW_RABBIT)
+        self.assertEqual(resp.status_code, 201, resp.get_json())
         litter = db.Breeding.get_by_id(litter.id)
         self.assertEqual((litter.litter_size, litter.litter_size6w), (5, 4))
+        answered = resp.get_json()["individual"]  # the rabbit as saved, its litter's counts filled in
+        self.assertEqual((answered["litter_size"], answered["litter_size6w"]), (5, 4))
+
+    def test_a_litter_without_a_count_born_must_hold_the_rabbits_it_has(self):
+        # An imported litter: no count born, one rabbit already. A paper saying one born cannot be a second.
+        item, document = self.taken(self.helper)
+        self.login("hjalp")
+        litter = self.paper_litter(alive=2)  # a certificate left for the paper's rabbit
+        db.Breeding.update(litter_number=1).where(db.Breeding.id == litter.id).execute()
+        db.Individual.create(
+            origin_herd=self.herds[0], breeding=litter, number="G1-2512", sex="male", certificate="C-2512"
+        )
+        self.refused(
+            self.save(item, document, **{**NEW_RABBIT, "litter_size": 1, "litter_size6w": 1}),
+            "Kullen har redan 1 kaniner i Stamboken.",
+            "litter_size",
+        )
+        self.unsaved(document)
+        self.assertIsNone(db.Breeding.get_by_id(litter.id).litter_size)
+
+    def test_an_existing_litters_count_alive_against_the_paper(self):
+        item, document = self.taken(self.helper)
+        self.login("hjalp")
+        litter = self.paper_litter(born=5, alive=3)
+        self.refused(
+            self.save(item, document, **NEW_RABBIT),  # 4 alive on the paper
+            "Kullen har 3 levande efter 6 veckor i Stamboken.",
+            "litter_size6w",
+        )
+        self.unsaved(document)
+        # Only a copy of the count born: the paper's count confirms it.
+        db.Breeding.update(litter_size6w=5, litter_size6w_preliminary=True).where(db.Breeding.id == litter.id).execute()
+        self.assertEqual(self.save(item, document, **NEW_RABBIT).status_code, 201)
+        litter = db.Breeding.get_by_id(litter.id)
+        self.assertEqual((litter.litter_size6w, litter.litter_size6w_preliminary), (4, False))
 
     def test_a_mother_in_no_herd(self):
         # Her latest herd event leaves her in none: no 500. Her litter, if it exists, is born in its own herd.

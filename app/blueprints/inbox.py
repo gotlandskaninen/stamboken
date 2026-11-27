@@ -734,8 +734,8 @@ _FIELD_BY_DETAIL = (
     (re.compile(r"^Välj mor och far|^Modern "), "mother"),
     (re.compile(r"^Fadern "), "father"),
     (re.compile(r"^Välj kön"), "sex"),
-    (re.compile(r"levande vid 6 veckor|litter_size6w", re.I), "litter_size6w"),
-    (re.compile(r"antal födda|^Kullen har \d+ födda", re.I), "litter_size"),
+    (re.compile(r"levande vid 6 veckor|litter_size6w|^Kullen har \d+ levande", re.I), "litter_size6w"),
+    (re.compile(r"antal födda|^Kullen har (\d+ födda|redan \d+ kaniner)", re.I), "litter_size"),
     (re.compile(r"^Födelsedatum"), "birth_date"),
     (re.compile(r"^name must"), "name"),
     (
@@ -822,20 +822,30 @@ def _as_on_paper(body, individual):
     """
     After registration, in its transaction (a refusal rolls it back), what registration does not hold the paper to:
     its colour must be in the list of the genebank the rabbit was registered in (registration drops another in
-    silence), and an existing litter's count born must be the paper's. A litter without one takes the paper's, as
-    registration fills in the count alive at 6 weeks. Raises the refusal.
+    silence), and an existing litter's counts must be the paper's. A litter without a count born takes the paper's,
+    as registration fills in the count alive at 6 weeks, if it holds every rabbit the litter has. Raises the refusal.
     """
     if individual.color_id is None:
         raise inbox.InboxError(400, "Välj en färg ur genbankens lista.")
     litter = Breeding.get_by_id(individual.breeding_id)  # locked by registration
-    born = body["litter_size"]
+    born, alive = body["litter_size"], body["litter_size6w"]
     if litter.litter_size is None:
-        if litter.litter_size6w is not None and litter.litter_size6w > born:
-            raise inbox.InboxError(400, LITTER_SIZE6W_ABOVE_BORN)
+        # Registration had no count to hold the litter to: the new rabbit, now one of them, must fit the paper's.
+        others = (
+            Individual.select()
+            .where((Individual.breeding == litter.id) & (Individual.id != individual.id) & not_voided())
+            .count()
+        )
+        if others + 1 > born:
+            raise inbox.InboxError(400, f"Kullen har redan {others} kaniner i Stamboken.")
         litter.litter_size = born
         litter.save(only=[Breeding.litter_size])
     elif litter.litter_size != born:
         raise inbox.InboxError(400, f"Kullen har {litter.litter_size} födda i Stamboken.")
+    # Registration writes the paper's count alive where the litter had none or a preliminary one: one it keeps was
+    # confirmed, and must be the paper's.
+    if litter.litter_size6w != alive:
+        raise inbox.InboxError(400, f"Kullen har {litter.litter_size6w} levande efter 6 veckor i Stamboken.")
 
 
 def _register_new(body, user, grant):
@@ -852,7 +862,8 @@ def _register_new(body, user, grant):
     _as_on_paper(body, individual)
     birth = HerdTracking.get((HerdTracking.individual == individual.id) & (HerdTracking.kind == "BIRTH"))
     grant.trace(birth.operation_id)
-    return response[0].get_json(), individual
+    # The rabbit as saved, its litter's counts included: registration answered before _as_on_paper filled them in.
+    return {**response[0].get_json(), "individual": Individual.get_by_id(individual.id).as_dict()}, individual
 
 
 def _same_number(paper_number, individual):
