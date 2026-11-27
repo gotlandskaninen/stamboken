@@ -320,35 +320,33 @@ export function WorkView({
     );
   };
 
-  // "Hitta pappret": the angle, and in the masking step the frame round the upper two thirds of the paper. The
-  // paper is in the stored rotation; the boxes drawn at another angle no longer cover what they did.
+  // "Hitta pappret": the angle. In the masking step the angle is fixed: the paper is looked for at it, and the
+  // frame goes round its upper two thirds. The paper is in the stored rotation.
   const findPaperOnPhoto = () => {
     if (!doc) return;
+    if (maskStep)
+      return run(
+        () => findPaper(item.id, doc.id, straighten),
+        ({ paper }) => {
+          const found =
+            paper && rotateRect(paper, (rotation - doc.rotation) / 90);
+          if (found) setCopyFrame({ ...found, h: found.h * 0.6667 });
+          setAngleNote(
+            found
+              ? "Ramen ligger runt pappret utom dess nedre tredjedel."
+              : "Pappret hittades inte, så ramen är kvar.",
+          );
+        },
+      );
     run(
       () => findPaper(item.id, doc.id),
-      ({ angle, paper }) => {
+      ({ angle }) => {
         straightenView(angle);
-        const notes = [
+        setAngleNote(
           angle
             ? `Fotot lutar ${degrees(angle)}, och vinkeln är satt till det.`
             : "Ingen tydlig lutning hittades, så vinkeln är 0°.",
-        ];
-        if (maskStep) {
-          const found =
-            paper && rotateRect(paper, (rotation - doc.rotation) / 90);
-          if (found) {
-            setCopyFrame({ ...found, h: found.h * 0.6667 });
-            notes.push("Ramen ligger runt pappret utom dess nedre tredjedel.");
-          } else notes.push("Pappret hittades inte, så ramen är kvar.");
-          if (angle !== straighten && rects.length > 0) {
-            setRects([]);
-            setSelectedRect(null);
-            notes.push(
-              "De svarta rutorna togs bort, eftersom vinkeln ändrades.",
-            );
-          }
-        }
-        setAngleNote(notes.join(" "));
+        );
       },
     );
   };

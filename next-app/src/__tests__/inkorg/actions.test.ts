@@ -6,6 +6,7 @@ import {
   assignItem,
   changeState,
   confirmMask,
+  findPaper,
   previewHerd,
   releaseItem,
   saveCertificate,
@@ -185,6 +186,18 @@ describe("the queue's server actions", () => {
       no_personal_data: true,
       matches_registry: false,
     });
+  });
+
+  it("send the masking's fixed angle to 'Hitta pappret', and nothing without one", async () => {
+    await findPaper(12, 31);
+    expect(api.mock.calls[0][0]).toBe(
+      "/v2/inkorg/12/dokument/31/hitta-pappret",
+    );
+    expect(api.mock.calls[0][1]?.body).toBeUndefined();
+    await findPaper(12, 31, 2.5);
+    expect(body(1)).toEqual({ straighten: 2.5 });
+    expect((await findPaper(12, 31, NaN)).ok).toBe(false);
+    expect(api).toHaveBeenCalledTimes(2);
   });
 
   it("refuse a rotation that is not a quarter turn", async () => {

@@ -610,11 +610,13 @@ def reinterpret(item_id, document_id):
     return _locked(item_id, action)
 
 
-# [Next.js] "Hitta pappret": how far the photo is tilted and where the paper lies. It changes nothing.
+# [Next.js] "Hitta pappret": how far the photo is tilted and where the paper lies. It changes nothing. With
+# "straighten" (the masking step, where the angle is fixed) the tilt is not looked for: the paper at that angle.
 @inbox_bp.route("/inkorg/<int:item_id>/dokument/<int:document_id>/hitta-pappret", methods=["POST"])
 @json_login_required
 @_queue_worker
 def find_paper(item_id, document_id):
+    straighten = _body().get("straighten")
     try:
         item = InboxItem.get_or_none(InboxItem.id == item_id)
         if item is None:
@@ -623,8 +625,10 @@ def find_paper(item_id, document_id):
         document = inbox.document_of(item, document_id)
         if document.original_path is None:
             raise inbox.InboxError(409, "Originalet är raderat.")
+        if straighten is not None:
+            straighten = inbox._straighten(straighten)  # pylint: disable=protected-access  # as PATCH takes it
         try:  # no transaction and no lock while the photo is looked at
-            found = inbox_paper.find_paper(inbox.private_path(document.original_path), document.rotation)
+            found = inbox_paper.find_paper(inbox.private_path(document.original_path), document.rotation, straighten)
         except FileNotFoundError:  # erased meanwhile
             raise inbox.InboxError(409, "Originalet är raderat.") from None
     except inbox.InboxError as exc:

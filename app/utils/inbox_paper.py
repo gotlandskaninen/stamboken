@@ -107,19 +107,19 @@ def _paper(grey):
     return {"x": round(x0, 4), "y": round(y0, 4), "w": round(x1 - x0, 4), "h": round(y1 - y0, 4)}
 
 
-def find_paper(source, rotation):
+def find_paper(source, rotation, straighten=None):
     """
     "Hitta pappret" on the photo (a path or a file) turned `rotation` degrees: the straighten that lines up its
-    writing (0.0 when there is no clear tilt, see _tilt), and the paper as fractions of F turned `rotation` plus
-    that angle, or None when no light area of a believable size stands out (a light background, a photo of only
-    paper). Found on a grey copy about WORK_SIDE pixels long.
+    writing (0.0 when there is no clear tilt, see _tilt), or the `straighten` given, which is never looked for; and
+    the paper as fractions of F turned `rotation` plus that angle, or None when no light area of a believable size
+    stands out (a light background, a photo of only paper). Found on a grey copy about WORK_SIDE pixels long.
     """
     with Image.open(source) as original:
         original.draft("L", (WORK_SIDE, WORK_SIDE))  # a JPEG is decoded at a fraction of its size
         grey = original.convert("L")
     grey.thumbnail((WORK_SIDE, WORK_SIDE))
     grey = grey.rotate(-rotation, expand=True)
-    angle = _tilt(np.asarray(grey))
+    angle = _tilt(np.asarray(grey)) if straighten is None else straighten
     # The corners the turn adds are black here, so that they are never taken for paper; F's are white.
     straightened = grey.rotate(-angle, expand=True, resample=Image.Resampling.BILINEAR, fillcolor=0)
     return {"angle": angle, "paper": _paper(np.asarray(straightened))}

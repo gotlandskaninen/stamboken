@@ -591,31 +591,33 @@ describe("WorkView: straightening the photo", () => {
     expect(screen.getByTestId("straighten")).toHaveTextContent("0"); // another handler: the stored angle
   });
 
-  it("'Hitta pappret' in the masking sets the angle and the frame round the paper's upper two thirds, in the view's turn", async () => {
+  it("'Hitta pappret' in the masking sends the angle and keeps it, and sets the frame round the paper's upper two thirds, in the view's turn", async () => {
+    // Even an answer with another angle changes nothing but the frame: the angle is locked in the masking.
     actions.findPaper.mockResolvedValue({
       ok: true,
-      data: { angle: 4, paper },
+      data: { angle: 0, paper },
     });
-    render(view(item({ documents: [doc()] })));
+    render(view(item({ documents: [doc({ straighten: 2.5 })] })));
     fireEvent.click(screen.getByRole("button", { name: "Lägg till ruta" }));
     fireEvent.click(screen.getByRole("button", { name: "Vrid" })); // turned for the masking, not yet stored
     fireEvent.click(screen.getByRole("button", { name: "Hitta pappret" }));
     expect(
-      await screen.findByText(/De svarta rutorna togs bort/),
+      await screen.findByText(
+        "Ramen ligger runt pappret utom dess nedre tredjedel.",
+      ),
     ).toBeInTheDocument();
-    expect(actions.findPaper).toHaveBeenCalledWith(12, 31);
-    expect(screen.getByTestId("straighten")).toHaveTextContent("4");
-    expect(screen.queryByRole("button", { name: /^Ruta/ })).toBeNull();
+    expect(actions.findPaper).toHaveBeenCalledWith(12, 31, 2.5);
+    expect(screen.getByTestId("straighten")).toHaveTextContent("2.5");
     fireEvent.click(
       screen.getByRole("button", { name: "Bekräfta maskningen och nästa" }),
     );
-    // The paper was found in the stored rotation (0): a quarter turn on, its upper two thirds.
+    // The paper was found in the stored rotation (0): a quarter turn on, its upper two thirds. The box stays.
     expect(actions.confirmMask).toHaveBeenCalledWith(
       12,
       31,
       90,
-      4,
-      [],
+      2.5,
+      [{ x: 0.45, y: 0.35, w: 0.1, h: 0.3 }],
       {
         x: expect.closeTo(0.05, 4),
         y: expect.closeTo(0.1, 4),
@@ -643,6 +645,7 @@ describe("WorkView: straightening the photo", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.getByTestId("straighten")).toHaveTextContent("0");
+    expect(actions.findPaper).toHaveBeenCalledWith(12, 31); // outside the masking the tilt is looked for
     unmount();
     render(view(item({ assigned_to: other, documents: [doc()] }), boss));
     expect(screen.queryByRole("button", { name: "Hitta pappret" })).toBeNull();

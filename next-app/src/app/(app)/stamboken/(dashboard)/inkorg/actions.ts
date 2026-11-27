@@ -216,14 +216,21 @@ export async function waitForParent(
 /**
  * "Hitta pappret": the straighten that lines up the photo's writing, and the
  * paper in fractions of the photo turned by its saved rotation plus that
- * angle. Nothing is changed: the view applies it.
+ * angle. With `straighten` (the masking step) the angle is that one and is
+ * not looked for. Nothing is changed: the view applies it.
  */
-export async function findPaper(id: number, doc: number) {
+export async function findPaper(id: number, doc: number, straighten?: number) {
   if (!isId(id) || !isId(doc)) return refused("Ogiltigt dokument.");
+  if (
+    straighten !== undefined &&
+    (!Number.isFinite(straighten) || Math.abs(straighten) > 15)
+  )
+    return refused("Ogiltig vinkel.");
   return call<{ angle: number; paper: Rect | null }>(
     id,
     `/${id}/dokument/${doc}/hitta-pappret`,
     "POST",
+    straighten === undefined ? undefined : { straighten },
   );
 }
 

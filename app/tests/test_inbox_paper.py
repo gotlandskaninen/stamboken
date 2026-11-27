@@ -92,9 +92,9 @@ class TestEndpoint(InboxTest):
         self.item = db.InboxItem.get_by_id(resp.get_json()["item"]["id"])
         self.document = self.item.documents.get()
 
-    def find(self, document_id=None):
+    def find(self, document_id=None, **body):
         url = f"/api/v2/inkorg/{self.item.id}/dokument/{document_id or self.document.id}/hitta-pappret"
-        return self.client.post(url)
+        return self.client.post(url, json=body)
 
     def state(self):
         events = db.InboxEvent.select().where(db.InboxEvent.item == self.item.id).count()
@@ -108,6 +108,28 @@ class TestEndpoint(InboxTest):
         self.assertEqual(resp.status_code, 200, resp.get_json())
         self.assertAlmostEqual(resp.get_json()["angle"], 4, delta=0.3)
         self.assertEqual(set(resp.get_json()["paper"]), {"x", "y", "w", "h"})
+        self.assertEqual(self.state(), before)
+
+    def test_with_an_angle_it_is_not_looked_for_and_the_paper_is_found_at_that_angle(self):
+        self.login("hjalp")
+        self.post(f"/{self.item.id}/ta")
+        before = self.state()
+        level = self.find(straighten=0).get_json()
+        self.assertEqual(level["angle"], 0)  # the photo is tilted 4°, but the angle given is kept
+        resp = self.find(straighten=4)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertEqual(resp.get_json()["angle"], 4)
+        with Image.open(self.stored(self.document)) as photo:
+            width, height = inbox_paper.turned(photo, 0, 4).size
+        box, x, y = resp.get_json()["paper"], (width - 1200) / 2 / width, (height - 1600) / 2 / height
+        self.assertLessEqual(box["x"], x)
+        self.assertLessEqual(box["y"], y)
+        self.assertGreaterEqual(box["x"] + box["w"], 1 - x)
+        self.assertGreaterEqual(box["y"] + box["h"], 1 - y)
+        self.assertNotEqual(level["paper"], resp.get_json()["paper"])  # each in its own frame
+        for bad in (15.1, True, "4", float("nan")):
+            with self.subTest(bad):
+                self.assertEqual(self.find(straighten=bad).status_code, 400)
         self.assertEqual(self.state(), before)
 
     def test_only_the_handler_of_an_item_with_its_original(self):
