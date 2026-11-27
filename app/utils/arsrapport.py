@@ -118,6 +118,7 @@ from utils.members import (
     CONSENT_TEXT_VERSIONS,
     STOCKHOLM,
     consent_from_answer,
+    counted_answers,
     effective_consent,
     holder_since,
     paper_from_holder,
@@ -1039,7 +1040,8 @@ def member_details(herd, report, access, user):
         .first()
     )
     counts = latest is not None and latest.text_version in CONSENT_TEXT_VERSIONS and isinstance(latest.value, dict)
-    consent = latest.value if counts else {}  # as stored_consent: an answer to an older text is none
+    # as stored_consent: an answer to an older text, or one given before the main member changed, is none
+    consent = latest.value if counts and membership.id in counted_answers([membership.id]) else {}
     return {
         "mode": "main",
         "contact": {

@@ -259,6 +259,17 @@ class TestLink(DetailsTest):
             ["adress", "telefon", "konto", "epost", "publicering"],
         )
 
+    def test_an_answer_from_before_the_main_member_changed_is_not_shown(self):  # 5.11, as the Koharen export
+        with db.DB_PROXY.atomic():
+            set_consent(self.membership(), ALL, source="profil", text_version=CONSENT_TEXT_VERSION)
+        db.MatrikelAudit.create(  # naive server time, a minute after the answer
+            membership=self.member.membership_id, action="main_member_changed", payload={},
+            created_at=datetime.now() + timedelta(minutes=1),
+        )  # fmt: skip
+        self.link_owner()
+        self.login("owner")
+        self.assertIsNone(self.view()["member_details"]["publicering"])
+
     def test_a_no_goes_at_once_and_fewer_details_too(self):
         with db.DB_PROXY.atomic():
             set_consent(self.membership(), ALL, source="profil", text_version=CONSENT_TEXT_VERSION)
