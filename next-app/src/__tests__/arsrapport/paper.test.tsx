@@ -608,6 +608,20 @@ describe("ReportForm on paper", () => {
     ).toBeTruthy();
   });
 
+  it("asks for a clearing number for a bankkonto only", () => {
+    renderPaper();
+    fireEvent.change(screen.getByLabelText("Clearingnummer"), {
+      target: { value: "8327" },
+    });
+    fireEvent.click(screen.getByLabelText("Plusgiro"));
+    expect(screen.queryByLabelText("Clearingnummer")).toBeNull();
+    fireEvent.click(screen.getByLabelText("Bankkonto"));
+    // the clearing number typed for the other box is gone, not sent with a plusgiro
+    expect(
+      (screen.getByLabelText("Clearingnummer") as HTMLInputElement).value,
+    ).toBe("");
+  });
+
   it("says there is no account when the matrikel has none", () => {
     renderPaper(
       paperView({
@@ -620,6 +634,20 @@ describe("ReportForm on paper", () => {
       }),
     );
     expect(screen.getByText("Inget konto i matrikeln")).toBeTruthy();
+  });
+
+  it("says there is an account when its end is too short to show", () => {
+    renderPaper(
+      paperView({
+        item: {
+          id: 5,
+          received_at: "2027-01-03T10:00:00+00:00",
+          state: "tagen",
+          account_end: "",
+        },
+      }),
+    );
+    expect(screen.getByText("Det finns ett konto i matrikeln")).toBeTruthy();
   });
 
   it("asks nothing of the form first when the intyg are not done", () => {

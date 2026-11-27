@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 
 from flask_login import UserMixin
 from peewee import (
+    JOIN,
     SQL,
     AutoField,
     BigAutoField,
@@ -76,8 +77,9 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # notice.individual and buyer_contact.erased_email_hash (53) +
 # acceptance of the account rules (54) + each history year's realised Ne (55) +
 # a paper certificate's copy checked against the registry, inbox_document.saved_certificate and saved_number,
-# verified_at and verified_by (56) + a buyer's e-mail kept only for the notice, buyer_contact.email_notice_only (57).
-CURRENT_SCHEMA_VERSION = 57
+# verified_at and verified_by (56) + a buyer's e-mail kept only for the notice, buyer_contact.email_notice_only (57) +
+# the support account on the membership, with its type (58).
+CURRENT_SCHEMA_VERSION = 58
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -246,7 +248,8 @@ class Genebank(BaseModel):
             matrikel_reader_herd_ids,
         )
 
-        rows = list(Herd.select().where(Herd.genebank == self))
+        account = (Membership.id, Membership.bank_account_number, Membership.bank_name)  # for filtered_dict
+        rows = list(Herd.select(Herd, *account).join(Membership, JOIN.LEFT_OUTER).where(Herd.genebank == self))
         contacts = herd_contacts(rows)
         readers = matrikel_reader_herd_ids(user, rows)
         return [h.filtered_dict(user, contact=contacts[h.id], reader=h.id in readers, with_contact=False) for h in rows]
@@ -298,6 +301,11 @@ class Membership(BaseModel):
     billing_city = CharField(max_length=100, null=True)
     billing_email = CharField(max_length=255, null=True)
     billing_reference = CharField(max_length=100, null=True)
+    # The account the genebank support is paid to (migration 58 moved it here from the herds), always private.
+    # The type is NULL for an account moved from a herd: the old free text does not tell (CHECK: ACCOUNT_TYPES).
+    bank_account_type = CharField(max_length=10, null=True)
+    bank_account_number = TextField(null=True)
+    bank_name = TextField(null=True)
     created_at = DateTimeField(default=datetime.now)
     updated_at = DateTimeField(default=datetime.now)
 
@@ -395,6 +403,7 @@ class Herd(BaseModel):
     latitude = FloatField(null=True)
     longitude = FloatField(null=True)
     coordinates_privacy = CharField(15, null=True)
+    # Empty since migration 58 (CHECK): the account is the membership's. The legacy API keeps the field names.
     bank_account_number = TextField(null=True)
     bank_account_number_privacy = CharField(15, null=True, default="private")
     bank_name = TextField(null=True)
@@ -440,7 +449,6 @@ class Herd(BaseModel):
         )
 
         access_level = "public"
-        effective = None  # the user's herd ids, fetched at most once
         if user and user.is_admin:
             access_level = "private"
         elif user:
@@ -489,15 +497,25 @@ class Herd(BaseModel):
                     data[field] = value
                 else:
                     data.pop(field, None)
-        # Bank details: whole for admin, matrikel_admin (who has no genebank role, so only these
-        # fields are added, not the other private ones) and the herd's own users. The genebank
-        # manager (private level, but none of those) sees the last two digits of the account.
-        if user and effective is None and not (user.is_admin or user.is_matrikel_admin):
-            effective = user.effective_herd_ids()
-        if user and (user.is_admin or user.is_matrikel_admin or self.id in effective):
-            data.update({f: raw[f] for f in ("bank_account_number", "bank_name") if f in raw})
-        elif "bank_account_number" in data:
-            data["bank_account_number"] = account_end(data["bank_account_number"])
+        # The support account is the membership's (migration 58), under the herd's legacy field names: its end and
+        # bank for admin, matrikel_admin (who has no genebank role, so only these fields are added, not the other
+        # private ones), the genebank's manager and the herd's owners; nothing for a caretaker grant (U2) or another
+        # member. Never the whole number: the old app sends back what it read, and update_herd takes only a mask that
+        # is still the stored account's as an unchanged account, so a stale form cannot write an old one back.
+        for field in HERD_BANK_FIELDS:
+            data.pop(field, None)
+        if user and (
+            user.is_admin
+            or user.is_matrikel_admin
+            or (
+                access_level == "private"
+                and (self.genebank_id in (user.is_manager or ()) or self.id in user.transfer_herd_ids())
+            )
+        ):
+            membership = self.membership if self.membership_id else None
+            number, name = (membership.bank_account_number, membership.bank_name) if membership else (None, None)
+            account = {"bank_account_number": account_end(number), "bank_name": name}
+            data.update({field: value for field, value in account.items() if field in raw})  # the row's keys, as before
         if with_contact and user:
             field = contact_field(user, self, contact, reader=reader, private_access=access_level == "private")
             if field:
@@ -520,6 +538,10 @@ PRIVACY_LEVELS = ("public", "authenticated", "private")
 # The bank details are only for support payouts: never shown to other members,
 # whatever the stored level says (issue #33).
 BANK_PRIVACY_FIELDS = ("bank_account_number_privacy", "bank_name_privacy")
+# The herd's old account columns, empty since migration 58, and the support account's types (Jonas 2026-11-18).
+HERD_BANK_FIELDS = ("bank_account_number", "bank_name")
+SUPPORT_ACCOUNT_FIELDS = ("bank_account_type", *HERD_BANK_FIELDS)
+ACCOUNT_TYPES = ("bankkonto", "bankgiro", "plusgiro")
 
 
 ACCOUNT_MASK = "••"
@@ -527,16 +549,76 @@ ACCOUNT_MASK = "••"
 
 def account_end(value):
     """
-    Only the last two digits of a bank account number, for readers who must not see all of it.
+    Only the last two digits of a bank account number, for readers who must not see all of it. Under five digits the
+    two would give most of it away (a plusgiro may have two): then only the mask, which says there is one.
 
     >>> account_end("8327-9, 123 456 789 12")
     '••12'
+    >>> account_end("123-4")
+    '••'
     >>> account_end(None) is None
     True
     """
     if not value:
         return value
-    return ACCOUNT_MASK + re.sub(r"\D", "", str(value))[-2:]
+    digits = re.sub(r"\D", "", str(value))
+    return ACCOUNT_MASK + (digits[-2:] if len(digits) >= 5 else "")
+
+
+# The soft hyphen, typographic dashes and minus sign mark the same boundary as a hyphen.
+DASHES = "[\u00ad\u2010-\u2015\u2212\ufe58\ufe63\uff0d]"
+ACCOUNT_MARKERS = {
+    "bg": "bankgiro",
+    "bankgiro": "bankgiro",
+    "pg": "plusgiro",
+    "plusgiro": "plusgiro",
+    "postgiro": "plusgiro",
+    "bankkonto": "bankkonto",
+    "konto": None,
+    "nr": None,
+    "nummer": None,
+}
+
+
+def account_parts(text):
+    """Return the original label words for migration, their account type for edits, and the number with its separators.
+    Unrecognised free text has no comparison key: two herds' values must then stay on their herds.
+
+    >>> account_parts("Konto – 123-45-67")
+    (('konto',), None, '123-45-67')
+    >>> account_parts("PG nr. 123 456–6")
+    (('pg', 'nr'), 'plusgiro', '123456-6')
+    """
+    text = re.sub(DASHES, "-", (text or "").strip().casefold())
+    if not text:
+        return (), None, ""
+    match = re.fullmatch(r"([^0-9]*)([0-9][0-9\s.,-]*)", text)
+    if not match:
+        return None
+    label = match[1]
+    words = re.findall(r"[^\s.:-]+", label)
+    number = "".join(match[2].split())
+    if (label and not label[0].isalpha()) or any(word not in ACCOUNT_MARKERS for word in words):
+        return None
+    kinds = {ACCOUNT_MARKERS[word] for word in words} - {None}
+    if len(kinds) > 1 or not re.fullmatch(r"[0-9]+(?:[.,-][0-9]+)*", number):
+        return None
+    return tuple(words), next(iter(kinds), None), number
+
+
+def same_destination(stored, stored_type, new, new_type=None):
+    """The same labelled destination, allowing a writer to omit a type or the number's dash."""
+    before, after = account_parts(stored), account_parts(new)
+    if before is None or after is None:
+        return stored == new and (not new_type or stored_type == new_type)
+    _, marker, number = before
+    _, new_marker, new_number = after
+    if new_marker and new_marker not in (stored_type, marker):
+        return False  # the writer explicitly named a destination the stored account does not identify
+    kinds = {stored_type, marker, new_type, new_marker} - {None}
+    if "-" not in number or "-" not in new_number:
+        number, new_number = number.replace("-", ""), new_number.replace("-", "")
+    return number == new_number and len(kinds) <= 1
 
 
 def remove_fields_by_privacy(data, access_level):
@@ -2884,6 +2966,9 @@ def init():
     # Yearly report v2: CHECKs, access-code FKs and the new void CHECK (migration won't run)
     _create_arsrapport_schema()
 
+    # The support account's type and the emptied herd columns (migrate_57_to_58)
+    _create_support_account_guards()
+
 
 def verify(try_init=True):
     """
@@ -3422,7 +3507,8 @@ AUDITED_TABLES = {
     "individual": ("individual_id", [], ["updated_at"]),
     "breeding": ("breeding_id", [], ["updated_at"]),
     "bunny": ("bunny_id", [], ["updated_at"]),  # from develop (22→23 roster)
-    "herd": ("herd_id", list(HERD_CONTACT_COLUMNS), []),
+    # the bank columns (migration 58): a herd that kept its account is emptied by a correction without a copy here
+    "herd": ("herd_id", [*HERD_CONTACT_COLUMNS, *HERD_BANK_FIELDS], []),
     "weight": ("weight_id", [], []),
     "bodyfat": ("bodyfat_id", [], []),
     "individualdisease": ("individual_disease_id", [], []),
@@ -5021,6 +5107,182 @@ def migrate_56_to_57():
         ).execute()
 
 
+SUPPORT_ACCOUNT_58 = "membership support account"  # migration 58's schema_history comment
+
+
+# Migration 58's guard on the herd's old account columns: no writer puts a value there. A value migration 58 left there
+# (no safe target) may stay, also in a whole row saved back, or be emptied by a data correction.
+HERD_BANK_GUARD_SQL = """
+    CREATE OR REPLACE FUNCTION herd_bank_guard() RETURNS trigger AS $$
+    DECLARE
+        written boolean;
+    BEGIN
+        IF TG_OP = 'INSERT' THEN
+            written := NEW.bank_account_number IS NOT NULL OR NEW.bank_name IS NOT NULL;
+        ELSE
+            written := (NEW.bank_account_number IS NOT NULL
+                        AND NEW.bank_account_number IS DISTINCT FROM OLD.bank_account_number)
+                       OR (NEW.bank_name IS NOT NULL AND NEW.bank_name IS DISTINCT FROM OLD.bank_name);
+        END IF;
+        IF written THEN
+            RAISE EXCEPTION 'the support account is the membership''s (migration 58)'
+                USING ERRCODE = 'check_violation';
+        END IF;
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+    CREATE OR REPLACE TRIGGER herd_bank_guard BEFORE INSERT OR UPDATE ON herd
+        FOR EACH ROW EXECUTE FUNCTION herd_bank_guard();
+"""
+
+
+def _create_support_account_guards():
+    """Migration 58's guards, from init() too: a known account type, and nothing new in the herd's account columns."""
+    if isinstance(DATABASE, SqliteDatabase):
+        return
+    types = ", ".join(f"'{kind}'" for kind in ACCOUNT_TYPES)
+    name = "ck_membership_bank_account_type"
+    if not DATABASE.execute_sql("SELECT 1 FROM pg_constraint WHERE conname = %s", (name,)).fetchone():
+        DATABASE.execute_sql(f'ALTER TABLE "membership" ADD CONSTRAINT "{name}" CHECK (bank_account_type IN ({types}))')
+    # a database that ran this branch's earlier 58 has a CHECK that keeps every herd's columns empty
+    DATABASE.execute_sql('ALTER TABLE "herd" DROP CONSTRAINT IF EXISTS "ck_herd_no_bank_account"')
+    DATABASE.execute_sql(HERD_BANK_GUARD_SQL)
+
+
+def redact_herd_account_audits(membership_ids):
+    """Remove only bank fields from v57 and older herd snapshots. Run last under the membership lock:
+    lifting the audit rule locks audit_log until commit. A snapshot predating the link uses the herd's membership.
+    """
+    if not membership_ids or isinstance(DATABASE, SqliteDatabase):
+        return
+    fields = list(HERD_BANK_FIELDS)
+    ids = [str(mid) for mid in membership_ids]
+    with DATABASE.atomic():
+        affected = {}
+        for side, other in (("old_data", "new_data"), ("new_data", "old_data")):
+            affected[side] = [
+                row[0]
+                for row in DATABASE.execute_sql(
+                    f"""SELECT a.id FROM audit_log a LEFT JOIN herd h ON h.herd_id::text = a.record_id
+                    WHERE a.table_name = 'herd' AND a.{side} ?| %s
+                      AND coalesce(a.{side}->>'membership_id', a.{other}->>'membership_id', h.membership_id::text)
+                          = ANY(%s)""",
+                    (fields, ids),
+                )
+            ]
+        if any(affected.values()):
+            DATABASE.execute_sql("DROP RULE audit_log_no_update ON audit_log")
+            for side, rows in affected.items():
+                DATABASE.execute_sql(
+                    f"UPDATE audit_log SET {side} = {side} - %s::text[] WHERE id = ANY(%s)", (fields, rows)
+                )
+            DATABASE.execute_sql(AUDIT_LOG_NO_UPDATE_RULE)
+
+
+def _sort_support_accounts(erased):
+    """
+    Migration 58's reading, every herd included, active or not: (moves, conflicts, orphans). `moves` maps a membership
+    to the (number, bank) its herds hold, for a membership without an account of its own. `conflicts` maps a
+    membership to the herds whose accounts may be different destinations, `orphans` lists the herds with an account
+    but no membership: both have no safe target, and their accounts stay on the herds. A text that is only whitespace
+    (tabs, newlines and no-break spaces too) is no value. Two herds hold the same account only with the same number
+    and bank together: the number by account_parts (label and all numeric boundaries), the bank
+    ignoring case and blanks. Nothing is merged or guessed. A household whose persons are all anonymised gets no
+    account (U14) and is neither.
+    """
+
+    def key(number, name):
+        parts = account_parts(number)
+        return (parts, " ".join((name or "").casefold().split())) if parts is not None else None
+
+    def blank(number, name):
+        return not (number or "").strip() and not (name or "").strip()
+
+    rows = DATABASE.execute_sql(
+        "SELECT herd_id, membership_id, bank_account_number, bank_name FROM herd"
+        " WHERE bank_account_number IS NOT NULL OR bank_name IS NOT NULL ORDER BY herd_id"
+    ).fetchall()
+    rows = [row for row in rows if not blank(*row[2:])]
+    orphans = [herd_id for herd_id, membership_id, *_ in rows if membership_id is None]
+    held = {}
+    for herd_id, membership_id, number, name in (row for row in rows if row[1] is not None):
+        held.setdefault(membership_id, []).append((herd_id, number, name))
+    stored = DATABASE.execute_sql(
+        "SELECT membership_id, bank_account_number, bank_name FROM membership WHERE membership_id = ANY(%s)",
+        (list(held),),
+    ).fetchall()
+    moves, conflicts = {}, {}
+    for membership_id, *own in stored:
+        if membership_id in erased:
+            continue
+        accounts = [account[1:] for account in held[membership_id]] + ([] if blank(*own) else [tuple(own)])
+        keys = {key(*account) for account in accounts}
+        if len(keys) > 1 or (len(accounts) > 1 and None in keys):
+            conflicts[membership_id] = [account[0] for account in held[membership_id]]
+        elif blank(*own):
+            moves[membership_id] = [(value or "").strip() or None for value in accounts[0]]
+    return moves, conflicts, orphans
+
+
+def _move_support_accounts(erased):
+    """
+    Migration 58's move (_sort_support_accounts). An account without a safe target stays on its herd (Jonas
+    2026-11-26) until a data correction moves it; the log names only ids and counts. Returns how many herds kept
+    theirs. Every other herd's columns are emptied without an audit copy.
+    """
+    moves, conflicts, orphans = _sort_support_accounts(erased)
+    kept = sorted([*orphans, *(herd for herds in conflicts.values() for herd in herds)])
+    if kept:
+        logger.warning(
+            "Migration 58: %s herds keep their support account on the herd (herd_id %s): %s memberships whose herds "
+            "hold different accounts (membership_id %s), %s herds without a membership.",
+            len(kept), kept, len(conflicts), sorted(conflicts), len(orphans),
+        )  # fmt: skip
+    for membership_id, (number, name) in moves.items():
+        Membership.update(bank_account_number=number, bank_name=name).where(Membership.id == membership_id).execute()
+    # The trigger would copy every account into new audit rows (migration 40's guard); the herds are emptied unlogged.
+    DATABASE.execute_sql("DROP TRIGGER IF EXISTS audit_trigger ON herd")  # reinstalled in the same transaction
+    DATABASE.execute_sql(
+        "UPDATE herd SET bank_account_number = NULL, bank_name = NULL"
+        " WHERE (bank_account_number IS NOT NULL OR bank_name IS NOT NULL) AND herd_id <> ALL(%s)",
+        (kept,),
+    )
+    return len(kept)
+
+
+def migrate_57_to_58():
+    """
+    The support account moves from the herd to its membership, with a type (bankkonto, bankgiro or plusgiro; Jonas
+    2026-11-18), so that a member with two herds has one account. The herd's columns stay: empty, or holding an
+    account without a safe target until a correction moves it (Jonas 2026-11-26), and a guard keeps writers out.
+    """
+    with DATABASE.atomic():
+        if not isinstance(DATABASE, SqliteDatabase):
+            # membership before herd, the matrikel's order (lock_herd); the move reads both and nothing may write them
+            DATABASE.execute_sql("LOCK TABLE membership, herd IN ACCESS EXCLUSIVE MODE")
+        existing = {c.name for c in DATABASE.get_columns("membership")}
+        for field in (Membership.bank_account_type, Membership.bank_account_number, Membership.bank_name):
+            if field.name not in existing:
+                migrate(DATABASE_MIGRATOR.add_column("membership", field.name, field))
+        kept = 0
+        if not isinstance(DATABASE, SqliteDatabase):
+            # Include erased households even when no live herd account remains to move.
+            erased = {
+                row[0]
+                for row in DATABASE.execute_sql(
+                    "SELECT membership_id FROM member GROUP BY membership_id"
+                    " HAVING bool_and(first_name = 'Borttagen' AND last_name = 'person')"
+                )
+            }
+            kept = _move_support_accounts(erased)
+            _create_audit_table_and_triggers()  # the herd's account out of new audit snapshots
+            redact_herd_account_audits(erased)
+            _create_support_account_guards()
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=58, comment=f"{SUPPORT_ACCOUNT_58}; {kept} herds keep theirs", applied=datetime.now()
+        ).execute()
+
+
 def migrate_21_to_22():
     """Add litter_number to Breeding table and backfill from minted numbers."""
     with DATABASE.atomic():
@@ -5515,6 +5777,7 @@ MIGRATIONS = {
     (54, 55): migrate_54_to_55,  # realised Ne per history year
     (55, 56): migrate_55_to_56,  # inbox_document.verified_at, verified_by, saved_certificate
     (56, 57): migrate_56_to_57,  # buyer_contact.email_notice_only
+    (57, 58): migrate_57_to_58,  # the support account on the membership
 }
 
 
@@ -5539,6 +5802,7 @@ def check_migrations():
     try:
         _run_migrations()
         _repair_arsrapport_columns()
+        _repair_support_account_guards()
     finally:
         try:
             DATABASE.execute_sql(
@@ -5551,6 +5815,26 @@ def check_migrations():
             # migration error — turning e.g. a fatal ProgrammingError into
             # an OperationalError that connect() swallows.
             logger.warning("Failed to release migration advisory lock", exc_info=True)
+
+
+def _repair_support_account_guards():
+    """
+    Migration 58's guards, checked at every boot under the migration lock: a fresh bootstrap stamps the schema version
+    before init() reaches _create_support_account_guards, so one that died in between would serve without them. The
+    catalog is read first, so a healthy database takes no lock; one not at 58 yet is the migration's.
+    """
+    if "membership" not in DATABASE.get_tables():
+        return
+    if "bank_account_type" not in {c.name for c in DATABASE.get_columns("membership")}:
+        return
+    present = DATABASE.execute_sql(
+        "SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = 'herd'::regclass AND tgname = 'herd_bank_guard')"
+        " AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ck_membership_bank_account_type')"
+    ).fetchone()[0]
+    if not present:
+        logger.warning("Repairing migration 58's guards on the support account")
+        with DATABASE.atomic():
+            _create_support_account_guards()
 
 
 def _repair_arsrapport_columns():
