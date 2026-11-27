@@ -57,6 +57,7 @@ import { RabbitRow } from "./RabbitRow";
 import { Receipt } from "./Receipt";
 import { ReportStatus, type StatusKind } from "./ReportStatus";
 import { SoldDialog } from "./SoldDialog";
+import { useLeaveWarning } from "./useLeaveWarning";
 import { ConfirmCountDialog, LitterDialog } from "./LitterDialog";
 import {
   ADD_FROM_CERTIFICATE,
@@ -336,6 +337,7 @@ export function ReportForm({
   actions,
   contactSlot,
   link,
+  loginTip,
   stickyTop = 56,
   post,
   env,
@@ -346,6 +348,8 @@ export function ReportForm({
   contactSlot?: React.ReactNode;
   // The page behind the personal link (/rapport): no sign-in, so no mode cookie, profile or sign-in link.
   link?: true;
+  // Code login is on: the link page recommends signing in (set by the page, which asks /v2/login/status).
+  loginTip?: true;
   stickyTop?: number;
   post?: number;
   paper?: PaperProps;
@@ -408,6 +412,14 @@ export function ReportForm({
   const [archiveError, setArchiveError] = React.useState<React.ReactNode>(null);
   const [mode, setMode] = React.useState<"form" | "receipt">(
     view.report && !isPaper ? "receipt" : "form",
+  );
+  // On the link page a typed buyer lives only in memory until Skicka: closing the tab would lose it.
+  useLeaveWarning(
+    !!link &&
+      mode === "form" &&
+      Object.values(state.rabbits).some(
+        (e) => e.val === "sald" && e.sald?.kopare,
+      ),
   );
   const [version, setVersion] = React.useState(0);
   const [retry, setRetry] = React.useState(0);
@@ -1578,6 +1590,15 @@ export function ReportForm({
       <p className={styles.lead}>
         {`Rapporten gäller kaninerna som fanns i ${isPaper ? "besättningen" : "din besättning"} den 31 december ${year}.`}
       </p>
+      {link && loginTip && (
+        <p className={styles.lead}>
+          Logga gärna in i Stamboken, så kan du sälja direkt och ändra dina
+          uppgifter.{" "}
+          <Link href="/auth/sign-in?return_to=/stamboken/arsrapport">
+            Logga in
+          </Link>
+        </p>
+      )}
       {link && (
         <p className={styles.lead}>
           <a

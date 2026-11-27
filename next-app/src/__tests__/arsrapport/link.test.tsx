@@ -25,6 +25,7 @@ import {
   forgetTabWrites,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/ReportForm";
 import type { Receipt } from "@/app/(app)/stamboken/(dashboard)/arsrapport/lib";
+import "@/i18n"; // BuyerFields' labels
 import { view } from "./fixtures";
 
 // The page behind the personal link (/rapport): the same form in link mode.
@@ -56,9 +57,10 @@ const actions = (over: Partial<Record<keyof ReportActions, unknown>> = {}) =>
   }) as never as {
     [K in keyof ReportActions]: ReturnType<typeof vi.fn>;
   } & ReportActions;
-const linkForm = (a: ReportActions) => (
+const linkForm = (a: ReportActions, loginTip?: true) => (
   <ReportForm
     link
+    loginTip={loginTip}
     env="prod"
     view={view({ access: "code", source: "link" })}
     actions={a}
@@ -208,6 +210,56 @@ describe("ReportForm in link mode", () => {
         "Ärende 12 · Köpt kanin finns inte i registret: G9002-2511 · Väntar på genbanksansvarig",
       ),
     ).toBeTruthy();
+  });
+
+  it("recommends signing in on the link page only where code login is on", () => {
+    render(linkForm(actions()));
+    expect(screen.queryByText(/Logga gärna in i Stamboken/)).toBeNull();
+    cleanup();
+    render(linkForm(actions(), true));
+    expect(
+      screen.getByText(/Logga gärna in i Stamboken, så kan du sälja direkt/)
+        .textContent,
+    ).toBe(
+      "Logga gärna in i Stamboken, så kan du sälja direkt och ändra dina uppgifter. Logga in",
+    );
+    expect(
+      screen.getByRole("link", { name: "Logga in" }).getAttribute("href"),
+    ).toBe("/auth/sign-in?return_to=/stamboken/arsrapport");
+  });
+
+  it("asks before the tab is closed only while a typed buyer is unsent", () => {
+    const leave = () => {
+      const e = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    render(
+      linkForm(
+        actions({ getGenebankHerds: vi.fn(() => new Promise(() => {})) }),
+      ),
+    );
+    fillAll();
+    expect(leave()).toBe(false);
+    choose(1, "Såld");
+    fireEvent.click(screen.getByLabelText("Utanför genbanken"));
+    fireEvent.click(screen.getByRole("radio", { name: "Ja" }));
+    for (const [label, value] of [
+      [/Köparens namn/, "Ola Köpare"],
+      [/^Ort/, "Visby"],
+      [/^Postadress/, "Testgatan 1"],
+      [/^E-post/, "ola@example.invalid"],
+    ] as const)
+      fireEvent.change(screen.getByLabelText(label), { target: { value } });
+    fireEvent.change(screen.getByLabelText("Månad"), {
+      target: { value: "6" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Spara försäljningen" }),
+    );
+    expect(leave()).toBe(true);
+    choose(1, "Finns kvar"); // the sale is gone, and the buyer with it
+    expect(leave()).toBe(false);
   });
 
   it("links the register extract above the rabbits", () => {
