@@ -2475,7 +2475,7 @@ class InboxDocument(BaseModel):
     straighten = FloatField(default=0)  # degrees clockwise after the rotation, -15 to 15
     mask_rects = BinaryJSONField(null=True, index=False)
     copy_frame = BinaryJSONField(null=True, index=False)  # the part of the turned photo the copy keeps
-    interpretation_status = TextField(default=_initial_interpretation)  # av, vantar, klar or misslyckad
+    interpretation_status = TextField(default=_initial_interpretation)  # av, vantar, klar, misslyckad or for_litet
     attempts = SmallIntegerField(default=0)
     interpreter = TextField(null=True)
     interpretation = BinaryJSONField(null=True, index=False)

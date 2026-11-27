@@ -1295,6 +1295,9 @@ administratörer, genbanksansvariga och genbankshjälpare, och alla tre kan se h
    intyg", "Numret stämmer med kullen" och "Intygsnumret är ledigt". Jämför alltid förslaget med
    fotot innan du sparar; inget sparas förrän du klickar **Spara och nästa**. Har du vridit fotot
    rätt efteråt klickar du **Tolka igen**, så kommer ett nytt förslag några minuter senare.
+   Ett foto som är för litet (under 1000 bildpunkter på kortsidan) tolkas inte av sig självt:
+   be uppfödaren om ett större foto, skriv av fälten, eller klicka **Tolka igen** för att tolka det
+   ändå.
    Det du har skrivit skrivs aldrig över: har du redan börjat fylla i när förslaget kommer står
    "Det finns ett förslag från tolkningen", och först när du klickar **Fyll i förslaget** läggs
    det in.

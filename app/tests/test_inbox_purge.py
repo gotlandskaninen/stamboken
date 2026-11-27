@@ -208,9 +208,19 @@ class TestOriginals(PurgeTest):
                 self.assertEqual((document.original_path, document.interpretation, document.proposal), (None,) * 3)
 
     def test_waiting_for_the_reading_stops_with_the_original(self):
-        item = self.make(self.limit - MINUTE)
-        db.InboxDocument.update(interpretation_status="vantar").execute()
-        purge.purge_originals(NOW)
+        for waiting in ("vantar", "for_litet"):  # a photo too small waits for "Tolka igen", which needs the original
+            with self.subTest(waiting):
+                item = self.make(self.limit - MINUTE)
+                db.InboxDocument.update(interpretation_status=waiting).where(db.InboxDocument.item == item).execute()
+                purge.purge_originals(NOW)
+                self.assertEqual(self.document(item).interpretation_status, "av")
+        # Turned into a certificate after the purge, it has no photo to read: not for_litet, whatever its size was.
+        db.InboxDocument.update(doc_type="bevis", quality={"short_side": 600}).where(
+            db.InboxDocument.item == item
+        ).execute()
+        inbox.take(self.reload(item), self.manager, over=False)
+        with mock.patch.object(settings.interpretation, "interpreter", "gemma"):
+            inbox.update_document(self.reload(item), self.document(item), self.manager, {"doc_type": "intyg"})
         self.assertEqual(self.document(item).interpretation_status, "av")
 
     def test_the_queue_and_the_images_after_the_purge(self):

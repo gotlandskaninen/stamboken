@@ -323,7 +323,8 @@ def send_photos(herd, round_, access, user, *, number, from_herd, date, document
         # read as any upload's certificate: a reading claimed before the move drops (attempts), one made before it goes
         read = dict.fromkeys(("interpretation", "proposal", "interpreter", "interpreted_at"))
         for document_id, doc_type in types.items():
-            status = interpreter.initial_status() if doc_type == "intyg" else "av"
+            quality = InboxDocument.select(InboxDocument.quality).where(InboxDocument.id == document_id).scalar()
+            status = interpreter.initial_status(quality) if doc_type == "intyg" else "av"
             moved = InboxDocument.update(
                 item=item.id, doc_type=doc_type, interpretation_status=status, attempts=0, **read
             )

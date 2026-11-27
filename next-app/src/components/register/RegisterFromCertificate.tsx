@@ -57,7 +57,7 @@ export const COUNT_LEFT_EMPTY =
 export function proposalHint(field?: ProposedField) {
   if (!field || field.source === "läst") return null;
   const parts = [
-    field.read && `Intyget: ${field.read}`,
+    field.read && `Inläst: ${field.read}`,
     field.registry != null && `Registret: ${field.registry}`,
   ].filter(Boolean);
   return parts.length ? (
@@ -405,9 +405,13 @@ export function RegisterFromCertificate({
         {text("paper_number", "Individnummer på pappret", {
           required: true,
           placeholder: "G1274-2512",
-          helperText: suggestion
-            ? `Som det står på intyget. Stamboken föreslår ${suggestion}.`
-            : "Som det står på intyget.",
+          // Under what the reading saw, "as on the certificate" reads as a caption of it.
+          helperText: [
+            !proposalHint(proposed.paper_number) && "Som det står på intyget.",
+            suggestion && `Stamboken föreslår ${suggestion}.`,
+          ]
+            .filter(Boolean)
+            .join(" "),
         })}
         {text("paper_certificate", "Intygsnummer", {
           required: true,

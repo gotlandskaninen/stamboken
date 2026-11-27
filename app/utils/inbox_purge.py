@@ -64,7 +64,9 @@ def _null_originals(where):
     rows = list(rows.where(where & InboxDocument.original_path.is_null(False)).tuples())
     if rows:
         waiting = Case(
-            None, [(InboxDocument.interpretation_status == "vantar", "av")], InboxDocument.interpretation_status
+            None,
+            [(InboxDocument.interpretation_status.in_(("vantar", "for_litet")), "av")],
+            InboxDocument.interpretation_status,
         )
         # The model's reading and the proposal from it are a transcription of the photo: they go with it.
         query = InboxDocument.update(
