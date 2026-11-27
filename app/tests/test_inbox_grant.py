@@ -445,25 +445,50 @@ class TestSaveEndpoint(GrantTest):
         resp = self.save(item, document, action="okand")
         self.assertNotIn("field", resp.get_json())
 
-    def test_a_colour_off_the_genebanks_list_is_refused(self):
-        # The list the form offers: the genebank of the mother's herd. Never dropped in silence.
+    def paper_litter(self, born=None, alive=None):
+        """The paper's litter already in Stamboken: G1-1911 and G2-1711, born 2025-05-10, in G1, not yet numbered."""
+        return db.Breeding.create(
+            breeding_herd_id=self.herds[0],
+            mother=self.rabbit("G1-1911"),
+            father=self.rabbit("G2-1711"),
+            birth_date=date(2025, 5, 10),
+            breed_date=date(2025, 4, 9),
+            litter_size=born,
+            litter_size6w=alive,
+        )
+
+    def refused(self, resp, detail, field):
+        self.assertEqual(resp.status_code, 400, resp.get_json())
+        self.assertEqual((resp.get_json()["detail"], resp.get_json()["field"]), (detail, field))
+
+    def unsaved(self, document):
+        self.assertIsNone(db.InboxDocument.get_by_id(document.id).individual_id)
+        self.assertFalse(db.Individual.select().where(db.Individual.number == "G1-2511").exists())
+
+    def test_a_colour_off_the_list_of_the_genebank_it_is_registered_in_is_refused(self):
+        # Never dropped in silence, also when the litter is named by its id and no mother is sent.
         item, document = self.taken(self.helper)
         self.login("hjalp")
-        for color in ("lila", "Bleighe", "bläåh"):  # none, another case, Mellerud's
-            with self.subTest(color=color):
-                resp = self.save(item, document, **{**NEW_RABBIT, "color": color})
-                self.assertEqual(resp.status_code, 400, resp.get_json())
-                self.assertEqual(
-                    (resp.get_json()["detail"], resp.get_json()["field"]),
-                    ("Välj en färg ur genbankens lista.", "color"),
-                )
+        litter = self.paper_litter(born=5, alive=4)
+        by_id = {k: v for k, v in NEW_RABBIT.items() if k not in ("mother", "father", "birth_date")}
+        for name, body in (("by parents", NEW_RABBIT), ("by its id", {**by_id, "breeding_id": litter.id})):
+            for color in ("lila", "Bleighe", "bläåh"):  # none, another case, Mellerud's
+                with self.subTest(name, color=color):
+                    self.refused(
+                        self.save(item, document, **{**body, "color": color}),
+                        "Välj en färg ur genbankens lista.",
+                        "color",
+                    )
+                    self.unsaved(document)
         self.assertEqual(self.save(item, document, **NEW_RABBIT).status_code, 201)
         self.assertEqual(self.rabbit("G1-2511").color.name, "bleighe")
 
     def test_the_queue_asks_for_everything_the_paper_has(self):
-        # Jonas 2026-11-27: as in "Registrera kanin", colour, sex and both counts are not left out in the queue.
+        # Jonas 2026-11-27: as in "Registrera kanin", colour, sex and both counts are not left out in the queue. On a
+        # litter already in Stamboken, which registration takes without counts.
         item, document = self.taken(self.helper)
         self.login("hjalp")
+        self.paper_litter(born=5, alive=4)
         missing = {
             "color": [None, ""],
             "sex": ["", "hona"],  # and left out: not chosen. Okänt is null with the key present, as below
@@ -479,10 +504,53 @@ class TestSaveEndpoint(GrantTest):
                     resp = self.save(item, document, **body)
                     self.assertEqual(resp.status_code, 400, resp.get_json())
                     self.assertEqual(resp.get_json().get("field"), field, resp.get_json())
-        self.assertFalse(db.Individual.select().where(db.Individual.number == "G1-2511").exists())
+        self.unsaved(document)
         resp = self.save(item, document, **{**NEW_RABBIT, "sex": None})  # Okänt, as normal registration sends it
         self.assertEqual(resp.status_code, 201, resp.get_json())
         self.assertIsNone(self.rabbit("G1-2511").sex)
+
+    def test_an_existing_litters_counts_against_the_paper(self):
+        item, document = self.taken(self.helper)
+        self.login("hjalp")
+        litter = self.paper_litter(born=5)
+        above = "Antal levande vid 6 veckor kan inte vara fler än antal födda."
+        self.refused(self.save(item, document, **{**NEW_RABBIT, "litter_size6w": 6}), above, "litter_size6w")
+        self.refused(
+            self.save(item, document, **{**NEW_RABBIT, "litter_size": 4, "litter_size6w": 3}),
+            "Kullen har 5 födda i Stamboken.",
+            "litter_size",
+        )
+        self.unsaved(document)
+        self.assertEqual(self.save(item, document, **NEW_RABBIT).status_code, 201)
+        litter = db.Breeding.get_by_id(litter.id)
+        self.assertEqual((litter.litter_size, litter.litter_size6w), (5, 4))
+
+    def test_a_litter_without_a_count_born_takes_the_papers(self):
+        item, document = self.taken(self.helper)
+        self.login("hjalp")
+        litter = self.paper_litter()
+        self.assertEqual(self.save(item, document, **NEW_RABBIT).status_code, 201)
+        litter = db.Breeding.get_by_id(litter.id)
+        self.assertEqual((litter.litter_size, litter.litter_size6w), (5, 4))
+
+    def test_a_mother_in_no_herd(self):
+        # Her latest herd event leaves her in none: no 500. Her litter, if it exists, is born in its own herd.
+        item, document = self.taken(self.helper)
+        self.login("hjalp")
+        ht_row(
+            "TRANSFER",
+            from_herd=self.herds[0],
+            herd=None,
+            individual=self.rabbit("G1-1911"),
+            herd_tracking_date=date(2025, 9, 1),
+        )
+        resp = self.save(item, document, **NEW_RABBIT)
+        self.assertEqual(resp.status_code, 403, resp.get_json())
+        self.assertEqual(resp.get_json()["field"], "mother")
+        self.unsaved(document)
+        self.paper_litter(born=5, alive=4)
+        resp = self.save(item, document, **NEW_RABBIT)
+        self.assertEqual(resp.status_code, 201, resp.get_json())
 
     def test_the_trace_outlives_the_item(self):
         item, document = self.taken(self.helper)

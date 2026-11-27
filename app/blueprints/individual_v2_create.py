@@ -648,7 +648,7 @@ def _litter_key(values, genebank=None):
 
 def _new_litter_refusal(herd, father, birth_date, may):
     """The refusal of a new litter born in `herd` (the mother's) to `father`, or None."""
-    if not may(herd):
+    if herd is None or not may(herd):  # a mother whose latest herd event left her in no herd
         return problem(403, "Forbidden", "Modern finns inte i en besättning där du får registrera kaniner.")
     # Any registered buck of the genebank may be the father, alive or not (as for "Ny parning").
     if father.origin_herd.genebank_id != herd.genebank_id:

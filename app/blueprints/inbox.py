@@ -31,7 +31,7 @@ from PIL import Image, ImageOps
 from utils.database import (
     DB_PROXY,
     OUTSIDE_GENEBANK_HERDS,
-    Color,
+    Breeding,
     Herd,
     HerdTracking,
     InboxDocument,
@@ -57,7 +57,7 @@ from utils.individual_commands import (
     lock_individual_for_edit,
     record_sale,
 )
-from utils.individual_number_v2 import PAPER_NUMBER_REQUIRED, parse_number
+from utils.individual_number_v2 import LITTER_SIZE6W_ABOVE_BORN, PAPER_NUMBER_REQUIRED, parse_number
 from utils.legacy_compat import NOT_PROMOTED
 from utils.matrikel import resolve_own_membership
 
@@ -735,7 +735,7 @@ _FIELD_BY_DETAIL = (
     (re.compile(r"^Fadern "), "father"),
     (re.compile(r"^Välj kön"), "sex"),
     (re.compile(r"levande vid 6 veckor|litter_size6w", re.I), "litter_size6w"),
-    (re.compile(r"antal födda", re.I), "litter_size"),
+    (re.compile(r"antal födda|^Kullen har \d+ födda", re.I), "litter_size"),
     (re.compile(r"^Födelsedatum"), "birth_date"),
     (re.compile(r"^name must"), "name"),
     (
@@ -807,24 +807,35 @@ def _missing_from_paper(body):
 
     if not isinstance(body.get("color"), str) or not body["color"].strip():
         return "Välj färg."
-    # The list the form offers: the genebank of the mother's herd, where the rabbit is born. Registration would drop
-    # another colour in silence. An unknown mother is registration's to refuse.
-    number = body.get("mother")
-    mother = Individual.get_or_none((Individual.number == number) & not_voided()) if isinstance(number, str) else None
-    if (
-        mother is not None
-        and not (
-            Color.select().where((Color.name == body["color"]) & (Color.genebank == mother.current_herd.genebank_id))
-        ).exists()
-    ):
-        return "Välj en färg ur genbankens lista."
     if "sex" not in body or body["sex"] not in ("female", "male", None):
         return "Välj kön: hona, hane eller okänt."
     if not (count("litter_size") or 0) >= 1:
         return "Ange antal födda (minst 1)."
     if not (count("litter_size6w") or 0) >= 1:
         return "Ange antal levande vid 6 veckor (minst 1)."
+    if body["litter_size6w"] > body["litter_size"]:  # an existing litter's counts are not checked by registration
+        return LITTER_SIZE6W_ABOVE_BORN
     return None
+
+
+def _as_on_paper(body, individual):
+    """
+    After registration, in its transaction (a refusal rolls it back), what registration does not hold the paper to:
+    its colour must be in the list of the genebank the rabbit was registered in (registration drops another in
+    silence), and an existing litter's count born must be the paper's. A litter without one takes the paper's, as
+    registration fills in the count alive at 6 weeks. Raises the refusal.
+    """
+    if individual.color_id is None:
+        raise inbox.InboxError(400, "Välj en färg ur genbankens lista.")
+    litter = Breeding.get_by_id(individual.breeding_id)  # locked by registration
+    born = body["litter_size"]
+    if litter.litter_size is None:
+        if litter.litter_size6w is not None and litter.litter_size6w > born:
+            raise inbox.InboxError(400, LITTER_SIZE6W_ABOVE_BORN)
+        litter.litter_size = born
+        litter.save(only=[Breeding.litter_size])
+    elif litter.litter_size != born:
+        raise inbox.InboxError(400, f"Kullen har {litter.litter_size} födda i Stamboken.")
 
 
 def _register_new(body, user, grant):
@@ -838,6 +849,7 @@ def _register_new(body, user, grant):
     if not created:
         raise _Refused(response)
     individual = created[0]
+    _as_on_paper(body, individual)
     birth = HerdTracking.get((HerdTracking.individual == individual.id) & (HerdTracking.kind == "BIRTH"))
     grant.trace(birth.operation_id)
     return response[0].get_json(), individual
