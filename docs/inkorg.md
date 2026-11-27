@@ -1213,8 +1213,9 @@ så hur säkert ett fält är avgörs av kontrollerna mot registret, aldrig av m
    annat på intyget markeras hela grenen, eftersom det lika gärna kan vara föräldern som är fel
    läst. Är en far- eller morförälder inläst med förälderns eget nummer (mormor som mor) har
    modellen läst fel ruta: ingen kanin är sin egen förälder. Då blir grenen osäker i stället för
-   avviker. Far- och morföräldrarna jämförs inte med registret, och föräldern används inte för att
-   hitta kullen.
+   avviker. Den rutan jämförs inte med registret, inte heller en ruta med den andra förälderns
+   nummer (modellen läste föräldrarnas rad två gånger), och föräldern används inte för att hitta
+   kullen. Den andra rutan jämförs som vanligt.
 4. Ett nummer ett tecken fel ger registrets nummer som `härlett`, om bara en kanin passar.
 5. Kaninens eget nummer: årssiffrorna mot födelsedatumet och numret mot kullen (samma kontroll
    som pappersnumret vid registreringen), och intygsnumret ska vara ledigt.

@@ -279,11 +279,14 @@ def _branch(registry, raw, struck, role, fields, checks):
     }
     # No rabbit is its own parent: a box that finds the parent itself was read from the wrong place. When the model
     # read the parents' row again, the other box holds the other parent's number: no comparison either.
-    itself = next((gp_key for gp_key, p in on_paper.items() if registry.compare(p, rabbit) in (READ, DERIVED)), None)
+    copies = [gp_key for gp_key, p in on_paper.items() if registry.compare(p, rabbit) in (READ, DERIVED)]
+    itself = copies[0] if copies else None
     if itself:
         other = _parse_number(_entry(raw, _PARENTS["father" if role == "mother" else "mother"][0]), registry.letter)
+        other_rabbit = registry.find(other)[0] if other else None
         for gp_key, p in on_paper.items():
-            if gp_key == itself or (p and other and p[:2] == other[:2]):
+            again = p and other and (p[:2] == other[:2] or registry.compare(p, other_rabbit) in (READ, DERIVED))
+            if gp_key in copies or again:
                 on_paper[gp_key] = None
     grandparents = [
         (gp_key, _number_text(entry), theirs, registry.compare(on_paper[gp_key], theirs))
@@ -311,7 +314,8 @@ def _branch(registry, raw, struck, role, fields, checks):
         doubts.append(sibling)
     compared = any(result in (READ, DERIVED) for *_, result in grandparents)
     if itself:
-        doubts.append(f"{itself} är inläst med {label.lower()}s eget nummer, så tolkningen har troligen tagit fel ruta")
+        boxes_named = f"{' och '.join(copies)} är {'inlästa' if len(copies) > 1 else 'inläst'}"
+        doubts.append(f"{boxes_named} med {label.lower()}s eget nummer, så tolkningen har troligen tagit fel ruta")
     elif not compared:
         doubts.append(f"far- och morföräldrarna går inte att jämföra med registrets för {rabbit.number}")
     if doubts:
@@ -621,9 +625,9 @@ def build_proposal(raw, genebank_id, herd_id=None, registered=None):
     struck = {key for key in struck if isinstance(key, str)} if isinstance(struck, list) else set()
     registry = _Registry(genebank_id if genebank_id is not None else _genebank_of_letter(raw))
     proposal = _proposal(registry, raw, struck, herd_id, registered)
-    letter = _text(raw.get("genbanksnr"))[:1].upper()
-    shaped = _parse_number(raw, registry.letter) is not None  # "Nr 9001" has no letter to speak of
-    if shaped and letter.isalpha() and registry.letter and letter != registry.letter and "genbanksnr" not in struck:
+    lettered = re.match(r"([A-Za-z])\s*\d", _text(raw.get("genbanksnr")))  # "Nr 9001" has no letter to speak of
+    letter = lettered[1].upper() if lettered else ""
+    if letter and registry.letter and letter != registry.letter and "genbanksnr" not in struck:
         # The reading or the item's genebank is wrong; which one, the handler sees on the photo.
         proposal["checks"].insert(
             0,

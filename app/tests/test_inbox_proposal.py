@@ -167,6 +167,10 @@ class TestGenebank(ProposalTest):
         for herd in ("G9001", "9001", "g9001", "Nr 9001"):
             with self.subTest(herd):
                 self.assertNotIn("börjar med", " ".join(self.texts(self.propose(reading(genbanksnr=herd)))))
+        unreadable = self.propose(reading(genbanksnr="M9001", ar_kull_individ="??"))  # the letter still speaks
+        self.assertIn(
+            "Individnumret börjar med M på intyget, men genbankens nummer börjar med G.", self.texts(unreadable)
+        )
         struck = self.propose(reading(genbanksnr="M9001", overstruket=["genbanksnr"]))
         self.assertNotIn("börjar med", " ".join(self.texts(struck)))
 
@@ -227,10 +231,20 @@ class TestPedigree(ProposalTest):
         )
 
     def test_a_misread_box_near_the_parent_is_caught_and_the_other_box_still_counts(self):
-        # Mormor one character from the mother finds her too.
+        # Mormor one character from the mother finds her too, and so do both boxes copying her.
+        for morfar, named in (
+            (ancestor("G9004", "2011"), "mormor är inläst"),
+            (ancestor("G9001", "2211"), "morfar och mormor är inlästa"),
+        ):
+            proposal = self.propose(reading(morfar=morfar, mormor=ancestor("G9011", "2211")))
+            self.assertIn(f"Mor: {named} med mors eget nummer", " ".join(self.texts(proposal, False)))
         proposal = self.propose(reading(mormor=ancestor("G9011", "2211")))
         self.assertEqual(self.source(proposal, "mother"), ("osäker", None))
         self.assertIn("Mor: mormor är inläst med mors eget nummer", " ".join(self.texts(proposal, False)))
+        # Mormor repeats the mother and morfar the father, one herd digit off: the parents' row read again.
+        proposal = self.propose(reading(morfar=ancestor("G9013", "2311"), mormor=ancestor("G9001", "2211")))
+        self.assertEqual(self.source(proposal, "mother"), ("osäker", None))
+        self.assertNotIn("far- och morföräldrarna på intyget", " ".join(self.texts(proposal)))
         # Farmor copies the father, but farfar, read on its own, is not G9002-2311's father: still a disagreement.
         proposal = self.propose(reading(far=ancestor("G9002", "2311", "Max"), farmor=ancestor("G9002", "2311")))
         self.assertEqual(self.source(proposal, "father"), ("avviker", None))
@@ -240,14 +254,14 @@ class TestPedigree(ProposalTest):
         )
 
     def test_a_misread_box_does_not_lead_to_another_rabbits_litter(self):
-        # The mother misread as Maja, whose mormor box repeats her: morfar, read right, is not Maja's father.
-        # Maja's one litter born that day must not fill in the parents.
+        # The mother misread as Maja, whose mormor box repeats her, and morfar left empty: nothing else speaks
+        # against Maja, but her one litter born that day must not fill in the parents.
         self.litter("G9003", "G9003-2313", "G9002-2311", date(2025, 5, 10), [], size=5)
         proposal = self.propose(
-            reading(mor=ancestor("G9003", "2313"), mormor=ancestor("G9003", "2313"), far=ancestor())
+            reading(mor=ancestor("G9003", "2313"), morfar=ancestor(), mormor=ancestor("G9003", "2313"), far=ancestor())
         )
-        for key in ("mother", "father"):
-            self.assertNotIn(self.source(proposal, key), [("härlett", "G9003-2313"), ("härlett", "G9002-2311")], key)
+        self.assertEqual(self.source(proposal, "mother"), ("osäker", None))
+        self.assertIsNone(self.source(proposal, "father"))
         self.assertNotIn("Mor och far är hämtade ur Stamboken, ur kullen född 2025-05-10.", self.texts(proposal))
 
     def test_a_parent_only_found_does_not_overrule_a_confirmed_one(self):
