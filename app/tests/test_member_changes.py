@@ -628,7 +628,9 @@ class TestReviewRound1(DetailsTest):
     def test_a_herd_page_account_fix_revokes_a_waiting_link_change(self):
         sibling = db.Herd.create(genebank=self.gotland, herd="G9003", is_active=True, membership=self.membership())
         self.submit_changes({"konto": NEW_KONTO})
+        revision = da.support_account_revision(self.membership().id)  # the form was read after the link's change
         fix = {"id": sibling.id, "bank_account_number": "5555-1234567", "bank_name": "Rätt bank"}
+        fix["bank_account_revision"] = revision
         self.assertEqual(da.update_herd(fix, self.admin.uuid), {"status": "updated"})  # through the sibling herd
         (row,) = self.requests()
         self.assertEqual(row.revoked_reason, "nyare")
