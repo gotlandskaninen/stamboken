@@ -143,43 +143,53 @@ def _edge(light, inside):
 
 def _paper(grey, inside):
     """
-    The light area (the paper) on the straightened copy, as fractions {x, y, w, h}, or None. `inside` marks the
-    photo's own pixels: the corners the turn adds count neither as paper nor as table. The paper must show an edge
-    against the table on at least two sides: on a light table the light area is the table, and runs to the photo's
-    edges.
+    The light area (the paper) on the straightened copy as fractions {x, y, w, h}: with PAPER_MARGIN on each side,
+    and tight. None, None when there is none. `inside` marks the photo's own pixels: the corners the turn adds count
+    neither as paper nor as table. The paper must show an edge against the table on three sides, or on two opposite
+    ones (a paper that fills the photo's width or height): on a light table the light area is the table, and runs
+    out to the photo's edges, two of them adjacent when the dark is only to one side and below.
     """
     if not inside.any():
-        return None
+        return None, None
     light = Image.fromarray((((grey > _otsu(grey[inside])) & inside) * 255).astype(np.uint8))
     light = np.asarray(light.filter(ImageFilter.MaxFilter(CLOSING)).filter(ImageFilter.MinFilter(CLOSING)), bool)
     light &= inside
     if not light.any():
-        return None
+        return None, None
     height, width = light.shape
-    top, bottom = _run(_shares(light, inside, 1))
-    left, right = _run(_shares(light, inside, 0))
+    top_row, bottom_row = _run(_shares(light, inside, 1))
+    left_col, right_col = _run(_shares(light, inside, 0))
     strip_x, strip_y = max(3, round(EDGE_STRIP * width)), max(3, round(EDGE_STRIP * height))
     strips = (
-        np.s_[max(0, top - strip_y) : top, left:right],
-        np.s_[bottom : bottom + strip_y, left:right],
-        np.s_[top:bottom, max(0, left - strip_x) : left],
-        np.s_[top:bottom, right : right + strip_x],
+        np.s_[max(0, top_row - strip_y) : top_row, left_col:right_col],
+        np.s_[bottom_row : bottom_row + strip_y, left_col:right_col],
+        np.s_[top_row:bottom_row, max(0, left_col - strip_x) : left_col],
+        np.s_[top_row:bottom_row, right_col : right_col + strip_x],
     )
-    if sum(_edge(light[strip], inside[strip]) for strip in strips if inside[strip].size) < 2:
-        return None
-    x0, y0 = max(0.0, left / width - PAPER_MARGIN), max(0.0, top / height - PAPER_MARGIN)
-    x1, y1 = min(1.0, right / width + PAPER_MARGIN), min(1.0, bottom / height + PAPER_MARGIN)
-    if not PAPER_AREA[0] <= (x1 - x0) * (y1 - y0) <= PAPER_AREA[1]:
-        return None
-    return {"x": round(x0, 4), "y": round(y0, 4), "w": round(x1 - x0, 4), "h": round(y1 - y0, 4)}
+    top, bottom, left, right = (bool(inside[strip].size) and _edge(light[strip], inside[strip]) for strip in strips)
+    if top + bottom + left + right < 3 and not ((top and bottom) or (left and right)):
+        return None, None
+
+    def box(x0, y0, x1, y1):
+        x0, y0, x1, y1 = max(0.0, x0), max(0.0, y0), min(1.0, x1), min(1.0, y1)
+        return {"x": round(x0, 4), "y": round(y0, 4), "w": round(x1 - x0, 4), "h": round(y1 - y0, 4)}
+
+    x0, y0, x1, y1 = left_col / width, top_row / height, right_col / width, bottom_row / height
+    tight = box(x0, y0, x1, y1)
+    padded = box(x0 - PAPER_MARGIN, y0 - PAPER_MARGIN, x1 + PAPER_MARGIN, y1 + PAPER_MARGIN)
+    if not PAPER_AREA[0] <= padded["w"] * padded["h"] <= PAPER_AREA[1]:
+        return None, None
+    return padded, tight
 
 
 def find_paper(source, rotation, straighten=None):
     """
     "Hitta pappret" on the photo (a path or a file) turned `rotation` degrees: the straighten that lines up its
     writing (0.0 when there is no clear tilt, see _tilt), or the `straighten` given, which is never looked for; and
-    the paper as fractions of F turned `rotation` plus that angle, or None when no light area of a believable size
-    stands out (a light background, a photo of only paper). Found on a grey copy about WORK_SIDE pixels long.
+    the paper as fractions of F turned `rotation` plus that angle, with a margin (`paper`) and tight
+    (`paper_tight`, for a cut that must not reach into the paper's lower part), or None when no light area of a
+    believable size stands out (a light table, a photo of only paper). Found on a grey copy about WORK_SIDE pixels
+    long.
     """
     with Image.open(source) as original:
         original.draft("L", (WORK_SIDE, WORK_SIDE))  # a JPEG is decoded at a fraction of its size
@@ -190,4 +200,5 @@ def find_paper(source, rotation, straighten=None):
     straightened = grey.rotate(-angle, expand=True, resample=Image.Resampling.BILINEAR)
     # The photo's own pixels, less the edge the resampling blends with the corners the turn adds.
     inside = Image.new("L", grey.size, 255).rotate(-angle, expand=True).filter(ImageFilter.MinFilter(3))
-    return {"angle": angle, "paper": _paper(np.asarray(straightened), np.asarray(inside, bool))}
+    padded, tight = _paper(np.asarray(straightened), np.asarray(inside, bool))
+    return {"angle": angle, "paper": padded, "paper_tight": tight}

@@ -612,11 +612,13 @@ def reinterpret(item_id, document_id):
 
 # [Next.js] "Hitta pappret": how far the photo is tilted and where the paper lies. It changes nothing. With
 # "straighten" (the masking step, where the angle is fixed) the tilt is not looked for: the paper at that angle.
+# "rotation" is the turn the view shows: the paper is found in the stored one, so another is refused.
 @inbox_bp.route("/inkorg/<int:item_id>/dokument/<int:document_id>/hitta-pappret", methods=["POST"])
 @json_login_required
 @_queue_worker
 def find_paper(item_id, document_id):
-    straighten = _body().get("straighten")
+    body = _body()
+    straighten, rotation = body.get("straighten"), body.get("rotation")
     try:
         item = InboxItem.get_or_none(InboxItem.id == item_id)
         if item is None:
@@ -627,6 +629,9 @@ def find_paper(item_id, document_id):
             raise inbox.InboxError(409, "Originalet är raderat.")
         if straighten is not None:
             straighten = inbox._straighten(straighten)  # pylint: disable=protected-access  # as PATCH takes it
+        # pylint: disable-next=protected-access
+        if rotation is not None and inbox._rotation(rotation) != document.rotation:
+            raise inbox.InboxError(409, "Fotot visas inte med den sparade vridningen. Ladda om sidan och sök igen.")
         try:  # no transaction and no lock while the photo is looked at
             found = inbox_paper.find_paper(inbox.private_path(document.original_path), document.rotation, straighten)
         except FileNotFoundError:  # erased meanwhile

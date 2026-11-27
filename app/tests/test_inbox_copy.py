@@ -5,15 +5,18 @@ isort:skip_file
 
 import datetime
 import io
+import math
 import os
 from unittest import mock
 
+import numpy as np  # noqa: E402
 import utils.database as db  # noqa: E402
 import utils.inbox as inbox  # noqa: E402
 import utils.inbox_gmail as inbox_gmail  # noqa: E402
 import utils.inbox_interpreter as interpreter  # noqa: E402
 from PIL import Image, ImageDraw  # noqa: E402
 
+import tests.test_inbox_paper as paper_photos  # noqa: E402
 from tests.database_test import rewind_migrations  # noqa: E402
 from tests.ht_helpers import ht_row  # noqa: E402
 from tests.inbox_fixtures import InboxTest, encoded  # noqa: E402
@@ -586,6 +589,29 @@ class TestStraighten(CopyTest):
         )
         events = self.reload(item).events.where(db.InboxEvent.kind == "kopia").order_by(db.InboxEvent.id)
         self.assertEqual([e.detail["straighten"] for e in events], [3, -2, 0, 0])
+
+    def test_the_frame_round_the_paper_found_keeps_no_line_of_its_lower_third(self):
+        item, document = self.saved_document()
+        certificate = paper_photos.paper()
+        # Just below the paper's two-thirds line (1066.7 of 1600), in the seller and buyer block.
+        ImageDraw.Draw(certificate).rectangle([100, 1075, 1099, 1081], fill=GREEN)
+        photo = Image.new("RGB", (1800, 2200), paper_photos.DARK)
+        photo.paste(certificate, (300, 300))
+        photo.save(self.stored(document), "JPEG", quality=95)
+        url = f"/{item.id}/dokument/{document.id}/hitta-pappret"
+        found = self.post(url, rotation=0, straighten=0).get_json()
+        padded, tight = found["paper"], found["paper_tight"]
+        # The frame the masking sets (image.ts paperFrame): the padded box, cut at the tight box's two thirds,
+        # then rounded inwards as toApiFrame sends it.
+        bottom = math.floor((tight["y"] + tight["h"] * 0.6667) * 1e4 + 1e-6) / 1e4
+        frame = {"x": padded["x"], "y": padded["y"], "w": padded["w"], "h": round(bottom - padded["y"], 4)}
+        # The padded box cut at its own two thirds would have reached the line.
+        self.assertGreater((padded["y"] + padded["h"] * 0.6667) * 2200, 300 + 1075)
+        resp = self.mask(item, document, straighten=0, mask_rects=[], copy_frame=frame)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        copy = np.asarray(self.copy(document), np.int16)
+        self.assertGreater(copy.shape[0], 1000)  # the upper two thirds of the paper, about 1067 rows
+        self.assertFalse((np.abs(copy - GREEN) < 60).all(axis=-1).any())
 
     def test_migration_59_adds_the_straighten_and_replays(self):
         self.addCleanup(db.check_migrations)

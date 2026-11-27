@@ -79,40 +79,59 @@ class TestFindPaper(unittest.TestCase):
             ("a blank page", Image.new("RGB", (1800, 2200), (240, 240, 240))),
         ):
             with self.subTest(name):
-                self.assertEqual(find(image), {"angle": 0.0, "paper": None})
+                self.assertEqual(find(image), {"angle": 0.0, "paper": None, "paper_tight": None})
 
     def test_on_a_light_table_the_frame_never_keeps_the_lower_third(self):
-        """The table is as light as the paper: either no paper, or one whose upper two thirds miss its lower third."""
+        """The table is as light as the paper: either no paper, or a frame (paperFrame) that misses its lower third."""
         certificate = paper()
-        ImageDraw.Draw(certificate).rectangle([100, 1250, 1099, 1269], fill=GREEN)  # in the seller and buyer block
+        # Just inside the seller and buyer block, which starts at 1067 of 1600.
+        ImageDraw.Draw(certificate).rectangle([100, 1080, 1099, 1099], fill=GREEN)
         for table, shadow in (
-            ((250, 250, 248), False),
-            ((215, 210, 200), False),
-            ((170, 160, 150), False),
-            ((250, 250, 248), True),  # the light area runs to three edges of the photo: it is the table
+            ((250, 250, 248), None),
+            ((215, 210, 200), None),
+            ((170, 160, 150), None),
+            ((250, 250, 248), "right"),  # the light area runs to three edges of the photo: it is the table
+            # Dark only to the right and below: the table's own two edges against it look like the paper's, and
+            # the light area runs out to the two other edges, which meet in a corner.
+            ((250, 250, 248), "right and below"),
         ):
             with self.subTest(table=table, shadow=shadow):
                 photo = Image.new("RGB", (2000, 2400), table)
                 if shadow:
                     ImageDraw.Draw(photo).rectangle([1550, 0, 1999, 2399], fill=DARK)
+                if shadow == "right and below":  # the paper near the top left, the table on far below it
+                    ImageDraw.Draw(photo).rectangle([0, 2100, 1999, 2399], fill=DARK)
                 tilted = certificate.convert("RGBA").rotate(5, expand=True, resample=Image.Resampling.BICUBIC)
-                photo.paste(tilted, (150, 100), tilted)  # off the middle
+                photo.paste(tilted, (100, 50) if shadow == "right and below" else (150, 100), tilted)  # off the middle
                 found = find(photo)
                 if found["paper"] is None:
                     continue
-                straightened, box = inbox_paper.turned(photo, 0, found["angle"]), found["paper"]
+                straightened, box, tight = (
+                    inbox_paper.turned(photo, 0, found["angle"]),
+                    found["paper"],
+                    found["paper_tight"],
+                )
                 width, height = straightened.size
                 kept = straightened.crop(
                     (
                         round(box["x"] * width),
                         round(box["y"] * height),
                         round((box["x"] + box["w"]) * width),
-                        round((box["y"] + box["h"] * 0.6667) * height),
+                        round((tight["y"] + tight["h"] * 0.6667) * height),
                     )
                 )
                 green = (np.abs(np.asarray(kept, np.int16) - GREEN) < 50).all(axis=-1)
                 self.assertFalse(green.any())
         self.assertIsNone(find(photographed(paper(), 5, background=(250, 250, 248)))["paper"])
+
+    def test_the_tight_box_is_the_paper_and_the_padded_one_holds_it_with_a_margin(self):
+        found = find(photographed(paper(), 0))
+        tight, padded = found["paper_tight"], found["paper"]
+        x, y = (1800 - 1200) / 2 / 1800, (2200 - 1600) / 2 / 2200  # the paper's edges in the photo
+        for got, expected in ((tight["x"], x), (tight["y"], y), (tight["w"], 1200 / 1800), (tight["h"], 1600 / 2200)):
+            self.assertAlmostEqual(got, expected, delta=0.004)  # a pixel or so of the copy it was found on
+        self.assertAlmostEqual(padded["y"], tight["y"] - inbox_paper.PAPER_MARGIN, places=3)
+        self.assertAlmostEqual(padded["h"], tight["h"] + 2 * inbox_paper.PAPER_MARGIN, places=3)
 
     def test_a_paper_too_small_to_believe_is_no_paper(self):
         self.assertIsNone(find(photographed(paper(700, 900), 6))["paper"])  # 13 % of the photo
@@ -208,6 +227,15 @@ class TestEndpoint(InboxTest):
             with self.subTest(bad):
                 self.assertEqual(self.find(straighten=bad).status_code, 400)
         self.assertEqual(self.state(), before)
+
+    def test_the_turn_the_view_shows_must_be_the_stored_one(self):
+        self.login("hjalp")
+        self.post(f"/{self.item.id}/ta")
+        db.InboxDocument.update(rotation=90).where(db.InboxDocument.id == self.document.id).execute()
+        self.assertEqual(self.find(rotation=0).status_code, 409)  # turned in the view, not yet stored
+        self.assertEqual(self.find(rotation=45).status_code, 400)
+        resp = self.find(rotation=90)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
 
     def test_only_the_handler_of_an_item_with_its_original(self):
         before = self.state()
