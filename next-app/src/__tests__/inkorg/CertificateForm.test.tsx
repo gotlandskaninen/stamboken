@@ -116,10 +116,30 @@ describe("CertificateForm with the image reading's proposal", () => {
     expect(sourceOf(/^Far(?!-)/)).toBe("avviker");
     expect(sourceOf(/^Födelsedatum/)).toBe("osäker");
     expect(sourceOf(/^Intygsnummer/)).toBeNull();
-    expect(screen.getByText("Intyget: G9002 2311")).toBeInTheDocument();
+    expect(screen.getByText("Inläst: G9002 2311")).toBeInTheDocument();
     expect(
-      screen.getByText("Intyget: G9003 2011 · Registret: G9002-2011"),
+      screen.getByText("Inläst: G9003 2011 · Registret: G9002-2011"),
     ).toBeInTheDocument();
+  });
+
+  it("does not caption a number read with how to write it", () => {
+    show(doc());
+    expect(screen.getByText("Som det står på intyget.")).toBeInTheDocument();
+    cleanup();
+    const unsure = {
+      ...PROPOSAL,
+      fields: {
+        ...PROPOSAL.fields,
+        paper_number: {
+          value: null,
+          source: "osäker" as const,
+          read: "G9001 2511",
+        },
+      },
+    };
+    show(doc({ proposal: unsure }));
+    expect(screen.getByText("Inläst: G9001 2511")).toBeInTheDocument();
+    expect(screen.queryByText(/Som det står på intyget/)).toBeNull();
   });
 
   it("lists the checks under the form, with the note to compare with the photo", () => {
@@ -132,6 +152,9 @@ describe("CertificateForm with the image reading's proposal", () => {
     ]);
     expect(checks).toHaveTextContent("Intygsnumret är ledigt.");
     expect(screen.getByText(/Jämför varje fält med fotot/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/räknas inte om när du skriver/),
+    ).toBeInTheDocument();
   });
 
   it("opens on the paper certificate when the rabbit is in Stamboken", () => {
