@@ -22,18 +22,31 @@ const actions = vi.hoisted(() => ({
 }));
 vi.mock("@/app/(app)/stamboken/(dashboard)/inkorg/actions", () => actions);
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
-// The canvas needs a browser: a stub that shows the rotation and can turn.
+// The canvas needs a browser: a stub that shows the rotation and can turn, and
+// a button per rectangle on the photo that selects it (Delete removes it).
 vi.mock("@/app/(app)/stamboken/(dashboard)/inkorg/[id]/PhotoViewer", () => ({
   PhotoViewer: ({
     rotation,
     onRotate,
+    mask,
   }: {
     rotation: number;
     onRotate: (q: number) => void;
+    mask?: MaskLayer;
   }) => (
     <div>
       <span data-testid="rotation">{rotation}</span>
       <button onClick={() => onRotate(1)}>Vrid</button>
+      {mask?.rects.map((_, i) => (
+        <button
+          key={i}
+          aria-pressed={mask.selected === i}
+          onClick={() => mask.onSelect(i)}
+          onKeyDown={(e) => e.key === "Delete" && mask.onRemove(i)}
+        >
+          {i === mask.frameAt ? "Ramen" : `Ruta ${i}`}
+        </button>
+      ))}
     </div>
   ),
 }));
@@ -51,6 +64,8 @@ vi.mock(
 );
 
 import { WorkView } from "@/app/(app)/stamboken/(dashboard)/inkorg/[id]/WorkView";
+import type { MaskLayer } from "@/app/(app)/stamboken/(dashboard)/inkorg/[id]/PhotoViewer";
+import { UPPER_TWO_THIRDS } from "@/app/(app)/stamboken/(dashboard)/inkorg/image";
 import { QueueUndoProvider } from "@/app/(app)/stamboken/(dashboard)/inkorg/QueueUndo";
 import { ModeProvider } from "@/lib/mode-context";
 import type {
@@ -74,7 +89,8 @@ const doc = (changes: Partial<InboxDocument> = {}): InboxDocument => ({
   cert_format: null,
   rotation: 0,
   mask_rects: null,
-  mask_suggestion: null,
+  copy_frame: null,
+  frame_suggestion: null,
   waiting_for: null,
   interpretation_status: "av",
   proposal: null,
@@ -234,8 +250,13 @@ describe("WorkView: mail", () => {
 });
 
 describe("WorkView: masking", () => {
-  it("sends the rotation of the turned view with its rectangles in one call", async () => {
-    render(view(item()));
+  it("sends the rotation of the turned view with its frame and rectangles in one call", async () => {
+    const handwritten = doc({
+      cert_format: "handskrivet",
+      frame_suggestion: UPPER_TWO_THIRDS,
+    });
+    render(view(item({ documents: [handwritten] })));
+    fireEvent.click(screen.getByRole("button", { name: "Lägg till ruta" }));
     fireEvent.click(screen.getByRole("button", { name: "Vrid" }));
     expect(screen.getByTestId("rotation")).toHaveTextContent("90");
     const confirm = screen.getByRole("button", {
@@ -244,12 +265,61 @@ describe("WorkView: masking", () => {
     // The turn is saved first; the button waits for it.
     await waitFor(() => expect(confirm).toBeEnabled());
     fireEvent.click(confirm);
-    // The lower third, turned a quarter clockwise with the view: the left third.
+    // Turned a quarter clockwise with the view: the frame round the top two
+    // thirds now holds the right two thirds, and the box turns with it.
     expect(actions.confirmMask).toHaveBeenCalledWith(
       12,
       31,
       90,
-      [{ x: 0, y: 0, w: 0.3333, h: 1 }],
+      [{ x: 0.45, y: 0.35, w: 0.1, h: 0.3 }],
+      { x: expect.closeTo(0.3333, 4), y: 0, w: 0.6667, h: 1 },
+      false,
+      false,
+    );
+  });
+
+  it("lays the frame first on the photo, never as the selected box, and hides 'nothing to hide' while it is there", () => {
+    const handwritten = doc({
+      cert_format: "handskrivet",
+      frame_suggestion: UPPER_TWO_THIRDS,
+    });
+    render(view(item({ documents: [handwritten] })));
+    const nothing = () =>
+      screen.queryByLabelText("Fotot visar inga säljar- eller köparuppgifter");
+    const confirm = screen.getByRole("button", {
+      name: "Bekräfta maskningen och nästa",
+    });
+    const removeBox = screen.getByRole("button", { name: "Ta bort vald ruta" });
+    expect(nothing()).toBeNull();
+    expect(confirm).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Lägg till ruta" }));
+    expect(screen.getByRole("button", { name: "Ruta 1" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Ramen" }));
+    expect(removeBox).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Ruta 1" }));
+    fireEvent.click(removeBox);
+    expect(screen.queryByRole("button", { name: "Ruta 1" })).toBeNull();
+    fireEvent.keyDown(screen.getByRole("button", { name: "Ramen" }), {
+      key: "Delete",
+    });
+    expect(screen.queryByRole("button", { name: "Ramen" })).toBeNull();
+    expect(nothing()).toBeInTheDocument();
+    expect(confirm).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Lägg till ram" }));
+    expect(nothing()).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Ta bort ramen" }));
+    expect(nothing()).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Lägg till ram" }));
+    fireEvent.click(confirm);
+    expect(actions.confirmMask).toHaveBeenCalledWith(
+      12,
+      31,
+      0,
+      [],
+      UPPER_TWO_THIRDS,
       false,
       false,
     );
@@ -282,17 +352,19 @@ describe("WorkView: masking", () => {
       31,
       0,
       [],
+      null,
       true,
       false,
     );
   });
 
-  it("lets a manager redo the masking of a finished document, from its stored rotation", () => {
+  it("lets a manager redo the masking of a finished document, from its stored rotation and frame", () => {
     const done = doc({
       status: "klar",
       has_copy: true,
       rotation: 90,
       mask_rects: [{ x: 0.1, y: 0.1, w: 0.2, h: 0.2 }],
+      copy_frame: { x: 0, y: 0, w: 1, h: 0.5 },
     });
     render(
       view(
@@ -310,6 +382,7 @@ describe("WorkView: masking", () => {
       31,
       90,
       [{ x: 0.1, y: 0.1, w: 0.2, h: 0.2 }],
+      { x: 0, y: 0, w: 1, h: 0.5 },
       false,
       false,
     );
@@ -334,6 +407,7 @@ describe("WorkView: masking", () => {
         individual: "G9001-2512",
         interpretation_status: "klar",
         proposal: { fields, checks },
+        mask_rects: [{ x: 0, y: 0.6667, w: 1, h: 0.3333 }],
       });
     const own = {
       individual: { value: "G9001-2512", source: "läst" as const },
@@ -349,6 +423,7 @@ describe("WorkView: masking", () => {
       31,
       0,
       expect.any(Array),
+      null,
       false,
       true,
     );

@@ -5,6 +5,7 @@ import { cookies } from "next/headers";
 import { MODE_COOKIE, parseMode, type Mode } from "@/lib/mode";
 import type { SaleBuyer } from "@/components/individual/BuyerFields";
 import { fetchApi, ApiError } from "@/lib/api";
+import { toApiRects } from "./image";
 import type {
   InboxDocument,
   InboxItem,
@@ -250,9 +251,11 @@ export async function registerSale(
 }
 
 /**
- * The rectangles come with the rotation they were drawn in (fractions of the
- * image as turned by it): the API stores both and makes the copy from the pair.
- * An empty list needs `noPersonalData`, the handler's explicit "nothing to hide".
+ * The rectangles and the frame come with the rotation they were drawn in
+ * (fractions of the image as turned by it): the API stores them together and
+ * makes the copy from them, cropped to the frame (null: the whole photo).
+ * Neither boxes nor a frame needs `noPersonalData`, the handler's explicit
+ * "nothing to hide".
  * `matchesRegistry`: the handler found the certificate and the registry in agreement.
  */
 export async function confirmMask(
@@ -260,6 +263,7 @@ export async function confirmMask(
   doc: number,
   rotation: number,
   rects: Rect[],
+  frame: Rect | null,
   noPersonalData = false,
   matchesRegistry = false,
 ) {
@@ -267,12 +271,13 @@ export async function confirmMask(
     return refused("Ogiltig maskning.");
   if (![0, 90, 180, 270].includes(rotation))
     return refused("Ogiltig vridning.");
-  if (rects.length === 0 && noPersonalData !== true)
+  if (rects.length === 0 && !frame && noPersonalData !== true)
     return refused("Bekräfta att fotot inte visar några uppgifter.");
   return call<DocResult>(id, `/${id}/dokument/${doc}/maskning`, "POST", {
     rotation,
     mask_rects: rects,
-    ...(rects.length === 0 ? { no_personal_data: true } : {}),
+    copy_frame: frame && toApiRects([frame])[0],
+    ...(rects.length === 0 && !frame ? { no_personal_data: true } : {}),
     matches_registry: matchesRegistry === true,
   });
 }

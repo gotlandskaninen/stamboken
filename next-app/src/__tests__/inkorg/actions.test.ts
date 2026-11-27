@@ -137,34 +137,47 @@ describe("the queue's server actions", () => {
 
   it("send the rotation together with the rectangles drawn in it", async () => {
     const rect = { x: 0, y: 0, w: 0.3, h: 1 };
-    await confirmMask(12, 31, 90, [rect]);
+    await confirmMask(12, 31, 90, [rect], null);
     expect(body(0)).toEqual({
       rotation: 90,
       mask_rects: [rect],
+      copy_frame: null,
+      matches_registry: false,
+    });
+  });
+
+  it("send the frame around the copy rounded inside the image, and no no_personal_data beside it", async () => {
+    const frame = { x: 0.33333333, y: 0, w: 0.66669999, h: 1.00001 };
+    await confirmMask(12, 31, 90, [], frame, true);
+    expect(body(0)).toEqual({
+      rotation: 90,
+      mask_rects: [],
+      copy_frame: { x: 0.3333, y: 0, w: 0.6667, h: 1 },
       matches_registry: false,
     });
   });
 
   it("send whether the handler found the certificate and the registry in agreement", async () => {
     const rect = { x: 0, y: 0, w: 0.3, h: 1 };
-    await confirmMask(12, 31, 0, [rect], false, true);
+    await confirmMask(12, 31, 0, [rect], null, false, true);
     expect(body(0)).toMatchObject({ matches_registry: true });
   });
 
-  it("need the explicit no_personal_data for an empty list", async () => {
-    expect((await confirmMask(12, 31, 0, [])).ok).toBe(false);
+  it("need the explicit no_personal_data for an empty list without a frame", async () => {
+    expect((await confirmMask(12, 31, 0, [], null)).ok).toBe(false);
     expect(api).not.toHaveBeenCalled();
-    await confirmMask(12, 31, 180, [], true);
+    await confirmMask(12, 31, 180, [], null, true);
     expect(body(0)).toEqual({
       rotation: 180,
       mask_rects: [],
+      copy_frame: null,
       no_personal_data: true,
       matches_registry: false,
     });
   });
 
   it("refuse a rotation that is not a quarter turn", async () => {
-    expect((await confirmMask(12, 31, 45, [])).ok).toBe(false);
+    expect((await confirmMask(12, 31, 45, [], null)).ok).toBe(false);
     expect(api).not.toHaveBeenCalled();
   });
 

@@ -1,14 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
   enhancePencil,
+  initialFrame,
   initialRects,
-  LOWER_THIRD,
   MAX_RECTS,
   moveRect,
   resizeRect,
   rotateRect,
   toApiRects,
   turn,
+  UPPER_TWO_THIRDS,
 } from "@/app/(app)/stamboken/(dashboard)/inkorg/image";
 
 const r = { x: 0.1, y: 0.2, w: 0.3, h: 0.4 };
@@ -36,10 +37,20 @@ describe("resizeRect", () => {
 });
 
 describe("rotateRect", () => {
-  it("a quarter turn clockwise takes the bottom band to the left edge", () =>
-    close(rotateRect(LOWER_THIRD, 1), { x: 0, y: 0, w: 0.3333, h: 1 }));
-  it("a half turn takes the bottom band to the top", () =>
-    close(rotateRect(LOWER_THIRD, 2), { x: 0, y: 0, w: 1, h: 0.3333 }));
+  it("a quarter turn clockwise takes the top band to the right edge", () =>
+    close(rotateRect(UPPER_TWO_THIRDS, 1), {
+      x: 0.3333,
+      y: 0,
+      w: 0.6667,
+      h: 1,
+    }));
+  it("a half turn takes the top band to the bottom", () =>
+    close(rotateRect(UPPER_TWO_THIRDS, 2), {
+      x: 0,
+      y: 0.3333,
+      w: 1,
+      h: 0.6667,
+    }));
   it("follows the content of an off-centre rectangle", () => {
     // Point (0.1, 0.2) in a W×H image is at (1 - 0.2, 0.1) after 90° clockwise.
     close(rotateRect(r, 1), { x: 1 - 0.2 - 0.4, y: 0.1, w: 0.4, h: 0.3 });
@@ -68,17 +79,24 @@ describe("toApiRects", () => {
 });
 
 describe("initialRects", () => {
-  it("prefers the saved rectangles, then the suggestion, then the lower third", () => {
+  it("starts from the saved black boxes, or none", () => {
+    expect(initialRects({ mask_rects: [r] })).toEqual([r]);
+    expect(initialRects({ mask_rects: [] })).toEqual([]);
+    expect(initialRects({ mask_rects: null })).toEqual([]);
+  });
+});
+
+describe("initialFrame", () => {
+  it("prefers the saved frame, then the API's for a handwritten certificate, then none", () => {
     expect(
-      initialRects({ mask_rects: [r], mask_suggestion: [LOWER_THIRD] }),
-    ).toEqual([r]);
-    expect(initialRects({ mask_rects: [], mask_suggestion: null })).toEqual([]);
-    expect(initialRects({ mask_rects: null, mask_suggestion: [r] })).toEqual([
-      r,
-    ]);
-    expect(initialRects({ mask_rects: null, mask_suggestion: null })).toEqual([
-      LOWER_THIRD,
-    ]);
+      initialFrame({ copy_frame: r, frame_suggestion: UPPER_TWO_THIRDS }),
+    ).toEqual(r);
+    expect(
+      initialFrame({ copy_frame: null, frame_suggestion: UPPER_TWO_THIRDS }),
+    ).toEqual(UPPER_TWO_THIRDS);
+    expect(initialFrame({ copy_frame: null, frame_suggestion: null })).toBe(
+      null,
+    );
   });
 });
 

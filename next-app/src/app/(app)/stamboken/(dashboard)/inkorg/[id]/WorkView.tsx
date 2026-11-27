@@ -17,11 +17,13 @@ import {
   type ActionResult,
 } from "../actions";
 import {
+  initialFrame,
   initialRects,
   MAX_RECTS,
   rotateRect,
   toApiRects,
   turn,
+  UPPER_TWO_THIRDS,
 } from "../image";
 import {
   ACTION_LABEL,
@@ -225,6 +227,11 @@ export function WorkView({
   const [rects, setRects] = useState<Rect[]>(() =>
     doc ? initialRects(doc) : [],
   );
+  // The frame the copy is cropped to, first in the photo's layer before the black boxes.
+  const [copyFrame, setCopyFrame] = useState<Rect | null>(() =>
+    doc ? initialFrame(doc) : null,
+  );
+  const shift = copyFrame ? 1 : 0;
   const [selectedRect, setSelectedRect] = useState<number | null>(null);
   // "Bifoga utsnitt": the frame on the photo, in the view's rotation.
   const [crop, setCrop] = useState<Rect | null>(null);
@@ -232,6 +239,7 @@ export function WorkView({
     setShownStep(step);
     setRotation(doc?.rotation ?? 0);
     setRects(doc ? initialRects(doc) : []);
+    setCopyFrame(doc ? initialFrame(doc) : null);
     setSelectedRect(null);
     setCrop(null);
     setRedo(false);
@@ -266,7 +274,10 @@ export function WorkView({
 
   const turnView = (quarterTurns: number) => {
     setRotation((r) => turn(r, quarterTurns));
-    if (masking) setRects((rs) => rs.map((r) => rotateRect(r, quarterTurns)));
+    if (masking) {
+      setRects((rs) => rs.map((r) => rotateRect(r, quarterTurns)));
+      setCopyFrame((f) => f && rotateRect(f, quarterTurns));
+    }
     setCrop((c) => c && rotateRect(c, quarterTurns));
   };
 
@@ -566,13 +577,25 @@ export function WorkView({
                 mask={
                   masking && mayMask
                     ? {
-                        rects,
-                        selected: selectedRect,
-                        onSelect: setSelectedRect,
+                        rects: copyFrame ? [copyFrame, ...rects] : rects,
+                        frameAt: copyFrame ? 0 : undefined,
+                        // selectedRect counts the black boxes only: the frame is never "Ta bort vald ruta"'s
+                        selected:
+                          selectedRect === null ? null : selectedRect + shift,
+                        onSelect: (i) =>
+                          setSelectedRect(i < shift ? null : i - shift),
                         onChange: (i, r) =>
-                          setRects((rs) => rs.map((x, j) => (j === i ? r : x))),
+                          i < shift
+                            ? setCopyFrame(r)
+                            : setRects((rs) =>
+                                rs.map((x, j) => (j === i - shift ? r : x)),
+                              ),
                         onRemove: (i) => {
-                          setRects((rs) => rs.filter((_, j) => j !== i));
+                          if (i < shift) setCopyFrame(null);
+                          else
+                            setRects((rs) =>
+                              rs.filter((_, j) => j !== i - shift),
+                            );
                           setSelectedRect(null);
                         },
                       }
@@ -828,6 +851,7 @@ export function WorkView({
                       // From the stored pair, not from a turn made for reading.
                       setRotation(doc.rotation);
                       setRects(initialRects(doc));
+                      setCopyFrame(initialFrame(doc));
                       setSelectedRect(null);
                       setMatches(false);
                       setRedo(true);
@@ -844,14 +868,34 @@ export function WorkView({
                 <h2 className={styles.cardTitle}>Dölj säljare och köpare</h2>
                 <p className={styles.muted}>
                   {doc.individual} är sparad.
-                  {redo && " Kopian på kaninen ersätts när du bekräftar."} Täck
-                  säljarens och köparens uppgifter med svarta rutor innan kopian
-                  läggs på kaninen. Dra en ruta eller dess hörn, eller välj den
-                  och använd piltangenterna (Skift ändrar storleken).
+                  {redo && " Kopian på kaninen ersätts när du bekräftar."}{" "}
+                  Kopian på kaninen är det som syns innanför ramen; utan ram är
+                  den hela fotot. Dra ramen och dess hörn så att säljarens och
+                  köparens uppgifter hamnar utanför. Täck det som ändå syns
+                  innanför ramen med svarta rutor. Du kan också välja ramen
+                  eller en ruta och använda piltangenterna (Skift ändrar
+                  storleken).
                 </p>
                 {mayMask ? (
                   <>
                     <div className={styles.row}>
+                      {copyFrame ? (
+                        <button
+                          type="button"
+                          className="sb-btn sb-btn-secondary sb-btn-sm"
+                          onClick={() => setCopyFrame(null)}
+                        >
+                          Ta bort ramen
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="sb-btn sb-btn-secondary sb-btn-sm"
+                          onClick={() => setCopyFrame(UPPER_TWO_THIRDS)}
+                        >
+                          Lägg till ram
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="sb-btn sb-btn-secondary sb-btn-sm"
@@ -880,7 +924,7 @@ export function WorkView({
                         Ta bort vald ruta
                       </button>
                     </div>
-                    {rects.length === 0 && (
+                    {rects.length === 0 && !copyFrame && (
                       <label className={styles.row}>
                         <input
                           type="checkbox"
@@ -909,7 +953,8 @@ export function WorkView({
                         type="button"
                         className="sb-btn"
                         disabled={
-                          pending || (rects.length === 0 && !noPersonalData)
+                          pending ||
+                          (rects.length === 0 && !copyFrame && !noPersonalData)
                         }
                         onClick={() =>
                           run(
@@ -919,6 +964,7 @@ export function WorkView({
                                 doc.id,
                                 rotation,
                                 toApiRects(rects),
+                                copyFrame,
                                 noPersonalData,
                                 matches,
                               ),

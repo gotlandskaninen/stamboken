@@ -24,11 +24,20 @@ export type MaskLayer = {
   rects: Rect[];
   /** An open frame around a part of the photo ("Bifoga utsnitt") instead of black boxes. */
   frame?: boolean;
+  /** The index of the rectangle that is the frame around the copy: the photo outside it is left out. */
+  frameAt?: number;
   selected: number | null;
   onSelect: (i: number) => void;
   onChange: (i: number, r: Rect) => void;
   onRemove: (i: number) => void;
 };
+
+/** "Svart ruta 2 av 3", counting the black boxes only, not the frame around the copy. */
+function boxLabel(i: number, { rects, frameAt }: MaskLayer) {
+  const framed = frameAt === undefined ? 0 : 1;
+  const after = frameAt !== undefined && i > frameAt ? 1 : 0;
+  return `Svart ruta ${i + 1 - after} av ${rects.length - framed}`;
+}
 
 /**
  * The original, drawn on a canvas: turned by `rotation`, with zoom, pan,
@@ -350,9 +359,9 @@ export function PhotoViewer({
                 <button
                   key={i}
                   type="button"
-                  className={`${styles.rect} ${mask.frame ? styles.frame : ""}`}
+                  className={`${styles.rect} ${mask.frame ? styles.frame : ""} ${i === mask.frameAt ? styles.copyFrame : ""}`}
                   aria-pressed={mask.selected === i}
-                  aria-label={`${mask.frame ? "Ramen runt utsnittet" : `Svart ruta ${i + 1} av ${mask.rects.length}`}. Piltangenterna flyttar, Skift och piltangenterna ändrar storleken, Delete tar bort.`}
+                  aria-label={`${mask.frame ? "Ramen runt utsnittet" : i === mask.frameAt ? "Ramen runt kopian" : boxLabel(i, mask)}. Piltangenterna flyttar, Skift och piltangenterna ändrar storleken, Delete tar bort.`}
                   style={{
                     left: `${r.x * 100}%`,
                     top: `${r.y * 100}%`,

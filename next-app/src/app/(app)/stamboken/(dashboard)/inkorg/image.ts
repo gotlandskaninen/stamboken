@@ -5,8 +5,8 @@ import type { InboxDocument, Rect } from "./lib";
 
 export const MAX_RECTS = 20;
 const MIN_SIZE = 0.02;
-/** The seller and buyer block of the green certificate: its lower third. */
-export const LOWER_THIRD: Rect = { x: 0, y: 0.6667, w: 1, h: 0.3333 };
+/** The copy of the green certificate: all but its lower third, the seller and buyer block. */
+export const UPPER_TWO_THIRDS: Rect = { x: 0, y: 0, w: 1, h: 0.6667 };
 
 const clamp = (v: number, lo: number, hi: number) =>
   Math.min(hi, Math.max(lo, v));
@@ -51,10 +51,14 @@ export const toApiRects = (rects: Rect[]): Rect[] =>
     };
   });
 
-/** What the masking step starts from: the saved rectangles, the API's suggestion, or the lower third. */
-export const initialRects = (
-  doc: Pick<InboxDocument, "mask_rects" | "mask_suggestion">,
-): Rect[] => doc.mask_rects ?? doc.mask_suggestion ?? [LOWER_THIRD];
+/** The black boxes the masking step starts from: the saved ones, or none. */
+export const initialRects = (doc: Pick<InboxDocument, "mask_rects">): Rect[] =>
+  doc.mask_rects ?? [];
+
+/** The frame around the copy the masking step starts from: the saved one, the API's for a handwritten certificate, or none. */
+export const initialFrame = (
+  doc: Pick<InboxDocument, "copy_frame" | "frame_suggestion">,
+): Rect | null => doc.copy_frame ?? doc.frame_suggestion ?? null;
 
 /**
  * "Förstärk blyerts", in place on RGBA pixels: the green channel (the form is
