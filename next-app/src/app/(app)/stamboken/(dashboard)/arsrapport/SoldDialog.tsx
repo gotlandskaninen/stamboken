@@ -1,5 +1,6 @@
 "use client";
 
+import { useLeaveWarning } from "./useLeaveWarning";
 import React from "react";
 import {
   Dialog,
@@ -54,6 +55,7 @@ interface Props {
   >;
   addressRequired: boolean;
   canSell: boolean; // a proposal takes no kept buyer (F1, K1)
+  guardTyping?: boolean; // the link page: a buyer typed here lives only in memory, so the tab asks before it closes
   onSave: (s: SaldState) => void;
   onClose: () => void;
 }
@@ -173,6 +175,7 @@ function Body({
   rabbit,
   canSell,
   addressRequired,
+  guardTyping,
   onSave,
   onClose,
 }: Props) {
@@ -210,6 +213,7 @@ function Body({
     buyer.email,
     buyer.phone,
   ].some((v) => v.trim());
+  useLeaveWarning(!!guardTyping && outside && typed);
   const correction =
     rabbit?.registered_buyer_date &&
     (stored || date === rabbit.registered_buyer_date);

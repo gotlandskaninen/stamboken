@@ -1594,9 +1594,8 @@ export function ReportForm({
         <p className={styles.lead}>
           Logga gärna in i Stamboken, så kan du sälja direkt och ändra dina
           uppgifter.{" "}
-          <Link href="/auth/sign-in?return_to=/stamboken/arsrapport">
-            Logga in
-          </Link>
+          {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- a full navigation, so the beforeunload guard runs */}
+          <a href="/auth/sign-in?return_to=/stamboken/arsrapport">Logga in</a>
         </p>
       )}
       {link && (
@@ -2457,6 +2456,7 @@ export function ReportForm({
             : null
         }
         canSell={view.can_sell}
+        guardTyping={!!link}
         rabbit={soldRabbit}
         addressRequired={
           !isPaper && view.access !== "manager" && view.access !== "admin"

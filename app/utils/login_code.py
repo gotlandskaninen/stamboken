@@ -46,6 +46,16 @@ def enabled():
     return os.environ.get("KODINLOGGNING", "false").lower() == "true" and not settings.service.demo_instance
 
 
+def leads_to_prod(member):
+    """Whether signing in by code lands `member` in production: an existing account needs v2 prod access, a new
+    self-made one gets it only with SJALVSKAPAT_KONTO_PROD. The yearly report recommends login only then."""
+    if not enabled():
+        return False
+    if member.user is None:
+        return os.environ.get("SJALVSKAPAT_KONTO_PROD", "false").lower() == "true"
+    return bool(member.user.v2_promoted)
+
+
 def refuse_unsafe():
     if not settings.mail.link_secret:
         raise CodeRefused("LINK_SECRET is not set")

@@ -211,6 +211,7 @@ def _link_address(params):
 
 @mail_kind("arsrapport.inbjudan", priority=2, category="T", login_address=_link_address)
 def _inbjudan(params):
+    member = None
     if params.get("prov"):
         herd, round_ = Herd.get_by_id(params["herd_id"]), arsrapport.get_round(params["year"])
         link = f"{settings.service.host.rstrip('/')}/rapport#prov"  # FA9: no code, no token
@@ -219,6 +220,7 @@ def _inbjudan(params):
         if valid is None:
             return None
         code, herd, round_ = valid
+        member = code.member
         if arsrapport.current_report(herd, round_) is not None:  # already reported on paper or elsewhere
             return None
         link = report_code.code_url(code)
@@ -227,7 +229,7 @@ def _inbjudan(params):
     return {
         **_common(herd, round_),
         "link": link,
-        "login_url": f"{host}/auth/sign-in" if login_code.enabled() else None,  # built at send time, never stored
+        "login_url": f"{host}/auth/sign-in" if member is not None and login_code.leads_to_prod(member) else None,  # built at send time, never stored
         "prov": bool(params.get("prov")),
         "utdrag": render_text(extract),
         "attachments": [(f"registerutdrag-{herd.herd}.pdf", "application/pdf", render_pdf(extract))],

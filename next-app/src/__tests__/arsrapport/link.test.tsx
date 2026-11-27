@@ -226,6 +226,33 @@ describe("ReportForm in link mode", () => {
     expect(
       screen.getByRole("link", { name: "Logga in" }).getAttribute("href"),
     ).toBe("/auth/sign-in?return_to=/stamboken/arsrapport");
+    // a full navigation, so the beforeunload guard runs: a client-side Link would call preventDefault
+    expect(
+      fireEvent.click(screen.getByRole("link", { name: "Logga in" })),
+    ).toBe(true);
+  });
+
+  it("asks before the tab is closed while a buyer is being typed in the sale dialog", () => {
+    const leave = () => {
+      const e = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    render(
+      linkForm(
+        actions({ getGenebankHerds: vi.fn(() => new Promise(() => {})) }),
+      ),
+    );
+    choose(1, "Såld");
+    fireEvent.click(screen.getByLabelText("Utanför genbanken"));
+    fireEvent.click(screen.getByRole("radio", { name: "Ja" }));
+    expect(leave()).toBe(false); // nothing typed yet
+    fireEvent.change(screen.getByLabelText(/Köparens namn/), {
+      target: { value: "Ola Köpare" },
+    });
+    expect(leave()).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Avbryt" }));
+    expect(leave()).toBe(false);
   });
 
   it("asks before the tab is closed only while a typed buyer is unsent", () => {

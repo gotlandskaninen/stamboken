@@ -15,7 +15,6 @@ import {
   submitReport,
   withdrawReport,
 } from "./actions";
-import { codeLoginEnabled } from "@/lib/code-login-enabled";
 import { ReportForm } from "../stamboken/(dashboard)/arsrapport/ReportForm";
 import styles from "../stamboken/(dashboard)/arsrapport/arsrapport.module.css";
 
@@ -93,7 +92,7 @@ export default async function RapportPage({
       <ReportForm
         key={`${entry.herd}-${entry.year}`}
         link
-        loginTip={(await codeLoginEnabled()) || undefined}
+        loginTip={entry.login_tip || undefined}
         env="prod"
         view={report.data}
         actions={{

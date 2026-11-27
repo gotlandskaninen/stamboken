@@ -8,6 +8,7 @@ isort:skip_file
 
 import json
 import logging
+import os
 from datetime import date, datetime, timedelta
 from unittest import mock
 
@@ -136,8 +137,20 @@ class RapportLinkTest(ArsrapportTest):
             session["rapport_seen"] = (arsrapport.now() - timedelta(minutes=119)).isoformat()
         rows = self.client.get("/api/v2/rapport/mina").get_json()
         self.assertEqual(
-            rows, [{"code_id": self.code.id, "herd": "G9001", "herd_name": "Besättning G9001", "year": 2025}]
+            rows,
+            [
+                {
+                    "code_id": self.code.id,
+                    "herd": "G9001",
+                    "herd_name": "Besättning G9001",
+                    "year": 2025,
+                    "login_tip": False,
+                }
+            ],
         )
+        with mock.patch.dict(os.environ, KODINLOGGNING="true", SJALVSKAPAT_KONTO_PROD="true"):
+            (row,) = self.client.get("/api/v2/rapport/mina").get_json()
+        self.assertTrue(row["login_tip"])
         seen = datetime.fromisoformat(self.session()["rapport_seen"])
         self.assertLess(arsrapport.now() - seen, timedelta(minutes=1))
         report_code.revoke(self.code, now=arsrapport.now())

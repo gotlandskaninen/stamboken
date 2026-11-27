@@ -11,6 +11,7 @@ import re
 import threading
 from datetime import date, datetime, timedelta, timezone
 from unittest import mock
+from uuid import uuid4
 
 import utils.arsrapport as arsrapport
 import utils.arsrapport_invite as invite
@@ -206,13 +207,31 @@ class InviteTest(ArsrapportTest):
         self.run_job()
         row = self.mails()[0]
         for flag, tip in (("true", True), ("false", False)):
-            with mock.patch.dict(os.environ, KODINLOGGNING=flag):
+            with mock.patch.dict(os.environ, KODINLOGGNING=flag, SJALVSKAPAT_KONTO_PROD="true"):
                 variables = {k: v for k, v in self.build(row).items() if k != "attachments"}
                 _, body = mail.render(row.kind, variables)
             self.assertEqual("Logga gärna in i Stamboken först" in body, tip)
             self.assertEqual("/auth/sign-in" in body, tip)
             self.assertEqual("Du behöver inte logga in" in body, not tip)
             self.assertEqual("Vill du inte logga in går det bra att använda länken ovan." in body, tip)
+
+    def test_tip_only_when_login_reaches_the_production_report(self):
+        self.run_job()
+        row = self.mails()[0]
+
+        def tip(**env):
+            with mock.patch.dict(os.environ, {"KODINLOGGNING": "true", **env}):
+                return self.build(row)["login_url"] is not None
+
+        self.assertFalse(tip(SJALVSKAPAT_KONTO_PROD="false"))  # no account: a new one would be demo
+        self.assertTrue(tip(SJALVSKAPAT_KONTO_PROD="true"))
+        user = db.User.create(email="konto@example.invalid", uuid=uuid4(), fullname="Test Medlem")
+        self.member.user = user.id
+        self.member.save()
+        self.assertFalse(tip(SJALVSKAPAT_KONTO_PROD="true"))  # an account without production access: demo
+        user.v2_prod_access = True
+        user.save()
+        self.assertTrue(tip(SJALVSKAPAT_KONTO_PROD="false"))
 
     def test_test_mail_goes_to_the_user_without_code(self):
         invite.test_mail(self.round_, self.gotland.id, self.owner)

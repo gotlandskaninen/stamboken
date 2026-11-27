@@ -10,6 +10,7 @@ import re
 from datetime import datetime, timedelta
 
 import utils.arsrapport as arsrapport
+import utils.login_code as login_code
 import utils.report_code as report_code
 import utils.settings as settings
 from extensions import limiter
@@ -128,7 +129,13 @@ def mine():
         herd = Herd.get_by_id(code.herd_id)
         if report_code.refusal(code, herd, today=arsrapport.today()) is None:
             rows.append(
-                {"code_id": code.id, "herd": herd.herd, "herd_name": herd.herd_name, "year": code.round.report_year}
+                {
+                    "code_id": code.id,
+                    "herd": herd.herd,
+                    "herd_name": herd.herd_name,
+                    "year": code.round.report_year,
+                    "login_tip": login_code.leads_to_prod(code.member),
+                }
             )
     if rows:
         touch(now)
