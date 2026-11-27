@@ -21,6 +21,7 @@ from peewee import fn
 
 import utils.arsrapport as arsrapport
 import utils.inbox as inbox
+import utils.login_code as login_code
 import utils.report_code as report_code
 import utils.settings as settings
 from utils.arsrapport import STOCKHOLM, ArsrapportError
@@ -266,6 +267,8 @@ def _paminnelse(params):
         "link": report_code.code_url(code),
         "draft": draft.exists(),  # the state when it is sent
         "late": now.astimezone(STOCKHOLM).date() > round_.deadline,
+        # Jonas 2026-11-27: with code login on, logging in first is recommended and the link is the alternative
+        "login_url": f"{settings.service.host.rstrip('/')}/auth/sign-in" if login_code.enabled() else None,
         # the button's reminder covers the occasion it is sent in too, also if the deadline moves later (_slots)
         "sent_note": f"tillfälle {slot}" if slot is not None and not params["scheduled"] else None,
     }

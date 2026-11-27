@@ -17,6 +17,7 @@ import utils.arsrapport as arsrapport
 import utils.arsrapport_invite as invite
 import utils.arsrapport_remind as remind
 import utils.database as db
+import utils.login_code as login_code
 import utils.mail as mail
 import utils.report_code as report_code
 import utils.settings as settings
@@ -187,6 +188,25 @@ class TestEligibility(ReminderTest):
         self.assertEqual(report_code.resolve(token).id, self.code(self.h).id)
         db.YearlyReportDraft.delete().execute()  # the wording follows the state when the mail goes
         self.assertIn("Vi saknar årsrapporten för G9001.", mail.render(row.kind, self.build(row))[1])
+
+    def test_the_reminder_recommends_code_login_only_when_it_is_on(self):  # Jonas 2026-11-27
+        self.job(SLOT1)
+        row = self.rows(self.h)[0]
+        tip = (
+            "Logga gärna in i Stamboken först, med din e-postadress hos föreningen. Vi mejlar en kod, du behöver "
+            "inget lösenord. Inloggad kan du sälja kaniner direkt, ändra dina uppgifter i rapporten och ångra en "
+            f"försäljning. Logga in på {settings.service.host.rstrip('/')}/auth/sign-in.\n\n"
+            "Vill du inte logga in går det bra att använda länken ovan.\n\nSista dag för stödet är"
+        )
+        with mock.patch.object(login_code, "enabled", return_value=True):
+            on = mail.render(row.kind, self.build(row))[1]
+        self.assertIn(tip, on)
+        (link,) = re.findall(r"/rapport#\S+", on)
+        self.assertLess(on.index(link), on.index("Logga gärna in"))
+        with mock.patch.object(login_code, "enabled", return_value=False):
+            off = mail.render(row.kind, self.build(row))[1]
+        self.assertNotIn("Logga", off)
+        self.assertIn(f"{link}\n\nSista dag för stödet är", off)  # as before
 
     def test_an_ending_report_counts_and_a_withdrawn_one_does_not(self):
         ending = self.reported(self.h, ending_genbank=True)
