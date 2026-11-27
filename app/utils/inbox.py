@@ -876,7 +876,10 @@ def make_copy(document):
         f = document.copy_frame
         left, top = math.ceil(f["x"] * width), math.ceil(f["y"] * height)
         right = min(width, math.floor((f["x"] + f["w"]) * width))
-        image = image.crop((left, top, right, min(height, math.floor((f["y"] + f["h"]) * height))))
+        bottom = min(height, math.floor((f["y"] + f["h"]) * height))
+        if right <= left or bottom <= top:  # a photo of a few pixels: nothing whole inside the frame
+            raise InboxError(400, "Fotot är för litet för en ram. Ta bort ramen och täck med svarta rutor.")
+        image = image.crop((left, top, right, bottom))
     document.public_path, _ = store_jpeg(image, "kopia")
 
 

@@ -362,7 +362,13 @@ export function PhotoViewer({
             {image &&
               mask?.rects.map((r, i) => (
                 <button
-                  key={i}
+                  // The frame keeps its own key: when it is removed, focus does not land on a box Delete would take.
+                  key={
+                    i === mask.frameAt
+                      ? "frame"
+                      : i -
+                        (mask.frameAt !== undefined && i > mask.frameAt ? 1 : 0)
+                  }
                   type="button"
                   className={`${styles.rect} ${mask.frame ? styles.frame : ""} ${i === mask.frameAt ? styles.copyFrame : ""}`}
                   aria-pressed={mask.selected === i}

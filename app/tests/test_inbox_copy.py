@@ -136,6 +136,13 @@ class TestCopy(CopyTest):
         self.assertEqual(resp.status_code, 200, resp.get_json())
         self.assertEqual(self.copy(document).size, (599, 799))  # columns 1-599, rows 1-799
 
+    def test_a_frame_with_no_whole_pixel_inside_is_refused(self):
+        item, document = self.saved_document()
+        Image.new("RGB", (4, 4), (200, 0, 0)).save(self.stored(document), "JPEG")  # a photo of a few pixels
+        resp = self.mask(item, document, mask_rects=[], copy_frame={"x": 0.1, "y": 0.1, "w": 0.1, "h": 0.1})
+        self.assertEqual(resp.status_code, 400, resp.get_json())
+        self.assertIsNone(db.InboxDocument.get_by_id(document.id).public_path)
+
     def test_only_a_handwritten_certificate_without_a_frame_or_boxes_is_offered_its_frame(self):
         _, document = self.saved_document()
         document = db.InboxDocument.get_by_id(document.id)

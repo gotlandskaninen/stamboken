@@ -119,6 +119,8 @@ describe("crops", () => {
     expect(crops(UPPER_TWO_THIRDS)).toBe(true);
     expect(crops({ x: 0, y: 0, w: 1, h: 1 })).toBe(false);
     expect(crops({ x: 0, y: 0, w: 1, h: 0.995 })).toBe(false);
+    // judged as the API gets it, rounded to four decimals: 0.98996 is 0.99 there
+    expect(crops({ x: 0, y: 0, w: 1, h: 0.98996 })).toBe(false);
     expect(crops(null)).toBe(false);
   });
 });

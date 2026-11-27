@@ -73,9 +73,15 @@ export const initialFrame = (
   doc.copy_frame ??
   (doc.mask_rects ? null : (doc.frame_suggestion ?? UPPER_TWO_THIRDS));
 
-/** A frame over (almost) the whole photo leaves nothing out: it is no cover for the seller and the buyer. */
-export const crops = (frame: Rect | null): boolean =>
-  !!frame && frame.w * frame.h < 0.99;
+/**
+ * A frame over (almost) the whole photo leaves nothing out: it is no cover for
+ * the seller and the buyer. Judged as the API gets it, rounded.
+ */
+export const crops = (frame: Rect | null): boolean => {
+  if (!frame) return false;
+  const [sent] = toApiRects([frame]);
+  return sent.w * sent.h < 0.99;
+};
 
 /**
  * "Förstärk blyerts", in place on RGBA pixels: the green channel (the form is
