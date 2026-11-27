@@ -55,9 +55,11 @@ from utils.matrikel import (
     write_matrikel_audit,
 )
 from utils.members import (
+    CONSENT_CHANGED,
     CONSENT_KEYS,
     CONSENT_TEXT_VERSION,
     consent_answered,
+    consent_version,
     counted_answers,
     effective_consent,
     set_consent,
@@ -693,7 +695,7 @@ def patch_me_consent():
     # PARTIAL update: the body carries only the switches this member
     # actually changed. Unknown keys are refused rather than ignored — a typo
     # would otherwise look to the member like a saved consent.
-    unknown = sorted(key for key in body if key not in (*CONSENT_KEYS, "text_version"))
+    unknown = sorted(key for key in body if key not in (*CONSENT_KEYS, "text_version", "version"))
     if unknown:
         return problem(400, "Ogiltigt fält", f"Okända samtyckesnycklar: {', '.join(unknown)}")
     # The version of the text the page showed: a tab opened before the question changed answered another one (5.11)
@@ -736,6 +738,12 @@ def patch_me_consent():
         # stored value that is not a literal true is persisted as false
         # (fail-closed).
         merged = {k: v is True for k, v in stored_consent(ms).items() if k in CONSENT_KEYS}
+        # The report edits a displayed revision. A stale tab must not undo a withdrawal.
+        if "version" in body and (
+            (body["version"] is not None and type(body["version"]) is not int)
+            or body["version"] != consent_version(ms.id)
+        ):
+            return problem(409, "Ladda om sidan", CONSENT_CHANGED)
         merged.update(updates)
         set_consent(
             ms,
@@ -743,8 +751,11 @@ def patch_me_consent():
             source="profil",
             text_version=CONSENT_TEXT_VERSION,
             user=current_user.id,
-            whole_answer=len(updates) == len(CONSENT_KEYS),
+            # The report sends all four keys even for one checkbox. As at Skicka, an unchanged Ja adds no row.
+            whole_answer="version" not in body and len(updates) == len(CONSENT_KEYS),
         )
+        if "version" in body:
+            return jsonify({**_me_response(m), "publicering_version": consent_version(ms.id)})
     return jsonify(_me_response(m))
 
 

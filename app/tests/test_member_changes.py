@@ -132,6 +132,55 @@ class DetailsTest(ArsrapportTest):
 
 
 class TestLoggedIn(DetailsTest):
+    def test_profile_answer_counts_for_the_round_and_checks_its_revision(self):
+        self.link_owner()
+        self.login("owner")
+        shown = self.view()["member_details"]
+        path = "/api/v2/members/me/consent"
+        body = {**NONE, "version": shown["publicering_version"], "text_version": CONSENT_TEXT_VERSION}
+        response = self.client.patch(path, json=body)
+        self.assertEqual(response.status_code, 200)
+        details = self.view()["member_details"]
+        self.assertFalse(details["publicering"]["ja"])  # an explicit Nej, not unanswered
+        version = response.get_json()["publicering_version"]
+        self.assertEqual(details["publicering_version"], version)
+        stale = self.client.patch(path, json={**body, **ALL})
+        self.assertEqual((stale.status_code, stale.get_json()["detail"]), (409, arsrapport.REFUSALS["koharen_andrad"]))
+        yes = self.client.patch(path, json={**body, **ALL, "version": version})
+        self.assertEqual(yes.status_code, 200)
+        same = self.client.patch(path, json={**body, **ALL, "version": yes.get_json()["publicering_version"]})
+        self.assertEqual(same.status_code, 200)
+        self.assertEqual(self.view()["member_details"]["publicering"], {"ja": True, "utom": []})
+        self.assertEqual(self.ok()["matrikel"], [])
+        history = db.PublicationConsentChange.select().order_by(db.PublicationConsentChange.id)
+        self.assertEqual([(r.source, r.submission_id) for r in history], [("profil", None), ("profil", None)])
+
+    def test_save_account_uses_the_submission_writer_and_notice_once(self):
+        self.login("owner")
+        path = REPORT.format(herd="G9001") + "/konto"
+        self.assertEqual(self.api("PUT", path, **NEW_KONTO).status_code, 403)
+        self.link_owner()
+        for invalid in ({"bank": "Testbank"}, {**NEW_KONTO, "konto": "1"}):
+            self.assertEqual(self.api("PUT", path, **invalid).status_code, 422)
+        for _ in range(2):  # an identical retry is already saved
+            response = self.api("PUT", path, **NEW_KONTO)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.get_json(), {"konto": "••••0377"})
+        self.assertEqual(self.membership().bank_account_number, "9420-46180377")
+        self.assertEqual(self.ok()["matrikel"], [])
+        (notice,) = self.mails(arsrapport.ACCOUNT_NOTICE)
+        self.assertEqual((notice.recipient_id, notice.created_by_id), (self.member.id, self.owner.id))
+        (audit,) = db.MatrikelAudit.select().where(db.MatrikelAudit.action == "kontakt_andrad")
+        self.assertEqual(audit.actor_id, self.owner.id)
+        self.assertEqual(
+            audit.payload,
+            {
+                "person_id": self.member.id,
+                "source": "profil",
+                "fields": ["bank_account_type", "bank_account_number", "bank_name"],
+            },
+        )
+
     def test_view_mode_follows_d1(self):
         self.link_owner()
         self.login("owner")
@@ -225,6 +274,18 @@ class TestLink(DetailsTest):
     def submit_changes(self, matrikel, herd="G9001"):
         self.open_link(herd)
         return self.ok(herd=herd, matrikel=matrikel)
+
+    def test_only_the_logged_in_holder_can_replace_a_waiting_account(self):
+        self.submit_changes({"konto": NEW_KONTO})
+        path = REPORT.format(herd="G9001") + "/konto"
+        account = {"typ": "bankgiro", "konto": "123-4567"}
+        self.assertIn(self.api("PUT", path, **account).status_code, (401, 403))
+        self.assertIsNone(self.requests()[0].revoked_at)
+        self.client.get("/api/logout")
+        self.link_owner()
+        self.login("owner")
+        self.assertEqual(self.api("PUT", path, **account).status_code, 200)
+        self.assertEqual(self.requests()[0].revoked_reason, "nyare")
 
     def test_link_changes_wait_and_write_nothing(self):
         before = (self.membership().address, self.membership().bank_account_number, db.Member.get_by_id(self.member.id))

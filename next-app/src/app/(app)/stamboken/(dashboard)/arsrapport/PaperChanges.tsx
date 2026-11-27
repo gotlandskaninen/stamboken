@@ -13,23 +13,35 @@ const KONTO_TYP: [KontoTyp, string][] = [
 ];
 
 // A labelled text field of "Dina uppgifter", on paper and in the report.
+export function TextField({
+  label,
+  ...input
+}: React.InputHTMLAttributes<HTMLInputElement> & { label: string }) {
+  return (
+    <label className={styles.label}>
+      {label}
+      <input
+        className={styles.field}
+        style={{ width: "100%", boxSizing: "border-box" }}
+        autoComplete="off"
+        {...input}
+      />
+    </label>
+  );
+}
+
 export const textField = (
   label: string,
   value: string,
   apply: (v: string) => void,
   extra: React.InputHTMLAttributes<HTMLInputElement> = {},
 ) => (
-  <label className={styles.label}>
-    {label}
-    <input
-      className={styles.field}
-      style={{ width: "100%", boxSizing: "border-box" }}
-      autoComplete="off"
-      value={value}
-      onChange={(e) => apply(e.target.value)}
-      {...extra}
-    />
-  </label>
+  <TextField
+    label={label}
+    value={value}
+    onChange={(e) => apply(e.target.value)}
+    {...extra}
+  />
 );
 
 type Konto = PaperFields["konto"];

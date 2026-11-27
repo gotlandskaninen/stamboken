@@ -3,9 +3,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 const updateContact = vi.fn();
+const updateConsent = vi.fn();
+const saveAccount = vi.fn();
+vi.mock("@/app/(app)/stamboken/(dashboard)/arsrapport/actions", () => ({
+  saveAccount: (...a: unknown[]) => saveAccount(...a),
+}));
 const verifyEmailCode = vi.fn();
 const cancelEmailCode = vi.fn();
 vi.mock("@/app/(app)/stamboken/(dashboard)/profil/actions", () => ({
+  updateConsent: (...a: unknown[]) => updateConsent(...a),
   updateContact: (...a: unknown[]) => updateContact(...a),
   verifyEmailCode: (...a: unknown[]) => verifyEmailCode(...a),
   cancelEmailCode: (...a: unknown[]) => cancelEmailCode(...a),
@@ -36,34 +42,116 @@ const main: MemberDetailsView = {
   konto: null,
 };
 
+const props = {
+  details: main,
+  fields: detailsFields(main),
+  onChange: vi.fn(),
+  herd: "G9001",
+  year: 2026,
+  env: "demo" as const,
+};
+
 describe("MemberDetails", () => {
-  it("changes the e-mail in place through the profile's code, and says the session ends", async () => {
+  it("saves contact once on blur and shows the field result", async () => {
+    updateContact
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ ok: false, error: "Försök igen." });
+    render(<MemberDetails {...props} />);
+    const phone = screen.getByLabelText("Telefon");
+    fireEvent.change(phone, { target: { value: "010-000 00 01" } });
+    expect(updateContact).not.toHaveBeenCalled();
+    fireEvent.blur(phone);
+    expect(await screen.findByText("Kontaktuppgifter sparade")).toBeTruthy();
+    fireEvent.blur(phone);
+    expect(updateContact).toHaveBeenCalledTimes(1);
+    expect(updateContact).toHaveBeenCalledWith(
+      { phone: "010-000 00 01" },
+      "demo",
+    );
+    fireEvent.change(phone, { target: { value: "" } });
+    fireEvent.blur(phone);
+    expect((await screen.findByRole("alert")).textContent).toBe("Försök igen.");
+  });
+
+  it("saves publication on change against the last acknowledged revision", async () => {
+    updateConsent.mockResolvedValue({ ok: true, version: 12 });
+    render(<MemberDetails {...props} />);
+    fireEvent.click(screen.getByRole("radio", { name: "Ja" }));
+    expect(await screen.findByText("Publiceringsval sparade")).toBeTruthy();
+    const answer = {
+      name: true,
+      email: false,
+      address: false,
+      phone: false,
+      text_version: "2026-11-20",
+    };
+    expect(updateConsent).toHaveBeenCalledWith(
+      { ...answer, version: null },
+      "demo",
+    );
+    fireEvent.click(screen.getByRole("checkbox", { name: "telefonnummer" }));
+    expect(await screen.findByText("Publiceringsval sparade")).toBeTruthy();
+    expect(updateConsent).toHaveBeenLastCalledWith(
+      { ...answer, phone: true, version: 12 },
+      "demo",
+    );
+  });
+
+  it("saves a complete account only with Spara kontot", async () => {
+    saveAccount.mockResolvedValue({ ok: true, data: { konto: "••67" } });
+    render(<MemberDetails {...props} />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Nytt konto för stödet" }),
+    );
+    fireEvent.click(screen.getByRole("radio", { name: "Bankgiro" }));
+    const save = screen.getByRole("button", {
+      name: "Spara kontot",
+    }) as HTMLButtonElement;
+    const number = screen.getByLabelText("Kontonummer");
+    fireEvent.change(number, { target: { value: "123" } });
+    expect(save.disabled).toBe(true);
+    fireEvent.change(number, { target: { value: "123-4567" } });
+    fireEvent.blur(number);
+    expect(saveAccount).not.toHaveBeenCalled();
+    expect(save.disabled).toBe(false);
+    fireEvent.click(save);
+    expect(await screen.findByText("Konto för stödet: ••67")).toBeTruthy();
+    expect(saveAccount).toHaveBeenCalledTimes(1);
+    expect(saveAccount).toHaveBeenCalledWith(
+      "G9001",
+      2026,
+      { typ: "bankgiro", konto: "123-4567" },
+      "demo",
+    );
+  });
+
+  it("sends a code only with Skicka kod, once, and verifies before sign-in", async () => {
     updateContact.mockResolvedValue({ ok: true, codeSent: true });
     verifyEmailCode.mockResolvedValue({ ok: true });
-    render(
-      <MemberDetails
-        details={main}
-        fields={detailsFields(main)}
-        onChange={vi.fn()}
-        returnTo="/stamboken/arsrapport/G9001/2026"
-      />,
-    );
+    render(<MemberDetails {...props} />);
     fireEvent.click(screen.getByRole("button", { name: "Byt e-postadress" }));
     expect(screen.getByText(/När adressen är bytt loggas du ut/)).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Ny e-postadress"), {
       target: { value: " ny@example.invalid " },
     });
+    fireEvent.blur(screen.getByLabelText("Ny e-postadress"));
+    expect(updateContact).not.toHaveBeenCalled(); // a half-typed address gets no mail
     fireEvent.click(screen.getByRole("button", { name: "Skicka kod" }));
+    fireEvent.click(screen.getByRole("button", { name: "Skicka kod" }));
+    expect(updateContact).toHaveBeenCalledTimes(1);
     expect(await screen.findByLabelText("Kod")).toBeTruthy();
-    expect(updateContact).toHaveBeenCalledWith({
-      email: "ny@example.invalid",
-    });
+    expect(updateContact).toHaveBeenCalledWith(
+      {
+        email: "ny@example.invalid",
+      },
+      "demo",
+    );
     fireEvent.change(screen.getByLabelText("Kod"), {
       target: { value: "1234 5678" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Byt adress" }));
     const login = await screen.findByRole("link", { name: "Logga in" });
-    expect(verifyEmailCode).toHaveBeenCalledWith("1234 5678");
+    expect(verifyEmailCode).toHaveBeenCalledWith("1234 5678", "demo");
     expect(login.getAttribute("href")).toBe(
       "/auth/sign-in?return_to=%2Fstamboken%2Farsrapport%2FG9001%2F2026",
     );
@@ -71,12 +159,7 @@ describe("MemberDetails", () => {
 
   it("shows nothing for paper, whose fields are PaperChanges", () => {
     const { container } = render(
-      <MemberDetails
-        details={{ mode: "paper" }}
-        fields={detailsFields()}
-        onChange={vi.fn()}
-        returnTo="/"
-      />,
+      <MemberDetails {...props} details={{ mode: "paper" }} />,
     );
     expect(container.textContent).toBe("");
   });

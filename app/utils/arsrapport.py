@@ -118,10 +118,12 @@ from utils.matrikel import (
     write_matrikel_audit,
 )
 from utils.members import (
+    CONSENT_CHANGED,
     CONSENT_TEXT_VERSION,
     CONSENT_TEXT_VERSIONS,
     STOCKHOLM,
     consent_from_answer,
+    consent_version,
     counted_answers,
     effective_consent,
     holder_since,
@@ -2213,7 +2215,7 @@ REFUSALS = {  # the copy the client shows (P44)
     "epost_ogiltig": "Kontrollera e-postadressen.",
     "epost_kan_inte_anvandas": "E-postadressen kan inte användas. Kontrollera den med medlemmen.",
     "koharen_ny_fraga": "Frågan om Koharen har ändrats. Ladda om sidan och svara igen.",
-    "koharen_andrad": "Svaret om Koharen har ändrats sedan sidan visades. Ladda om sidan och svara igen.",
+    "koharen_andrad": CONSENT_CHANGED,
     "epost_via_kod": "Den nya e-postadressen bekräftar du med en kod. Byt den under Dina uppgifter.",
     "konto_ogiltigt": (
         "Ett bankkonto har clearingnummer med 4–5 siffror och kontonummer med 5–12 siffror. "
@@ -2669,12 +2671,6 @@ def _contact_cleared(matrikel) -> tuple[dict, list[Refusal]]:
     return contact, refusals
 
 
-def consent_version(membership_id):
-    """The stored Koharen answer's version: its latest publication_consent_change row, None before any."""
-    change = PublicationConsentChange
-    return change.select(fn.MAX(change.id)).where(change.membership == membership_id).scalar()
-
-
 def _details_refusals(herd, access, matrikel):
     """
     check's refusals of a digital "Dina uppgifter": bad values, an e-mail outside the link (D1, 5.11), and logged in
@@ -2900,7 +2896,10 @@ def save_contact(membership, member, written, actor, payload):
             row.save(only=[getattr(model, column) for column in columns] + stamp)
     if written:
         fields = [column for columns in written.values() for column in columns]
-        write_matrikel_audit(actor, "kontakt_andrad", membership, {"person_id": member.id, "fields": fields, **payload})
+        return write_matrikel_audit(
+            actor, "kontakt_andrad", membership, {"person_id": member.id, "fields": fields, **payload}
+        )
+    return None
 
 
 def apply_login_matrikel(herd, membership, member, submission, user, matrikel):
@@ -2909,8 +2908,6 @@ def apply_login_matrikel(herd, membership, member, submission, user, matrikel):
     differs. The caller holds the membership's lock and checked D1 under it. A new account is told to the matrikel's
     e-mail (account_notice). The e-mail is not here: it goes through the profile's code flow.
     """
-    typed = bool((matrikel.get("konto") or {}).get("typ"))
-    changes = _changes(membership, member, _contact_cleared(matrikel)[0], typed=typed)
     answer = matrikel.get("publicering")
     if answer is not None:
         set_consent(
@@ -2923,9 +2920,32 @@ def apply_login_matrikel(herd, membership, member, submission, user, matrikel):
             submission=submission.id,
             at=submission.created_at,
         )
-    save_contact(membership, member, changes, user, {"source": "login", "submission_id": submission.id})
+    contact, _ = _contact_cleared(matrikel)
+    typed = bool((matrikel.get("konto") or {}).get("typ"))
+    _save_login_contact(herd, membership, member, user, contact, typed=typed, submission=submission)
+
+
+def _save_login_contact(herd, membership, member, user, contact, *, typed, submission=None):
+    changes = _changes(membership, member, contact, typed=typed)
+    payload = {"source": "login", "submission_id": submission.id} if submission else {"source": "profil"}
+    audit = save_contact(membership, member, changes, user, payload)
     if "konto" in changes:
-        account_notice(herd, member, f"submission:{submission.id}", created_by=user.id)
+        key = f"submission:{submission.id}" if submission else f"audit:{audit.id}"
+        account_notice(herd, member, key, created_by=user.id)
+
+
+def save_report_account(herd, round_, access, user, konto):
+    with DB_PROXY.atomic():
+        require_open(_lock_round(round_), herd, access, today())
+        membership, member = _lock_matrikel(herd)
+        if access.source != "login" or not _own_details(member, access, user):
+            raise ArsrapportError(403, NOT_MAIN)
+        matrikel = _matrikel({"matrikel": {"konto": konto}})
+        contact, refusals = _contact(matrikel)
+        if refusals or "konto" not in contact:
+            raise ArsrapportError(422, REFUSALS["konto_ogiltigt"])
+        _save_login_contact(herd, membership, member, user, contact, typed=bool(konto.get("typ")))
+        return {"konto": shown_account(membership.bank_account_number)}
 
 
 ACCOUNT_NOTICE = "kontakt.konto_andrat"
