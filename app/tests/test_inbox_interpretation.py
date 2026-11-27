@@ -237,6 +237,26 @@ class TestSaleReading(InterpretationTest):
                     self.assertEqual(interpreter.interpret_next(), document.id)
                 self.assertEqual(self.doc(document).interpretation, READING)
 
+    def test_contact_fields_that_are_not_what_they_say_are_dropped(self):
+        _, (wrong, right) = self.uploaded(files=2)
+        answers = (
+            {
+                "kopare_namn": "Köpa Testsson",
+                "kopare_utdelningsadress": "Väg 1 070-123 45 67",  # a phone number after the street
+                "kopare_postnummer": "6235",
+                "kopare_ort": "Visby",
+                "kopare_epost": "070 123 45 67",
+            },
+            {"kopare_utdelningsadress": "Väg 1", "kopare_postnummer": "62355", "kopare_epost": "kopa@example.com"},
+        )
+        for document, answer in zip((wrong, right), answers, strict=True):
+            self.sale = answer
+            self.assertEqual(interpreter.interpret_next(), document.id)
+        self.assertEqual(
+            self.doc(wrong).interpretation["forsaljning"], {"kopare_namn": "Köpa Testsson", "kopare_ort": "Visby"}
+        )
+        self.assertEqual(self.doc(right).interpretation["forsaljning"], answers[1])
+
     def test_a_worker_dying_in_the_second_reading_keeps_the_first(self):
         _, (document,) = self.uploaded()
         self.sale = SystemExit("the worker stopped")

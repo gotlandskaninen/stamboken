@@ -633,15 +633,16 @@ _URL = re.compile(r"(?i:[a-z][a-z0-9+.-]*://|www\.)|\b[\w-]+\.[a-z]{2,}\b")
 _LINK = re.compile(r"(?i:[a-z][a-z0-9+.-]*://|www\.)")
 
 
+def has_phone(text):
+    """A Swedish phone number somewhere in `text`."""
+    return any(len(re.sub(r"\D", "", m.group(0))) >= _PHONE_MIN_DIGITS for m in _PHONE.finditer(text))
+
+
 def reject_contact_details(text, *, links=False):
     """No buyer identity in free text: it lives forever in audit_log."""
     if not text:
         return
-    if (
-        (links and _URL.search(text))
-        or _EMAIL.search(text)
-        or any(len(re.sub(r"\D", "", m.group(0))) >= _PHONE_MIN_DIGITS for m in _PHONE.finditer(text))
-    ):
+    if (links and _URL.search(text)) or _EMAIL.search(text) or has_phone(text):
         raise HerdTrackingInvalid(BUYER_PRIVACY_HELP)
 
 

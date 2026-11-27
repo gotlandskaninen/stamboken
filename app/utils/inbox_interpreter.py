@@ -19,8 +19,11 @@ from PIL import Image, ImageFilter
 
 import utils.settings as settings
 from utils.database import DB_PROXY, InboxDocument, InboxItem
+from utils.herd_tracking import has_phone
 from utils.inbox_proposal import SALE_READING, build_proposal, sale_part
 from utils.log_masking import mask_cut
+from utils.mail import is_address
+from utils.postal import POSTAL_CODE_RE
 
 logger = logging.getLogger(__name__)
 
@@ -234,13 +237,26 @@ def _locked(document_id, item_id):
     return InboxDocument.get_or_none(InboxDocument.id == document_id)
 
 
+def _contact_shaped(key, value):
+    """A field of the sale reading that can be what it says: an e-mail address, a postcode, and never a phone number."""
+    if key == "kopare_epost":
+        return is_address(value) and not has_phone(value)
+    if key == "kopare_postnummer":
+        return POSTAL_CODE_RE.match(value) is not None
+    return not has_phone(value)
+
+
 def _sale_reading(image):
-    """The seller and buyer read off the photo, or None: a failure or an empty answer leaves the main reading alone."""
+    """
+    The seller and buyer read off the photo, each field only if _contact_shaped, or None: a failure or an empty answer
+    leaves the main reading alone.
+    """
     try:
         sale = interpret(image, SALE_SCHEMA)
     except Exception as exc:  # pylint: disable=broad-except  # the rabbit's reading stands whatever failed here
         logger.warning("Reading the seller and buyer failed: %s", exc)
         return None
+    sale = {key: value for key, value in sale.items() if _contact_shaped(key, value)}
     return sale if any(value.strip() for value in sale.values()) else None
 
 
