@@ -24,6 +24,7 @@ import utils.member_changes as member_changes
 import utils.report_code as report_code
 import utils.settings as settings
 from herdbook import APP
+from utils.buyer_mail import sv_date
 from utils.matrikel import set_member_email, swap_main_member
 from utils.members import CONSENT_TEXT_VERSION, set_consent
 
@@ -730,7 +731,7 @@ class TestReviewRound1(DetailsTest):
         receipt = self.submit_changes({"telefon": "0709-777 888"})
         (kvitto,) = self.mails("arsrapport.kvitto")
         printed = mail.MAIL_KINDS[kvitto.kind].build(kvitto.params)["andringar_senast"]
-        self.assertEqual(printed, f"{DAY0 + timedelta(days=14):%Y-%m-%d}")
+        self.assertEqual(printed, sv_date(DAY0 + timedelta(days=14)))
         token = self.token(receipt["submission_id"])
         self.at(
             datetime.combine(DAY0 + timedelta(days=14), datetime.min.time(), arsrapport.STOCKHOLM)
