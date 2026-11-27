@@ -193,7 +193,8 @@ class AndraTest(ArsrapportTest):
         self.assertIsNone(view["report"])
         self.assertIsNotNone(view["draft"])
         self.assertIsNone(view["draft"]["submission_key"])
-        latest = {k: v for k, v in self.submissions(rid)[-1].data.items() if k != "litters_added"}
+        receipts = ("litters_added", "salda_direkt")  # the receipt's own keys, never the draft's
+        latest = {k: v for k, v in self.submissions(rid)[-1].data.items() if k not in receipts}
         self.assertEqual(view["draft"]["data"], latest)  # the latest submission's, without the receipt's litters
         self.assertEqual(self.mail_kinds(), ["arsrapport.kvitto", "arsrapport.andrad", "arsrapport.angrad"])
         # no rabbit is held on 31/12 through the report any more: they are all to choose again

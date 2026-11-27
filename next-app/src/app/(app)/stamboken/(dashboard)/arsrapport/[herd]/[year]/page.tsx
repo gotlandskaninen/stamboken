@@ -11,9 +11,11 @@ import {
   getMothers,
   reportPurchase,
   saveDraft,
+  sellNow,
   sendPurchasePhotos,
-  submitReport,
   submitCompletion,
+  submitReport,
+  undoSale,
   withdrawReport,
 } from "../../actions";
 import { getGenebankHerds } from "../../../individ/[number]/actions";
@@ -71,6 +73,8 @@ export default async function ReportPage({
           changeLitter,
           getFathers,
           getMothers,
+          sellNow,
+          undoSale,
         }}
       />
     );
@@ -94,6 +98,8 @@ export default async function ReportPage({
         changeLitter,
         getFathers,
         getMothers,
+        sellNow,
+        undoSale,
       }}
       post={post}
     />

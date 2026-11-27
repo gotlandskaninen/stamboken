@@ -272,6 +272,30 @@ Jonas beslutade 2026-11-26, efter arbetsgruppens förslag 5 b och 6, en
   mejlet hänvisar den som köpt flera kaniner till dataskyddsadressen (Jonas
   2026-11-26: inget avtryck i det här fallet).
 
+## Tillägg 2026-11-26 (årsrapport v2): försäljningen registreras direkt
+
+Jonas beslutade 2026-11-26 att en försäljning i årsrapporten registreras
+direkt, som Sälj på kaninens sida och i den gamla appen. Köparen ska inte
+vänta i rapporten till Skicka.
+
+* Före första Skicka kryssar säljaren i samma ruta som i Sälj ("Jag har
+  tagit del av informationen …"). Därefter registrerar "Spara
+  försäljningen" försäljningen med rapportens regler: roll, krav på
+  postadress, årsreglerna för köparen, raderad köpare, rundan öppen och
+  posten på pappersvägen. Köparen sparas då med försäljningen, och
+  `kopare.information` köas genast. Mejlet når därmed köparen inom en
+  månad från att föreningen fick uppgifterna.
+* Försäljningen hör till registret, inte till rapporten. Säljaren kan
+  ångra den i 7 dagar, som på kaninens sida (`SALE_UNDO_WINDOW`). Dra
+  tillbaka lämnar den, och Skicka skriver den aldrig en gång till.
+* Är rapporten redan inskickad (Ändra) går försäljningen med Skicka som
+  förut. Detsamma gäller ett försäljningsförslag från en skötare eller
+  den personliga länken, tills förslag kan finnas före första Skicka.
+* `purge_uninformed` tar inte köparen från en registrerad försäljning
+  medan mejlet till köparen är på väg. En köpare vars adress väntar på
+  genbanksansvarigs kontroll raderas när månaden har gått, som förut:
+  köparen ska få veta inom en månad, annars sparas inget.
+
 ## Mer information
 
 Köparens uppgifter sparas med berättigat intresse som rättslig grund,
@@ -297,3 +321,4 @@ Relaterade beslut: [ADR-0014](0014-authorization-model.md)
 | 2026-11-23 | Jonas Hagberg | Kontrollsidan: "Såld" för varje byte av besättning i den rättade historiken, och "Intygas av" är den fysiska person som utfärdade intyget, med namn bara efter eget val (issue #6) |
 | 2026-11-25 | Jonas Hagberg | Pappret heter försäljningsbevis i stället för överlåtelsebevis, samma ord som Sälj och Försäljning i Stamboken (arbetsgruppen 2026-11-24/25) |
 | 2026-11-26 | Jonas Hagberg | Tillägg: försäljning utan försäljningsbevis till och med 2027, e-post bara för informationsmejlet eller ingen köpare (#273, förslag 5 b och 6) |
+| 2026-11-26 | Jonas Hagberg | Tillägg: årsrapportens försäljning registreras direkt, som Sälj, med Ångra i 7 dagar |

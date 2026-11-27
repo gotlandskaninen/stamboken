@@ -202,7 +202,13 @@ class CodeApiTest(ArsrapportTest):
     def test_code_session_cannot_reach_another_herd(self):
         self.open_link()
         before = self.counts()
-        for method, suffix in (("GET", ""), ("PUT", "/utkast"), ("POST", "/torrkorning"), ("POST", "/dra-tillbaka")):
+        for method, suffix in (
+            ("GET", ""),
+            ("PUT", "/utkast"),
+            ("POST", "/torrkorning"),
+            ("POST", "/dra-tillbaka"),
+            ("POST", "/forsaljning"),
+        ):
             response = self.api(method, f"/besattning/G9002/2025{suffix}", revision=None, data={})
             self.assertEqual(response.status_code, 404, (method, suffix))
         self.assertEqual(self.skicka("G9002", self.rabbits2).status_code, 404)

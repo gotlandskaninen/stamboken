@@ -434,8 +434,7 @@ def purge_uninformed(now):
     """
     #273: a buyer without a försäljningsbevis is kept only if the association can tell them within a month. A
     pending proposal's e-mail buyer becomes "såld utanför genbanken", and a buyer whose notice has not gone in that
-    time goes: its address waits for a manager's check, its mail still waits or fails, or a withdrawn report has not
-    been sent again.
+    time goes, including when its notice is still queued or sending.
     """
     late = now - NOTICE_WITHIN
 

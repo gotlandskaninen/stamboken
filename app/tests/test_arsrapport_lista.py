@@ -290,6 +290,7 @@ class ListaTest(ArsrapportTest):
                     "to_herd": "G2",
                     "date": "2025-08-01",
                     "day_known": True,
+                    "undo": None,  # the owner did not register them
                 },
                 {
                     "individual_id": kits[1].id,
@@ -297,6 +298,7 @@ class ListaTest(ArsrapportTest):
                     "to_herd": "GX1",
                     "date": "2025-09-01",
                     "day_known": True,
+                    "undo": None,  # the owner did not register them
                 },
             ],
         )

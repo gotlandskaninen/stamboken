@@ -23,11 +23,13 @@ import {
   newLink,
   saveDraft,
   saveRound,
+  sellNow,
   sendReminder,
   sendTestMail,
   setOnTime,
   submitCompletion,
   submitReport,
+  undoSale,
   withdrawReport,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/actions";
 import {
@@ -88,6 +90,19 @@ describe("arsrapport actions", () => {
       expect(fetchApi).toHaveBeenCalledTimes(2);
     },
   );
+
+  it("keeps a demo sale and its Ångra in the demo environment, never on production", async () => {
+    const sald = { till: "G9002", ar: 2026, manad: 6, dag: null, kopare: null };
+    await sellNow("G9001", 2026, 1, sald, "demo");
+    await undoSale("G9001", 2026, 55, "op", "demo");
+    expect(
+      fetchApi.mock.calls.map(([url, options]) => [url, options.isolateDemo]),
+    ).toEqual([
+      ["/v2/arsrapport/besattning/G9001/2026/forsaljning", true],
+      ["/v2/arsrapport/besattning/G9001/2026/forsaljning/55/angra", true],
+    ]);
+  });
+
   it("gives dryRun, submitReport and withdrawReport the long timeout", async () => {
     await dryRun("G9001", 2026, body, "demo");
     await submitReport("G9001", 2026, body, "demo");

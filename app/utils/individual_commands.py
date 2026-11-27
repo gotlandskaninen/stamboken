@@ -720,6 +720,7 @@ class TransferIndividual(PolicyCommand):
     address_optional: bool = False  # the report corrects its own registered sale, or enters a paper form as written
     buyer_removed: bool = False
     corrects_sale: bool = False  # the report corrects its own registered sale the old way (#273)
+    month_only: bool = False  # the report's sale dialog gave no day (5.3): the log says so, the date is made up
     apply_rank = 70
     policy_stage = None  # asked in apply, after the measurements are written (IR-52)
 
@@ -742,7 +743,7 @@ class TransferIndividual(PolicyCommand):
         note = None
         if target.genebank_id != holder.genebank_id:
             note = _genebank_correction(ctx, holder, target, self.reason)
-        op = ctx.record(type(self).__name__, None, None)
+        op = ctx.record(type(self).__name__, None, {"month_only": True} if self.month_only else None)
         record_herd_tracking(
             ctx.individual,
             target,

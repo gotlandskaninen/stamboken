@@ -75,6 +75,8 @@ from utils.herd_tracking import (
     NOT_RECORDED,
     QUEUE_CHANGED,
     REPORT_LATER_ROW,
+    REPORT_ROW,
+    UNDO_REASON,
     HerdTrackingError,
     HerdTrackingInvalid,
     QueueChanged,
@@ -85,8 +87,10 @@ from utils.herd_tracking import (
     drop_kept_buyers,
     latest_death_op,
     reject_contact_details,
+    removed_sale_buyers,
+    report_owners,
     report_void_denial,
-    sold_on,
+    sale_undo_denial,
     void_herd_tracking,
 )
 from utils.individual_commands import (
@@ -607,6 +611,20 @@ def _listed_5_2(herd, last):
     return {row["id"] for row in rows.dicts() if _alive_by_note(row, last)}
 
 
+def _year_sales(herd, year):
+    return HerdTracking.select().where(
+        HerdTracking.from_herd == herd.id,
+        HerdTracking.kind == "TRANSFER",
+        ht_not_voided(),
+        HerdTracking.herd_tracking_date.between(date(year, 1, 1), date(year, 12, 31)),
+    )
+
+
+def _listed_or_sold(herd, year, listed):
+    sold = _year_sales(herd, year).select(HerdTracking.individual).distinct()
+    return set(listed) | {rabbit for (rabbit,) in sold.tuples()}
+
+
 def report_list(herd, year, report=None):
     """
     ReportView.rabbits, sorted on number: the 5.2 list plus every rabbit in the report's latest submission (D3b).
@@ -836,6 +854,52 @@ def require_open(round_, herd, access, day):
         raise ArsrapportError(409, "Rundan är inte öppen.", code="rundan_stangd")
 
 
+def _without_registered(herd, data):
+    """
+    A draft's data without the sales the register already holds out of the herd and no report wrote: the sale
+    dialog registered them (sell_now) and let go of the entry, which an old tab's autosave would bring back. A sale
+    given without its day matches its month, as its made-up day moves with the clock.
+    """
+    judged = data["form"] if isinstance(data.get("form"), dict) else data
+    rabbits = judged.get("rabbits") if isinstance(judged.get("rabbits"), dict) else {}
+    sold = {
+        key: entry["sald"]
+        for key, entry in rabbits.items()
+        if key.isdecimal()
+        and isinstance(entry, dict)
+        and entry.get("val") == "sald"
+        and isinstance(entry.get("sald"), dict)
+    }
+    if not sold:
+        return data
+    rows = list(
+        HerdTracking.select(HerdTracking, Herd)
+        .join(Herd, on=(HerdTracking.herd == Herd.id))
+        .where(
+            HerdTracking.individual.in_([int(key) for key in sold]),
+            HerdTracking.from_herd == herd.id,
+            HerdTracking.kind == "TRANSFER",
+            ht_not_voided(),
+        )
+    )
+    owned = report_owners([row.operation_id for row in rows])
+
+    def registered(key):
+        sald = sold[key]
+        return any(
+            row.individual_id == int(key)
+            and str(row.operation_id) not in owned
+            and row.herd.herd == _sale_code(herd, sald.get("till"))
+            and (row.herd_tracking_date.year, row.herd_tracking_date.month) == (sald.get("ar"), sald.get("manad"))
+            and sald.get("dag") in (None, row.herd_tracking_date.day)
+            for row in rows
+        )
+
+    for key in [key for key in sold if registered(key)]:
+        data = _with_entry(data, key, {"val": None})
+    return data
+
+
 def save_draft(herd, round_, access, user, data, updated_at, submission_key, revision):
     """
     The herd's server draft (5.1), saved under the report's lock. `updated_at` is the version the client saw (None
@@ -863,6 +927,13 @@ def save_draft(herd, round_, access, user, data, updated_at, submission_key, rev
         _recheck_code(access, herd, day)
         draft = _draft(herd, round_)
         report = current_report(herd, round_)
+        listed = report_list(herd, round_.report_year, report)
+        choosing = {str(row["id"]) for row in listed if row["state"] == "att_valja"}
+        if report is not None and (submissions := _submissions(report)):
+            # Skicka also accepts an unchanged submitted entry after a later event.
+            choosing.update(submissions[-1].data.get("rabbits") or {})
+        # After a buyback the rabbit is eligible again, but the draft still cannot replay the earlier sale.
+        stored = _without_registered(herd, _pruned(stored, choosing))
         stored, gone = _with_kept(stored, _kept_claims(draft.data) if draft is not None else {})
         if draft is None and updated_at is None and revision == (report.revision if report else None):
             try:
@@ -1178,6 +1249,39 @@ def report_view(herd, round_, access, user):
         rabbits[rabbit]["removed_buyer_dates"] = sorted(day.isoformat() for day in dates)
     for rabbit in removed:
         rabbits[rabbit]["buyer_removed"] = True
+    moved = {  # a sale after 31 December keeps the rabbit on the list, counted by its move (via_flytt)
+        rabbit for rabbit, row in rabbits.items() if row["state"] == "via_flytt" and row["later"]["kind"] == "TRANSFER"
+    }
+    later_sales = (
+        HerdTracking.select(
+            HerdTracking.id,
+            HerdTracking.individual,
+            Herd.herd,
+            HerdTracking.herd_tracking_date,
+            HerdTracking.operation_id,
+        )
+        .join(Herd, on=(HerdTracking.herd == Herd.id))
+        .where(
+            HerdTracking.individual.in_(sorted(moved)),
+            HerdTracking.from_herd == herd.id,
+            HerdTracking.kind == "TRANSFER",
+            ht_not_voided(),
+            HerdTracking.herd_tracking_date > last,
+        )
+    )
+    # the sale the row shows (`later`, its first move): a buyback and a resale after it are not that one
+    shown = {}
+    for row_id, rabbit, to, day, op in later_sales.order_by(HerdTracking.herd_tracking_date, HerdTracking.id).tuples():
+        if rabbit not in shown and _iso(day) == rabbits[rabbit]["later"]["date"]:
+            shown[rabbit] = (row_id, to, op)
+    dialog = month_only([op for _, _, op in shown.values()])
+    for rabbit, (_, _, op) in shown.items():  # a sale the dialog gave without its day shows its month (5.3)
+        rabbits[rabbit]["later"] = {**rabbits[rabbit]["later"], "day_known": str(op) not in dialog}
+    later_sales = {row_id: (rabbit, to) for rabbit, (row_id, to, _) in shown.items()}
+    sales = list(sales.dicts())  # one read: each sale's label and its Ångra come from the same row
+    undo = _undoable(user, access, [row["id"] for row in sales] + list(later_sales))
+    for row_id, (rabbit, to) in later_sales.items():  # `undo_to`: the buyer's herd, for Ångra's question
+        rabbits[rabbit] |= {"undo": row_id if row_id in undo else None, "undo_to": to}
     claims = _kept_claims(draft.data) if draft and access.can_sell else {}
     if ops or claims:
         dates = HerdTracking.select(
@@ -1211,7 +1315,10 @@ def report_view(herd, round_, access, user):
         "other_active_herd": other_active,
         "rabbits": list(rabbits.values()),
         "litters": report_litters(herd, year),
-        "sales": _sales_json(report, sales.dicts()),
+        "sales": [
+            {**sale, "undo": row["id"] if row["id"] in undo else None}
+            for sale, row in zip(_sales_json(report, sales), sales, strict=True)
+        ],
         "forslag": _forslag_json(report),
         "kopanmalningar": purchase_notice.report_notices(herd, round_, access),  # closes the registered ones first
         "arenden": purchase_notice.report_cases(herd, year),  # after the closing above (S8)
@@ -1232,6 +1339,33 @@ def report_view(herd, round_, access, user):
     }
 
 
+def month_only(op_ids):
+    """The sales among `op_ids` (operation ids) that the report's sale dialog registered without their day (5.3)."""
+    rows = IndividualCommand.select(IndividualCommand.operation_id).where(
+        IndividualCommand.operation_id.in_([str(op) for op in op_ids]),
+        IndividualCommand.after.contains({"month_only": True}),
+    )
+    return {str(op) for (op,) in rows.tuples()} if op_ids else set()
+
+
+def _undoable(user, access, row_ids):
+    """
+    The sales among `row_ids` (TRANSFER rows) that the viewer may undo now as the seller does on the rabbit page
+    (sale_undo_denial): their own, the rabbit's latest row, within SALE_UNDO_WINDOW. Never a sale a report wrote
+    (REPORT_ROW: Ändra changes it), never a link's, and not a manager's wider right, which the rabbit page keeps.
+    """
+    if access.code is not None or not row_ids:
+        return set()
+    rows = list(HerdTracking.select().where(HerdTracking.id.in_(row_ids)))
+    owned = report_owners([row.operation_id for row in rows])
+    undo = set()
+    for row in rows:
+        active = HerdTracking.select().where(HerdTracking.individual == row.individual_id, ht_not_voided())
+        if str(row.operation_id) not in owned and sale_undo_denial(user, row, sorted(active, key=ht_sort_key)) is None:
+            undo.add(row.id)
+    return undo
+
+
 def _sales_json(report, rows):
     """
     ReportView.sales: the sale `rows` with `day_known`, false for a sale the report gave without its day (5.3), whose
@@ -1246,13 +1380,15 @@ def _sales_json(report, rows):
             .where(SaleProposal.report == report.id, SaleProposal.herd_tracking_id.is_null(False))
         )
         approved = dict(proposals.tuples())
+    dialog = month_only([row["operation_id"] for row in rows])
     return [
         {
             "individual_id": row["individual_id"],
             "number": row["number"],
             "to_herd": row["to_herd"],
             "date": _iso(row["date"]),
-            "day_known": not dayless(
+            "day_known": str(row["operation_id"]) not in dialog
+            and not dayless(
                 written.get(str(row["operation_id"])) or approved.get(row["id"]), row["individual_id"], "sald"
             ),
         }
@@ -2184,62 +2320,7 @@ def _removed_buyers(herd, round_, rabbits, current_ops):
     reports = YearlyHerdReport.select(YearlyHerdReport.id).where(
         YearlyHerdReport.herd == herd.id, YearlyHerdReport.round == round_.id
     )
-    ops = YearlyReportSubmission.select(fn.jsonb_array_elements_text(YearlyReportSubmission.operation_ids)).where(
-        YearlyReportSubmission.report.in_(reports)
-    )
-    own_sale = HerdTracking.operation_id.cast("text").in_(ops)
-    # The FK is now NULL. The tracking audit still names the contact id it lost, and the contact audit says why.
-    deleted = AuditLog.select(AuditLog.record_id).where(
-        AuditLog.table_name == BuyerContact._meta.table_name,
-        AuditLog.operation == "DELETE",
-        AuditLog.new_data["action"].in_(
-            ("radering", "invandning", "gallring_fem_ar", "gallring_dod", "studs", "ej_informerad")
-        ),
-    )
-    history = AuditLog.select(AuditLog.transaction_id).where(
-        AuditLog.table_name == HerdTracking._meta.table_name, AuditLog.record_id == HerdTracking.id.cast("text")
-    )
-    erased_contact = history.where(
-        AuditLog.operation == "UPDATE",
-        AuditLog.new_data["holder_contact_id"].is_null(),
-        AuditLog.old_data["holder_contact_id"].in_(deleted),
-    )
-    born_removed = history.where(AuditLog.operation == "INSERT", AuditLog.new_data["buyer_removed"] == "true")
-    voided = (
-        history.where(AuditLog.changed_fields.contains("voided_at"), AuditLog.new_data["voided_at"].is_null(False))
-        .order_by(AuditLog.id.desc())
-        .limit(1)
-    )
-    returned = HerdTracking.alias()
-    bought_back = returned.select(returned.id).where(
-        returned.individual == HerdTracking.individual, returned.herd == herd.id, sold_on(HerdTracking, returned)
-    )
-    sales = (
-        HerdTracking.select(
-            HerdTracking.individual,
-            HerdTracking.herd_tracking_date,
-            HerdTracking.created_at,
-            HerdTracking.operation_id,
-            HerdTracking.voided_at,
-            own_sale.alias("from_report"),
-            fn.EXISTS(erased_contact).alias("erased"),
-            born_removed.alias("removed_transaction"),
-            voided.alias("void_transaction"),
-        )
-        .join(Herd, on=(HerdTracking.herd == Herd.id))
-        .where(
-            HerdTracking.individual.in_(rabbits),
-            HerdTracking.kind == "TRANSFER",
-            HerdTracking.from_herd == herd.id,
-            HerdTracking.buyer_removed,
-            Herd.genebank == herd.genebank_id,
-            Herd.herd.in_(OUTSIDE_GENEBANK_HERDS),
-            ht_not_voided() | own_sale,
-            ~fn.EXISTS(bought_back),
-        )
-        .order_by(HerdTracking.id)
-        .objects()
-    )
+    current, dates = removed_sale_buyers(herd.id, herd.genebank_id, rabbits, current_ops)
     # Closing a proposal clears its buyer too. The audit distinguishes a buyer already missing at that point.
     erased_proposals = AuditLog.select(AuditLog.record_id).where(
         AuditLog.table_name == SaleProposal._meta.table_name,
@@ -2252,20 +2333,6 @@ def _removed_buyers(herd, round_, rabbits, current_ops):
         SaleProposal.to_herd.is_null(),
         SaleProposal.buyer.is_null(),
     )
-    current = set()
-    dates, replaced = {}, set()
-    for sale in sales:
-        rabbit, day = sale.individual_id, sale.herd_tracking_date
-        if not sale.erased:
-            # A report can write a buyer_removed transfer on resubmission even if its inferred day has moved.
-            carried = sale.from_report or (rabbit, sale.removed_transaction) in replaced or day in dates.get(rabbit, ())
-            if sale.removed_transaction is None or (not carried and BuyerContact.purge_at_for(day) > sale.created_at):
-                continue
-        dates.setdefault(rabbit, set()).add(day)
-        if sale.void_transaction is not None:
-            replaced.add((rabbit, sale.void_transaction))
-        if sale.voided_at is None and str(sale.operation_id) in current_ops:
-            current.add(rabbit)
     for rabbit, day in cleared.tuples():
         dates.setdefault(rabbit, set()).add(day)
     return current, dates
@@ -2409,7 +2476,9 @@ def check(
         refusals.append(_refusal(None, "halsa_saknas"))
     rows = {row["id"]: row for row in report_list(herd, year, report)}
     strangers = [rabbit for rabbit in sub.rabbits if rabbit not in rows]
-    strangers += [d["individual_id"] for d in sub.report["defects"] if d["individual_id"] not in rows]
+    # a rabbit sold out of the herd in the year (the sale dialog's, or Sälj) leaves the list, not its defect
+    eligible = _listed_or_sold(herd, year, rows)
+    strangers += [d["individual_id"] for d in sub.report["defects"] if d["individual_id"] not in eligible]
     refusals += [_refusal(rabbit, "okand_kanin") for rabbit in strangers]
     # Only the report's own rabbits: another herd's rabbit would make the refusal an oracle on its buyer's name.
     own = [rabbit for rabbit in sub.rabbits if rabbit in rows]
@@ -3050,6 +3119,33 @@ def _waiting_sales(data):
     return {key for key, entry in rabbits.items() if ((entry or {}).get("sald") or {}).get("forslag") is not None}
 
 
+def _sold_besides(herd, year, sub):
+    """
+    For the receipt (D21, read from the submission alone): the year's sales out of the herd that no report wrote,
+    the sale dialog's and Sälj's, which took the rabbits off the list. As the body gives a sale: {individual_id,
+    till, ar, manad, dag}, the day None when the dialog was given none.
+    """
+    rows = list(
+        _year_sales(herd, year)
+        .select(HerdTracking, Herd)
+        .join(Herd, on=(HerdTracking.herd == Herd.id))
+        .where(HerdTracking.individual.not_in(list(sub.rabbits)))
+        .order_by(HerdTracking.herd_tracking_date, HerdTracking.id)
+    )
+    owned, dayless_ = report_owners([r.operation_id for r in rows]), month_only([r.operation_id for r in rows])
+    return [
+        {
+            "individual_id": row.individual_id,
+            "till": "utanfor" if row.herd.herd in OUTSIDE_GENEBANK_HERDS else row.herd.herd,
+            "ar": row.herd_tracking_date.year,
+            "manad": row.herd_tracking_date.month,
+            "dag": None if str(row.operation_id) in dayless_ else row.herd_tracking_date.day,
+        }
+        for row in rows
+        if str(row.operation_id) not in owned
+    ]
+
+
 def receipt(submission) -> dict:
     """
     Receipt, from the submission row and its events alone, so every retry gets the same one, also after a later change
@@ -3070,7 +3166,7 @@ def receipt(submission) -> dict:
         "summary": {
             "kvar": chosen["kvar"],
             "doda": chosen["dod"],
-            "salda": chosen["sald"],
+            "salda": chosen["sald"] + len(submission.data.get("salda_direkt") or []),
             "vantar": waiting,
             "ej_angivna": chosen["ej_angiven"],
         },
@@ -3453,7 +3549,9 @@ def submit(herd, round_, access, user, sub, *, now=None, completion=False) -> di
             open_choices = {k: e for k, e in latest.items() if isinstance(e, dict) and e.get("val") is None}
         draft = _draft(herd, round_)  # K1: its kept buyers are linked again or deleted, under the rabbits' locks
         kept = {int(key): claim["kopare_id"] for key, claim in (_kept_claims(draft.data) if draft else {}).items()}
-        ids = sorted(set(sub.rabbits) | set(kept))
+        # Ångra can put a sold rabbit back on the list. Hold it from the completeness check through the receipt.
+        listed_or_sold = _listed_or_sold(herd, year, _listed_5_2(herd, last))
+        ids = sorted(listed_or_sold | sub.rabbits.keys() | kept.keys())
         items = _lock_items(ids, access.item.id if paper else None, report, kept.values())
         item, pages = _lock_form(access, user, herd) if paper else (None, [])
         _lock_rabbits(ids, items)
@@ -3541,8 +3639,11 @@ def submit(herd, round_, access, user, sub, *, now=None, completion=False) -> di
                 **_by(user, "user", "access_code"),
                 operation_ids=grant.operation_ids,
                 added_measurements=added,
-                data=_with_open_choices(submitted_body(sub), open_choices)
-                | {"litters_added": _litters_added(herd, round_)},
+                data={
+                    **_with_open_choices(submitted_body(sub), open_choices),
+                    "litters_added": _litters_added(herd, round_),
+                    "salda_direkt": _sold_besides(herd, year, sub),
+                },
                 request_hash=digest,
             )
         except IntegrityError as exc:  # the key, taken meanwhile for another herd, which this lock does not cover
@@ -3684,18 +3785,104 @@ def keep_draft_after_completion(herd, round_, answered, key):
     draft.save()
 
 
-def _pruned(data, choosing, listed):
+SOLD_WITH_SKICKA = "Rapporten är redan inskickad. Försäljningen registreras när du skickar ändringarna."
+
+
+def undo_sale(herd, access, user, row_id, operation_id):
     """
-    FB1: a withdrawn report's draft without what Skicka would refuse now (okand_kanin, senare_handelse): the entries
-    of rabbits not left to choose (`choosing`, ids as text) and the defects of rabbits off the list (`listed`), in the
-    body and in the form's copy.
+    The report's Ångra of a sale out of the herd (Jonas 2026-11-26): only as its seller may on the rabbit page,
+    checked again here under the rabbit's lock (sale_undo_denial: their own, the latest row, within
+    SALE_UNDO_WINDOW), never a sale a report wrote (REPORT_ROW) and never a link's. A manager's wider right stays on
+    the rabbit page. The same `operation_id` again changes nothing.
+    """
+    if access.code is not None:
+        raise ArsrapportError(403, "Länken kan inte ångra en försäljning.")
+    row = HerdTracking.get_or_none((HerdTracking.id == row_id) & (HerdTracking.from_herd == herd.id))
+    if row is None or row.kind != "TRANSFER":
+        raise ArsrapportError(404, "Försäljningen finns inte.")
+    with DB_PROXY.atomic():
+        buyer_items([row], lock=True)  # the queue's order, as void_herd_tracking takes them again: items, rabbit
+        lock_individuals([row.individual_id])
+        if HerdTracking.select().where(HerdTracking.voided_operation_id == operation_id).exists():
+            return
+        row = HerdTracking.get_by_id(row_id)
+        active = HerdTracking.select().where(HerdTracking.individual == row.individual_id, ht_not_voided())
+        denial = REPORT_ROW if report_owners([row.operation_id]) else None
+        denial = denial or sale_undo_denial(user, row, sorted(active, key=ht_sort_key))
+        if denial:
+            raise ArsrapportError(403, denial)
+        void_herd_tracking(row.id, user, UNDO_REASON, operation_id, typed=False)
+
+
+def sell_now(herd, round_, access, user, rabbit_id, sald, *, now=None):
+    """
+    The sale dialog's Spara (Jonas 2026-11-26): one rabbit's sale registered at once, as Sälj on the rabbit page
+    writes it, with the rules Skicka checks: check() on a submission of that rabbit alone gives the role and its
+    address rule, the buyer's year rules (report=True), a herd in the genebank or såld utanför genbanken, an erased
+    buyer, the round open or a late editor, and a buyer kept across Dra tillbaka (K1). On paper the item is locked
+    and checked again, and the write goes through its InboxGrant. The sale is the register's, not the report's: the
+    rabbit page's Ångra undoes it, the buyer's mail is queued now, and the report lists the rabbit no more, or by
+    its move after 31 December, so Skicka never writes it again. Only before the first Skicka: once a report is in,
+    the sale goes with Ändra (SOLD_WITH_SKICKA). Returns the TRANSFER's operation id.
+    """
+    if not access.can_sell:
+        raise ArsrapportError(403, "Försäljningen blir ett förslag när du skickar rapporten.")
+    entry = _entry(str(rabbit_id), {"val": "sald", "sald": sald})
+    body = {"rabbits": {}, "health": "inga"}
+    sub = replace(parse_submission(body, paper=False), rabbits={rabbit_id: entry})
+    at = now or globals()["now"]()  # the parameter hides the module's clock, which the tests patch
+    on, paper = at.astimezone(STOCKHOLM).date(), access.source == "paper"
+    if paper:
+        form = {"inbox_item_id": access.item.id, "received_on": on, "signed_on": None, "matrikel": None}
+        sub = replace(sub, paper=form)
+    with DB_PROXY.atomic():
+        round_ = _lock_round(round_)
+        lock_report(round_, herd)
+        _recheck_code(access, herd, on)
+        if current_report(herd, round_) is not None:
+            raise ArsrapportError(409, SOLD_WITH_SKICKA)
+        draft = _draft(herd, round_)
+        claim = (_kept_claims(draft.data) if draft else {}).get(str(rabbit_id))
+        kept = [claim["kopare_id"]] if claim else []
+        items = _lock_items([rabbit_id], access.item.id if paper else None, None, kept)
+        item, pages = _lock_form(access, user, herd) if paper else (None, [])
+        _lock_rabbits([rabbit_id], items)
+        transfers = {}
+        refusals, _ = check(herd, round_, access, None, sub, on=on, check_email=False, transfers=transfers)
+        # the rabbit's own, the round's, and the reason a late entry needs (orsak_kravs): that sale goes with Skicka
+        refusals = [r for r in refusals if r.individual_id == rabbit_id or r.code in ("rundan_stangd", "orsak_kravs")]
+        if refusals:
+            raise _cannot(refusals, "Försäljningen kan inte registreras.")
+        transfer = transfers.get(rabbit_id)
+        if transfer is not None:
+            transfer = replace(transfer, month_only=entry.sald["dag"] is None)
+        if transfer is None:  # check() left nothing to write
+            raise _cannot([_refusal(rabbit_id, "senare_handelse")], "Försäljningen kan inte registreras.")
+        if transfer.buyer and lock_sale_buyers({rabbit_id: transfer.buyer}, proposal=False):
+            transfer = replace(transfer, buyer=None, buyer_removed=True)
+        grant = ReportGrant(inbox.InboxGrant(item, user, pages[0]) if paper else None, herd=herd)
+        try:
+            execute(user, rabbit_id, lambda ctx: [transfer], grant=grant)
+        except (IndividualRefused, HerdTrackingError) as exc:
+            raise _cannot([_written(rabbit_id, exc)], "Försäljningen kan inte registreras.") from exc
+        drop_kept_buyers(set(kept), user)  # K1: one the sale did not link goes; the rabbit and its items are locked
+        if draft is not None:  # the row lets go of the sale, also before the form's next save; its version stays
+            draft.data = _with_entry(draft.data, str(rabbit_id), {"val": None})
+            draft.save(only=[YearlyReportDraft.data])
+        return grant.operation_ids[0]
+
+
+def _pruned(data, choosing, defect_ids=None):
+    """
+    FB1: keep the rabbit entries Skicka accepts (`choosing`, ids as text) in the body and the form's copy.
+    On withdrawal also prune defects by their own list of listed or sold rabbits (okand_kanin, senare_handelse).
     """
 
     def prune(body):
         if isinstance(body.get("rabbits"), dict):
             body = {**body, "rabbits": {key: e for key, e in body["rabbits"].items() if key in choosing}}
-        if isinstance(body.get("defects"), list):
-            kept = [d for d in body["defects"] if isinstance(d, dict) and d.get("individual_id") in listed]
+        if defect_ids is not None and isinstance(body.get("defects"), list):
+            kept = [d for d in body["defects"] if isinstance(d, dict) and d.get("individual_id") in defect_ids]
             body = {**body, "defects": kept}
         return body
 
@@ -3800,8 +3987,10 @@ def withdraw(herd, round_, access, user, *, revision, reason=None, now=None) -> 
             )
         }
         # D10: the submission's data is already stored_body
-        latest = {k: v for k, v in submissions[-1].data.items() if k != "litters_added"}  # not the form's
-        data = _pruned(latest if draft is None else draft.data, choosing, {row["id"] for row in listed})
+        # not the form's
+        latest = {k: v for k, v in submissions[-1].data.items() if k not in ("litters_added", "salda_direkt")}
+        eligible = _listed_or_sold(herd, round_.report_year, (row["id"] for row in listed))
+        data = _pruned(latest if draft is None else draft.data, choosing, eligible)
         data, gone = _with_kept(data, kept)
         drop_kept_buyers(gone, user)  # FB6; Skicka's locks hold the items and the rabbits
         if draft is None:
