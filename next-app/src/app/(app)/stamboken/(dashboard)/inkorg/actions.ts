@@ -5,7 +5,7 @@ import { cookies } from "next/headers";
 import { MODE_COOKIE, parseMode, type Mode } from "@/lib/mode";
 import type { SaleBuyer } from "@/components/individual/BuyerFields";
 import { fetchApi, ApiError } from "@/lib/api";
-import { toApiRects } from "./image";
+import { crops, toApiRects } from "./image";
 import type {
   InboxDocument,
   InboxItem,
@@ -271,13 +271,13 @@ export async function confirmMask(
     return refused("Ogiltig maskning.");
   if (![0, 90, 180, 270].includes(rotation))
     return refused("Ogiltig vridning.");
-  if (rects.length === 0 && !frame && noPersonalData !== true)
+  if (rects.length === 0 && !crops(frame) && noPersonalData !== true)
     return refused("Bekräfta att fotot inte visar några uppgifter.");
   return call<DocResult>(id, `/${id}/dokument/${doc}/maskning`, "POST", {
     rotation,
     mask_rects: rects,
     copy_frame: frame && toApiRects([frame])[0],
-    ...(rects.length === 0 && !frame ? { no_personal_data: true } : {}),
+    ...(rects.length === 0 && !crops(frame) ? { no_personal_data: true } : {}),
     matches_registry: matchesRegistry === true,
   });
 }

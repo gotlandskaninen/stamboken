@@ -55,10 +55,21 @@ export const toApiRects = (rects: Rect[]): Rect[] =>
 export const initialRects = (doc: Pick<InboxDocument, "mask_rects">): Rect[] =>
   doc.mask_rects ?? [];
 
-/** The frame around the copy the masking step starts from: the saved one, the API's for a handwritten certificate, or none. */
+/**
+ * The frame around the copy the masking step starts from: the saved one, the
+ * API's for a handwritten certificate, the upper two thirds for a photo never
+ * masked, or none for a copy made with black boxes only.
+ */
 export const initialFrame = (
-  doc: Pick<InboxDocument, "copy_frame" | "frame_suggestion">,
-): Rect | null => doc.copy_frame ?? doc.frame_suggestion ?? null;
+  doc: Pick<InboxDocument, "copy_frame" | "frame_suggestion" | "mask_rects">,
+): Rect | null =>
+  doc.copy_frame ??
+  doc.frame_suggestion ??
+  (doc.mask_rects ? null : UPPER_TWO_THIRDS);
+
+/** A frame over (almost) the whole photo leaves nothing out: it is no cover for the seller and the buyer. */
+export const crops = (frame: Rect | null): boolean =>
+  !!frame && frame.w * frame.h < 0.99;
 
 /**
  * "Förstärk blyerts", in place on RGBA pixels: the green channel (the form is

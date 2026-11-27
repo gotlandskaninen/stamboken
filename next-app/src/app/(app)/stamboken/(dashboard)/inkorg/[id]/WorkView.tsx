@@ -17,6 +17,7 @@ import {
   type ActionResult,
 } from "../actions";
 import {
+  crops,
   initialFrame,
   initialRects,
   MAX_RECTS,
@@ -924,7 +925,7 @@ export function WorkView({
                         Ta bort vald ruta
                       </button>
                     </div>
-                    {rects.length === 0 && !copyFrame && (
+                    {rects.length === 0 && !crops(copyFrame) && (
                       <label className={styles.row}>
                         <input
                           type="checkbox"
@@ -954,7 +955,9 @@ export function WorkView({
                         className="sb-btn"
                         disabled={
                           pending ||
-                          (rects.length === 0 && !copyFrame && !noPersonalData)
+                          (rects.length === 0 &&
+                            !crops(copyFrame) &&
+                            !noPersonalData)
                         }
                         onClick={() =>
                           run(

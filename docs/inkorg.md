@@ -306,7 +306,8 @@ för en post med `ref_type` `sale_proposal`, vars statusvy avgör förslaget, oc
   [Maskning](#maskning-och-kopian-på-kaninen), eller `null` (hela fotot). Sätts bara med `…/maskning`.
 - `frame_suggestion`: ramen som maskningen börjar med när `cert_format` är `handskrivet` och varken
   `copy_frame` eller `mask_rects` är satta: allt utom den nedre tredjedelen, där säljaren och
-  köparen skriver, `{"x": 0.0, "y": 0.0, "w": 1.0, "h": 0.6667}`. Annars `null`.
+  köparen skriver, `{"x": 0.0, "y": 0.0, "w": 1.0, "h": 0.6667}`. Annars `null`. Arbetsvyn börjar
+  med samma ram för ett foto som aldrig maskerats, oavsett format.
 - `waiting_for`: `null` eller en lista med de föräldranummer dokumentet väntar på.
 - `interpretation_status`: bildtolkningen av fotot, se [Tolkning](#tolkning). `av` (tolkningen är
   avstängd, eller dokumentet är inget intyg), `vantar` (i kö), `klar` (förslaget finns) eller
@@ -909,7 +910,8 @@ som ska döljas, och beskuret till ramen när det finns en. Den ska inte visa an
 **Ramen** (`copy_frame`) är den del av fotot som kopian behåller. På det gröna handskrivna intyget
 är det överdelen, ned till säljaren och köparen, så att deras uppgifter hamnar utanför kopian. De
 svarta rektanglarna täcker det som ändå syns innanför ramen. Originalet och tolkningen av det
-ändras inte.
+ändras inte. En ram som täcker hela fotot (minst 99 %) lämnar inget utanför och räknas som ingen
+ram. I arbetsvyn tar bara ramens kant och hörn emot musen; inne i ramen flyttar ett drag fotot.
 
 **Rektanglarna** och ramen anges i bråkdelar av bilden *efter* vridningen: `x` och `y` är det övre
 vänstra hörnet, `w` och `h` bredd och höjd, alla mellan 0 och 1, och rektangeln måste ligga inom
@@ -931,7 +933,7 @@ Bekräftar vridningen, rektanglarna och ramen tillsammans och gör kopian av jus
 | `rotation` | krävs: 0, 90, 180 eller 270 grader medurs |
 | `mask_rects` | krävs: rektanglarna i bråkdelar av bilden vriden `rotation` grader. Får inte vara `null` |
 | `copy_frame` | valfritt: ramen som kopian beskärs till, i bråkdelar av bilden vriden `rotation` grader, minst 0,1 bred och hög. Utelämnad eller `null`: hela fotot |
-| `no_personal_data` | `true` krävs när `mask_rects` är en tom lista och `copy_frame` saknas: intyget visar ingen säljare eller köpare |
+| `no_personal_data` | `true` krävs när `mask_rects` är en tom lista och `copy_frame` saknas eller täcker hela fotot (minst 99 %): intyget visar ingen säljare eller köpare |
 | `matches_registry` | `true` när handläggaren har jämfört intyget med registret och de stämmer. Ger kaninen märkningen "Intyget kontrollerat" (se nedan). Handläggaren kryssar i det själv varje gång, också när kopian görs om. Gränssnittet visar "Förslag: stämmer" när tolkningen läste kaninens eget nummer och intygsnumret (båda `läst`) och ingen kontroll gick emot, men handläggaren avgör (Jonas 2026-11-26). Utelämnat eller `false`: ingen märkning. Kaninen måste ha kvar det intygsnummer och individnummer som fotot sparades med (`saved_certificate`, `saved_number`), annars 409: kontrollen gäller det intyg handläggaren jämförde |
 
 Vridningen, rektanglarna och ramen sparas på dokumentet i samma transaktion som kopian görs, också

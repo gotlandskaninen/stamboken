@@ -351,6 +351,30 @@
 /* Outside the frame the photo is dimmed: not in the copy. A shadow adds no scroll overflow, and the viewport clips it. */
 .rect.copyFrame {
   box-shadow: 0 0 0 100vmax rgb(0 0 0 / 0.35);
+  pointer-events: none;
+}
+/* Only the frame's edge and corner take the pointer: inside it, a drag pans the photo as anywhere else. */
+.rect.copyFrame::before {
+  content: "";
+  position: absolute;
+  inset: -9px;
+  pointer-events: auto;
+  clip-path: polygon(
+    evenodd,
+    0 0,
+    100% 0,
+    100% 100%,
+    0 100%,
+    0 0,
+    18px 18px,
+    18px calc(100% - 18px),
+    calc(100% - 18px) calc(100% - 18px),
+    calc(100% - 18px) 18px,
+    18px 18px
+  );
+}
+.rect.copyFrame .handle {
+  pointer-events: auto;
 }
 .handle {
   position: absolute;

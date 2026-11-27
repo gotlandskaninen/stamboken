@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   enhancePencil,
+  crops,
   initialFrame,
   initialRects,
   MAX_RECTS,
@@ -87,16 +88,28 @@ describe("initialRects", () => {
 });
 
 describe("initialFrame", () => {
-  it("prefers the saved frame, then the API's for a handwritten certificate, then none", () => {
+  it("prefers the saved frame, then the API's, then the upper two thirds of a photo never masked", () => {
+    const none = { copy_frame: null, frame_suggestion: null, mask_rects: null };
+    expect(initialFrame({ ...none, copy_frame: r })).toEqual(r);
     expect(
-      initialFrame({ copy_frame: r, frame_suggestion: UPPER_TWO_THIRDS }),
-    ).toEqual(r);
-    expect(
-      initialFrame({ copy_frame: null, frame_suggestion: UPPER_TWO_THIRDS }),
-    ).toEqual(UPPER_TWO_THIRDS);
-    expect(initialFrame({ copy_frame: null, frame_suggestion: null })).toBe(
-      null,
-    );
+      initialFrame({
+        ...none,
+        frame_suggestion: { ...UPPER_TWO_THIRDS, h: 0.5 },
+      }),
+    ).toEqual({ ...UPPER_TWO_THIRDS, h: 0.5 });
+    expect(initialFrame(none)).toEqual(UPPER_TWO_THIRDS);
+    // A copy made with boxes only, or with nothing to hide, is redone as it was made: without a frame.
+    expect(initialFrame({ ...none, mask_rects: [r] })).toBe(null);
+    expect(initialFrame({ ...none, mask_rects: [] })).toBe(null);
+  });
+});
+
+describe("crops", () => {
+  it("is a frame that leaves part of the photo out", () => {
+    expect(crops(UPPER_TWO_THIRDS)).toBe(true);
+    expect(crops({ x: 0, y: 0, w: 1, h: 1 })).toBe(false);
+    expect(crops({ x: 0, y: 0, w: 1, h: 0.995 })).toBe(false);
+    expect(crops(null)).toBe(false);
   });
 });
 

@@ -165,6 +165,9 @@ describe("the queue's server actions", () => {
 
   it("need the explicit no_personal_data for an empty list without a frame", async () => {
     expect((await confirmMask(12, 31, 0, [], null)).ok).toBe(false);
+    // A frame over the whole photo leaves nothing out: no cover either.
+    const whole = { x: 0, y: 0, w: 1, h: 1 };
+    expect((await confirmMask(12, 31, 0, [], whole)).ok).toBe(false);
     expect(api).not.toHaveBeenCalled();
     await confirmMask(12, 31, 180, [], null, true);
     expect(body(0)).toEqual({

@@ -104,6 +104,7 @@ MAX_RECTS = 20
 # The frame a handwritten certificate (format 1) is offered: all but its lower third, where seller and buyer write.
 HANDWRITTEN_FRAME = {"x": 0.0, "y": 0.0, "w": 1.0, "h": 0.6667}
 MIN_FRAME = 0.1  # the copy keeps at least a tenth of the photo's width and height
+FULL_FRAME = 0.99  # a frame over this share of the photo or more leaves nothing out
 
 
 class InboxError(Exception):
@@ -909,9 +910,10 @@ def confirm_mask(item, document, user, rotation, rects, no_personal_data=None, m
     frame = None if frame is None else _rects([frame])[0]
     if frame and min(frame["w"], frame["h"]) < MIN_FRAME:
         raise InboxError(400, "Ramen runt kopian måste vara minst en tiondel av fotots bredd och höjd.")
-    if not rects and not frame and no_personal_data is not True:
+    crops = frame is not None and frame["w"] * frame["h"] < FULL_FRAME
+    if not rects and not crops and no_personal_data is not True:
         raise InboxError(
-            400, 'En tom mask_rects kräver copy_frame eller "no_personal_data": true: intyget visar ingen säljare.'
+            400, 'En tom mask_rects kräver en copy_frame som lämnar något utanför, eller "no_personal_data": true.'
         )
     if matches_registry is not None and not isinstance(matches_registry, bool):
         raise InboxError(400, "matches_registry är true eller false.")

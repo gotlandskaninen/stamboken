@@ -106,6 +106,11 @@ class TestCopy(CopyTest):
         self.assertEqual(self.copy(document).size, (1200, 1600))
         events = self.reload(item).events.where(db.InboxEvent.kind == "kopia").order_by(db.InboxEvent.id)
         self.assertEqual([(e.detail["rects"], e.detail["frame"]) for e in events], [(0, True), (1, False)])
+        # A frame over the whole photo leaves nothing out: it needs no_personal_data as no frame does.
+        whole = {"x": 0, "y": 0, "w": 1, "h": 1}
+        self.assertEqual(self.mask(item, document, mask_rects=[], copy_frame=whole).status_code, 400)
+        resp = self.mask(item, document, mask_rects=[], copy_frame=whole, no_personal_data=True)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
 
     def test_the_frame_crops_the_turned_photo_after_its_boxes_are_painted(self):
         item, document = self.saved_document()
