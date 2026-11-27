@@ -294,12 +294,22 @@ class SellNowTest(ArsrapportTest):
         self.sold(post=item.id, kopare={k: v for k, v in OTHER.items() if k != "postal_address"})  # as written
         access = arsrapport.report_access(helper, self.h, item.id)
         inbox.take(db.InboxItem.get_by_id(item.id), db.User.get_by_id(self.manager.id), over=True)  # meanwhile
-        with self.assertRaises(Exception) as caught:
+        with self.assertRaises(inbox.InboxError) as caught:  # _lock_form: the item is the manager's now
             arsrapport.sell_now(
                 self.h, self.round_, access, helper, self.b.id, {"till": "G9002", "ar": 2025, "manad": 9, "dag": None}
             )
-        self.assertEqual(getattr(caught.exception, "status", None), 409)
+        self.assertEqual(caught.exception.status, 409)
+        self.assertRegex(str(caught.exception.detail), r"har posten\. Ta över den")
         self.assertEqual(sales(self.b), [])
+
+    def test_dra_tillbaka_leaves_a_direct_sale(self):  # review r1: the register's, not the report's
+        self.sold(kopare=BUYER)
+        (sale,) = sales(self.a)
+        self.assertEqual(self.skicka(self.kvar(self.b, vikt=2.8)).status_code, 200)
+        withdrawn = self.api("POST", "/besattning/G9001/2025/dra-tillbaka", revision=1)
+        self.assertEqual(withdrawn.status_code, 200, withdrawn.get_data(as_text=True))
+        self.assertEqual([(s.id, s.holder_contact_id) for s in sales(self.a)], [(sale.id, sale.holder_contact_id)])
+        self.assertNotIn(self.a.id, [row["id"] for row in withdrawn.get_json()["rabbits"]])
 
     def test_a_buyer_kept_across_dra_tillbaka_is_linked(self):  # K1, and the draft's next save spares it
         ok = self.skicka(self.sald(self.a, "utanfor", 2025, 10, 10, kopare=BUYER), self.kvar(self.b, vikt=2.8))

@@ -530,6 +530,7 @@ describe("ReportForm", () => {
     vi.useFakeTimers();
     const a = sellingActions();
     render(<ReportForm env="demo" view={view()} actions={a as never} />);
+    choose(1, "Finns kvar"); // an entry the sale must take away
     typeSaleOutside();
     expect(
       screen.getByText(
