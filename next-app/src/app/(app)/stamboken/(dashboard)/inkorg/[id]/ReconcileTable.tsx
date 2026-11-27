@@ -31,12 +31,12 @@ const ROWS: [RowKey, string][] = [
   ["farmor", "Farmor"],
 ];
 const GRANDPARENTS = new Set<RowKey>(["morfar", "mormor", "farfar", "farmor"]);
-const NUMBERS = new Set<RowKey>([
+// The fields that had an example number before the table (not the grandparents: it would read as theirs).
+const EXAMPLE = new Set<RowKey>([
   "individual",
   "paper_number",
   "mother",
   "father",
-  ...GRANDPARENTS,
 ]);
 // What saving needs in each mode, as the form has always asked for it.
 const REQUIRED: Record<SaveMode, RowKey[]> = {
@@ -155,7 +155,7 @@ export function ReconcileTable({
           maxLength={
             key === "paper_certificate" ? 20 : key === "name" ? 50 : undefined
           }
-          placeholder={NUMBERS.has(key) ? "G1274-2512" : undefined}
+          placeholder={EXAMPLE.has(key) ? "G1274-2512" : undefined}
           autoComplete="off"
           spellCheck={false}
         />

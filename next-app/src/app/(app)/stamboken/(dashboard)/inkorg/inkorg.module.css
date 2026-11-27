@@ -505,7 +505,7 @@
   font-family: var(--sb-mono);
   font-size: 14px;
   color: var(--sb-ink-2);
-  overflow-wrap: anywhere;
+  white-space: nowrap;
 }
 .reconcilePaper {
   min-width: 150px;
@@ -632,6 +632,8 @@
   }
   .reconcileFrame tr.reconcileRow > .reconcileRead {
     grid-area: read;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
   .reconcileFrame tr.reconcileRow > .reconcileRegistry {
     grid-area: registry;
