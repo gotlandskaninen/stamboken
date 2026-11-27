@@ -1291,6 +1291,13 @@ administratörer, genbanksansvariga och genbankshjälpare, och alla tre kan se h
    tolkningen läste, med numret skrivet som i Stamboken (G1 2511 blir G1-2511). Under tabellen
    står kontrollerna, till exempel "Mor och far finns i Stamboken", "Numret stämmer med kullen"
    och "Intygsnumret är ledigt". De räknas också om medan du skriver.
+   Rader med stjärna (*) är obligatoriska. En ny kanin behöver, som när du registrerar en kanin
+   själv, individnumret och intygsnumret på pappret, kön (**Hona**, **Hane** eller **Okänt**),
+   födelsedatum, färg ur genbankens lista, antal födda, antal levande efter 6 veckor (högst antal
+   födda), mor och far. Pappersintyg på en kanin som finns behöver de tre numren överst. Går
+   intyget inte att läsa letar du fram uppgifterna innan kaninen sparas: **Spara och nästa** går
+   inte att klicka förrän allt obligatoriskt är ifyllt, och under knappen står "Kvar att fylla i"
+   med det som fattas. En rad som skiljer sig från registret hindrar inte att du sparar.
    Klicka **Spara och nästa**. Ett fel visas vid raden det gäller.
    Stämmer inte individnumret på pappret med Stambokens öppnas samma ruta som för
    uppfödaren, se [När pappret och Stamboken har olika individnummer](#när-pappret-och-stamboken-har-olika-individnummer).
