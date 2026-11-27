@@ -862,8 +862,8 @@ Vad på intyget som hör till vilket fält:
 | Namn | `name`, högst 50 tecken |
 | Kön | `sex`, krävs: `female`, `male` eller `null` för okänt (nyckeln måste finnas) |
 | Födelsedatum | `birth_date`, krävs om `breeding_id` saknas |
-| Färg | `color`, krävs: färgens namn som det står i genbankens färglista |
-| Kullstorlek (antal födda) | `litter_size`, krävs, minst 1 |
+| Färg | `color`, krävs: färgens namn som det står i färglistan för genbanken kaninen registreras i (kullens besättning) |
+| Kullstorlek (antal födda) | `litter_size`, krävs, minst 1; för en kull som finns lika med kullens |
 | Antal levande vid 6 veckor | `litter_size6w`, krävs, minst 1 och högst `litter_size` |
 | Mor: nummer | `mother`, krävs om `breeding_id` saknas: en registrerad kanin |
 | Far: nummer | `father`, som `mother`; samma genbank som modern |
@@ -892,7 +892,7 @@ Kullen skapas i moderns besättning, och kaninen föds där. Kaninen måste vara
 
 | Status | När |
 |---|---|
-| 400 | `Välj färg.`, `Välj kön: hona, hane eller okänt.`, `Ange antal födda (minst 1).`, `Ange antal levande vid 6 veckor (minst 1).` (med `field`); `Välj mor och far bland registrerade kaniner.` (en unge utan föräldrar), ett datum, en kullstorlek eller ett individnummer som saknas eller är fel |
+| 400 | `Välj färg.`, `Välj kön: hona, hane eller okänt.`, `Ange antal födda (minst 1).`, `Ange antal levande vid 6 veckor (minst 1).`, `Antal levande vid 6 veckor kan inte vara fler än antal födda.`, och efter registreringens egna kontroller `Välj en färg ur genbankens lista.` (färgen finns inte i listan för genbanken kaninen registreras i) och `Kullen har N födda i Stamboken.` (en kull som finns har ett annat antal födda än pappret; har den inget tar den pappersintygets) (med `field`, inget sparas); `Välj mor och far bland registrerade kaniner.` (en unge utan föräldrar), ett datum, en kullstorlek eller ett individnummer som saknas eller är fel |
 | 403 | anroparen får inte registrera i moderns besättning (`Modern finns inte i en besättning där du får registrera kaniner.` eller `Åtkomst nekad`) |
 | 409, `title: "number_conflict"` | pappersintygets individnummer stämmer inte med det Stamboken ger. Svaret har kontrollens fält: `stamboken_number`, `paper_number`, `check_status`, `conflicts`, `choices`, `actions`. Inget sparas. Visa skillnaden; väljer handläggaren Stambokens nummer, skicka samma anrop med `"resolution": {"expected_number": "<stamboken_number>", "choice": "use_stamboken_number"}`. Stämmer pappret, lämna posten till genbanksansvarig. |
 | 409, `title: "litter_order_conflict"` | kullen är född före en kull som redan har kullnummer det året |
