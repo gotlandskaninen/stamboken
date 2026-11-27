@@ -439,6 +439,16 @@ describe("WorkView: masking", () => {
         { ok: true, text: "Föräldrarna på intyget stämmer med registret." },
         { ok: false, text: "Namnet skiljer sig." },
       ]),
+      // The right number and certificate, but a grandparent that is not the registry's.
+      read({
+        ...own,
+        farfar: {
+          value: null,
+          source: "avviker" as const,
+          read: "G9002 2011",
+          registry: "G9003-2011",
+        },
+      }),
     ]) {
       const { unmount: done } = render(view(item({ documents: [other] })));
       expect(screen.queryByText(/Förslag: stämmer/)).toBeNull();

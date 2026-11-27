@@ -1,18 +1,104 @@
 "use client";
 
 import React from "react";
+import { PublicationFields } from "@/components/member/PublicationFields";
 import { MbCard } from "../min-besattning/min-besattning-ui";
-import { CONSENT_TEXT, UTOM_ALL, type PaperFields, type Utom } from "./lib";
+import { type KontoTyp, type PaperFields } from "./lib";
 import styles from "./arsrapport.module.css";
 
-const UTOM_LABEL: Record<Utom, string> = {
-  phone: "telefonnummer",
-  email: "e-postadress",
-  address: "postnummer och ort",
-};
+const KONTO_TYP: [KontoTyp, string][] = [
+  ["bankkonto", "Bankkonto"],
+  ["bankgiro", "Bankgiro"],
+  ["plusgiro", "Plusgiro"],
+];
+
+// A labelled text field of "Dina uppgifter", on paper and in the report.
+export const textField = (
+  label: string,
+  value: string,
+  apply: (v: string) => void,
+  extra: React.InputHTMLAttributes<HTMLInputElement> = {},
+) => (
+  <label className={styles.label}>
+    {label}
+    <input
+      className={styles.field}
+      style={{ width: "100%", boxSizing: "border-box" }}
+      autoComplete="off"
+      value={value}
+      onChange={(e) => apply(e.target.value)}
+      {...extra}
+    />
+  </label>
+);
+
+type Konto = PaperFields["konto"];
+
+// A new support account: its type (drift #53), the clearing number for a bankkonto only, the number and the bank.
+// With `accountEnd` it says when the typed number ends as the stored one does.
+export function AccountFields({
+  konto,
+  onChange,
+  accountEnd,
+}: {
+  konto: Konto;
+  onChange: (k: Konto) => void;
+  accountEnd?: string | null;
+}) {
+  const set = (patch: Partial<Konto>) => onChange({ ...konto, ...patch });
+  const digits = konto.konto.replace(/\D/g, "");
+  const sameEnd =
+    !!accountEnd && digits.length >= 2 && digits.endsWith(accountEnd);
+  return (
+    <>
+      <div role="radiogroup" aria-label="Typ av konto">
+        <div className={styles.choices}>
+          {KONTO_TYP.map(([v, label]) => (
+            <label key={v} className={styles.choice}>
+              <input
+                type="radio"
+                name="kontotyp"
+                checked={konto.typ === v}
+                onChange={() =>
+                  // only a bankkonto has a clearing number
+                  set({
+                    typ: v,
+                    clearing: v === "bankkonto" ? konto.clearing : "",
+                  })
+                }
+              />
+              <span>{label}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+      {(konto.typ === "" || konto.typ === "bankkonto") &&
+        textField(
+          "Clearingnummer",
+          konto.clearing,
+          (v) => set({ clearing: v }),
+          { inputMode: "numeric", maxLength: 12 },
+        )}
+      {textField("Kontonummer", konto.konto, (v) => set({ konto: v }), {
+        inputMode: "numeric",
+        maxLength: 20,
+      })}
+      {sameEnd && (
+        <p className={styles.note} role="status">
+          Samma slutsiffror som nuvarande konto. Är det samma konto? Lämna då
+          fälten tomma.
+        </p>
+      )}
+      {textField("Bank", konto.bank, (v) => set({ bank: v }), {
+        maxLength: 100,
+      })}
+    </>
+  );
+}
 
 // The form's contact part. The page never reads the stored values: it shows
-// only the last two digits of the account (`accountEnd`), and what is typed
+// only the last two digits of the account (`accountEnd`, "" when the number
+// is too short to show any, null when there is none), and what is typed
 // here goes to the matrikel when the form is sent. Its state is the caller's,
 // outside FormState, so it never reaches a draft or localStorage.
 export function PaperChanges({
@@ -28,88 +114,32 @@ export function PaperChanges({
 }) {
   const set = (patch: Partial<PaperFields>) =>
     onChange({ ...fields, ...patch });
-  const text = (
-    label: string,
-    value: string,
-    apply: (v: string) => void,
-    extra: React.InputHTMLAttributes<HTMLInputElement> = {},
-  ) => (
-    <label className={styles.label}>
-      {label}
-      <input
-        className={styles.field}
-        style={{ width: "100%", boxSizing: "border-box" }}
-        autoComplete="off"
-        value={value}
-        onChange={(e) => apply(e.target.value)}
-        {...extra}
-      />
-    </label>
-  );
-  const digits = fields.konto.konto.replace(/\D/g, "");
-  const sameEnd =
-    !!accountEnd && digits.length >= 2 && digits.endsWith(accountEnd);
 
   return (
     <MbCard title="Uppgifter på blanketten">
       <div className={styles.detail}>
-        <div role="radiogroup" aria-label="Publicering i Koharen">
-          <p className={styles.label} style={{ margin: "0 0 8px" }}>
-            {CONSENT_TEXT}
-          </p>
-          <div className={styles.choices}>
-            {(
-              [
-                ["ja", "Ja"],
-                ["nej", "Nej"],
-                ["", "Inget svar på blanketten"],
-              ] as const
-            ).map(([v, label]) => (
-              <label key={v || "inget"} className={styles.choice}>
-                <input
-                  type="radio"
-                  name="consent"
-                  checked={fields.consent === v}
-                  onChange={() =>
-                    set({ consent: v, utom: v === "ja" ? UTOM_ALL : [] })
-                  }
-                />
-                <span>{label}</span>
-              </label>
-            ))}
-          </div>
-        </div>
-        {fields.consent === "ja" && (
-          <div role="group" aria-label="Får stå med">
-            <span className={styles.label}>
-              Om ja står ditt namn och besättningens nummer med. Kryssa också
-              det ur medlemsregistret som får stå med:
-            </span>
-            {(Object.keys(UTOM_LABEL) as Utom[]).map((k) => (
-              <label key={k} className={styles.line} style={{ minHeight: 48 }}>
-                <input
-                  type="checkbox"
-                  checked={!fields.utom.includes(k)}
-                  onChange={(e) =>
-                    set({
-                      utom: e.target.checked
-                        ? fields.utom.filter((x) => x !== k)
-                        : [...fields.utom, k],
-                    })
-                  }
-                />
-                {UTOM_LABEL[k]}
-              </label>
-            ))}
-          </div>
-        )}
+        <PublicationFields
+          value={
+            fields.consent
+              ? { ja: fields.consent === "ja", utom: fields.utom }
+              : null
+          }
+          onChange={(v) =>
+            set(
+              v
+                ? { consent: v.ja ? "ja" : "nej", utom: v.utom }
+                : { consent: "", utom: [] },
+            )
+          }
+          noAnswer="Inget svar på blanketten"
+        />
         <p className={styles.label} style={{ margin: 0 }}>
           Kryssar du varken ja eller nej gäller ditt senaste svar. Har du aldrig
           svarat publicerar vi ingenting. Du kan ändra ditt svar när som helst i
           Stamboken Online eller hos genbanksansvarig.
         </p>
 
-        {text("E-post", fields.epost, (v) => set({ epost: v }), {
+        {textField("E-post", fields.epost, (v) => set({ epost: v }), {
           id: "paper-email",
           type: "email",
           inputMode: "email",
@@ -122,54 +152,37 @@ export function PaperChanges({
             {emailError}
           </p>
         )}
-        {text("Telefon", fields.telefon, (v) => set({ telefon: v }), {
+        {textField("Telefon", fields.telefon, (v) => set({ telefon: v }), {
           type: "tel",
           maxLength: 50,
         })}
 
         <p className={styles.label} style={{ margin: 0 }}>
-          {accountEnd
-            ? `Nuvarande konto slutar på ••${accountEnd}`
-            : "Inget konto i matrikeln"}
+          {accountEnd === null
+            ? "Inget konto i matrikeln"
+            : accountEnd
+              ? `Nuvarande konto slutar på ••${accountEnd}`
+              : "Det finns ett konto i matrikeln"}
         </p>
-        {text(
-          "Clearingnummer",
-          fields.konto.clearing,
-          (v) => set({ konto: { ...fields.konto, clearing: v } }),
-          { inputMode: "numeric", maxLength: 12 },
-        )}
-        {text(
-          "Kontonummer",
-          fields.konto.konto,
-          (v) => set({ konto: { ...fields.konto, konto: v } }),
-          { inputMode: "numeric", maxLength: 20 },
-        )}
-        {sameEnd && (
-          <p className={styles.note} role="status">
-            Samma slutsiffror som nuvarande konto. Är det samma konto? Lämna då
-            fälten tomma.
-          </p>
-        )}
-        {text(
-          "Bank",
-          fields.konto.bank,
-          (v) => set({ konto: { ...fields.konto, bank: v } }),
-          { maxLength: 100 },
-        )}
+        <AccountFields
+          konto={fields.konto}
+          onChange={(konto) => set({ konto })}
+          accountEnd={accountEnd}
+        />
 
-        {text(
+        {textField(
           "Gatuadress",
           fields.adress.address,
           (v) => set({ adress: { ...fields.adress, address: v } }),
           { maxLength: 200 },
         )}
-        {text(
+        {textField(
           "Postnummer",
           fields.adress.postal_code,
           (v) => set({ adress: { ...fields.adress, postal_code: v } }),
           { inputMode: "numeric", maxLength: 10 },
         )}
-        {text(
+        {textField(
           "Ort",
           fields.adress.city,
           (v) => set({ adress: { ...fields.adress, city: v } }),

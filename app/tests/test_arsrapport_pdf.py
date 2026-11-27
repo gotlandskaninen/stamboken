@@ -68,12 +68,13 @@ class PdfTest(ArsrapportTest):
 
     def test_receipt_has_choices_and_no_buyer_or_account(self):
         kept, sold = self.rabbits(self.h, 2)
-        db.Herd.update(bank_account_number=ACCOUNT, bank_name="Testbanken").where(db.Herd.id == self.h.id).execute()
+        membership = db.Membership.create(bank_account_number=ACCOUNT, bank_name="Testbanken")
+        db.Herd.update(membership=membership).where(db.Herd.id == self.h.id).execute()
         self.h = db.Herd.get_by_id(self.h.id)  # the report must carry the account, or the assertion proves nothing
         report = self.reported(
             self.h, self.kvar(kept, vikt=2.8), self.sald(sold, "utanfor", 2025, 10, 3, kopare=BUYER), health="inga"
         )
-        self.assertEqual(report.herd.bank_account_number, ACCOUNT)
+        self.assertEqual(report.herd.membership.bank_account_number, ACCOUNT)
         submission = arsrapport._submissions(report)[-1]  # pylint: disable=protected-access
         submission.created_at = datetime(2026, 1, 5, 11, 0, tzinfo=timezone.utc)
         text = text_of(receipt_pdf(report, submission))

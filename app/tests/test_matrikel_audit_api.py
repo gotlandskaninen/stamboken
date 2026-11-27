@@ -171,6 +171,20 @@ class TestMatrikelAudit(MatrikelApiTest):
                 found = self.get(f"actor={actor}").get_json()
                 self.assertEqual((found["total"], found["rows"]), (0, []))
 
+    def test_anonymised_persons_account_change_on_the_herd_page_is_not_named(self):
+        """Opus #278: update_herd logs her own change of the support account (source herd) like a profile change."""
+        account = da.register_user("tova-konto@example.com", "pass")
+        matrikel.link_member_user(self.person.id, account.id, actor=self.matrikel_user, mode="admin")
+        payload = {"fields": ["bank_account_number", "bank_account_type"], "source": "herd", "herd_id": 1}
+        matrikel.write_matrikel_audit(account, "kontakt_andrad", self.ms, payload)
+        matrikel.unlink_member_user(self.person.id, actor=self.matrikel_user)
+        matrikel.anonymize_person(db.Member.get_by_id(self.person.id), self.matrikel_user)
+        self.login("man")
+        data = self.get(f"membership_id={self.ms.id}").get_json()
+        self.assertNotIn("tova-konto", json.dumps(data))
+        by_action = {r["action"]: r for r in data["rows"]}
+        self.assertEqual(by_action["kontakt_andrad"]["actor"], {"id": None, "name": matrikel.REDACTED_VALUE})
+
     def _billing_row(self, minutes_before_now=0):
         """A membership_updated row with the household's old street address (billing_* is always masked), written
         now and dated back if asked: after the erasure, so the erasure's own redaction never reached it."""

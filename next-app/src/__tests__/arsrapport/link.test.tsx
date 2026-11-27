@@ -6,6 +6,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 
@@ -170,15 +171,75 @@ describe("ReportForm in link mode", () => {
     ]);
   });
 
-  it("link mode shows no profile link", () => {
-    const { container } = render(linkForm(actions()));
+  it("link mode shows no profile link and no stored value", () => {
+    const { container } = render(
+      <ReportForm
+        link
+        env="prod"
+        view={view({
+          access: "code",
+          source: "link",
+          member_details: { mode: "link", changes: [] },
+        })}
+        actions={actions()}
+        stickyTop={0}
+      />,
+    );
     expect(screen.queryByText("Gå till profilen")).toBeNull();
     expect(container.querySelector('a[href^="/stamboken"]')).toBeNull();
+    expect(screen.getByText("Har något ändrats?")).toBeTruthy();
     expect(
       screen.getByText(
-        "Har din adress, e-post, ditt konto för stödet eller ditt svar om Koharen ändrats? Kontakta genbanksansvarig.",
+        "Av säkerhetsskäl visar vi inte dina uppgifter här. Har inget ändrats behöver du inte göra något.",
       ),
     ).toBeTruthy();
+    expect(screen.queryByLabelText("Telefon")).toBeNull(); // closed until asked for
+    fireEvent.click(
+      screen.getByRole("button", { name: "Ny adress eller telefon" }),
+    );
+    expect(
+      (screen.getByLabelText("Gatuadress") as HTMLInputElement).value,
+    ).toBe("");
+    expect(screen.getByText(/Gäller när du bekräftat i mejlet/)).toBeTruthy();
+  });
+
+  it("link mode sends only the fields filled in, the Koharen answer with its text version", async () => {
+    const a = actions();
+    render(
+      <ReportForm
+        link
+        env="prod"
+        view={view({
+          access: "code",
+          source: "link",
+          member_details: { mode: "link", changes: [] },
+        })}
+        actions={a}
+        stickyTop={0}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Ny adress eller telefon" }),
+    );
+    fireEvent.change(screen.getByLabelText("Telefon"), {
+      target: { value: "0709-777 888" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Svar om Koharen" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Nej" }));
+    for (const n of [1, 2]) {
+      choose(n, "Finns kvar");
+      fireEvent.change(within(row(n)).getByLabelText("Vikt"), {
+        target: { value: "2,8" },
+      });
+    }
+    fireEvent.click(
+      screen.getByRole("button", { name: "Skicka årsrapporten" }),
+    );
+    await waitFor(() => expect(a.submitReport).toHaveBeenCalled());
+    expect(a.submitReport.mock.calls[0][2].matrikel).toEqual({
+      telefon: "0709-777 888",
+      publicering: { ja: false, utom: [], text_version: "2026-11-20" },
+    });
   });
 
   it("shows the herd's cases with the queue on the link page too (S8)", () => {

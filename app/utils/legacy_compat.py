@@ -119,6 +119,10 @@ EXEMPT_ENDPOINTS = frozenset(
         ("rapport_link.open_link", "POST"),
         ("rapport_link.mine", "GET"),
         ("rapport_link.contacts", "GET"),
+        # The receipt mail's confirmation page (step 5): each call checks its own token.
+        ("rapport_link.show_changes", "POST"),
+        ("rapport_link.confirm_changes", "POST"),
+        ("rapport_link.not_me", "POST"),
         # The public membership application (not its listing, which is GET)
         # and the genebank names its form shows.
         ("member_applications.create_application", "POST"),

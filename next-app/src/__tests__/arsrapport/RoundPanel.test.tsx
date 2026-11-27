@@ -132,6 +132,28 @@ describe("RoundPanel invitation", () => {
   });
 });
 
+describe("RoundPanel activation box", () => {
+  it("tells the manager that old answers do not count for the Koharen list", () => {
+    render(
+      <RoundPanel
+        year={2026}
+        genebankId={1}
+        genebankName="Gotland"
+        round={{ ...round, genebanks: [] }}
+        canEdit
+        recipients={null}
+        env="demo"
+      />,
+    );
+    expect(
+      screen.getByText(
+        "Listan i Koharen tar bara med besättningar vars innehavare har svarat ja i årsrapporten, i profilen eller på blanketten. Svaren från årsrapporterna för 2025 och tidigare räknas inte, så den första listan kan bli kortare än förut.",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText("Aktivera")).toBeTruthy();
+  });
+});
+
 describe("RoundPanel without an open round", () => {
   it("says a round that closed without activation is closed, with nothing to do", () => {
     render(

@@ -47,6 +47,32 @@ def invitation_members(now):
     )
 
 
+def mail_addresses(member: Member, now) -> list[str]:
+    """
+    Where a mail to `member` may go now, the preferred first: the current address when it counts for login (no
+    seven days' wait left, U8), then the earlier ones that still count. Only an address the login system gives to
+    this member alone (login_code.login_holder: not an ended person, not a friexemplar's contact address, not one
+    another member holds), and none for an inactive membership. Empty when none does: the mail is cancelled.
+    """
+    if member.end_date is not None or member.membership.membership_status == "inactive":
+        return []
+    current = (member.email or "").strip() and (member.email_login_from is None or member.email_login_from <= now)
+    previous = MemberPreviousAddress.select(MemberPreviousAddress.address).where(
+        MemberPreviousAddress.member == member.id,
+        MemberPreviousAddress.login_until > now,
+        fn.TRIM(MemberPreviousAddress.address) != "",
+    )
+    earlier = [row.address for row in previous.order_by(MemberPreviousAddress.id)]
+    return [address for address in ([member.email] if current else []) + earlier if _owns(member, address)]
+
+
+def _owns(member, address):
+    from utils.login_code import login_holder  # pylint: disable=import-outside-toplevel  # it imports data_access
+
+    holder = login_holder(address.strip().lower())
+    return holder is not None and holder.id == member.id
+
+
 def invitation_recipient(herd: Herd, *, now=None) -> Member | None:
     """
     FA11: who the herd's invitation goes to, and who a code must have been issued to: the active main member of the

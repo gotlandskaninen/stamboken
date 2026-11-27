@@ -103,6 +103,23 @@ export type ProposedField = {
 export type Proposal = {
   fields: Partial<Record<string, ProposedField>>;
   checks: { ok: boolean | null; text: string }[];
+  /** The seller and buyer read at the bottom of a queue certificate (rule 5 b), for the sale panel. */
+  sale?: SaleReading;
+};
+/** What was read, never a confident value: the handler fills the sale with a click and checks it. */
+export type SaleReading = {
+  /** The buyer's herd as read; `found` only when it is one of the genebank's, and only then is it filled in. */
+  buyer_herd: { herd: string; found: boolean } | null;
+  buyer: {
+    name: string;
+    postal_address: string;
+    town: string;
+    email: string;
+  } | null;
+  date: string | null;
+  /** As read; a check says when it is not the rabbit's herd of origin. */
+  seller_herd: string | null;
+  checks: Proposal["checks"];
 };
 
 export type InterpretationSummary = {
@@ -129,7 +146,16 @@ export const checksPass = (doc: InboxDocument): boolean => {
   );
   // The certificate number too: a rabbit read with a digital certificate has none compared.
   const certificate = proposal.fields.paper_certificate?.source === "läst";
-  return same && certificate && !proposal.checks.some((c) => c.ok === false);
+  // Any row of the paper that is not the rabbit's (a grandparent, the colour) speaks against it.
+  const deviates = Object.values(proposal.fields).some(
+    (f) => f?.source === "avviker",
+  );
+  return (
+    same &&
+    certificate &&
+    !deviates &&
+    !proposal.checks.some((c) => c.ok === false)
+  );
 };
 
 export interface InboxEvent {
@@ -507,6 +533,104 @@ export function initialCertForm(proposal: Proposal | null): CertForm {
       Object.assign(form, { [key]: String(value) });
   }
   return form;
+}
+
+/** The grandparents on the paper: typed only to compare with the registry, never saved. */
+export type Grandparents = Record<
+  "morfar" | "mormor" | "farfar" | "farmor",
+  string
+>;
+export type RowKey = keyof CertForm | keyof Grandparents;
+
+/** The grandparents' first values: läst and härlett carry a value, as in initialCertForm. */
+export function initialGrandparents(proposal: Proposal | null): Grandparents {
+  const value = (key: keyof Grandparents) => {
+    const v = proposal?.fields[key]?.value;
+    return v === undefined || v === null ? "" : String(v);
+  };
+  return {
+    morfar: value("morfar"),
+    mormor: value("mormor"),
+    farfar: value("farfar"),
+    farmor: value("farmor"),
+  };
+}
+
+// The reconciliation table (docs/inkorg.md, "Avstämning"): each row beside the
+// registry, recomputed from what the handler typed, and the checks in words.
+export type RowStatus = "stammer" | "skiljer" | "osaker" | "ingen";
+export type NearRabbit = {
+  number: string;
+  name: string | null;
+  sex: string | null;
+};
+export type ReconciledRow = {
+  registry: string | number | null;
+  status: RowStatus;
+  /** A number not in the registry: those one character off, to pick from. */
+  near?: NearRabbit[];
+};
+export type Reconciliation = {
+  rows: Partial<Record<RowKey, ReconciledRow>>;
+  checks: Proposal["checks"];
+};
+
+/** "g1 2511" as the registry writes it, "G1-2511"; null for another shape. */
+export function normalNumber(text: string): string | null {
+  const m = text
+    .trim()
+    .toUpperCase()
+    .match(/^([A-Z]+)\s*(\d{1,5})\s*[-–\s]\s*(\d{4,5})$/);
+  return m ? `${m[1]}${m[2]}-${m[3]}` : null;
+}
+
+/** A date read as ÅÅÅÅ-MM-DD, ÅÅMMDD or D/M-ÅÅ(ÅÅ), as ÅÅÅÅ-MM-DD; null otherwise. */
+function isoDate(text: string): string | null {
+  const t = text.trim().replace(/\.$/, "");
+  const ymd =
+    t.match(/^(\d{4})-?(\d{2})-?(\d{2})$/) ??
+    t.match(/^(\d{2})(\d{2})(\d{2})$/);
+  const dmy = t.match(/^(\d{1,2})\/(\d{1,2})[-/ ]?(\d{4}|\d{2})$/);
+  const parts = ymd
+    ? [ymd[1], ymd[2], ymd[3]]
+    : dmy
+      ? [dmy[3], dmy[2], dmy[1]]
+      : null;
+  if (!parts) return null;
+  const [y, m, d] = parts.map(Number);
+  const day = new Date(Date.UTC(y < 100 ? 2000 + y : y, m - 1, d));
+  if (day.getUTCMonth() !== m - 1 || day.getUTCDate() !== d) return null;
+  return day.toISOString().slice(0, 10);
+}
+
+/**
+ * "Ta inläst": what the reading saw, as the field takes it (a number as the
+ * registry writes it, a date as ÅÅÅÅ-MM-DD); null when the field cannot take
+ * it (a sex, date, count or colour it has no value for).
+ */
+export function takeRead(
+  key: RowKey,
+  read: string,
+  colors: string[],
+): string | null {
+  const text = read.trim();
+  switch (key) {
+    case "sex":
+      return /^hon/i.test(text) ? "female" : /^han/i.test(text) ? "male" : null;
+    case "birth_date":
+      return isoDate(text);
+    case "litter_size":
+    case "litter_size6w":
+      return text.match(/^(\d{1,2})\s*(st\.?)?$/i)?.[1] ?? null;
+    case "color":
+      if (!colors.length) return text;
+      return colors.find((c) => c.toLowerCase() === text.toLowerCase()) ?? null;
+    case "name":
+    case "paper_certificate":
+      return text;
+    default:
+      return normalNumber(text) ?? text;
+  }
 }
 
 /** A proposal that found the rabbit in Stamboken is for its paper certificate. */

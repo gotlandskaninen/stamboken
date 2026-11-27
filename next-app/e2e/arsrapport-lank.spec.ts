@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import * as fs from "fs";
 import * as path from "path";
 import {
@@ -380,4 +381,81 @@ test("9. A kit and its mother from their certificates, then the report", async (
   await page.getByRole("button", { name: SEND }).click();
   await expect(page.getByText(/^Inskickad/)).toBeVisible({ timeout: 30_000 });
   await context.close();
+});
+
+// The receipt mail's confirmation link (5.11), read from the test API's mail queue as the mailbox would get it.
+function receiptMail(herd: string): { subject: string; fragment: string } {
+  return JSON.parse(
+    execFileSync("docker", ["exec", "-i", "test-api", "python3", "-", herd], {
+      input: fs.readFileSync(
+        path.join(process.cwd(), "e2e", "fixtures", "arsrapport_andringar.py"),
+      ),
+      encoding: "utf8",
+    }),
+  );
+}
+
+test("10. Har något ändrats? The link asks, and the receipt mail confirms in another browser", async ({
+  browser,
+}) => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await page.goto(links["M9201"]);
+  await expect(page.getByText(/^Inskickad/)).toBeVisible({ timeout: 30_000 });
+  await page.getByRole("button", { name: /^(Ändra|Fortsätt ändra)$/ }).click();
+  await expect(page.getByText("Har något ändrats?")).toBeVisible();
+  await expect(
+    page.getByText(
+      "Av säkerhetsskäl visar vi inte dina uppgifter här. Har inget ändrats behöver du inte göra något.",
+    ),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Ny adress eller telefon" }).click();
+  await expect(page.getByLabel("Gatuadress")).toHaveValue(""); // never the stored value
+  await page.getByLabel("Telefon").fill("0709-123 456");
+  await page.getByRole("button", { name: "Nytt konto för stödet" }).click();
+  await page.getByRole("radio", { name: "Bankgiro" }).check();
+  await page.getByLabel("Kontonummer").fill("1234567");
+  await page.getByRole("button", { name: SEND }).click();
+  await expect(
+    page.getByText(
+      /^Du har ändringar att bekräfta i mejlet \(telefon, konto\)/,
+    ),
+  ).toBeVisible({ timeout: 30_000 });
+  // the private fields are in no browser storage
+  const stored = await page.evaluate(() =>
+    JSON.stringify({ ...localStorage, ...sessionStorage }),
+  );
+  expect(stored).not.toContain("0709-123");
+  await context.close();
+
+  const mail = receiptMail("M9201");
+  expect(mail.subject).toBe(
+    "Årsrapporten är inskickad, bekräfta dina ändringar",
+  );
+  const mailbox = await (await browser.newContext()).newPage();
+  const seen = watchRequests(mailbox, [mail.fragment.slice(1)]);
+  await mailbox.goto(`/rapport/andringar${mail.fragment}`);
+  await expect(
+    mailbox.getByRole("heading", { name: "Bekräfta dina ändringar" }),
+  ).toBeVisible();
+  expect(mailbox.url()).not.toContain("#");
+  await expect(mailbox.getByText("Nytt: 0709-123 456")).toBeVisible();
+  const tick = mailbox.getByRole("checkbox", {
+    name: "Jag bekräftar det nya kontot för stödet.",
+  });
+  await expect(tick).not.toBeChecked();
+  await mailbox.getByRole("button", { name: "Bekräfta" }).click();
+  await expect(
+    mailbox.getByText(
+      "Klart. Ändringarna är sparade. Kontot ändras inte förrän du har kryssat i rutan.",
+    ),
+  ).toBeVisible();
+  await tick.check();
+  await mailbox.getByRole("button", { name: "Bekräfta" }).click();
+  await expect(mailbox.getByText(/^Redan bekräftat/)).toHaveCount(2);
+  await expect(mailbox.getByRole("button", { name: "Bekräfta" })).toHaveCount(
+    0,
+  );
+  expect(seen.leaks).toEqual([]);
+  await mailbox.context().close();
 });

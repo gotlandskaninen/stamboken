@@ -164,11 +164,11 @@ class TestCopy(CopyTest):
                 self.assertEqual(body["copy_frame"], changes.get("copy_frame"))
                 self.assertNotIn("mask_suggestion", body)
 
-    def test_migration_58_adds_the_frame_and_replays(self):
+    def test_migration_60_adds_the_frame_and_replays(self):
         self.addCleanup(db.check_migrations)
         db.DATABASE.execute_sql("ALTER TABLE inbox_document DROP COLUMN copy_frame")
         for _ in range(2):  # replay-safe
-            rewind_migrations(58)
+            rewind_migrations(60)
             db.check_migrations()
         self.assertIn("copy_frame", {c.name for c in db.DATABASE.get_columns("inbox_document")})
 

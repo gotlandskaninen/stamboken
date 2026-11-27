@@ -295,3 +295,314 @@ describe("SalePanel with a buyer outside the association", () => {
     expect(registerSale.mock.calls[0][2]).not.toHaveProperty("buyer");
   });
 });
+
+// The seller and buyer read off a saved certificate (rule 5 b): made-up names, a reserved domain.
+const READ_BUYER = {
+  name: "Köpa Testsson",
+  postal_address: "Väg 1, 623 55",
+  town: "Visby",
+  email: "kopa@example.com",
+};
+function readDoc(sale: object) {
+  return {
+    ...doc,
+    doc_type: "intyg",
+    status: "sparad",
+    interpretation_status: "klar",
+    proposal: {
+      fields: {},
+      checks: [],
+      sale: {
+        buyer_herd: null,
+        buyer: READ_BUYER,
+        date: "2025-06-01",
+        seller_herd: "G9002",
+        checks: [],
+        ...sale,
+      },
+    },
+  } as unknown as InboxDocument;
+}
+function readPanel(sale: object = {}, changes: object = {}) {
+  render(
+    <SalePanel
+      itemId={12}
+      doc={{ ...readDoc(sale), ...changes }}
+      herds={[]}
+      canSave
+      onDone={vi.fn()}
+    />,
+  );
+}
+const fillButton = () =>
+  screen.getByRole("button", { name: "Fyll i från fotot" });
+const value = (label: RegExp) =>
+  (screen.getByLabelText(label) as HTMLInputElement).value;
+
+describe("SalePanel with the seller and buyer read off the photo", () => {
+  it("lists what was read and fills nothing by itself", () => {
+    readPanel({
+      checks: [
+        {
+          ok: false,
+          text: "Säljarens besättning G9002 avviker från kaninens ursprungsbesättning G9001.",
+        },
+      ],
+    });
+    const read = screen.getByRole("list", { name: "Från fotot" });
+    for (const text of [
+      "Köpa Testsson",
+      "Väg 1, 623 55",
+      "Visby",
+      "kopa@example.com",
+      "2025-06-01",
+      "Säljarens besättning: G9002",
+    ])
+      expect(read).toHaveTextContent(text);
+    expect(screen.getByText(/ursprungsbesättning G9001/)).toBeInTheDocument();
+    expect(value(/Säljdatum/)).toBe("");
+    expect(
+      screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
+    ).not.toBeChecked();
+    expect(screen.queryByLabelText(/Köparens namn/)).toBeNull();
+  });
+
+  it("fills the buyer outside the association, the e-mail for the notice only, on a click", async () => {
+    registerSale.mockResolvedValue({ ok: true, data: { document: doc } });
+    readPanel();
+    fireEvent.click(fillButton());
+    expect(value(/Säljdatum/)).toBe("2025-06-01");
+    expect(
+      screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
+    ).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Ja" })).toBeChecked(); // before 2026: "Har köparen e-post?"
+    expect(value(/Köparens namn/)).toBe("Köpa Testsson");
+    expect(value(/^Postadress/)).toBe("Väg 1, 623 55");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Spara försäljningen" }),
+    );
+    await waitFor(() => expect(registerSale).toHaveBeenCalledTimes(1));
+    expect(registerSale.mock.calls[0][2]).toEqual({
+      individual: "G9001-2511",
+      herd: "GX1",
+      date: "2025-06-01",
+      buyer: { ...READ_BUYER, notice_only: true },
+      from_photo: true, // the server refuses it once the reading is gone
+    });
+  });
+
+  it("in 2026 and 2027 picks the e-mail for the notice, not the bevis", async () => {
+    registerSale.mockResolvedValue({ ok: true, data: { document: doc } });
+    readPanel({ date: "2026-10-03" });
+    fireEvent.click(fillButton());
+    expect(
+      screen.getByRole("radio", { name: "Nej, men köparen har e-post" }),
+    ).toBeChecked();
+    expect(screen.getByRole("radio", { name: /Ja/ })).not.toBeChecked();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Spara försäljningen" }),
+    );
+    await waitFor(() => expect(registerSale).toHaveBeenCalledTimes(1));
+    expect(registerSale.mock.calls[0][2].buyer).toEqual({
+      ...READ_BUYER,
+      notice_only: true,
+    });
+    // Saved: Stamboken holds the buyer now. No copy of it is left here, and nothing can send it again.
+    expect(
+      await screen.findByText("Försäljningen är sparad."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Fyll i från fotot")).toBeNull();
+    expect(screen.queryByDisplayValue("Köpa Testsson")).toBeNull();
+    expect(screen.queryByDisplayValue("kopa@example.com")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Spara/ })).toBeNull();
+  });
+
+  it("shows only that the sale is saved when the document already has it", () => {
+    readPanel({}, { herd_tracking_id: 7 });
+    expect(screen.getByText("Försäljningen är sparad.")).toBeInTheDocument();
+    expect(screen.queryByLabelText(/Säljdatum/)).toBeNull();
+    expect(screen.queryByRole("button", { name: /Spara|Fyll i/ })).toBeNull();
+  });
+
+  it("starts from an empty buyer: nothing typed before stays, no yes and no phone", () => {
+    readPanel({ date: BEVIS_DATE });
+    fireEvent.change(screen.getByLabelText(/Säljdatum/), {
+      target: { value: BEVIS_DATE },
+    });
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
+    );
+    fireEvent.click(screen.getByRole("checkbox", { name: CONSENT }));
+    type(/^Telefon/, "0700000000");
+    type(/^E-post/, "annan@example.org");
+    fireEvent.click(fillButton());
+    expect(screen.getByRole("checkbox", { name: CONSENT })).not.toBeChecked();
+    fireEvent.click(screen.getByRole("checkbox", { name: CONSENT }));
+    expect(value(/^Telefon/)).toBe("");
+    expect(value(/^E-post/)).toBe("");
+  });
+
+  it("never lets the bevis's yes make the read e-mail a contact address", () => {
+    readPanel({ date: "2026-10-03" });
+    fireEvent.click(fillButton());
+    fireEvent.click(screen.getByRole("radio", { name: "Ja" })); // the buyer got the bevis after all
+    fireEvent.click(screen.getByRole("checkbox", { name: CONSENT }));
+    expect(value(/^E-post/)).toBe("");
+    fireEvent.click(
+      screen.getByRole("radio", { name: "Nej, men köparen har e-post" }),
+    );
+    expect(value(/^E-post/)).toBe(""); // gone, not kept aside
+  });
+
+  it("clears the read e-mail when the date moves to a year without the notice", () => {
+    readPanel();
+    fireEvent.click(fillButton());
+    expect(value(/^E-post/)).toBe("kopa@example.com");
+    fireEvent.change(screen.getByLabelText(/Säljdatum/), {
+      target: { value: BEVIS_DATE },
+    });
+    fireEvent.click(screen.getByRole("checkbox", { name: CONSENT }));
+    expect(value(/^E-post/)).toBe("");
+  });
+
+  it("clears what the photo filled once that reading changes or goes", () => {
+    const panelFor = (proposal: object) => (
+      <SalePanel
+        itemId={12}
+        doc={{ ...readDoc({}), proposal } as InboxDocument}
+        herds={[]}
+        canSave
+        onDone={vi.fn()}
+      />
+    );
+    const original = (readDoc({}) as unknown as { proposal: { sale: object } })
+      .proposal;
+    const cleared = () => {
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Läsningen har ändrats, fyll i köparen igen.",
+      );
+      expect(value(/Säljdatum/)).toBe("");
+      expect(
+        screen.getByRole("checkbox", {
+          name: "Köparen är utanför föreningen",
+        }),
+      ).not.toBeChecked();
+      expect(screen.queryByDisplayValue("Köpa Testsson")).toBeNull();
+    };
+    const view = render(panelFor(original));
+    fireEvent.click(fillButton());
+    expect(value(/Köparens namn/)).toBe("Köpa Testsson");
+    view.rerender(
+      panelFor({ ...original, sale: { ...original.sale, date: "2025-06-02" } }),
+    ); // read again
+    cleared();
+    fireEvent.click(fillButton());
+    expect(value(/Köparens namn/)).toBe("Köpa Testsson");
+    view.rerender(panelFor({ fields: {}, checks: [] })); // gone with a close
+    cleared();
+  });
+
+  it("leaves nothing of a buyer typed before when the herd read is not the genebank's", () => {
+    readPanel({ buyer_herd: { herd: "G9999", found: false } });
+    fireEvent.change(screen.getByLabelText(/Säljdatum/), {
+      target: { value: "2026-10-03" },
+    });
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
+    );
+    typeEpostBuyer(); // Anna Köpare, by hand
+    fireEvent.click(fillButton());
+    const saveButton = screen.getByRole("button", {
+      name: "Spara försäljningen",
+    }) as HTMLButtonElement;
+    expect(saveButton.disabled).toBe(true); // a herd or a buyer outside must be chosen
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
+    );
+    expect(screen.queryByDisplayValue("Anna Köpare")).toBeNull();
+    expect(screen.queryByDisplayValue("anna@example.org")).toBeNull();
+    expect(saveButton.disabled).toBe(true);
+    expect(registerSale).not.toHaveBeenCalled();
+  });
+
+  it("keeps an e-mail edited by hand when the bevis is chosen", () => {
+    readPanel({ date: "2026-10-03" });
+    fireEvent.click(fillButton());
+    type(/^E-post/, "annan@example.org");
+    fireEvent.click(screen.getByRole("radio", { name: "Ja" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: CONSENT }));
+    expect(value(/^E-post/)).toBe("annan@example.org");
+  });
+
+  it("asks the handler to choose when the herd read is not the genebank's", () => {
+    readPanel({ buyer_herd: { herd: "G9999", found: false } });
+    expect(screen.getByRole("list", { name: "Från fotot" })).toHaveTextContent(
+      "Köparens besättning: G9999",
+    );
+    fireEvent.click(fillButton());
+    expect(value(/Säljdatum/)).toBe("2025-06-01");
+    expect(
+      screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
+    ).not.toBeChecked();
+    expect(value(/Köparens besättning/)).toBe("");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "finns inte i genbanken",
+    );
+  });
+
+  it("leaves the choice to the handler when no e-mail was read", () => {
+    readPanel({ buyer: { ...READ_BUYER, email: "" } });
+    fireEvent.click(fillButton());
+    expect(screen.getByRole("radio", { name: "Ja" })).not.toBeChecked();
+    expect(screen.queryByLabelText(/Köparens namn/)).toBeNull();
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Spara försäljningen",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    fireEvent.click(screen.getByRole("radio", { name: "Ja" }));
+    expect(value(/Köparens namn/)).toBe("Köpa Testsson"); // the rest is filled in
+    expect(value(/^E-post/)).toBe("");
+  });
+
+  it("fills the buyer's herd when it is in Stamboken", () => {
+    readPanel({ buyer_herd: { herd: "G9002", found: true } });
+    fireEvent.click(fillButton());
+    expect(value(/Köparens besättning/)).toBe("G9002");
+    expect(
+      screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
+    ).not.toBeChecked();
+  });
+
+  it("from 2028 fills no e-mail and never says yes for the buyer", async () => {
+    registerSale.mockResolvedValue({ ok: true, data: { document: doc } });
+    readPanel({ date: BEVIS_DATE });
+    fireEvent.click(fillButton());
+    expect(screen.queryByRole("radio")).toBeNull(); // the bevis is the only way
+    expect(screen.getByRole("checkbox", { name: CONSENT })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: OPTIN })).not.toBeChecked();
+    fireEvent.click(screen.getByRole("checkbox", { name: CONSENT }));
+    expect(value(/^E-post/)).toBe(""); // a yes ticked by the handler shows an empty field
+    fireEvent.click(screen.getByRole("checkbox", { name: CONSENT }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Spara försäljningen" }),
+    );
+    await waitFor(() => expect(registerSale).toHaveBeenCalledTimes(1));
+    expect(registerSale.mock.calls[0][2].buyer).toEqual({
+      name: "Köpa Testsson",
+      town: "Visby",
+      postal_address: "Väg 1, 623 55",
+      contact_consent: false,
+      membership_optin: false,
+    });
+  });
+
+  it("shows nothing without a finished reading of the sale", () => {
+    render(
+      <SalePanel itemId={12} doc={doc} herds={[]} canSave onDone={vi.fn()} />,
+    );
+    expect(screen.queryByText("Fyll i från fotot")).toBeNull();
+  });
+});
