@@ -20,6 +20,8 @@ from utils.database import (
     BuyerContact,
     Herd,
     HerdTracking,
+    InboxDocument,
+    InboxItem,
     Individual,
     MailMessage,
     SaleProposal,
@@ -434,7 +436,8 @@ def purge_uninformed(now):
     """
     #273: a buyer without a försäljningsbevis is kept only if the association can tell them within a month. A
     pending proposal's e-mail buyer becomes "såld utanför genbanken", and a buyer whose notice has not gone in that
-    time goes, including when its notice is still queued or sending.
+    time goes, including when its notice is still queued or sending. A buyer taken from a paper form in the queue
+    counts from the day the form came in, not the day the sale was saved (art. 14.3, Jonas 2026-11-27).
     """
     late = now - NOTICE_WITHIN
 
@@ -446,15 +449,22 @@ def purge_uninformed(now):
         sale_proposal.clear_buyer(proposal, "ej_informerad", still=waiting, to=dict(NOT_RECORDED)) for proposal in found
     )
 
-    # the month runs from when the association got the address: a proposal's submission, else the sale's entry
+    # the month runs from when the association got the address: the earliest of a proposal's submission, the
+    # arrival of the queue item whose document the sale was saved from, and the sale's entry
     proposed = (
         SaleProposal.select(fn.MIN(SaleProposal.created_at))
         .join(HerdTracking, on=(HerdTracking.id == SaleProposal.herd_tracking_id))
         .where(HerdTracking.holder_contact == BuyerContact.id)
     )
+    arrived = (
+        InboxItem.select(fn.MIN(InboxItem.received_at))
+        .join(InboxDocument, on=(InboxDocument.item == InboxItem.id))
+        .join(HerdTracking, on=(HerdTracking.id == InboxDocument.herd_tracking_id))
+        .where(HerdTracking.holder_contact == BuyerContact.id)
+    )
 
     def unsent():  # the e-mail goes once the notice has (purge_notice_email)
-        got = fn.COALESCE(proposed, BuyerContact.created_at)
+        got = fn.LEAST(proposed, arrived, BuyerContact.created_at)  # LEAST skips the NULLs
         told = BuyerContact.id.in_(_notices(MailMessage.status == "sent"))
         return BuyerContact.email_notice_only & BuyerContact.email.is_null(False) & ~told & (got < late)
 

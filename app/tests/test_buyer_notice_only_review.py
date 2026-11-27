@@ -267,6 +267,26 @@ class TestSaleReview(NoticeOnlyTest):
             self.assertIsNone(self.contact(sale))
             self.assertTrue(db.HerdTracking.get_by_id(sale.id).buyer_removed)
 
+    def test_a_buyer_from_a_paper_form_counts_from_its_arrival(self):
+        now = datetime.now(timezone.utc)
+        late, recent, typed = (
+            self.sale(),
+            record_herd_tracking(self.individuals[1], self.gx1, DAY, "TRANSFER", self.manager, buyer=NOTICE),
+            record_herd_tracking(self.individuals[3], self.gx1, DAY, "TRANSFER", self.manager, buyer=NOTICE),
+        )
+        herd = db.Herd.select().where(db.Herd.herd.not_in(("GX1", "MX1"))).first()  # the seller's, for the item
+        for sale, days in ((late, 31), (recent, 10)):  # the paper came in that long ago; the sale is saved today
+            item = db.InboxItem.create(
+                kind="upload", genebank=herd.genebank_id, herd=herd, received_at=now - timedelta(days=days)
+            )
+            db.InboxDocument.create(item=item, mime="image/jpeg", sha256=f"{days}".zfill(64), herd_tracking_id=sale.id)
+        db.BuyerContact.update(created_at=now - timedelta(days=1)).execute()
+        buyer_contact.purge_uninformed(now)
+        self.assertIsNone(self.contact(late))  # its month ran out in the queue
+        self.assertTrue(db.HerdTracking.get_by_id(late.id).buyer_removed)
+        self.assertIsNotNone(self.contact(recent))
+        self.assertIsNotNone(self.contact(typed))  # no paper: from the sale's entry, as before
+
     def test_cancelled_notice_removes_the_buyer_only_when_the_sale_was_not_withdrawn(self):
         withdrawn = self.sale()
         stopped = record_herd_tracking(self.individuals[1], self.gx1, DAY, "TRANSFER", self.manager, buyer=NOTICE)
