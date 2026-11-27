@@ -6,8 +6,10 @@ interpreter's answers are canned dicts in the shape of inbox_interpreter.SCHEMA.
 """
 
 from datetime import date
+from unittest import mock
 
 import utils.database as db
+import utils.inbox_proposal as inbox_proposal
 from utils.inbox_proposal import build_proposal
 
 from tests.database_test import DatabaseTest
@@ -493,6 +495,13 @@ class TestExistingRabbit(ProposalTest):
         struck = self.propose({**reading_, "overstruket": ["namn", "mormor"]})
         self.assertEqual(self.source(struck, "name"), ("osäker", None))
         self.assertEqual(self.source(struck, "mormor"), ("osäker", None))
+
+    def test_a_report_photo_sets_its_fields_once(self):
+        # _registered sets every field itself: the checks it takes from _existing compare nothing more.
+        with mock.patch.object(inbox_proposal, "_beside", wraps=inbox_proposal._beside) as beside:
+            reading_ = self.existing("2411", namn="Elsa")
+            build_proposal(reading_, self.genebanks[0].id, registered=self.r["G9001-2411"])
+        self.assertEqual(beside.call_count, 1)
 
     def test_a_digital_rabbit_that_does_not_fit_gets_the_checks(self):
         proposal = self.propose(self.existing("2412", kon="Hona"))

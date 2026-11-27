@@ -507,12 +507,13 @@ def _plain_fields(registry, raw, struck, fields):
         fields["color"] = _field(READ, listed, read=color_text) if ok else _field(UNSURE, read=color_text)
 
 
-def _existing(registry, raw, struck, rabbit, own_text, swapped):
+def _existing(registry, raw, struck, rabbit, own_text, swapped, rows=True):
     """
     A certificate of a rabbit already in Stamboken: the paper certificate to put on it, or for a digital one
     nothing more. Either way its parents and birth date must agree with the registry, and its sex and name must
     not disagree. That does not tell a rabbit from a littermate of its sex, which has the same parents and birth
-    date and is one misread digit away: such a rabbit is läst only when the name read is its own.
+    date and is one misread digit away: such a rabbit is läst only when the name read is its own. With `rows`, every
+    other field read is set beside the rabbit too.
     """
     doubts = []
     sex = _SEXES.get(re.sub(r"[^A-ZÅÄÖ]", "", _text(raw.get("kon")).upper()))
@@ -556,6 +557,8 @@ def _existing(registry, raw, struck, rabbit, own_text, swapped):
     if rabbit.certificate and rabbit.certificate != re.sub(r"\s", "", _text(raw.get("intygsnummer"))):
         checks.append(_check(False, f"{rabbit.number} har redan intyg {rabbit.certificate} i Stamboken."))
     _certificate(raw, struck, rabbit, fields, checks)
+    if not rows:  # a report photo: _registered sets the fields itself
+        return {"fields": fields, "checks": checks}
     # The rest of the paper beside the rabbit, so the handler sees every row read and compared.
     _beside(registry, raw, struck, rabbit, litter, fields)
     for role in ("mother", "father"):
@@ -636,7 +639,7 @@ def _registered(registry, raw, struck, rabbit):
     """
     own_text = _number_text(raw)
     own = None if {"genbanksnr", "ar_kull_individ"} & struck else _parse_number(raw, registry.letter)
-    checks = _existing(registry, raw, struck, rabbit, own_text, bool(own and own[2]))["checks"]
+    checks = _existing(registry, raw, struck, rabbit, own_text, bool(own and own[2]), rows=False)["checks"]
     litter = Breeding.get_or_none(Breeding.id == rabbit.breeding_id)
     fields = {}
     _number_beside(registry, fields, "paper_number", own_text, own, rabbit)
