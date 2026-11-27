@@ -78,7 +78,11 @@ pappersvägen låses posten och kontrolleras igen. Svaret är `{"operation_id": 
 Endast före första Skicka och för en roll som får sälja. Med en inskickad rapport blir svaret 409, och
 försäljningen går med Skicka. Försäljningen hör till registret: en försäljning till och med 31 december tar
 kaninen från listan och visas i `sales`, en senare försäljning ger raden läget `via_flytt`. `sales[].undo`
-och `rabbits[].undo` är försäljningens rad när den som tittar får ångra den som på kaninens sida.
+och `rabbits[].undo` är försäljningens rad när säljaren får ångra den som på kaninens sida (7 dagar).
+`POST …/forsaljning/<rad>/angra` med `{"operation_id": …}` ångrar den och kontrollerar säljarens regel igen
+nu, aldrig en rad som en rapport skrev. Efter sista dagen går försäljningen med Skicka, som kräver en orsak.
+En försäljning utan dag visas med månad. Skicka sparar årets försäljningar som ingen rapport skrev i
+inskicket (`salda_direkt`), så kvittot räknar dem bland de sålda, och en defekt på en såld kanin följer med.
 
 ## Försäljningsförslag
 
