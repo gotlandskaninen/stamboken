@@ -268,7 +268,7 @@ def _sale_reading(image):
 def _sale_wanted(document, item_id):
     """
     The sale reading is still of use, under the item's lock: a certificate of an open queue item (inbox.require_saving:
-    never a report photo's or a notice's), not done and no sale saved from it.
+    never a report photo's or a notice's), not done, no sale saved from it, and its original and reading not erased.
     """
     item = InboxItem.get_by_id(item_id)
     return (
@@ -277,6 +277,8 @@ def _sale_wanted(document, item_id):
         and document.doc_type == "intyg"
         and document.done_at is None
         and document.herd_tracking_id is None
+        and document.original_path is not None
+        and document.interpretation is not None
     )
 
 

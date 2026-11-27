@@ -11,6 +11,7 @@ from unittest import mock
 import utils.database as db  # noqa: E402
 import utils.inbox as inbox  # noqa: E402
 import utils.inbox_interpreter as interpreter  # noqa: E402
+import utils.inbox_purge as inbox_purge  # noqa: E402
 import utils.settings as settings  # noqa: E402
 
 from tests.inbox_fixtures import InboxTest, encoded, photo  # noqa: E402
@@ -329,6 +330,22 @@ class TestSaleReading(InterpretationTest):
             self.assertEqual(interpreter.interpret_next(), document.id)
         self.assertEqual((closed, self.reload(item).state), ([True], "tagen"))
         self.assertEqual(self.doc(document).interpretation, READING)
+
+    def test_an_erasure_during_the_sale_reading_ends_the_job_quietly(self):
+        item, (document,) = self.uploaded()
+
+        def erased_meanwhile(image, schema):
+            if schema is interpreter.SCHEMA:
+                return READING
+            with db.DB_PROXY.atomic():
+                erased = db.InboxDocument.get_by_id(document.id)
+                inbox_purge.erase_document(inbox.lock_item(item.id), erased, self.manager)
+            return SALE
+
+        with mock.patch.dict(interpreter.INTERPRETERS, {"gemma": erased_meanwhile}):
+            self.assertEqual(interpreter.interpret_next(), document.id)
+        gone = self.doc(document)
+        self.assertEqual((gone.original_path, gone.interpretation, gone.proposal), (None, None, None))
 
     def test_a_worker_dying_in_the_second_reading_keeps_the_first(self):
         _, (document,) = self.uploaded()
