@@ -1293,12 +1293,17 @@ administratörer, genbanksansvariga och genbankshjälpare, och alla tre kan se h
    Det du har skrivit skrivs aldrig över: har du redan börjat fylla i när förslaget kommer står
    "Det finns ett förslag från tolkningen", och först när du klickar **Fyll i förslaget** läggs
    det in.
-4. Dölj säljaren och köparen. En svart ruta täcker intygets nedre tredjedel. Dra rutan
-   eller dess hörn, eller välj den och använd piltangenterna (Skift ändrar storleken,
-   Delete tar bort den). **Lägg till ruta** ger fler. Klicka **Bekräfta maskningen och
-   nästa**. Rutorna och fotots vridning skickas tillsammans, så kopian görs som du ser fotot.
-   Visar intyget ingen säljare eller köpare tar du bort rutorna, kryssar i **Fotot visar inga
-   säljar- eller köparuppgifter** och klickar **Bekräfta maskningen och nästa**. Har du
+4. Dölj säljaren och köparen. Kopian på kaninen är det som syns innanför ramen; fotot
+   utanför är dämpat. På det gröna handskrivna intyget behåller ramen intygets övre del, ned
+   till säljaren och köparen. Dra ramen eller dess hörn så att säljarens och köparens
+   uppgifter hamnar utanför, eller välj den och använd piltangenterna (Skift ändrar
+   storleken, Delete tar bort den). **Lägg till ram** ger en ram och **Ta bort ramen** tar
+   bort den; utan ram blir hela fotot kopian. Syns något mer innanför ramen täcker du det med
+   en svart ruta: **Lägg till ruta**, och flytta den på samma sätt. Klicka **Bekräfta
+   maskningen och nästa**. Ramen, rutorna och fotots vridning skickas tillsammans, så kopian
+   görs som du ser fotot. Visar intyget ingen säljare eller köpare tar du bort ramen och
+   rutorna, kryssar i **Fotot visar inga säljar- eller köparuppgifter** och klickar
+   **Bekräfta maskningen och nästa**. Har du
    jämfört intyget med registret och de stämmer, kryssa i **Jag har jämfört intyget med
    registret och de stämmer** innan du bekräftar. När tolkningen hittade kaninen och alla
    kontroller gick igenom står "Förslag: stämmer" under rutan, men det är du som avgör och
