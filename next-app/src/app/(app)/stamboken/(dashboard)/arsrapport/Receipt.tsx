@@ -30,6 +30,8 @@ function summaryOf(view: ReportView): Summary {
     else if (e.val === "sald") s.salda++;
     else if (e.val === "ej_angiven") s.ej_angivna++;
   }
+  // the year's sales the report did not write (the sale dialog's, or Sälj), as the receipt counts them
+  s.salda += view.report?.submitted?.salda_direkt?.length ?? 0;
   return s;
 }
 

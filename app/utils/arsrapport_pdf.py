@@ -175,6 +175,18 @@ def receipt_context(report, submission) -> dict:
         }
         for rabbit, entry in sorted(entries.items(), key=lambda item: numbers[item[0]])
     ]
+    besides = data.get("salda_direkt") or []  # sold in the year without the report: the sale dialog's, or Sälj
+    sold_numbers = _numbers(sale["individual_id"] for sale in besides)
+    rabbits += [
+        {
+            "number": sold_numbers[sale["individual_id"]],
+            "choice": "Såld " + ("utanför genbanken" if sale["till"] == "utanfor" else f"till {sale['till']}"),
+            "when": _when(sale),
+            "weight": None,
+            "hull": None,
+        }
+        for sale in besides
+    ]
     health = data.get("health")
     diseases = [_disease(name, value) for name, value in (data.get("diseases") or {}).items()]
     named = _numbers(d["individual_id"] for d in data.get("defects") or [])

@@ -247,7 +247,12 @@ export interface ReportView {
     received_at: string;
     report_date: string;
     on_time: boolean;
-    submitted: (Partial<DraftData> & { received_on?: string }) | null;
+    submitted:
+      | (Partial<DraftData> & {
+          received_on?: string;
+          salda_direkt?: { individual_id: number }[]; // the year's sales no report wrote
+        })
+      | null;
     can_change: boolean;
     can_withdraw: boolean;
     withdraw_until: string | null;

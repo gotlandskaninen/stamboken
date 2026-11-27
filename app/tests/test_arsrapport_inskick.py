@@ -564,6 +564,7 @@ class InskickTest(ArsrapportTest):
                 "defects": [],
                 "message": "Allt väl",
                 "litters_added": [],  # the litters the receipt lists (4b)
+                "salda_direkt": [],  # the year's sales no report wrote, which the receipt counts too
             },
         )
         self.assertEqual(len(ops), 1)  # the attestation; measurements are logged in added_measurements

@@ -23,6 +23,7 @@ from utils.individual_commands import record_sale
 
 from tests.arsrapport_fixtures import ArsrapportTest
 from tests.inbox_fixtures import QUALITY
+from tests.test_arsrapport_pdf import text_of
 from tests.test_buyer_notice_only import REAL_REPORT_BEVIS_FROM
 
 DAY0 = date(2026, 1, 10)
@@ -269,6 +270,20 @@ class SellNowTest(ArsrapportTest):
         draft = db.YearlyReportDraft.get()
         self.assertEqual((set(draft.data["rabbits"]), draft.data["message"]), ({str(self.b.id)}, "Från en annan flik"))
         self.assertEqual(set(draft.data["form"]["rabbits"]), {str(self.b.id)})
+
+    def test_the_receipt_counts_the_years_sales_besides_the_report(self):  # review r1: not "0 sålda"
+        self.sold(dag=None, kopare=BUYER)
+        sent = self.skicka(self.kvar(self.b, vikt=2.8))
+        self.assertEqual(sent.status_code, 200, sent.get_data(as_text=True))
+        self.assertEqual(sent.get_json()["summary"]["salda"], 1)
+        submission = db.YearlyReportSubmission.get()
+        self.assertEqual(
+            submission.data["salda_direkt"],
+            [{"individual_id": self.a.id, "till": "utanfor", "ar": 2025, "manad": 10, "dag": None}],
+        )
+        text = text_of(arsrapport_pdf.receipt_pdf(db.YearlyHerdReport.get(), submission))
+        self.assertIn("Såld utanför genbanken", text)
+        self.assertIn("2025-10", text)
 
     def test_paper_rechecks_the_item_under_the_locks(self):
         item, _ = inbox.create_upload(self.owner, self.h, None, [("inkorg/original/x.jpg", "0" * 64, QUALITY)])

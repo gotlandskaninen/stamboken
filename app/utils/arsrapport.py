@@ -2919,6 +2919,38 @@ def _waiting_sales(data):
     return {key for key, entry in rabbits.items() if ((entry or {}).get("sald") or {}).get("forslag") is not None}
 
 
+def _sold_besides(herd, year, sub):
+    """
+    For the receipt (D21, read from the submission alone): the year's sales out of the herd that no report wrote,
+    the sale dialog's and Sälj's, which took the rabbits off the list. As the body gives a sale: {individual_id,
+    till, ar, manad, dag}, the day None when the dialog was given none.
+    """
+    rows = list(
+        HerdTracking.select(HerdTracking, Herd)
+        .join(Herd, on=(HerdTracking.herd == Herd.id))
+        .where(
+            HerdTracking.from_herd == herd.id,
+            HerdTracking.kind == "TRANSFER",
+            ht_not_voided(),
+            HerdTracking.herd_tracking_date.between(date(year, 1, 1), date(year, 12, 31)),
+            HerdTracking.individual.not_in(list(sub.rabbits)),
+        )
+        .order_by(HerdTracking.herd_tracking_date, HerdTracking.id)
+    )
+    owned, dayless_ = report_owners([r.operation_id for r in rows]), month_only([r.operation_id for r in rows])
+    return [
+        {
+            "individual_id": row.individual_id,
+            "till": "utanfor" if row.herd.herd in OUTSIDE_GENEBANK_HERDS else row.herd.herd,
+            "ar": row.herd_tracking_date.year,
+            "manad": row.herd_tracking_date.month,
+            "dag": None if str(row.operation_id) in dayless_ else row.herd_tracking_date.day,
+        }
+        for row in rows
+        if str(row.operation_id) not in owned
+    ]
+
+
 def receipt(submission) -> dict:
     """
     Receipt, from the submission row and its events alone, so every retry gets the same one, also after a later change
@@ -2939,7 +2971,7 @@ def receipt(submission) -> dict:
         "summary": {
             "kvar": chosen["kvar"],
             "doda": chosen["dod"],
-            "salda": chosen["sald"],
+            "salda": chosen["sald"] + len(submission.data.get("salda_direkt") or []),
             "vantar": waiting,
             "ej_angivna": chosen["ej_angiven"],
         },
@@ -3374,7 +3406,11 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
                 **_by(user, "user", "access_code"),
                 operation_ids=grant.operation_ids,
                 added_measurements=added,
-                data={**submitted_body(sub), "litters_added": _litters_added(herd, round_)},
+                data={
+                    **submitted_body(sub),
+                    "litters_added": _litters_added(herd, round_),
+                    "salda_direkt": _sold_besides(herd, year, sub),
+                },
                 request_hash=digest,
             )
         except IntegrityError as exc:  # the key, taken meanwhile for another herd, which this lock does not cover
@@ -3598,7 +3634,8 @@ def withdraw(herd, round_, access, user, *, revision, reason=None, now=None) -> 
             )
         }
         # D10: the submission's data is already stored_body
-        latest = {k: v for k, v in submissions[-1].data.items() if k != "litters_added"}  # not the form's
+        # not the form's
+        latest = {k: v for k, v in submissions[-1].data.items() if k not in ("litters_added", "salda_direkt")}
         data = _pruned(latest if draft is None else draft.data, choosing, {row["id"] for row in listed})
         data, gone = _with_kept(data, kept)
         drop_kept_buyers(gone, user)  # FB6; Skicka's locks hold the items and the rabbits

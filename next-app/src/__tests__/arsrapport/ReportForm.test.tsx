@@ -592,6 +592,22 @@ describe("ReportForm", () => {
     expect(a.sellNow).not.toHaveBeenCalled();
   });
 
+  it("counts the year's sales the report did not write among Sålda", () => {
+    const report = {
+      ...submittedReport(),
+      submitted: {
+        rabbits: { "1": { val: "kvar", vikt: 2.8 } },
+        salda_direkt: [{ individual_id: 3 }, { individual_id: 4 }],
+      } as never,
+    };
+    render(
+      <ReportForm env="demo" view={view({ report })} actions={actions()} />,
+    );
+    expect(screen.getByText("Sålda").previousElementSibling?.textContent).toBe(
+      "2",
+    );
+  });
+
   it("keeps the dialog open with the server's refusal", async () => {
     const a = sellingActions();
     a.sellNow.mockImplementationOnce(() =>
