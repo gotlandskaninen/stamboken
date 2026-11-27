@@ -31,6 +31,7 @@ from PIL import Image, ImageOps
 from utils.database import (
     DB_PROXY,
     OUTSIDE_GENEBANK_HERDS,
+    Color,
     Herd,
     HerdTracking,
     InboxDocument,
@@ -806,6 +807,17 @@ def _missing_from_paper(body):
 
     if not isinstance(body.get("color"), str) or not body["color"].strip():
         return "Välj färg."
+    # The list the form offers: the genebank of the mother's herd, where the rabbit is born. Registration would drop
+    # another colour in silence. An unknown mother is registration's to refuse.
+    number = body.get("mother")
+    mother = Individual.get_or_none((Individual.number == number) & not_voided()) if isinstance(number, str) else None
+    if (
+        mother is not None
+        and not (
+            Color.select().where((Color.name == body["color"]) & (Color.genebank == mother.current_herd.genebank_id))
+        ).exists()
+    ):
+        return "Välj en färg ur genbankens lista."
     if "sex" not in body or body["sex"] not in ("female", "male", None):
         return "Välj kön: hona, hane eller okänt."
     if not (count("litter_size") or 0) >= 1:

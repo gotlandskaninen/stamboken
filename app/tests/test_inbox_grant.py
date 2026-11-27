@@ -445,6 +445,21 @@ class TestSaveEndpoint(GrantTest):
         resp = self.save(item, document, action="okand")
         self.assertNotIn("field", resp.get_json())
 
+    def test_a_colour_off_the_genebanks_list_is_refused(self):
+        # The list the form offers: the genebank of the mother's herd. Never dropped in silence.
+        item, document = self.taken(self.helper)
+        self.login("hjalp")
+        for color in ("lila", "Bleighe", "bläåh"):  # none, another case, Mellerud's
+            with self.subTest(color=color):
+                resp = self.save(item, document, **{**NEW_RABBIT, "color": color})
+                self.assertEqual(resp.status_code, 400, resp.get_json())
+                self.assertEqual(
+                    (resp.get_json()["detail"], resp.get_json()["field"]),
+                    ("Välj en färg ur genbankens lista.", "color"),
+                )
+        self.assertEqual(self.save(item, document, **NEW_RABBIT).status_code, 201)
+        self.assertEqual(self.rabbit("G1-2511").color.name, "bleighe")
+
     def test_the_queue_asks_for_everything_the_paper_has(self):
         # Jonas 2026-11-27: as in "Registrera kanin", colour, sex and both counts are not left out in the queue.
         item, document = self.taken(self.helper)
