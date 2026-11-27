@@ -100,6 +100,23 @@ export type ProposedField = {
 export type Proposal = {
   fields: Partial<Record<string, ProposedField>>;
   checks: { ok: boolean | null; text: string }[];
+  /** The seller and buyer read at the bottom of a queue certificate (rule 5 b), for the sale panel. */
+  sale?: SaleReading;
+};
+/** What was read, never a confident value: the handler fills the sale with a click and checks it. */
+export type SaleReading = {
+  /** The buyer's herd as read; `found` only when it is one of the genebank's, and only then is it filled in. */
+  buyer_herd: { herd: string; found: boolean } | null;
+  buyer: {
+    name: string;
+    postal_address: string;
+    town: string;
+    email: string;
+  } | null;
+  date: string | null;
+  /** As read; a check says when it is not the rabbit's herd of origin. */
+  seller_herd: string | null;
+  checks: Proposal["checks"];
 };
 
 export type InterpretationSummary = {
