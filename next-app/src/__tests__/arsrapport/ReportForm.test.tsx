@@ -656,15 +656,16 @@ describe("ReportForm", () => {
         actions={a as never}
       />,
     );
+    const BACK = "Kaninen kommer tillbaka till din besättning.";
     const NOTE =
       "Kaninen kommer tillbaka till din besättning, och köparens uppgifter tas bort.";
-    for (const [i, id] of [
-      [0, 56], // the row comes before "Sålda under 2026"
-      [1, 55],
+    for (const [i, id, note] of [
+      [0, 56, BACK], // the row comes before "Sålda under 2026"; sold to G9002, a herd in the genebank
+      [1, 55, NOTE], // sold outside the genebank
     ] as const) {
       fireEvent.click(screen.getAllByRole("button", { name: "Ångra" })[i]);
       const dialog = screen.getByRole("dialog");
-      expect(within(dialog).getByText(NOTE)).toBeTruthy();
+      expect(within(dialog).getByText(note)).toBeTruthy();
       expect(a.undoSale).toHaveBeenCalledTimes(i); // nothing undone before the question is answered
       await act(async () =>
         fireEvent.click(

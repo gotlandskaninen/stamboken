@@ -2560,7 +2560,11 @@ export function ReportForm({
             reason_replaced: true, // the report asks no reason: the system's, as for a seller with a buyer outside
           } as unknown as HerdTrackingRow)
         }
-        note="Kaninen kommer tillbaka till din besättning, och köparens uppgifter tas bort."
+        note={
+          undoing?.to === "GX1" || undoing?.to === "MX1"
+            ? "Kaninen kommer tillbaka till din besättning, och köparens uppgifter tas bort."
+            : "Kaninen kommer tillbaka till din besättning." // a herd in the genebank: no buyer details are kept
+        }
         busy={undoBusy}
         error={undoError}
         onClose={() => setUndoing(null)}
