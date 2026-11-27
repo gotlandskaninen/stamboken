@@ -9,7 +9,9 @@ from datetime import date
 from unittest import mock
 
 import utils.database as db
+import utils.inbox as inbox
 import utils.inbox_proposal as inbox_proposal
+from utils.inbox_reconcile import HIDDEN, NOT_SEARCHED
 
 from tests.ht_helpers import ht_row, make_individual
 from tests.inbox_fixtures import InboxTest
@@ -133,8 +135,10 @@ class TestNewRabbit(ReconcileTest):
         self.assertEqual(self.row(answer, "paper_certificate"), ("skiljer", "G9003-2312"))
         self.assertIn("Intygsnumret C-G9003-2312 finns redan på G9003-2312.", self.texts(answer, False))
 
-    def test_a_colour_not_in_the_list_differs(self):
-        self.assertEqual(self.row(self.answer(color="Bleighe"), "color"), ("stammer", "bleighe"))
+    def test_a_colour_only_as_the_genebank_spells_it(self):
+        # Registration looks a colour up as typed: another case is not the listed one.
+        self.assertEqual(self.row(self.answer(color="bleighe"), "color"), ("stammer", "bleighe"))
+        self.assertEqual(self.row(self.answer(color="Bleighe"), "color"), ("skiljer", "bleighe"))
         self.assertEqual(self.row(self.answer(color="lila"), "color"), ("skiljer", "finns inte"))
 
     def test_a_letter_that_is_not_the_genebanks_is_named(self):
@@ -186,7 +190,9 @@ class TestGenebankScope(ReconcileTest):
     def test_an_item_without_a_genebank_searches_the_one_its_letter_names(self):
         db.InboxItem.update(genebank=None).where(db.InboxItem.id == self.queue_item.id).execute()
         self.assertEqual(self.row(self.answer(), "mother"), ("stammer", "G9001-2211 Mira"))
-        self.assertEqual(self.row(self.answer(paper_number="9001-2511"), "mother"), ("skiljer", "finns inte"))
+        answer = self.answer(paper_number="9001-2511")  # no letter: no genebank to search
+        self.assertEqual(self.row(answer, "mother"), ("ingen", None))
+        self.assertEqual(self.texts(answer), [NOT_SEARCHED])
 
 
 class TestExistingRabbit(ReconcileTest):
@@ -235,7 +241,7 @@ class TestExistingRabbit(ReconcileTest):
             name="elsa",
             sex="female",
             birth_date="2024-04-21",
-            color="Bleighe",
+            color="bleighe",
             litter_size=2,
             mother="G9001-2212",
             father="G9003-2311",
@@ -246,6 +252,7 @@ class TestExistingRabbit(ReconcileTest):
         self.assertEqual(self.row(answer, "birth_date"), ("skiljer", "2024-04-20"))
         self.assertEqual(self.row(answer, "mother"), ("skiljer", "G9001-2211 Mira"))  # Sara, her sister
         self.assertIn("Intygsnumret är kaninens.", self.texts(answer, True))
+        self.assertEqual(self.row(self.existing(color="Bleighe"), "color"), ("skiljer", "bleighe"))
         answer = self.existing(paper_certificate="SYN-778")
         self.assertEqual(self.row(answer, "paper_certificate"), ("skiljer", "SYN-777"))
         self.assertIn("G9001-2411 har redan intyg SYN-777 i Stamboken.", self.texts(answer, False))
@@ -372,25 +379,159 @@ class TestNumberCheckNames(ReconcileTest):
         )
         self.assertEqual(self.sibling_line(self.answer()), "En kanin i kullen saknar intyg. Är det samma kanin?")
 
-    def test_another_genebanks_rabbits_are_not_named_to_a_manager_who_cannot_see_them(self):
-        # An item without a genebank, read in Mellerud by its letter, worked by Gotland's manager.
+
+def rows_of(order, **changes):
+    """Every row of an answer: nothing to compare with, unless `changes` says otherwise."""
+    rows = {key: {"registry": None, "status": "ingen"} for key in order}
+    for key, (status, registry) in changes.items():
+        rows[key] = {"registry": registry, "status": status}
+    return rows
+
+
+NEW_ROWS = (
+    "paper_number",
+    "paper_certificate",
+    "name",
+    "sex",
+    "birth_date",
+    "color",
+    "litter_size",
+    "litter_size6w",
+    "mother",
+    "morfar",
+    "mormor",
+    "father",
+    "farfar",
+    "farmor",
+)
+
+
+class TestWhatTheUserMayRead(ReconcileTest):
+    """A rabbit is named only to someone who may read it (GET /v2/individual): its herd in one of their genebanks."""
+
+    def test_an_item_without_a_genebank_searches_none_the_user_does_not_work(self):
+        # Mellerud's numbers on an item without a genebank, asked by Gotland's manager: nothing is searched.
         db.InboxItem.update(genebank=None).where(db.InboxItem.id == self.queue_item.id).execute()
         self.r["M9005-2112"] = make_individual(self.h["M9005"], "M9005-2112", date(2021, 4, 1), sex="female")
-        self.litter(
-            "M9005",
-            "M9005-2112",
-            "M9005-2399",
-            date(2025, 5, 10),
-            [("M9005-2512", "female", "Syster", {"certificate": None})],
-        )
-        typed = {
-            "paper_number": "M9005-2511",
-            "mother": "M9005-2112",
-            "father": "M9005-2399",
-            "morfar": "",
-            "mormor": "",
-            "farfar": "",
-            "farmor": "",
-        }
+        self.litter("M9005", "M9005-2112", "M9005-2399", date(2025, 5, 10), [("M9005-2512", "female", "Syster")])
+        typed = {"paper_number": "M9005-2511", "mother": "M9005-2112", "father": "M9005-2399", "farfar": "M9005-2511"}
         answer = self.answer(**typed)
-        self.assertEqual(self.sibling_line(answer), "En kanin i kullen saknar intyg. Är det samma kanin?")
+        self.assertEqual(answer, {"rows": rows_of(NEW_ROWS), "checks": [{"ok": None, "text": NOT_SEARCHED}]})
+        self.login("admin")  # an admin works every genebank
+        self.assertEqual(self.row(self.answer(**typed), "mother"), ("stammer", "M9005-2112"))
+
+    def test_a_rabbit_moved_to_another_genebank_is_never_named(self):
+        # Max, the father, now lives in a Mellerud herd: Gotland's helper may no longer read him.
+        ht_row(
+            "TRANSFER",
+            from_herd=self.h["G9003"],
+            herd=self.h["M9005"],
+            individual=self.father,
+            herd_tracking_date=date(2025, 1, 10),
+        )
+        self.login("hjalp")
+        seen = {
+            "paper_certificate": ("stammer", "ledigt"),
+            "color": ("stammer", "bleighe"),
+            "mother": ("stammer", "G9001-2211 Mira"),
+            "morfar": ("stammer", "G9004-2011"),
+            "mormor": ("stammer", "G9004-2112"),
+            "farfar": ("ingen", "G9003-2011"),  # not compared: his son is not hers to see
+            "farmor": ("ingen", "G9003-2112"),
+        }
+        answer = self.answer()
+        expected_rows = rows_of(NEW_ROWS, **seen, father=("ingen", HIDDEN))
+        self.assertEqual(answer["rows"], expected_rows)
+        self.assertEqual(
+            answer["checks"],
+            [
+                {"ok": False, "text": f"Far G9003-2311 är {HIDDEN}."},
+                {"ok": None, "text": "Individnumret går inte att pröva mot kullen utan mor, far och födelsedatum."},
+                {"ok": True, "text": "Intygsnumret är ledigt."},
+            ],
+        )
+        # One character off, his certificate, his number: never his number or name.
+        answer = self.answer(father="G9013-2311", paper_certificate="C-G9003-2311", paper_number="G9003-2311")
+        changed = {
+            "father": ("skiljer", "finns inte"),  # no "near": he is the only one one character off
+            "paper_number": ("skiljer", f"finns redan: {HIDDEN}"),
+            "paper_certificate": ("skiljer", "används redan"),
+        }
+        expected_rows = rows_of(NEW_ROWS, **(seen | changed))
+        self.assertEqual(answer["rows"], expected_rows)
+        self.assertEqual(
+            answer["checks"],
+            [
+                {"ok": False, "text": "Årssiffrorna i individnumret stämmer inte med födelsedatumet."},
+                {"ok": False, "text": "Far G9013-2311 finns inte i Stamboken."},
+                {"ok": False, "text": "G9003-2311 finns redan i Stamboken. Välj Pappersintyg på en kanin som finns."},
+                {"ok": False, "text": "Intygsnumret C-G9003-2311 används redan."},
+            ],
+        )
+        # Chosen as the rabbit in Stamboken: nothing of his is shown or compared.
+        answer = self.reconcile(mode="pappersintyg", individual="G9003-2311", name="Max").get_json()
+        self.assertEqual(
+            answer,
+            {
+                "rows": rows_of(("individual", *NEW_ROWS), individual=("ingen", HIDDEN)),
+                "checks": [{"ok": False, "text": f"G9003-2311 är {HIDDEN}."}],
+            },
+        )
+
+
+class TestCheckedAsSavingTakesIt(ReconcileTest):
+    def test_a_digital_certificate_is_said_and_never_free(self):
+        rabbits = [("G9001-2411", "male", "Digge", {"certificate": None, "digital_certificate": 9001})]
+        self.litter("G9001", "G9001-2211", "G9003-2311", date(2024, 4, 20), rabbits)
+        digital = "G9001-2411 har digitalt intyg. Sparar du pappersintyget ersätts det digitala."
+        for certificate, row in (("", ("ingen", "digitalt intyg")), ("SYN-801", ("skiljer", "digitalt intyg"))):
+            with self.subTest(certificate=certificate):
+                answer = self.reconcile(mode="pappersintyg", individual="G9001-2411", paper_certificate=certificate)
+                answer = answer.get_json()
+                self.assertEqual(self.row(answer, "paper_certificate"), row)
+                self.assertIn(digital, self.texts(answer, False))
+                self.assertNotIn("Intygsnumret är ledigt.", self.texts(answer))
+
+    def test_a_certificate_number_only_as_saving_takes_it(self):
+        # Saving trims the number and keeps the spaces inside: "AB 12" is not the stored "AB12".
+        rabbits = [("G9001-2411", "female", "Elsa", {"certificate": "AB12"})]
+        self.litter("G9001", "G9001-2211", "G9003-2311", date(2024, 4, 20), rabbits)
+        typed = {"mode": "pappersintyg", "individual": "G9001-2411", "paper_number": "G9001-2411"}
+        self.assertEqual(
+            self.row(self.reconcile(**typed, paper_certificate="AB 12").get_json(), "paper_certificate"),
+            ("skiljer", "AB12"),
+        )
+        answer = self.reconcile(**typed, paper_certificate=" AB12 ").get_json()
+        self.assertEqual(self.row(answer, "paper_certificate"), ("stammer", "AB12"))
+        # What stämmer saves as a link: the stored number is untouched.
+        inbox.take(self.queue_item, self.manager, over=False)
+        body = {
+            "action": "pappersintyg",
+            "individual": "G9001-2411",
+            "paper_certificate": "AB12",
+            "paper_number": "G9001-2411",
+        }
+        saved = self.post(f"/{self.queue_item.id}/dokument/{self.document.id}/spara", **body)
+        self.assertEqual(saved.status_code, 200, saved.get_json())
+        self.assertEqual(db.Individual.get(db.Individual.number == "G9001-2411").certificate, "AB12")
+        self.assertEqual(db.InboxDocument.get_by_id(self.document.id).individual.number, "G9001-2411")
+
+
+class TestTheReadingsChecksFromWhatIsTyped(ReconcileTest):
+    def test_a_herd_not_in_stamboken(self):
+        answer = self.answer(paper_number="G9009-2511")
+        self.assertIn("Besättningen G9009 finns inte i Stamboken.", self.texts(answer, False))
+        self.assertNotIn("Besättningen", " ".join(self.texts(self.answer())))
+
+    def test_the_year_digits_against_the_birth_date(self):
+        text = "Årssiffrorna i individnumret stämmer inte med födelsedatumet."
+        self.assertIn(text, self.texts(self.answer(paper_number="G9001-2411"), False))
+        self.assertNotIn(text, self.texts(self.answer()))
+        self.assertNotIn(text, self.texts(self.answer(paper_number="G9001-2411", birth_date="")))
+
+    def test_the_parents_litters_when_none_was_born_that_day(self):
+        self.litter("G9001", "G9001-2211", "G9003-2311", date(2025, 5, 12), [], size=3)
+        line = "Kull i Stamboken: född 2025-05-12, mor G9001-2211, far G9003-2311, 3 födda."
+        self.assertIn(line, self.texts(self.answer()))  # typed born the 10th
+        self.assertIn(line, self.texts(self.answer(father="", birth_date="")))  # the mother's litters
+        self.assertNotIn(line, self.texts(self.answer(birth_date="2025-05-12")))  # that one is the litter
