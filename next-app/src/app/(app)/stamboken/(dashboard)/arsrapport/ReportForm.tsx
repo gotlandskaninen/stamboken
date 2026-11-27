@@ -898,7 +898,7 @@ export function ReportForm({
     const id = Number(row.id.slice("rabbit-".length));
     const entry = stateRef.current.rabbits[id];
     const before = { field, val: entry?.val ?? null };
-    const next = paperKey(before, e.key, entry?.vikt);
+    const next = paperKey(before, e.key, entry?.vikt, done.get(id) === false);
     if (next.field === before.field && next.val === before.val) return;
     e.preventDefault();
     // Enter ticks Ej vägd only for a row with no weight: the toggle clears a typed weight
@@ -909,6 +909,7 @@ export function ReportForm({
       !entry.vikt.trim()
     )
       t.click();
+    if (field === "reason" || field === "other_reason") t.click();
     if (next.val !== before.val)
       document.getElementById(`val-${id}-${next.val}`)?.click(); // the row's own choose()
     focusLater(
@@ -917,6 +918,9 @@ export function ReportForm({
         val: `val-${id}-kvar`,
         vikt: `vikt-${id}`,
         ej_vagd: `ejvagd-${id}`,
+        reason: `ejvagd-reason-${id}`,
+        other_reason: null,
+        reason_text: `ejvagd-text-${id}`,
         hull: `hull-${id}`,
         month: `month-${id}`,
         day: `dag-${id}`,

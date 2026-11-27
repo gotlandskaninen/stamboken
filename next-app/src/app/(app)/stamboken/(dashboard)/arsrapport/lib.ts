@@ -1146,6 +1146,9 @@ export type PaperField =
   | "val"
   | "vikt"
   | "ej_vagd"
+  | "reason"
+  | "other_reason"
+  | "reason_text"
   | "hull"
   | "month"
   | "day"
@@ -1166,6 +1169,7 @@ export function paperKey(
   state: PaperState,
   key: string,
   weight = "",
+  needsReason = false,
 ): PaperState {
   const { field } = state;
   if (field === "val" && key in VAL_KEYS) {
@@ -1180,6 +1184,10 @@ export function paperKey(
     if (field === "number") return { ...state, field: "val" };
     if (field === "vikt" && !weight.trim())
       return { ...state, field: "ej_vagd" };
+    if (field === "ej_vagd" && !weight.trim() && needsReason)
+      return { ...state, field: "reason" };
+    if (field === "other_reason") return { ...state, field: "reason_text" };
+    if (field === "reason_text" && needsReason) return state;
     if (field !== "val") return { ...state, field: "number" };
   }
   return state;

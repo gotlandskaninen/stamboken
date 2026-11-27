@@ -13,14 +13,18 @@ import {
 const refresh = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
 
-const updateContact = vi.fn();
-const updateConsent = vi.fn();
-const saveAccount = vi.fn();
 vi.mock("@/app/(app)/stamboken/(dashboard)/profil/actions", () => ({
-  updateContact: (...args: unknown[]) => updateContact(...args),
-  updateConsent: (...args: unknown[]) => updateConsent(...args),
+  updateContact: vi.fn(),
+  verifyEmailCode: vi.fn(),
+  cancelEmailCode: vi.fn(),
 }));
+
+const saveReportContact = vi.fn();
+const saveReportConsent = vi.fn();
+const saveAccount = vi.fn();
 vi.mock("@/app/(app)/stamboken/(dashboard)/arsrapport/actions", () => ({
+  saveReportContact: (...args: unknown[]) => saveReportContact(...args),
+  saveReportConsent: (...args: unknown[]) => saveReportConsent(...args),
   saveAccount: (...args: unknown[]) => saveAccount(...args),
 }));
 
@@ -911,12 +915,15 @@ describe("ReportForm", () => {
     vi.useFakeTimers();
     const a = actions();
     let finish!: () => void;
-    updateContact.mockReturnValueOnce(
+    saveReportContact.mockReturnValueOnce(
       new Promise((resolve) => {
         finish = () => resolve({ ok: true });
       }),
     );
-    updateConsent.mockResolvedValueOnce({ ok: true, version: 8 });
+    saveReportConsent.mockResolvedValueOnce({
+      ok: true,
+      data: { publicering_version: 8 },
+    });
     saveAccount.mockResolvedValueOnce({
       ok: true,
       data: { konto: "••67" },
@@ -991,7 +998,10 @@ describe("ReportForm", () => {
 
   it("sends a failed contact edit and an unsaved account with Skicka", async () => {
     const a = actions();
-    updateContact.mockResolvedValueOnce({ ok: false, error: "Försök igen." });
+    saveReportContact.mockResolvedValueOnce({
+      ok: false,
+      problem: { detail: "Försök igen." },
+    });
     render(
       <ReportForm
         env="demo"

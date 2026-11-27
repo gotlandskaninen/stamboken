@@ -115,7 +115,7 @@ export function PaperEntry({
             const inbox = "/stamboken/inkorg";
             const href =
               destination === "next"
-                ? await nextPaperForm(view.year, env).catch(() => inbox)
+                ? await nextPaperForm(env).catch(() => inbox)
                 : inbox;
             if (message) showSnackbar(message);
             router.push(href);

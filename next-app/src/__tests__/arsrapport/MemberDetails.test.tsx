@@ -3,15 +3,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 const updateContact = vi.fn();
-const updateConsent = vi.fn();
+const saveReportContact = vi.fn();
+const saveReportConsent = vi.fn();
 const saveAccount = vi.fn();
 vi.mock("@/app/(app)/stamboken/(dashboard)/arsrapport/actions", () => ({
   saveAccount: (...a: unknown[]) => saveAccount(...a),
+  saveReportContact: (...a: unknown[]) => saveReportContact(...a),
+  saveReportConsent: (...a: unknown[]) => saveReportConsent(...a),
 }));
 const verifyEmailCode = vi.fn();
 const cancelEmailCode = vi.fn();
 vi.mock("@/app/(app)/stamboken/(dashboard)/profil/actions", () => ({
-  updateConsent: (...a: unknown[]) => updateConsent(...a),
   updateContact: (...a: unknown[]) => updateContact(...a),
   verifyEmailCode: (...a: unknown[]) => verifyEmailCode(...a),
   cancelEmailCode: (...a: unknown[]) => cancelEmailCode(...a),
@@ -53,19 +55,25 @@ const props = {
 
 describe("MemberDetails", () => {
   it("saves contact once on blur and shows the field result", async () => {
-    updateContact
+    saveReportContact
       .mockResolvedValueOnce({ ok: true })
-      .mockResolvedValueOnce({ ok: false, error: "Försök igen." });
+      .mockResolvedValueOnce({
+        ok: false,
+        problem: { detail: "Försök igen." },
+      });
     render(<MemberDetails {...props} />);
     const phone = screen.getByLabelText("Telefon");
     fireEvent.change(phone, { target: { value: "010-000 00 01" } });
-    expect(updateContact).not.toHaveBeenCalled();
+    expect(saveReportContact).not.toHaveBeenCalled();
     fireEvent.blur(phone);
     expect(await screen.findByText("Kontaktuppgifter sparade")).toBeTruthy();
     fireEvent.blur(phone);
-    expect(updateContact).toHaveBeenCalledTimes(1);
-    expect(updateContact).toHaveBeenCalledWith(
-      { phone: "010-000 00 01" },
+    expect(saveReportContact).toHaveBeenCalledTimes(1);
+    expect(saveReportContact).toHaveBeenCalledWith(
+      "G9001",
+      2026,
+      "phone",
+      "010-000 00 01",
       "demo",
     );
     fireEvent.change(phone, { target: { value: "" } });
@@ -74,25 +82,30 @@ describe("MemberDetails", () => {
   });
 
   it("saves publication on change against the last acknowledged revision", async () => {
-    updateConsent.mockResolvedValue({ ok: true, version: 12 });
+    saveReportConsent.mockResolvedValue({
+      ok: true,
+      data: { publicering_version: 12 },
+    });
     render(<MemberDetails {...props} />);
     fireEvent.click(screen.getByRole("radio", { name: "Ja" }));
     expect(await screen.findByText("Publiceringsval sparade")).toBeTruthy();
     const answer = {
-      name: true,
-      email: false,
-      address: false,
-      phone: false,
+      ja: true,
+      utom: ["phone", "email", "address"],
       text_version: "2026-11-20",
     };
-    expect(updateConsent).toHaveBeenCalledWith(
+    expect(saveReportConsent).toHaveBeenCalledWith(
+      "G9001",
+      2026,
       { ...answer, version: null },
       "demo",
     );
     fireEvent.click(screen.getByRole("checkbox", { name: "telefonnummer" }));
     expect(await screen.findByText("Publiceringsval sparade")).toBeTruthy();
-    expect(updateConsent).toHaveBeenLastCalledWith(
-      { ...answer, phone: true, version: 12 },
+    expect(saveReportConsent).toHaveBeenLastCalledWith(
+      "G9001",
+      2026,
+      { ...answer, utom: ["email", "address"], version: 12 },
       "demo",
     );
   });

@@ -132,28 +132,106 @@ class DetailsTest(ArsrapportTest):
 
 
 class TestLoggedIn(DetailsTest):
-    def test_profile_answer_counts_for_the_round_and_checks_its_revision(self):
+    def test_report_detail_saves_refuse_a_switched_session(self):
         self.link_owner()
         self.login("owner")
         shown = self.view()["member_details"]
-        path = "/api/v2/members/me/consent"
-        body = {**NONE, "version": shown["publicering_version"], "text_version": CONSENT_TEXT_VERSION}
-        response = self.client.patch(path, json=body)
+        edits = (
+            ("PATCH", "/kontakt", {"phone": "010-000 00 02"}),
+            ("PUT", "/publicering", {**JA, "version": shown["publicering_version"]}),
+        )
+        # The new login can open this herd as its manager, but belongs to the other membership.
+        db.Member.update(user=self.manager).where(db.Member.id == self.member2.id).execute()
+        self.login("man")
+        for method, route, body in edits:
+            response = self.api(method, REPORT.format(herd="G9001") + route, **body)
+            self.assertEqual((response.status_code, response.get_json()["detail"]), (403, arsrapport.NOT_MAIN))
+        for member in (self.member, self.member2):
+            self.assertEqual(db.Member.get_by_id(member.id).phone, "0709-111 222")
+        self.assertFalse(db.PublicationConsentChange.select().exists())
+
+    def test_report_detail_saves_require_an_open_round_and_login_access(self):
+        self.link_owner()
+        self.login("owner")
+        self.open_link("G9002")  # this session also has a valid code for another main member
+        edits = (("PATCH", "/kontakt", {"phone": ""}), ("PUT", "/publicering", {**NEJ, "version": None}))
+        for method, route, body in edits:
+            response = self.api(method, REPORT.format(herd="G9002") + route, **body)
+            self.assertEqual((response.status_code, response.get_json()["detail"]), (403, arsrapport.NOT_MAIN))
+        self.at(self.round_.end_date + timedelta(days=1))
+        for method, route, body in edits:
+            response = self.api(method, REPORT.format(herd="G9001") + route, **body)
+            self.assertEqual((response.status_code, response.get_json()["code"]), (409, "rundan_stangd"))
+
+    def test_report_contact_validates_clears_and_audits_one_field(self):
+        self.link_owner()
+        self.login("owner")
+        path = REPORT.format(herd="G9001") + "/kontakt"
+        for body in ({"postal_code": "12"}, {"phone": False}, {"email": "test@example.org"}, {"phone": "", "city": ""}):
+            self.assertEqual(self.api("PATCH", path, **body).status_code, 400)
+        for body in ({"postal_code": "12345"}, {"phone": ""}, {"phone": ""}):
+            self.assertEqual(self.api("PATCH", path, **body).status_code, 200)
+        self.assertEqual((self.membership().postal_code, self.membership().city), ("123 45", "Slite"))
+        self.assertIsNone(db.Member.get_by_id(self.member.id).phone)
+        audits = (
+            db.MatrikelAudit.select().where(db.MatrikelAudit.action == "kontakt_andrad").order_by(db.MatrikelAudit.id)
+        )
+        self.assertEqual(
+            [row.payload for row in audits],
+            [{"source": "profil", "person_id": self.member.id, "fields": [k]} for k in ("postal_code", "phone")],
+        )
+
+    def test_report_consent_checks_revision_and_preserves_answer_history(self):
+        self.link_owner()
+        self.login("owner")
+        path = REPORT.format(herd="G9001") + "/publicering"
+        initial = self.view()["member_details"]["publicering_version"]
+        response = self.api("PUT", path, **NEJ, version=initial)
         self.assertEqual(response.status_code, 200)
         details = self.view()["member_details"]
-        self.assertFalse(details["publicering"]["ja"])  # an explicit Nej, not unanswered
+        self.assertFalse(details["publicering"]["ja"])
         version = response.get_json()["publicering_version"]
         self.assertEqual(details["publicering_version"], version)
-        stale = self.client.patch(path, json={**body, **ALL})
-        self.assertEqual((stale.status_code, stale.get_json()["detail"]), (409, arsrapport.REFUSALS["koharen_andrad"]))
-        yes = self.client.patch(path, json={**body, **ALL, "version": version})
+        for body in (JA, {**JA, "version": initial}, {**JA, "version": True}):
+            stale = self.api("PUT", path, **body)
+            self.assertEqual((stale.status_code, stale.get_json()["detail"]), (409, arsrapport.CONSENT_CHANGED))
+        old_text = self.api("PUT", path, **{**JA, "text_version": "old", "version": version})
+        self.assertEqual(
+            (old_text.status_code, old_text.get_json()["detail"]), (409, arsrapport.REFUSALS["koharen_ny_fraga"])
+        )
+        no_again = self.api("PUT", path, **NEJ, version=version)
+        self.assertEqual(no_again.status_code, 200)
+        self.assertGreater(no_again.get_json()["publicering_version"], version)
+        yes = self.api("PUT", path, **JA, version=no_again.get_json()["publicering_version"])
         self.assertEqual(yes.status_code, 200)
-        same = self.client.patch(path, json={**body, **ALL, "version": yes.get_json()["publicering_version"]})
-        self.assertEqual(same.status_code, 200)
+        same = self.api("PUT", path, **JA, version=yes.get_json()["publicering_version"])
+        self.assertEqual(same.get_json(), yes.get_json())
         self.assertEqual(self.view()["member_details"]["publicering"], {"ja": True, "utom": []})
         self.assertEqual(self.ok()["matrikel"], [])
         history = db.PublicationConsentChange.select().order_by(db.PublicationConsentChange.id)
-        self.assertEqual([(r.source, r.submission_id) for r in history], [("profil", None), ("profil", None)])
+        self.assertEqual(
+            [(r.value, r.source, r.submission_id) for r in history],
+            [(answer, "profil", None) for answer in (NONE, NONE, ALL)],
+        )
+
+    def test_profile_detail_endpoints_keep_their_original_contract(self):
+        self.link_owner()
+        self.login("owner")
+        path = "/api/v2/members/me"
+        for key in ("version", "member_id"):
+            response = self.client.patch(
+                path + "/consent", json={**NONE, "text_version": CONSENT_TEXT_VERSION, key: None}
+            )
+            self.assertEqual(response.status_code, 400)
+        consent = self.client.patch(path + "/consent", json={**NONE, "text_version": CONSENT_TEXT_VERSION})
+        self.assertEqual(consent.status_code, 200)
+        self.assertEqual(consent.get_json(), self.client.get(path).get_json())
+        self.assertNotIn("publicering_version", consent.get_json())
+        # The profile has always ignored unknown contact keys.
+        contact = self.client.patch(path + "/contact", json={"phone": "010-000 00 02", "member_id": self.member2.id})
+        self.assertEqual(contact.status_code, 200)
+        self.assertEqual(contact.get_json(), {**self.client.get(path).get_json(), "email_code_sent": False})
+        self.assertEqual(db.Member.get_by_id(self.member.id).phone, "010-000 00 02")
 
     def test_save_account_uses_the_submission_writer_and_notice_once(self):
         self.login("owner")

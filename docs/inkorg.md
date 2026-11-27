@@ -490,7 +490,7 @@ Kölistan, äldst först (`received_at`). Ett foto från årsrapporten som håll
 | `herd=<besättningsnummer>` | en besättning |
 | `state=<läge>[,<läge>…]` | ett eller flera lägen; utan `state` gäller vald vy, annars alla öppna; `state=alla` lägger inte till något lägesfilter |
 | `kind=<typ>` | posttyp |
-| `paper_entry=1` | öppna ärenden med besättning och en oavslutad årsblankett, utan annan ärendekoppling, som är otagna eller tilldelade anroparen |
+| `paper_entry=1` | ärenden med besättning och en oavslutad årsblankett, utan annan ärendekoppling, som är nya och otilldelade eller i läget `tagen` hos anroparen |
 | `limit`, `offset` | sidindelning; `limit` 1–200, standard 50 |
 
 **Svar 200:**
@@ -550,6 +550,7 @@ Om posten redan var tagen av anroparen och inget ändrades är `undo` null.
 "Jag tar den": posten blir `tagen` med anroparen som handläggare. Har anroparen redan posten i
 läget `tagen` händer ingenting. **409** när någon annan har posten
 (`"<namn> har posten. Ta över den för att arbeta med den."`) eller posten är stängd.
+Med `{"paper_entry": true}` kontrolleras listans blankettfilter igen under postens lås. Om posten har lämnat urvalet blir svaret **409**.
 
 ### `POST /api/v2/inkorg/{id}/ta-over`
 

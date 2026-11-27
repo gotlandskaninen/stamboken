@@ -195,8 +195,8 @@ describe("ReportForm on paper", () => {
     expect(document.activeElement).toBe(number);
   });
 
-  it("marks or keeps Ej vägd after an empty weight", () => {
-    renderPaper();
+  it("marks or keeps Ej vägd without a reason for a young rabbit", () => {
+    renderPaper(paperView({ rabbits: [rabbit(2, { adult: false })] }));
     typeNumber("2");
     fireEvent.keyDown(within(row(2)).getByLabelText("Finns kvar"), {
       key: "1",
@@ -215,6 +215,47 @@ describe("ReportForm on paper", () => {
       );
     }
   });
+
+  it.each(["Hann inte väga", "Annat skäl"])(
+    "focuses the reason and submits the adult row with %s",
+    async (reason) => {
+      const { a } = renderPaper(paperView({ rabbits: [rabbit(2)] }));
+      typeNumber("2");
+      const fields = within(row(2));
+      const enter = (target: HTMLElement) =>
+        fireEvent.keyDown(target, { key: "Enter" });
+      fireEvent.keyDown(fields.getByLabelText("Finns kvar"), { key: "1" });
+      enter(fields.getByLabelText("Vikt"));
+      const toggle = fields.getByRole("button", { name: "Ej vägd" });
+      expect(document.activeElement).toBe(toggle);
+      enter(toggle);
+      const first = fields.getByRole("button", { name: "Hann inte väga" });
+      expect(document.activeElement).toBe(first);
+      if (reason === "Annat skäl") {
+        const other = fields.getByRole("button", { name: "Annat …" });
+        other.focus();
+        enter(other);
+        const input = fields.getByLabelText("Annat skäl");
+        expect(document.activeElement).toBe(input);
+        enter(input);
+        expect(document.activeElement).toBe(input);
+        fireEvent.change(input, { target: { value: reason } });
+        enter(input);
+      } else {
+        enter(first);
+      }
+      expect(document.activeElement).toBe(
+        screen.getByLabelText("Nummer efter G9001-"),
+      );
+      fireEvent.click(sendButton());
+      await waitFor(() => expect(a.submitReport).toHaveBeenCalledTimes(1));
+      expect(a.submitReport.mock.calls[0][2].rabbits[2]).toMatchObject({
+        val: "kvar",
+        vikt: null,
+        ej_vagd: reason,
+      });
+    },
+  );
 
   it("takes a full number from another herd as written", () => {
     renderPaper(

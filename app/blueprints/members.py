@@ -55,13 +55,13 @@ from utils.matrikel import (
     write_matrikel_audit,
 )
 from utils.members import (
-    CONSENT_CHANGED,
     CONSENT_KEYS,
     CONSENT_TEXT_VERSION,
     consent_answered,
-    consent_version,
+    contact_text_fields,
     counted_answers,
     effective_consent,
+    save_profile_contact,
     set_consent,
     stored_consent,
 )
@@ -479,24 +479,10 @@ def patch_me_contact():
     if not isinstance(body, dict):
         return problem(400, "Ogiltigt anrop", "Uppdateringen måste vara ett JSON-objekt")
 
-    # Every string field must actually BE a string (or null) — a JSON
-    # list/number/object would 500 on .strip()/save below instead of 400
-    # (repo precedent: member_applications.py create_application).
-    for key in ("phone", "address"):
-        if key in body and body[key] is not None and not isinstance(body[key], str):
-            return problem(400, "Ogiltigt fält", f"{key} måste vara en sträng eller null")
-
-    # Track exactly which columns this body touches — a full-row save() would
-    # write member.user_id and membership_status back from the instance this
-    # request read: it would NULL a link
-    # committed in between, resurrect one an admin just removed, or undo a
-    # status flip and restore herd access. Values are collected here and applied
-    # to the rows re-read under the membership lock below.
-    person_updates: dict[str, str | None] = {}
-    membership_updates: dict[str, str | None] = {}
-
-    if "phone" in body:
-        person_updates["phone"] = (body["phone"] or "").strip() or None
+    try:
+        fields = contact_text_fields(body)
+    except AddressValidationError as err:
+        return problem(400, err.title, err.detail)
 
     # The e-mail is never written here: a new address gets a code (_ask_for_code), and the change waits for it.
     new_email = None
@@ -520,14 +506,9 @@ def patch_me_contact():
         # Split keys only — the postal_address alias is an admin/legacy input,
         # never a self-service one. Unknown keys
         # stay ignored, as they always were on this route.
-        postal = parse_postal_fields({k: body[k] for k in ("postal_code", "city") if k in body})
+        fields.update(parse_postal_fields({k: body[k] for k in ("postal_code", "city") if k in body}))
     except AddressValidationError as err:
         return problem(400, err.title, err.detail)
-    if "address" in body:
-        # The postal address lives on the membership — one address change
-        # per household.
-        membership_updates["address"] = (body["address"] or "").strip() or None
-    membership_updates.update(postal)
 
     person_id, membership_id = m.id, m.membership_id
     try:
@@ -543,18 +524,7 @@ def patch_me_contact():
             m, ms, err = _relock_me(membership_id, person_id)
             if err is not None:
                 return err
-            changed = [f for f, v in membership_updates.items() if getattr(ms, f) != v]
-            changed += [f for f, v in person_updates.items() if getattr(m, f) != v]
-            if changed:  # D19: a paper form signed before this change must not overwrite it; the names only
-                payload = {"person_id": m.id, "fields": changed, "source": "profil"}
-                write_matrikel_audit(current_user, "kontakt_andrad", ms, payload)
-            for field, value in person_updates.items():
-                setattr(m, field, value)
-            for field, value in membership_updates.items():
-                setattr(ms, field, value)
-            if membership_updates:
-                ms.save(only=[getattr(Membership, f) for f in membership_updates] + [Membership.updated_at])
-            m.save(only=[getattr(Member, f) for f in person_updates] + [Member.updated_at])
+            save_profile_contact(ms, m, current_user, fields)
             if new_email is not None:
                 if ms.membership_status == Status.FRIEXEMPLAR:
                     refused, new_email = "E-postadressen för ett friexemplar kan bara bytas i matrikeln.", None
@@ -695,7 +665,7 @@ def patch_me_consent():
     # PARTIAL update: the body carries only the switches this member
     # actually changed. Unknown keys are refused rather than ignored — a typo
     # would otherwise look to the member like a saved consent.
-    unknown = sorted(key for key in body if key not in (*CONSENT_KEYS, "text_version", "version"))
+    unknown = sorted(key for key in body if key not in (*CONSENT_KEYS, "text_version"))
     if unknown:
         return problem(400, "Ogiltigt fält", f"Okända samtyckesnycklar: {', '.join(unknown)}")
     # The version of the text the page showed: a tab opened before the question changed answered another one (5.11)
@@ -738,12 +708,6 @@ def patch_me_consent():
         # stored value that is not a literal true is persisted as false
         # (fail-closed).
         merged = {k: v is True for k, v in stored_consent(ms).items() if k in CONSENT_KEYS}
-        # The report edits a displayed revision. A stale tab must not undo a withdrawal.
-        if "version" in body and (
-            (body["version"] is not None and type(body["version"]) is not int)
-            or body["version"] != consent_version(ms.id)
-        ):
-            return problem(409, "Ladda om sidan", CONSENT_CHANGED)
         merged.update(updates)
         set_consent(
             ms,
@@ -751,11 +715,8 @@ def patch_me_consent():
             source="profil",
             text_version=CONSENT_TEXT_VERSION,
             user=current_user.id,
-            # The report sends all four keys even for one checkbox. As at Skicka, an unchanged Ja adds no row.
-            whole_answer="version" not in body and len(updates) == len(CONSENT_KEYS),
+            whole_answer=len(updates) == len(CONSENT_KEYS),
         )
-        if "version" in body:
-            return jsonify({**_me_response(m), "publicering_version": consent_version(ms.id)})
     return jsonify(_me_response(m))
 
 

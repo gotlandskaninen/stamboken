@@ -419,6 +419,19 @@ class StatusTest(ArsrapportTest):
         db.MailMessage.delete().where(db.MailMessage.ref_id == replacement.id).execute()
         self.assertEqual(self.rows()["G9001"]["report_link"], "current")
 
+    def test_only_queued_and_sending_invitations_hide_link_actions(self):
+        code = self.invite(self.h, "queued")
+        for link in ("current", "revoked"):
+            if link == "revoked":
+                report_code.revoke(code, now=NOW)
+            for status in ("queued", "sending", "sent", "cancelled", "logged", "failed", "bounced", "blocked"):
+                with self.subTest(link=link, status=status):
+                    db.MailMessage.update(status=status).where(db.MailMessage.ref_id == code.id).execute()
+                    expected = None if status in ("queued", "sending") else link
+                    self.assertEqual(self.rows()["G9001"]["report_link"], expected)
+        db.MailMessage.delete().where(db.MailMessage.ref_id == code.id).execute()
+        self.assertEqual(self.rows()["G9001"]["report_link"], "revoked")
+
     def test_status_no_email_flag(self):
         self.herd("G9102", email=None)
         rows = self.rows()

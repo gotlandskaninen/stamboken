@@ -233,9 +233,9 @@ describe("StatusTable", () => {
       ).toBeTruthy(),
     );
   });
-  it("hides both mail actions before the herd's invitation", () => {
+  it("uses the link state for mail actions when the invitation has no label", () => {
     show(true, [
-      base,
+      { ...base, inbjudan: null },
       { ...base, herd: "G9002", inbjudan: null, report_link: null },
     ]);
     const invited = within(screen.getByText("G9001").closest("tr")!);

@@ -124,12 +124,14 @@ from utils.members import (
     STOCKHOLM,
     consent_from_answer,
     consent_version,
+    contact_text_fields,
     counted_answers,
     effective_consent,
     holder_since,
     paper_from_holder,
     paper_signature,
     revoke_waiting_consent,
+    save_profile_contact,
     set_consent,
 )
 from utils.reference_population import _alive_by_note
@@ -1469,7 +1471,7 @@ def _invitations(herds, round_):
     """
     Each herd's invitation state from its active code: `oppnad` once the link has been opened, else the state of the
     mail that carries it (`skickad`, `studsade`, `misslyckades`); a herd with no active code or no such mail is None.
-    Also track invited herds whose link was revoked so the manager can still send them a replacement.
+    Only queued and sending invitation mail is still pending. An issued link may outlive its mail row.
     """
     codes = list(
         ReportAccessCode.select().where(
@@ -1478,7 +1480,7 @@ def _invitations(herds, round_):
         )
     )
     mail = {
-        row.ref_id: _MAIL_INVITATION.get(row.status)
+        row.ref_id: row.status
         for row in MailMessage.select(MailMessage.ref_id, MailMessage.status)
         .where(
             MailMessage.ref_type == "access_code",
@@ -1489,15 +1491,16 @@ def _invitations(herds, round_):
     }
     states, links = {}, {}
     for code in codes:
-        state = "oppnad" if code.last_opened_at else mail.get(code.id)
+        status = mail.get(code.id)
+        state = "oppnad" if code.last_opened_at else _MAIL_INVITATION.get(status)
         if code.revoked_at is None:
             states[code.herd_id] = state
-        # An issued link can outlive its mail row. A first invitation still in the queue has not gone out yet.
-        if state or code.id not in mail:
-            if code.revoked_at is None:
-                links[code.herd_id] = "current"
-            else:
-                links.setdefault(code.herd_id, "revoked")
+        if status in ("queued", "sending"):
+            continue
+        if code.revoked_at is None:
+            links[code.herd_id] = "current"
+        else:
+            links.setdefault(code.herd_id, "revoked")
     return states, links
 
 
@@ -1937,12 +1940,16 @@ def _matrikel(body, *, digital=False):
             texts += _keys(value[name], parts, "matrikel").values()
     if any(text is not None and not isinstance(text, str) for text in texts):
         raise _bad("matrikel", "Fältet ska vara text.")
-    if (answer := value.get("publicering")) is not None:  # Ja or Nej, and at Ja what may not be listed
-        allowed = ("ja", "utom", "text_version", "version") if digital else ("ja", "utom")
-        utom = _keys(answer, allowed, "matrikel").get("utom")
-        if not isinstance(answer.get("ja"), bool) or not isinstance(utom, list) or not all(k in UTOM for k in utom):
-            raise _bad("matrikel", "Svara Ja eller Nej om Koharen, och vid Ja vad som inte får stå med.")
+    if (answer := value.get("publicering")) is not None:
+        _validate_publication(answer, digital=digital)
     return value
+
+
+def _validate_publication(answer, *, digital):
+    allowed = ("ja", "utom", "text_version", "version") if digital else ("ja", "utom")
+    utom = _keys(answer, allowed, "matrikel").get("utom")
+    if not isinstance(answer.get("ja"), bool) or not isinstance(utom, list) or not all(k in UTOM for k in utom):
+        raise _bad("matrikel", "Svara Ja eller Nej om Koharen, och vid Ja vad som inte får stå med.")
 
 
 def parse_submission(body: dict, *, paper: bool) -> Submission:
@@ -2934,12 +2941,59 @@ def _save_login_contact(herd, membership, member, user, contact, *, typed, submi
         account_notice(herd, member, key, created_by=user.id)
 
 
+def _lock_login_details(herd, round_, access, user):
+    """Inside the save's transaction, authorize against the displayed herd's current main member."""
+    require_open(_lock_round(round_), herd, access, today())
+    membership, member = _lock_matrikel(herd)
+    if access.source != "login" or not _own_details(member, access, user):
+        raise ArsrapportError(403, NOT_MAIN)
+    return membership, member
+
+
+def save_report_contact(herd, round_, access, user, body):
+    with DB_PROXY.atomic():
+        membership, member = _lock_login_details(herd, round_, access, user)
+        _keys(body, ("phone", *MATRIKEL_PARTS["adress"]), "kontakt")
+        if len(body) != 1:
+            raise ArsrapportError(400, "Ogiltigt fält")
+        try:
+            fields = contact_text_fields(body) | parse_postal_fields(body)
+        except AddressValidationError as err:
+            raise ArsrapportError(400, err.detail) from err
+        if len(fields.get("phone") or "") > 50:
+            raise ArsrapportError(422, REFUSALS["telefon_ogiltig"])
+        if len(fields.get("address") or "") > 200:
+            raise ArsrapportError(422, REFUSALS["adress_ogiltig"])
+        save_profile_contact(membership, member, user, fields)
+        return {"ok": True}
+
+
+def save_report_consent(herd, round_, access, user, answer):
+    with DB_PROXY.atomic():
+        membership, _ = _lock_login_details(herd, round_, access, user)
+        _validate_publication(answer, digital=True)
+        if answer.get("text_version") != CONSENT_TEXT_VERSION:
+            raise ArsrapportError(409, REFUSALS["koharen_ny_fraga"])
+        version = answer.get("version")
+        if (
+            "version" not in answer
+            or (version is not None and not _is_int(version))
+            or version != consent_version(membership.id)
+        ):
+            raise ArsrapportError(409, CONSENT_CHANGED)
+        set_consent(
+            membership,
+            consent_from_answer(answer["ja"], answer["utom"]),
+            source="profil",
+            text_version=CONSENT_TEXT_VERSION,
+            user=user.id,
+        )
+        return {"publicering_version": consent_version(membership.id)}
+
+
 def save_report_account(herd, round_, access, user, konto):
     with DB_PROXY.atomic():
-        require_open(_lock_round(round_), herd, access, today())
-        membership, member = _lock_matrikel(herd)
-        if access.source != "login" or not _own_details(member, access, user):
-            raise ArsrapportError(403, NOT_MAIN)
+        membership, member = _lock_login_details(herd, round_, access, user)
         matrikel = _matrikel({"matrikel": {"konto": konto}})
         contact, refusals = _contact(matrikel)
         if refusals or "konto" not in contact:

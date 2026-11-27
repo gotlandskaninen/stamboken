@@ -223,6 +223,20 @@ def save_report_account(herd, year):
     return jsonify(arsrapport.save_report_account(herd, round_, access, current_user, _submission_body()))
 
 
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/kontakt", methods=["PATCH"])
+@json_login_required
+def save_report_contact(herd, year):
+    herd, round_, access = _report_target(herd, year)
+    return jsonify(arsrapport.save_report_contact(herd, round_, access, current_user, _submission_body()))
+
+
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/publicering", methods=["PUT"])
+@json_login_required
+def save_report_consent(herd, year):
+    herd, round_, access = _report_target(herd, year)
+    return jsonify(arsrapport.save_report_consent(herd, round_, access, current_user, _submission_body()))
+
+
 # [Next.js] The sale dialog's buyer herds for the personal link, which has no genebank picker of its own (4a).
 @arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/besattningar", methods=["GET"])
 @report_actor_required

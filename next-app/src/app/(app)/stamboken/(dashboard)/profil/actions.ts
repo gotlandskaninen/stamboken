@@ -65,7 +65,7 @@ type Result = { ok: true } | { ok: false; error: string };
 // The merged row the backend wrote under the membership lock — the client
 // re-bases its next partial update on it.
 type ConsentResult =
-  | { ok: true; consent: Consent; answered: boolean; version?: number }
+  | { ok: true; consent: Consent; answered: boolean }
   | { ok: false; error: string };
 
 type AddPersonResult =
@@ -141,16 +141,13 @@ export async function verifyEmailCode(
 }
 
 export async function updateConsent(
-  consent: Partial<Consent> & { text_version: string; version?: number | null },
-  expectedMode?: Mode,
+  consent: Partial<Consent> & { text_version: string },
 ): Promise<ConsentResult> {
   try {
     const me = await fetchApi<{
       publication_consent: Consent;
       consent_answered: boolean;
-      publicering_version?: number;
     }>("/v2/members/me/consent", {
-      expectedMode,
       method: "PATCH",
       body: JSON.stringify(consent),
       headers: { "Content-Type": "application/json" },
@@ -160,7 +157,6 @@ export async function updateConsent(
       ok: true,
       consent: me.publication_consent,
       answered: me.consent_answered,
-      version: me.publicering_version,
     };
   } catch (err) {
     return { ok: false, error: describe(err) };

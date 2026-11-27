@@ -5,18 +5,16 @@ import { formatPostalCode, isValidPostalCode } from "@/lib/postal";
 import type { Mode } from "@/lib/mode";
 import {
   PublicationFields,
-  toConsent,
   type Publication,
 } from "@/components/member/PublicationFields";
 import {
   cancelEmailCode,
   updateContact,
-  updateConsent,
   verifyEmailCode,
 } from "../profil/actions";
 import { MbCard } from "../min-besattning/min-besattning-ui";
 import { AccountFields, TextField, textField } from "./PaperChanges";
-import { saveAccount } from "./actions";
+import { saveAccount, saveReportContact, saveReportConsent } from "./actions";
 import {
   CONSENT_TEXT_VERSION,
   detailsBody,
@@ -169,6 +167,7 @@ export function MemberDetails({
   }
   return (
     <MainDetails
+      key={`${herd}/${year}`}
       details={details}
       herd={herd}
       year={year}
@@ -278,8 +277,8 @@ function MainDetails({
     if (key === "postal_code" && !isValidPostalCode(value))
       return message(key, "Postnummer ska vara fem siffror", "error");
     save(key, async () => {
-      const result = await updateContact({ [key]: value }, env);
-      if (!result.ok) return message(key, result.error, "error");
+      const result = await saveReportContact(herd, year, key, value, env);
+      if (!result.ok) return message(key, result.problem.detail, "error");
       saved.current = {
         ...saved.current,
         contact: { ...saved.current.contact, [key]: value },
@@ -295,16 +294,20 @@ function MainDetails({
       utom: answer.utom,
     });
     save("publicering", async () => {
-      const result = await updateConsent(
+      const result = await saveReportConsent(
+        herd,
+        year,
         {
-          ...toConsent(answer),
+          ...answer,
           version: saved.current.publicering_version,
           text_version: CONSENT_TEXT_VERSION,
         },
         env,
       );
-      if (!result.ok) return message("publicering", result.error, "error");
-      if (result.version === undefined)
+      if (!result.ok)
+        return message("publicering", result.problem.detail, "error");
+      const version = result.data.publicering_version;
+      if (!Number.isSafeInteger(version))
         return message(
           "publicering",
           "Ladda om sidan och kontrollera svaret.",
@@ -313,7 +316,7 @@ function MainDetails({
       saved.current = {
         ...saved.current,
         publicering: answer,
-        publicering_version: result.version,
+        publicering_version: version,
       };
       message("publicering", "Publiceringsval sparade");
     });

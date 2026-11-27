@@ -23,6 +23,8 @@ import {
   newLink,
   nextPaperForm,
   saveDraft,
+  saveReportContact,
+  saveReportConsent,
   saveRound,
   sellNow,
   sendReminder,
@@ -79,33 +81,93 @@ describe("arsrapport actions", () => {
     fetchApi
       .mockResolvedValueOnce(rounds)
       .mockResolvedValueOnce({
-        items: [{ id: 2, genebank_id: 2, herd: "M9001" }],
+        items: [
+          { id: 2, genebank_id: 2, herd: "M9001" },
+          { ...item, id: 3 },
+        ],
         total: 3,
       })
-      .mockResolvedValueOnce({ items: [{ ...item, id: 3 }, item], total: 3 })
       .mockRejectedValueOnce(Object.assign(new ApiError(conflict), conflict))
+      .mockResolvedValueOnce({ items: [item], total: 2 })
       .mockResolvedValueOnce(item);
-    expect(await nextPaperForm(2025, "demo")).toBe(
+    expect(await nextPaperForm("demo")).toBe(
       "/stamboken/arsrapport/G9002/2026?post=8",
     );
     expect(fetchApi.mock.calls.map(([url]) => url)).toEqual([
       "/v2/arsrapport/rundor",
       "/v2/inkorg?paper_entry=1&offset=0",
-      "/v2/inkorg?paper_entry=1&offset=1",
       "/v2/inkorg/3/ta",
+      "/v2/inkorg?paper_entry=1&offset=1",
       "/v2/inkorg/8/ta",
     ]);
     expect(fetchApi.mock.calls.at(-1)?.[1]).toMatchObject({
       method: "POST",
+      body: JSON.stringify({ paper_entry: true }),
       isolateDemo: true,
     });
+  });
+
+  it("opens the claimed case to choose the year between rounds", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2027-06-01T12:00:00Z"));
+      const item = { id: 8, genebank_id: 1, herd: "G9002" };
+      fetchApi
+        .mockResolvedValueOnce({
+          rounds: [
+            ...rounds.rounds,
+            {
+              ...rounds.rounds[0],
+              year: 2027,
+              start_date: "2027-12-31",
+              end_date: "2028-03-31",
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ items: [item], total: 1 })
+        .mockResolvedValueOnce(item);
+      expect(await nextPaperForm("demo")).toBe("/stamboken/inkorg/8");
+      expect(fetchApi.mock.calls.at(-1)?.[0]).toBe("/v2/inkorg/8/ta");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("returns to the inbox when the paper queue is empty", async () => {
     fetchApi
       .mockResolvedValueOnce(rounds)
       .mockResolvedValueOnce({ items: [], total: 0 });
-    expect(await nextPaperForm(2026, "demo")).toBe("/stamboken/inkorg");
+    expect(await nextPaperForm("demo")).toBe("/stamboken/inkorg");
+    expect(fetchApi).toHaveBeenCalledTimes(2);
+  });
+
+  it("saves details for the displayed herd and refuses a switched environment", async () => {
+    const answer = {
+      ja: false,
+      utom: [],
+      text_version: "2026-11-20",
+      version: null,
+    };
+    await saveReportContact("G9002", 2025, "phone", "", "demo");
+    await saveReportConsent("G9002", 2025, answer, "demo");
+    const path = "/v2/arsrapport/besattning/G9002/2025";
+    expect(fetchApi.mock.calls).toEqual([
+      [
+        `${path}/kontakt`,
+        { method: "PATCH", body: '{"phone":""}', isolateDemo: true },
+      ],
+      [
+        `${path}/publicering`,
+        { method: "PUT", body: JSON.stringify(answer), isolateDemo: true },
+      ],
+    ]);
+    modeCookie = "prod";
+    expect(
+      (await saveReportContact("G9002", 2025, "phone", "", "demo")).ok,
+    ).toBe(false);
+    expect((await saveReportConsent("G9002", 2025, answer, "demo")).ok).toBe(
+      false,
+    );
     expect(fetchApi).toHaveBeenCalledTimes(2);
   });
 

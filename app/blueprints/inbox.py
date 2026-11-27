@@ -400,16 +400,7 @@ def queue():
     if args.get("kind"):
         query = query.where(InboxItem.kind == args["kind"])
     if args.get("paper_entry") == "1":
-        forms = InboxDocument.select(InboxDocument.item).where(
-            InboxDocument.doc_type == "arsblankett", InboxDocument.done_at.is_null()
-        )
-        query = query.where(
-            InboxItem.id.in_(forms),
-            InboxItem.herd.in_(Herd.select(Herd.id).where(Herd.herd.not_in(OUTSIDE_GENEBANK_HERDS))),
-            InboxItem.ref_type.is_null(),
-            open_item,
-            InboxItem.assigned_to.is_null() | (InboxItem.assigned_to == current_user.id),
-        )
+        query = query.where(inbox.paper_entry_filter(current_user.id))
     counts = dict(query.select(InboxItem.state, fn.COUNT(InboxItem.id)).group_by(InboxItem.state).tuples())
     if mode:
         query = query.where(modes[mode])
@@ -484,7 +475,8 @@ def rabbit_sales(item_id, number):
 @json_login_required
 @_queue_worker
 def take(item_id):
-    return _locked(item_id, _then_assignment(lambda item: inbox.take(item, current_user, over=False)))
+    change = partial(inbox.take, user=current_user, over=False, paper_entry=_body().get("paper_entry") is True)
+    return _locked(item_id, _then_assignment(change))
 
 
 @inbox_bp.route("/inkorg/<int:item_id>/ta-over", methods=["POST", "PUT"])

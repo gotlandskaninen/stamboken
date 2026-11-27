@@ -7,6 +7,7 @@ from datetime import timedelta  # noqa: E402
 
 import utils.database as db  # noqa: E402
 import utils.inbox as inbox  # noqa: E402
+import utils.mail as mail  # noqa: E402
 
 from tests.inbox_fixtures import InboxTest  # noqa: E402
 
@@ -228,6 +229,25 @@ class TestVisibility(InboxTest):
         body = self.client.get("/api/v2/inkorg?paper_entry=1").get_json()
         self.assertEqual([item["id"] for item in body["items"]], [free.id, mine.id])
         self.assertEqual(body["total"], 2)
+
+    def test_paper_claim_skips_waiting_and_escalated_forms_after_listing(self):
+        self.login("hjalp")
+        waiting, escalated = self.item(), self.item()
+        db.InboxDocument.update(doc_type="arsblankett").where(db.InboxDocument.item.in_([waiting, escalated])).execute()
+        queue = "/api/v2/inkorg?paper_entry=1"
+        self.assertEqual(self.client.get(queue).get_json()["total"], 2)
+        for item, state in ((waiting, "ofullstandig"), (escalated, "hos_genbanksansvarig")):
+            claim = f"/{item.id}/ta"
+            self.assertEqual(self.post(claim, paper_entry=True).status_code, 200)
+            self.assertIsNone(self.post(claim, paper_entry=True).get_json()["undo"])
+            self.assertEqual(self.post(f"/{item.id}/lage", state=state, note="Datum saknas").status_code, 200)
+            self.assertEqual(self.post(claim, paper_entry=True).status_code, 409)
+            self.assertEqual(self.reload(item).state, state)
+        self.assertEqual(self.client.get(queue).get_json()["items"], [])
+        self.assertIsNone(self.reload(escalated).assigned_to_id)
+        request = db.MailMessage.get(db.MailMessage.kind == "inlasning.ofullstandig")
+        self.assertEqual(request.status, "queued")
+        self.assertEqual(mail.MAIL_KINDS[request.kind].build(request.params)["note"], "Datum saknas")
 
     def test_opening_an_item_is_logged_and_reads_its_notices(self):
         item = self.item(0)

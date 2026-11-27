@@ -121,6 +121,37 @@ export async function saveAccount(
   );
 }
 
+export async function saveReportContact(
+  herd: string,
+  year: number,
+  field: "phone" | keyof NonNullable<Matrikel["adress"]>,
+  value: string,
+  env: Mode,
+) {
+  return call<{ ok: true }>(
+    env,
+    path(herd, year, "/kontakt"),
+    "PATCH",
+    { [field]: value },
+    { isolateDemo: true },
+  );
+}
+
+export async function saveReportConsent(
+  herd: string,
+  year: number,
+  answer: Required<NonNullable<Matrikel["publicering"]>>,
+  env: Mode,
+) {
+  return call<{ publicering_version: number }>(
+    env,
+    path(herd, year, "/publicering"),
+    "PUT",
+    answer,
+    { isolateDemo: true },
+  );
+}
+
 export async function dryRun(
   herd: string,
   year: number,
@@ -150,7 +181,7 @@ export async function submitReport(
   });
 }
 
-export async function nextPaperForm(year: number, env: Mode): Promise<string> {
+export async function nextPaperForm(env: Mode): Promise<string> {
   const inbox = "/stamboken/inkorg";
   const rounds = await call<{ rounds: RoundRow[] }>(
     env,
@@ -171,26 +202,27 @@ export async function nextPaperForm(year: number, env: Mode): Promise<string> {
       { isolateDemo: true },
     );
     if (!page.ok || !page.data.items.length) return inbox;
+    let lost = 0;
     for (const item of page.data.items) {
       const years = reportYears(rounds.data.rounds, item.genebank_id, today);
       if (!item.herd || !years.length) continue;
-      // /ta also resumes our own waiting item. It refuses a competing claim under the item lock.
       const taken = await call(
         env,
         `/v2/inkorg/${item.id}/ta`,
         "POST",
-        undefined,
+        { paper_entry: true },
         { isolateDemo: true },
       );
       if (!taken.ok) {
         if (![404, 409].includes(taken.problem.status)) return inbox;
+        lost++;
         continue;
       }
-      const nextYear = years.includes(year) ? year : years[0];
-      return `/stamboken/arsrapport/${item.herd}/${nextYear}?post=${item.id}`;
+      if (years.length > 1) return `${inbox}/${item.id}`;
+      return `/stamboken/arsrapport/${item.herd}/${years[0]}?post=${item.id}`;
     }
     if (offset + page.data.items.length >= page.data.total) return inbox;
-    offset += page.data.items.length; // an item lost to another helper may be skipped, never looped on
+    offset += page.data.items.length - lost; // refused items have left the filtered queue
   }
 }
 
