@@ -9,6 +9,7 @@ from datetime import datetime
 from peewee import fn
 
 import utils.arsrapport as arsrapport
+import utils.login_account as login_account
 import utils.report_code as report_code
 import utils.settings as settings
 from utils.arsrapport import ArsrapportError
@@ -210,8 +211,19 @@ def _link_address(params):
     return member.login_address if member is not None else None
 
 
+def login_tip(herd, member_id=None, signed_in=False):
+    # Signing in ends the link's session: no tip to an account already signed in, the member or someone else.
+    if signed_in:
+        return False
+    member = report_code.invitation_recipient(herd, now=arsrapport.now())
+    if member is None or (member_id is not None and member.id != member_id):
+        return False
+    return login_account.leads_to_prod(member, member.login_address)
+
+
 @mail_kind("arsrapport.inbjudan", priority=2, category="T", login_address=_link_address)
 def _inbjudan(params):
+    member_id = None
     if params.get("prov"):
         herd, round_ = Herd.get_by_id(params["herd_id"]), arsrapport.get_round(params["year"])
         link = f"{settings.service.host.rstrip('/')}/rapport#prov"  # FA9: no code, no token
@@ -220,13 +232,18 @@ def _inbjudan(params):
         if valid is None:
             return None
         code, herd, round_ = valid
+        member_id = code.member_id
         if arsrapport.current_report(herd, round_) is not None:  # already reported on paper or elsewhere
             return None
         link = report_code.code_url(code)
     extract = extract_context(herd, round_)  # one read for the mail text and the attachment
+    host = settings.service.host.rstrip("/")
+    tip = login_tip(herd, member_id)
+    report_path = f"/stamboken/arsrapport/{herd.herd}/{round_.report_year}"
     return {
         **_common(herd, round_),
         "link": link,
+        "login_url": f"{host}/auth/sign-in?return_to={report_path}" if tip else None,
         "prov": bool(params.get("prov")),
         "utdrag": render_text(extract),
         "attachments": [(f"registerutdrag-{herd.herd}.pdf", "application/pdf", render_pdf(extract))],

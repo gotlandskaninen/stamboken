@@ -8,6 +8,7 @@ isort:skip_file
 
 import json
 import logging
+import os
 from datetime import date, datetime, timedelta
 from unittest import mock
 
@@ -136,8 +137,20 @@ class RapportLinkTest(ArsrapportTest):
             session["rapport_seen"] = (arsrapport.now() - timedelta(minutes=119)).isoformat()
         rows = self.client.get("/api/v2/rapport/mina").get_json()
         self.assertEqual(
-            rows, [{"code_id": self.code.id, "herd": "G9001", "herd_name": "Besättning G9001", "year": 2025}]
+            rows,
+            [
+                {
+                    "code_id": self.code.id,
+                    "herd": "G9001",
+                    "herd_name": "Besättning G9001",
+                    "year": 2025,
+                    "login_tip": False,
+                }
+            ],
         )
+        with mock.patch.dict(os.environ, KODINLOGGNING="true", SJALVSKAPAT_KONTO_PROD="true"):
+            (row,) = self.client.get("/api/v2/rapport/mina").get_json()
+        self.assertTrue(row["login_tip"])
         seen = datetime.fromisoformat(self.session()["rapport_seen"])
         self.assertLess(arsrapport.now() - seen, timedelta(minutes=1))
         report_code.revoke(self.code, now=arsrapport.now())
@@ -153,6 +166,16 @@ class RapportLinkTest(ArsrapportTest):
         self.assertEqual([entry[0] for entry in self.session()["rapport"]], [other.id])
         rows = self.client.get("/api/v2/rapport/mina").get_json()
         self.assertEqual([row["herd"] for row in rows], ["G9002"])
+
+    @mock.patch.dict(os.environ, KODINLOGGNING="true", SJALVSKAPAT_KONTO_PROD="true")
+    def test_mina_hides_tip_while_an_account_is_signed_in(self):
+        db.Member.update(user=self.owner).where(db.Member.id == self.code.member_id).execute()
+        self.login("owner")
+        self.exchange()
+        _, _, other = self.new_code("G9002")
+        self.exchange(other)
+        rows = self.client.get("/api/v2/rapport/mina").get_json()
+        self.assertEqual({r["herd"]: r["login_tip"] for r in rows}, {"G9001": False, "G9002": False})
 
     def test_at_most_four_codes(self):
         codes = [self.code.id]

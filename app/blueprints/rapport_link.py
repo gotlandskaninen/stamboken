@@ -10,6 +10,7 @@ import re
 from datetime import datetime, timedelta
 
 import utils.arsrapport as arsrapport
+import utils.arsrapport_invite as arsrapport_invite
 import utils.member_changes as member_changes
 import utils.report_code as report_code
 import utils.settings as settings
@@ -130,7 +131,13 @@ def mine():
         herd = Herd.get_by_id(code.herd_id)
         if report_code.refusal(code, herd, today=arsrapport.today()) is None:
             rows.append(
-                {"code_id": code.id, "herd": herd.herd, "herd_name": herd.herd_name, "year": code.round.report_year}
+                {
+                    "code_id": code.id,
+                    "herd": herd.herd,
+                    "herd_name": herd.herd_name,
+                    "year": code.round.report_year,
+                    "login_tip": arsrapport_invite.login_tip(herd, code.member_id, bool(session.get("user_id"))),
+                }
             )
     if rows:
         touch(now)
