@@ -6,6 +6,7 @@ Synthetic herds, rabbits and addresses only.
 isort:skip_file
 """
 
+import os
 import re
 import threading
 from datetime import date, datetime, timedelta, timezone
@@ -200,6 +201,18 @@ class InviteTest(ArsrapportTest):
     def test_new_link_without_email_refused(self):
         with self.assertRaises(arsrapport.ArsrapportError):
             invite.new_link(self.h3, self.round_, self.owner, now=NOW)
+
+    def test_invitation_recommends_code_login_only_when_it_is_on(self):
+        self.run_job()
+        row = self.mails()[0]
+        for flag, tip in (("true", True), ("false", False)):
+            with mock.patch.dict(os.environ, KODINLOGGNING=flag):
+                variables = {k: v for k, v in self.build(row).items() if k != "attachments"}
+                _, body = mail.render(row.kind, variables)
+            self.assertEqual("Logga gärna in i Stamboken först" in body, tip)
+            self.assertEqual("/auth/sign-in" in body, tip)
+            self.assertEqual("Du behöver inte logga in" in body, not tip)
+            self.assertEqual("Vill du inte logga in går det bra att använda länken ovan." in body, tip)
 
     def test_test_mail_goes_to_the_user_without_code(self):
         invite.test_mail(self.round_, self.gotland.id, self.owner)

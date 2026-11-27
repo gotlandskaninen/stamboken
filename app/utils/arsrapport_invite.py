@@ -9,6 +9,7 @@ from datetime import datetime
 from peewee import fn
 
 import utils.arsrapport as arsrapport
+import utils.login_code as login_code
 import utils.report_code as report_code
 import utils.settings as settings
 from utils.arsrapport import ArsrapportError
@@ -222,9 +223,11 @@ def _inbjudan(params):
             return None
         link = report_code.code_url(code)
     extract = extract_context(herd, round_)  # one read for the mail text and the attachment
+    host = settings.service.host.rstrip("/")
     return {
         **_common(herd, round_),
         "link": link,
+        "login_url": f"{host}/auth/sign-in" if login_code.enabled() else None,  # built at send time, never stored
         "prov": bool(params.get("prov")),
         "utdrag": render_text(extract),
         "attachments": [(f"registerutdrag-{herd.herd}.pdf", "application/pdf", render_pdf(extract))],
