@@ -106,6 +106,8 @@ class TestPermissions(DatabaseTest):
                     self.assertIsNone(value)
                 else:
                     expected["individuals"] = [i.as_dict() for i in herd_members(herd)]
+                    if "bank_account_number" in expected:  # the herd read carries the account's revision too
+                        expected["bank_account_revision"] = da.support_account_revision(herd.membership_id)
                     # Sort individuals by number for consistent comparison
                     # (PostgreSQL may return in different order than SQLite)
                     if "individuals" in value and value["individuals"]:

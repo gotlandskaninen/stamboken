@@ -75,6 +75,20 @@ describe("LinkGate", () => {
     expect(hashAtPost).toBe("");
   });
 
+  it("the inline script also clears the receipt mail's /rapport/andringar and keeps the path", () => {
+    history.replaceState(null, "", "/rapport/andringar#34.def");
+    new Function(CLEAR_HASH_SCRIPT)();
+    expect(location.hash).toBe("");
+    expect(location.pathname).toBe("/rapport/andringar");
+    expect((window as { __rapportToken?: string }).__rapportToken).toBe(
+      "34.def",
+    );
+    delete (window as { __rapportToken?: string }).__rapportToken;
+    history.replaceState(null, "", "/stamboken#x"); // any other page keeps its hash
+    new Function(CLEAR_HASH_SCRIPT)();
+    expect(location.hash).toBe("#x");
+  });
+
   it("the inline script takes the token out of the address bar before the app starts", () => {
     history.replaceState(null, "", "/rapport#12.abc");
     new Function(CLEAR_HASH_SCRIPT)();

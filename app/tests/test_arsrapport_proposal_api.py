@@ -423,12 +423,12 @@ class ProposalApiTest(ArsrapportTest):
         proposal = self.first()
         sent, results, original = threading.Event(), {}, arsrapport._mail  # pylint: disable=protected-access
 
-        def held_open(kind, *args):
+        def held_open(kind, *args, **kwargs):
             # the buyer's Skicka has read its list and written: it holds its report until it commits
             if kind == "arsrapport.kvitto":
                 sent.set()
                 time.sleep(1)
-            return original(kind, *args)
+            return original(kind, *args, **kwargs)
 
         def buyer_submits():
             try:

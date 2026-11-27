@@ -13,9 +13,11 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("@/lib/mode-context", () => ({ useMode: () => "demo" }));
 const newLink = vi.fn();
 const saleProposals = vi.fn();
+const undoAccountLink = vi.fn();
 vi.mock("@/app/(app)/stamboken/(dashboard)/arsrapport/actions", () => ({
   setOnTime: vi.fn(),
   newLink: (...a: unknown[]) => newLink(...a),
+  undoAccountLink: (...a: unknown[]) => undoAccountLink(...a),
   saleProposals: (...a: unknown[]) => saleProposals(...a),
   approveSale: vi.fn(),
   rejectSale: vi.fn(),
@@ -232,6 +234,47 @@ describe("StatusTable", () => {
     fireEvent.click(screen.getByText("Skicka ny länk"));
     await waitFor(() =>
       expect(newLink).toHaveBeenCalledWith("G9001", 2026, "demo"),
+    );
+  });
+  it("shows the link's change flags without values, and Koppla bort asks first (5.1, 5.14)", async () => {
+    undoAccountLink.mockResolvedValue({ ok: true, data: { ok: true } });
+    const flagged: StatusRow = {
+      ...sent,
+      flags: {
+        ...sent.flags,
+        andring_vantar: 2,
+        kontobyte_vantar: false,
+        kontobyte_forfoll: true,
+        inte_jag: true,
+        nytt_konto: 41,
+      },
+    };
+    const props = {
+      year: 2026,
+      genebankId: 1,
+      filter: "alla" as const,
+      env: "demo" as const,
+    };
+    const { unmount } = render(
+      <StatusTable {...props} view={view([flagged])} canEdit={false} />,
+    );
+    for (const text of [
+      "Ändring väntar på bekräftelse",
+      "Kontobyte förföll",
+      "Det var inte jag",
+      "Nytt konto",
+    ])
+      expect(screen.getByText(text)).toBeTruthy();
+    expect(screen.queryByText("Kontobyte väntar på bekräftelse")).toBeNull();
+    expect(screen.queryByText("Koppla bort kontot")).toBeNull(); // a helper sees, but does not undo
+    unmount();
+    render(<StatusTable {...props} view={view([flagged])} canEdit />);
+    fireEvent.click(screen.getByText("Koppla bort kontot"));
+    expect(screen.getByText(/Andra behörigheter påverkas inte\./)).toBeTruthy();
+    expect(undoAccountLink).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Koppla bort" }));
+    await waitFor(() =>
+      expect(undoAccountLink).toHaveBeenCalledWith("G9002", 2026, 41, "demo"),
     );
   });
   it("offers Ny länk only to a manager", () => {

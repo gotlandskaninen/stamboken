@@ -966,6 +966,29 @@ Säljer en skötare en kanin, eller den som rapporterar via länken i inbjudan, 
 försäljningen på genbanksansvarig. Raden visar "Försäljningen väntar på genbanksansvarig.
 Kaninen står kvar hos dig tills den är godkänd."
 
+**Dina uppgifter** står sist före Skicka. Är ditt konto kopplat till huvudmedlemmen i
+besättningens medlemskap ser du adress, telefon, kontot för stödet (bara de fyra sista
+siffrorna) och svaret om Koharen. Det du ändrar sparas när du skickar rapporten, och ändras
+kontot får du ett mejl om det. **Byt e-postadress** skickar en kod till den nya adressen;
+när adressen är bytt loggas du ut, så skicka rapporten först. Är du ägare eller skötare
+men inte huvudmedlem står bara att huvudmedlemmen ändrar uppgifterna.
+
+Via länken i inbjudan heter avsnittet **Har något ändrats?**, och sidan visar inte dina
+uppgifter. Knapparna **Ny adress eller telefon**, **Ny e-postadress**, **Nytt konto för
+stödet** och **Svar om Koharen** öppnar tomma fält. Ett Nej om Koharen, eller färre
+uppgifter i listan, gäller direkt. Allt annat gäller först när det bekräftats på sidan
+som kvittomejlet länkar till, senast 14 dagar efter inskicket. Kvittomejlet har då ämnet
+"Årsrapporten är inskickad, bekräfta dina ändringar" och går till medlemmens adress i
+matrikeln, aldrig till en ny adress som inte har bekräftats. Sidan **Bekräfta dina
+ändringar** visar varje ändring med nuvarande och nytt värde (kontot med fyra siffror).
+**Bekräfta** sparar dem; kontot ändras bara om rutan **Jag bekräftar det nya kontot för
+stödet.** är ikryssad. **Det var inte jag** stoppar ändringarna, och genbanksansvarig ser
+det i statusen. En ny e-postadress gäller för inloggning efter sju dagar, och den gamla
+adressen får ett meddelande. En ändring som inte bekräftats i tid står på kvittot med
+"gällde till"; fyll i den igen med **Ändra**. Sist på kvittot, när inloggning med kod är
+på, står **Skapa konto**: du loggar in med en kod som mejlas till din adress, och ett konto
+skapas som är kopplat till ditt medlemskap.
+
 Det du fyller i sparas medan du skriver. **Skicka årsrapporten** visar ett kvitto.
 Därefter kan du **Ändra** och skicka ändringarna, eller klicka **Dra tillbaka** (det
 går till och med det datum som står bredvid knappen). Rutan **Dra tillbaka rapporten**
@@ -1027,7 +1050,12 @@ besättningen (koden öppnar rapporten), läget, villkoren för stöd (**Hane**,
 **Kull**, **I tid**, med bock eller kryss), flaggor, när rapporten togs emot och åtgärder.
 Flaggorna är **Ingen e-post**, **Preliminärt antal**, till exempel **3 ej angivna** (med
 "(påverkar stödet)" när det gäller), **Försäljning väntar**, **Försäljning avvisad,
-medlemmen väljer igen**, **Köpt efter inskick** och **Köp anmält**. Under läget står
+medlemmen väljer igen**, **Köpt efter inskick**, **Köp anmält**, **Ändring väntar på bekräftelse**, **Kontobyte väntar
+på bekräftelse**, **Kontobyte förföll** (stödet går då till det gamla kontot), **Det var inte
+jag** och **Nytt konto**. **Nytt konto** betyder att huvudmedlemmen har skapat ett konto med
+inloggning med kod sedan rundan öppnade. Genbanksansvarig och administratör kan **Koppla bort
+kontot**; kontot finns kvar, men kopplingen till medlemskapet och dess besättningar tas bort.
+Under läget står
 inbjudans läge: **Inbjudan skickad**, **Inbjudan studsade**, **Inbjudan misslyckades** eller
 **Länken öppnad**. Studsade och misslyckade inbjudningar kommer också under **Att ringa** tills
 besättningen har rapporterat. **Mata in blankett** öppnar inkorgen
@@ -1317,12 +1345,16 @@ administratörer, genbanksansvariga och genbankshjälpare, och alla tre kan se h
    Det du har skrivit skrivs aldrig över: har du redan börjat fylla i när tolkningen blir klar
    står "Bildtolkningen har läst fotot", och först när du klickar **Fyll i det inlästa** läggs
    det in.
-4. Dölj säljaren och köparen. En svart ruta täcker intygets nedre tredjedel. Dra rutan
-   eller dess hörn, eller välj den och använd piltangenterna (Skift ändrar storleken,
-   Delete tar bort den). **Lägg till ruta** ger fler. Klicka **Bekräfta maskningen och
-   nästa**. Rutorna och fotots vridning skickas tillsammans, så kopian görs som du ser fotot.
-   Visar intyget ingen säljare eller köpare tar du bort rutorna, kryssar i **Fotot visar inga
-   säljar- eller köparuppgifter** och klickar **Bekräfta maskningen och nästa**. Har du
+4. Dölj säljaren och köparen. Kopian på kaninen är det som syns innanför ramen; fotot
+   utanför är dämpat. Ramen finns redan och behåller intygets övre två tredjedelar, ned till
+   säljaren och köparen. Dra ramens kant eller hörn så att säljarens och köparens uppgifter
+   hamnar utanför, eller välj den och använd piltangenterna (Skift ändrar storleken, Delete
+   tar bort den). Inne i ramen flyttar du fotot som vanligt när det är inzoomat. **Ta bort ramen** tar bort den; utan ram blir hela fotot kopian. Syns något mer innanför ramen täcker du det med
+   en svart ruta: **Lägg till ruta**, och flytta den på samma sätt. Klicka **Bekräfta
+   maskningen och nästa**. Ramen, rutorna och fotots vridning skickas tillsammans, så kopian
+   görs som du ser fotot. Visar intyget ingen säljare eller köpare tar du bort ramen och
+   rutorna, kryssar i **Fotot visar inga säljar- eller köparuppgifter** och klickar
+   **Bekräfta maskningen och nästa**. Har du
    jämfört intyget med registret och de stämmer, kryssa i **Jag har jämfört intyget med
    registret och de stämmer** innan du bekräftar. När tolkningen hittade kaninen och alla
    kontroller gick igenom står "Förslag: stämmer" under rutan, men det är du som avgör och
