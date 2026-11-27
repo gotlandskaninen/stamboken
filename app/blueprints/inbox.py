@@ -19,6 +19,7 @@ import utils.data_access as da
 import utils.inbox as inbox
 import utils.inbox_interpreter as interpreter
 import utils.inbox_purge as inbox_purge
+import utils.inbox_reconcile as inbox_reconcile
 import utils.purchase_notice as purchase_notice
 import utils.settings as settings
 from extensions import limiter
@@ -622,6 +623,28 @@ def check_report_photo(item_id, document_id):
     return _locked(item_id, action)
 
 
+# [Next.js] The reconciliation table: what the handler typed off the certificate beside the registry, recomputed as
+# she types. A read: no lock, nothing written. Only for those who work the item's genebank, since it searches its
+# registry; an item without one searches the genebank its letter names, so it takes a manager.
+@inbox_bp.route("/inkorg/<int:item_id>/dokument/<int:document_id>/avstamning", methods=["POST"])
+@json_login_required
+@_queue_worker
+@limiter.limit("600 per minute", key_func=lambda: str(current_user.id))  # a request as the handler pauses typing
+def reconcile_document(item_id, document_id):
+    user = User.get_by_id(current_user.id)
+    item = InboxItem.get_or_none(InboxItem.id == item_id)
+    try:
+        if item is None:
+            raise inbox.InboxError(404, "Posten finns inte.")
+        if item.genebank_id is None and not inbox.manages(user, None):
+            raise inbox.InboxError(403, "En post utan genbank stäms av av admin eller genbanksansvarig.")
+        inbox.require_worker_of(item, user)
+        document = inbox.document_of(item, document_id)
+    except inbox.InboxError as exc:
+        return problem(exc.status, exc.title, exc.detail)
+    return jsonify(inbox_reconcile.reconcile(item, document, _body(), user))
+
+
 # [Next.js] "Mina inskick": the user's own uploads, in plain words.
 @inbox_bp.route("/inkorg/mina-inskick", methods=["GET"])
 @json_login_required
@@ -1047,7 +1070,9 @@ def remove_copy(item_id, document_id):
             item = inbox.lock_item(item_id)
             path = inbox.remove_copy(item, inbox.document_of(item, document_id), current_user)
             document = inbox.document_of(item, document_id)
-            answer = {"item": inbox.items_json([item])[0], "document": inbox.documents_json([document])[0]}
+            # The rabbit's manager may not work the item's genebank.
+            shown = inbox.documents_json([document], user=current_user)[0]
+            answer = {"item": inbox.items_json([item])[0], "document": shown}
     except inbox.InboxError as exc:
         return problem(exc.status, exc.title, exc.detail)
     inbox.remove_files([path])

@@ -1049,7 +1049,21 @@ def _document_status(document, report=False):
     return "vantar_foralder" if document.waiting_for else "ny"
 
 
-def documents_json(documents, report=False):
+def _proposal_shown(document, user):
+    """
+    The stored proposal, for someone who works the item's genebank; for anyone else in the queue (who may see the
+    item but not work it) only what the photo shows: each field's source and what was read, no checks.
+    """
+    proposal = document.proposal
+    if user is None or not isinstance(proposal, dict) or can_handle(user, document.item.genebank_id):
+        return proposal
+    fields = proposal.get("fields") if isinstance(proposal.get("fields"), dict) else {}
+    seen = {key: {k: f[k] for k in ("source", "read") if k in f} for key, f in fields.items() if isinstance(f, dict)}
+    return {"fields": seen, "checks": []}
+
+
+def documents_json(documents, report=False, user=None):
+    """The documents as the API answers them; with `user`, the proposal as that user may see it (_proposal_shown)."""
     rabbits = {}
     individual_ids = {d.individual_id for d in documents if d.individual_id}
     if individual_ids:
@@ -1077,7 +1091,7 @@ def documents_json(documents, report=False):
             "mask_suggestion": HANDWRITTEN_MASK if d.cert_format == "handskrivet" and not d.mask_rects else None,
             "waiting_for": d.waiting_for,
             "interpretation_status": d.interpretation_status,
-            "proposal": d.proposal,
+            "proposal": _proposal_shown(d, user),
             "individual": rabbits[d.individual_id].number if d.individual_id in rabbits else None,
             "individual_genebank_id": genebanks.get(d.individual_id),
             "herd_tracking_id": d.herd_tracking_id,
@@ -1205,7 +1219,7 @@ def item_detail(item, user):
         "message": item.message,
         "mentioned_individuals": _rabbit_numbers(item, events, user),
         "sender_address": item.sender_address,
-        "documents": documents_json(documents, report_photo(item)),
+        "documents": documents_json(documents, report_photo(item), user),
         "events": [
             {"id": e.id, "at": _iso(e.at), "kind": e.kind, "user": _person(e.user_id, names), "detail": e.detail}
             for e in events
