@@ -428,7 +428,8 @@ def _documents(item, stored):
             mime="image/jpeg",
             sha256=sha256,
             quality=quality,
-            interpretation_status=interpreter.initial_status(quality),
+            # a reply to a purchase notice brings photos that are never read, as the notice's own are not
+            interpretation_status="av" if inbox.unread(item) else interpreter.initial_status(quality),
         )
         for path, sha256, quality in stored
     ]

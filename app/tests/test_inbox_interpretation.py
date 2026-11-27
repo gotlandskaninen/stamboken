@@ -177,7 +177,7 @@ class TestTooSmall(InterpretationTest):
 
     def test_a_small_photo_waits_for_the_handler(self):
         self.login("owner")
-        small = encoded(photo(size=(600, 800)))
+        small = encoded(photo(size=(800, 1600)))  # the longer side is enough, the shorter is not
         resp = self.upload(("intyg.jpg", small), ("stort.jpg", encoded(photo())), accept_warnings="1")
         self.assertEqual(resp.status_code, 201, resp.get_json())
         item = db.InboxItem.get_by_id(resp.get_json()["item"]["id"])

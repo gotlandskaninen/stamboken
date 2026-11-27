@@ -804,7 +804,7 @@ def update_document(item, document, user, changes):
     if "dismissed" in changes and not isinstance(changes["dismissed"], bool):
         raise InboxError(400, "dismissed är true eller false.")
     if changes.get("doc_type", document.doc_type) != document.doc_type:  # only certificates are read, never a notice's
-        read = changes["doc_type"] == "intyg" and not unread(item)
+        read = changes["doc_type"] == "intyg" and not unread(item) and document.original_path is not None
         document.interpretation_status = interpreter.initial_status(document.quality) if read else "av"
         document.attempts = 0
     for key in ("doc_type", "cert_format", "rotation"):

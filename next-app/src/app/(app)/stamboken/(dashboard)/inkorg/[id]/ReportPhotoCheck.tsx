@@ -83,7 +83,8 @@ export function ReportPhotoCheck({
       {doc.interpretation_status === "for_litet" && (
         <p className={styles.muted}>
           Fotot är för litet för att tolkas av sig självt. Jämför fotot med
-          registreringen, eller klicka Tolka igen för att tolka det ändå.
+          registreringen
+          {canCheck ? ", eller klicka Tolka igen för att tolka det ändå." : "."}
         </p>
       )}
       <table

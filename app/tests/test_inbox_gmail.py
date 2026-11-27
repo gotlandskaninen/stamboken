@@ -807,6 +807,15 @@ class TestItemsFromMail(GmailTest):
         self.assertEqual(len(self.documents(item)), 2)
         self.assertEqual(item.events.where(db.InboxEvent.kind == "svar").get().detail["documents"], [added.id])
 
+    def test_a_reply_to_a_purchase_notice_brings_photos_that_are_not_read(self):
+        self.holder(self.herds[0])
+        item = self.waiting()
+        db.InboxItem.update(ref_type="kopanmalan").where(db.InboxItem.id == item.id).execute()
+        with mock.patch.object(settings.interpretation, "interpreter", "gemma"):
+            self.fake.deliver(message(files=[("ny.jpg", JPEG, encoded(photo()))], In_Reply_To=self.our_mail(item)))
+            self.read()
+        self.assertEqual(self.documents(item)[-1].interpretation_status, "av")
+
     def test_a_message_that_fails_leaves_no_files(self):
         self.fake.deliver(message(files=[("a.jpg", JPEG, encoded(photo()))]))
         with mock.patch.object(inbox_gmail, "_processed", side_effect=RuntimeError("fel")):

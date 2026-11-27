@@ -63,7 +63,7 @@ class AddRabbitTest(ArsrapportTest):
         self.assertEqual(response.status_code, 200)
 
     def upload_photo(self, path=REPORT, content=None, client=None, query_string=None):
-        data = {"file": (io.BytesIO(content or encoded(photo((600, 800)))), "intyg.jpg")}
+        data = {"file": (io.BytesIO(content or encoded(photo())), "intyg.jpg")}
         return (client or self.client).post(
             f"/api/v2/arsrapport{path}/foto", data=data, content_type="multipart/form-data", query_string=query_string
         )
@@ -773,10 +773,21 @@ class TestReportPhotoReading(AddRabbitTest):
         self.assertEqual(detail["documents"][0]["proposal"], read.proposal)
         self.assertIsNone(inbox.item_detail(queued, self.helper)["registered"])
 
+    def test_a_photo_too_small_waits_for_tolka_igen_once_registered(self):
+        self.open_link()
+        item_id = self.reload(self.photo_item()).id
+        db.InboxDocument.update(quality={"short_side": 600, "sharpness": 900.0, "brightness": 200.0}).where(
+            db.InboxDocument.item == item_id
+        ).execute()
+        self.assertEqual(self.kit(item_id).status_code, 201)
+        (document,) = self.reload(item_id).documents
+        self.assertEqual(document.interpretation_status, "for_litet")
+        self.assertIsNone(interpreter.interpret_next())
+
     def test_a_photo_uploaded_for_a_purchase_is_read_once_a_rabbit_is_registered_from_it(self):
         """The purpose is the client's word: a rabbit's photo is read whatever it was uploaded for (G5)."""
         self.open_link()
-        data = {"file": (io.BytesIO(encoded(photo((600, 800)))), "intyg.jpg")}
+        data = {"file": (io.BytesIO(encoded(photo())), "intyg.jpg")}
         response = self.client.post(
             f"/api/v2/arsrapport{REPORT}/foto?syfte=kop", data=data, content_type="multipart/form-data"
         )
