@@ -69,13 +69,18 @@ vi.mock("@/app/(app)/stamboken/(dashboard)/inkorg/[id]/AskBreeder", () => ({
   AskBreeder: ({
     documentId,
     crop,
+    turn,
     onFrame,
   }: {
     documentId: number | null;
     crop: unknown;
+    turn: { rotation: number; straighten: number } | null;
     onFrame: (on: boolean) => void;
   }) => (
     <div>
+      {turn && (
+        <span data-testid="turn">{`${turn.rotation}:${turn.straighten}`}</span>
+      )}
       {documentId !== null && (
         <button onClick={() => onFrame(true)}>Bifoga utsnitt</button>
       )}
@@ -627,6 +632,17 @@ describe("WorkView: straightening the photo", () => {
       false,
       false,
     );
+  });
+
+  it("sends the part of the photo with the turn it was drawn in", () => {
+    render(
+      view(
+        item({
+          documents: [doc({ status: "ny", rotation: 90, straighten: 2.5 })],
+        }),
+      ),
+    );
+    expect(screen.getByTestId("turn")).toHaveTextContent("90:2.5");
   });
 
   it("'Hitta pappret' without a clear tilt sets 0°, and is only the handler's", async () => {

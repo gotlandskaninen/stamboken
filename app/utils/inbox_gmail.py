@@ -688,11 +688,12 @@ def _receipt_mail(params):
     return {"item_id": params["item_id"], "images": params["images"]} if found else None
 
 
-def ask_breeder(item, user, text, document_id=None, crop=None):
+def ask_breeder(item, user, text, document_id=None, crop=None, rotation=None, straighten=None):
     """
     "Fråga uppfödaren" (POST …/fraga), by the item's handler: the question (and the frame of the photo it is
     about) is an event on the item, inlasning.fraga goes to the herd's holder per the member register, and the
-    item waits for the answer. The answer comes back through read_message.
+    item waits for the answer. The answer comes back through read_message. The frame comes with the rotation and
+    straighten it was drawn in, which must still be the document's: it is cut from the photo turned by them.
     """
     inbox.require_handler(item, user)
     if item.state != "tagen":
@@ -705,6 +706,9 @@ def ask_breeder(item, user, text, document_id=None, crop=None):
             raise inbox.InboxError(400, "Ange dokumentet som utsnittet är ur.")
         document = inbox.document_of(item, document_id)
         crop = inbox._rects([crop])[0]  # pylint: disable=protected-access  # as a masking rectangle
+        drawn = (inbox._rotation(rotation), inbox._straighten(straighten))  # pylint: disable=protected-access
+        if drawn != (document.rotation, document.straighten):
+            raise inbox.InboxError(409, "Fotot har vridits sedan utsnittet ritades. Rita utsnittet igen.")
         detail.update(document=document.id, rotation=document.rotation, straighten=document.straighten, crop=crop)
     holder = inbox.herd_holder(item.herd_id)
     if holder is None or _normalize(holder.email) is None:

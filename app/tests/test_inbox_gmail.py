@@ -966,7 +966,9 @@ class TestAskBreeder(GmailTest):
     def test_the_handler_asks_the_holder_with_a_part_of_the_photo_and_the_item_waits(self):
         db.InboxDocument.update(rotation=90).where(db.InboxDocument.id == self.document.id).execute()
         crop = {"x": 0, "y": 0, "w": 0.5, "h": 0.25}
-        resp = self.ask(text="  Står det G1-2112 eller G1-2113?  ", document=self.document.id, crop=crop)
+        resp = self.ask(
+            text="  Står det G1-2112 eller G1-2113?  ", document=self.document.id, crop=crop, rotation=90, straighten=0
+        )
         self.assertEqual(resp.status_code, 200, resp.get_json())
         self.assertEqual(resp.get_json()["state"], "vantar_uppfodare")
         (event,) = db.InboxEvent.select().where(db.InboxEvent.kind == "fraga")
@@ -997,7 +999,8 @@ class TestAskBreeder(GmailTest):
     def test_the_part_of_the_photo_is_cut_from_the_photo_straightened_as_it_was_when_asked(self):
         db.InboxDocument.update(straighten=5).where(db.InboxDocument.id == self.document.id).execute()
         crop = {"x": 0, "y": 0, "w": 0.5, "h": 0.25}
-        self.assertEqual(self.ask(text="Står det G1-2112?", document=self.document.id, crop=crop).status_code, 200)
+        resp = self.ask(text="Står det G1-2112?", document=self.document.id, crop=crop, rotation=0, straighten=5)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
         (event,) = db.InboxEvent.select().where(db.InboxEvent.kind == "fraga")
         self.assertEqual(event.detail["straighten"], 5)
         # Straightened again since: the question shows the part the handler framed, from the photo as it was then.
@@ -1017,6 +1020,24 @@ class TestAskBreeder(GmailTest):
             db.InboxEvent.id == event.id
         ).execute()
         self.assertEqual(attachment(), (600, 400))
+
+    def test_a_part_drawn_at_another_turn_than_the_documents_is_refused_before_anything_is_sent(self):
+        db.InboxDocument.update(rotation=90, straighten=2.5).where(db.InboxDocument.id == self.document.id).execute()
+        crop = {"x": 0, "y": 0, "w": 0.5, "h": 0.25}
+        for turn, status in (
+            ({"rotation": 0, "straighten": 2.5}, 409),  # turned since the part was drawn
+            ({"rotation": 90, "straighten": 0}, 409),  # straightened since
+            ({"rotation": 90}, 400),  # which turn is not said
+            ({"rotation": 90, "straighten": 16}, 400),
+        ):
+            with self.subTest(turn):
+                resp = self.ask(text="Står det G1-2112?", document=self.document.id, crop=crop, **turn)
+                self.assertEqual(resp.status_code, status, resp.get_json())
+        self.assertEqual(self.questions(), [])
+        self.assertFalse(db.InboxEvent.select().where(db.InboxEvent.kind == "fraga").exists())
+        self.assertEqual(db.InboxItem.get_by_id(self.item_id).state, "tagen")
+        resp = self.ask(text="Står det G1-2112?", document=self.document.id, crop=crop, rotation=90, straighten=2.5)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
 
     def test_who_may_ask_and_when(self):
         self.login("man")  # in the queue, but not the item's handler

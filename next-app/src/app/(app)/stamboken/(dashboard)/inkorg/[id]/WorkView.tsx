@@ -602,6 +602,7 @@ export function WorkView({
                       ])[0]
                     : null
                 }
+                turn={doc && { rotation: doc.rotation, straighten }}
                 onFrame={(on) =>
                   setCrop(on ? { x: 0.2, y: 0.2, w: 0.6, h: 0.3 } : null)
                 }

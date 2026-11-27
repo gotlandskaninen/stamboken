@@ -10,12 +10,19 @@ const isId = (n: unknown): n is number =>
 
 /**
  * "Fråga uppfödaren" (POST …/fraga, docs/inkorg.md): the question to the
- * herd's holder, and the framed part of a document's photo when there is one.
+ * herd's holder, and the framed part of a document's photo when there is one,
+ * with the rotation and straighten it was drawn in: the API refuses it when
+ * the photo has been turned since.
  */
 export async function askBreeder(
   id: number,
   text: string,
-  part: { document: number; crop: Rect } | null = null,
+  part: {
+    document: number;
+    crop: Rect;
+    rotation: number;
+    straighten: number;
+  } | null = null,
 ): Promise<ActionResult<InboxItem>> {
   if (!isId(id) || typeof text !== "string" || (part && !isId(part.document)))
     return {
@@ -27,7 +34,13 @@ export async function askBreeder(
       },
     };
   const body = part
-    ? { text, document: part.document, crop: part.crop }
+    ? {
+        text,
+        document: part.document,
+        crop: part.crop,
+        rotation: part.rotation,
+        straighten: part.straighten,
+      }
     : { text };
   try {
     const data = await fetchApi<InboxItem>(`/v2/inkorg/${id}/fraga`, {
