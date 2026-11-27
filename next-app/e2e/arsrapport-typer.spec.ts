@@ -279,8 +279,9 @@ test("3b. Tillbaka från profilen behåller det sparade", async ({
   let saved = saveOf();
   await kvar(rabbit(page, "M9006-2411")).check();
   await saved;
-  // "Dina uppgifter" are in the report now (step 5): the menu's Profil link leaves it the same way
-  await page.getByRole("link", { name: "Profil", exact: true }).first().click();
+  // "Dina uppgifter" are in the report now (step 5): the menu's profile link leaves it the same way,
+  // found by its address since the menu's language can differ
+  await page.locator('a[href="/stamboken/profil"]:visible').first().click();
   await page.waitForURL("**/stamboken/profil");
   await page.goBack();
   await expect(kvar(rabbit(page, "M9006-2411"))).toBeChecked();
