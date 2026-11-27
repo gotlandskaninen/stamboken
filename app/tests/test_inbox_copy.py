@@ -9,8 +9,10 @@ import os
 from unittest import mock
 
 import utils.database as db  # noqa: E402
+import utils.inbox as inbox  # noqa: E402
 from PIL import Image  # noqa: E402
 
+from tests.database_test import rewind_migrations  # noqa: E402
 from tests.ht_helpers import ht_row  # noqa: E402
 from tests.inbox_fixtures import InboxTest, encoded  # noqa: E402
 
@@ -87,6 +89,69 @@ class TestCopy(CopyTest):
         copy = self.copy(document)
         self.assertTrue(close(copy.getpixel((600, 400)), (0, 0, 0)))
         self.assertTrue(close(copy.getpixel((600, 1200)), BLUE))
+
+    def test_a_frame_crops_the_copy_without_black_boxes_and_a_redo_without_it_keeps_the_whole_photo(self):
+        item, document = self.saved_document()
+        frame = {"x": 0, "y": 0, "w": 1, "h": 0.5}
+        resp = self.mask(item, document, mask_rects=[], copy_frame=frame)  # no no_personal_data: the frame says it
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertEqual(resp.get_json()["document"]["copy_frame"], frame)
+        copy = self.copy(document)
+        self.assertEqual(copy.size, (1200, 800))  # the top half, red: the blue half is not in the copy
+        self.assertFalse(any(close(copy.getpixel((x, y)), BLUE) for x in range(0, 1200, 50) for y in range(0, 800, 50)))
+        self.login("man")
+        resp = self.mask(item, document, mask_rects=[{"x": 0, "y": 0.5, "w": 1, "h": 0.5}])
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertIsNone(db.InboxDocument.get_by_id(document.id).copy_frame)
+        self.assertEqual(self.copy(document).size, (1200, 1600))
+        events = self.reload(item).events.where(db.InboxEvent.kind == "kopia").order_by(db.InboxEvent.id)
+        self.assertEqual([(e.detail["rects"], e.detail["frame"]) for e in events], [(0, True), (1, False)])
+
+    def test_the_frame_crops_the_turned_photo_after_its_boxes_are_painted(self):
+        item, document = self.saved_document()
+        # Turned clockwise the photo is 1600 × 1200, blue on the left and red on the right. The frame keeps all but
+        # its left quarter; the box covers the middle of its right quarter, in fractions of the turned photo.
+        frame = {"x": 0.25, "y": 0, "w": 0.75, "h": 1}
+        resp = self.mask(
+            item, document, rotation=90, mask_rects=[{"x": 0.75, "y": 0.25, "w": 0.25, "h": 0.5}], copy_frame=frame
+        )
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        copy = self.copy(document)
+        self.assertEqual(copy.size, (1200, 1200))
+        self.assertTrue(close(copy.getpixel((200, 600)), BLUE))  # x 400-800 of the turned photo
+        self.assertTrue(close(copy.getpixel((600, 600)), RED))
+        for x in (850, 1000, 1150):  # the box, x 1200-1600 of the turned photo
+            self.assertTrue(close(copy.getpixel((x, 600)), (0, 0, 0)))
+        self.assertTrue(close(copy.getpixel((1000, 100)), RED))  # above the box
+
+    def test_only_a_handwritten_certificate_without_a_frame_or_boxes_is_offered_its_frame(self):
+        _, document = self.saved_document()
+        document = db.InboxDocument.get_by_id(document.id)
+        frame = {"x": 0, "y": 0, "w": 1, "h": 0.5}
+        for changes, suggestion in (
+            ({"cert_format": "handskrivet"}, inbox.HANDWRITTEN_FRAME),
+            ({"cert_format": "handskrivet", "mask_rects": []}, inbox.HANDWRITTEN_FRAME),
+            ({"cert_format": "handskrivet", "mask_rects": [frame]}, None),
+            ({"cert_format": "handskrivet", "copy_frame": frame}, None),
+            ({"cert_format": "datorskrivet"}, None),
+            ({"cert_format": None}, None),
+        ):
+            with self.subTest(changes):
+                document.cert_format, document.mask_rects, document.copy_frame = None, None, None
+                for key, value in changes.items():
+                    setattr(document, key, value)
+                body = inbox.documents_json([document])[0]
+                self.assertEqual(body["frame_suggestion"], suggestion)
+                self.assertEqual(body["copy_frame"], changes.get("copy_frame"))
+                self.assertNotIn("mask_suggestion", body)
+
+    def test_migration_58_adds_the_frame_and_replays(self):
+        self.addCleanup(db.check_migrations)
+        db.DATABASE.execute_sql("ALTER TABLE inbox_document DROP COLUMN copy_frame")
+        for _ in range(2):  # replay-safe
+            rewind_migrations(58)
+            db.check_migrations()
+        self.assertIn("copy_frame", {c.name for c in db.DATABASE.get_columns("inbox_document")})
 
     def test_a_copy_checked_against_the_registry_gives_the_rabbit_a_badge_everyone_sees(self):
         item, document = self.saved_document()
@@ -233,8 +298,15 @@ class TestCopy(CopyTest):
             {"rotation": None, "mask_rects": rects},
             {"rotation": 45, "mask_rects": rects},
             {"rotation": False, "mask_rects": rects},
-            {"mask_rects": []},  # an empty list says nothing without the explicit confirmation
+            {"mask_rects": []},  # an empty list says nothing without the explicit confirmation or a frame
             {"mask_rects": [], "no_personal_data": "true"},
+            {"rotation": 0, "mask_rects": [], "copy_frame": None},
+            {"rotation": 0, "mask_rects": [], "copy_frame": {"x": 0.5, "y": 0, "w": 0.6, "h": 1}},  # past the edge
+            {"rotation": 0, "mask_rects": [], "copy_frame": {"x": 0, "y": 0, "w": 0.09, "h": 1}},  # under a tenth
+            {"rotation": 0, "mask_rects": rects, "copy_frame": {"x": 0, "y": 0.5, "w": 1, "h": 0.05}},
+            {"rotation": 0, "mask_rects": rects, "copy_frame": {}},
+            {"rotation": 0, "mask_rects": rects, "copy_frame": False},
+            {"rotation": 0, "mask_rects": rects, "copy_frame": [{"x": 0, "y": 0, "w": 1, "h": 0.5}]},
         ):
             with self.subTest(body=body):
                 resp = self.post(f"/{item.id}/dokument/{document.id}/maskning", **body)
