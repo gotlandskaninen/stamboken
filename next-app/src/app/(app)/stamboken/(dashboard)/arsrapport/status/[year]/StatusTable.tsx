@@ -22,6 +22,7 @@ import {
   fmtDate,
   phoneNumbers,
   todayStockholm,
+  wordForm,
   type RowState,
   type StatusFilter,
   type StatusRow,
@@ -438,7 +439,7 @@ function Row({
               <span
                 className={`sb-badge ${f.ej_angivna_paverkar ? inkorg.badgeWarn : ""}`}
               >
-                {f.ej_angivna} ej angivna
+                {f.ej_angivna} ej {wordForm(f.ej_angivna, "angiven", "angivna")}
                 {f.ej_angivna_paverkar && " (påverkar stödet)"}
               </span>
             )}

@@ -4212,7 +4212,8 @@ def _kvitto(params):
         "datum": received or f"{submission.created_at.astimezone(STOCKHOLM):%Y-%m-%d}",
         **receipt(submission)["summary"],
         "kullar": [
-            f"efter {item['mother']} född {item['birth_date']}, {item['litter_size']} födda"
+            f"efter {item['mother']} född {item['birth_date']}, {item['litter_size']} "
+            f"{'född' if item['litter_size'] == 1 else 'födda'}"
             for item in submission.data.get("litters_added") or ()
         ],
         "end_date": f"{report.round.end_date:%Y-%m-%d}",

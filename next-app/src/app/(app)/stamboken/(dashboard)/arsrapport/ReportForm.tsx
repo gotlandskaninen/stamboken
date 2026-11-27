@@ -36,6 +36,7 @@ import {
   toBody,
   toDraft,
   withoutGoneBuyer,
+  wordForm,
   todayStockholm,
   autosaveAnswerKept,
   type Completion,
@@ -131,9 +132,11 @@ const summaryLine = (herd: string, r: ReceiptData) => {
   const { kvar, doda, salda, ej_angivna } = r.summary;
   return `${herd} inskickad: ${[
     `${kvar} finns kvar`,
-    doda ? `${doda} ${doda === 1 ? "död" : "döda"}` : "",
-    salda ? `${salda} ${salda === 1 ? "såld" : "sålda"}` : "",
-    ej_angivna ? `${ej_angivna} ej angivna` : "",
+    doda ? `${doda} ${wordForm(doda, "död", "döda")}` : "",
+    salda ? `${salda} ${wordForm(salda, "såld", "sålda")}` : "",
+    ej_angivna
+      ? `${ej_angivna} ej ${wordForm(ej_angivna, "angiven", "angivna")}`
+      : "",
   ]
     .filter(Boolean)
     .join(", ")}.`;
@@ -1689,7 +1692,7 @@ export function ReportForm({
     >
       <h2>
         {rabbitErrors.length > 0
-          ? `${rabbitErrors.length} ${rabbitErrors.length === 1 ? "kanin är" : "kaniner är"} inte klara`
+          ? `${rabbitErrors.length} ${wordForm(rabbitErrors.length, "kanin är inte klar", "kaniner är inte klara")}`
           : "Rapporten kan inte skickas"}
       </h2>
       <ul>
@@ -1784,6 +1787,7 @@ export function ReportForm({
         }
         canSell={view.can_sell}
         rabbit={soldRabbit}
+        isPaper={isPaper}
         onRegister={direct ? register : undefined}
         undoable={view.access === "owner" && !isPaper}
         addressRequired={
@@ -2022,7 +2026,9 @@ export function ReportForm({
             {isPaper && (
               <div className={styles.sticky}>
                 <span className={styles.counter} aria-live="polite">
-                  {entered.length} inmatade, {allRest.length} kvar
+                  {entered.length}{" "}
+                  {wordForm(entered.length, "inmatad", "inmatade")},{" "}
+                  {allRest.length} kvar
                 </span>
                 {!ready && <span className={styles.stickyStatus}>Laddar…</span>}
               </div>
@@ -2274,8 +2280,9 @@ export function ReportForm({
                       aria-label="Markera resten"
                     >
                       <span>
-                        Markera {restCount} kaniner som finns kvar? Vuxna
-                        kaniner behöver ändå vikt eller Ej vägd.
+                        Markera {restCount}{" "}
+                        {wordForm(restCount, "kanin", "kaniner")} som finns
+                        kvar? Vuxna kaniner behöver ändå vikt eller Ej vägd.
                       </span>
                       <button
                         type="button"

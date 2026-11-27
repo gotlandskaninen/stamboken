@@ -636,6 +636,23 @@ describe("paper omissions", () => {
     ).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Skicka svar" })).toBeNull();
   });
+
+  it("shows the receipt draft notice once", () => {
+    render(
+      <ReportForm
+        env="demo"
+        view={missingView([])}
+        actions={completionActions()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Fortsätt ändra" })).toBeTruthy();
+    expect(
+      screen.getAllByText(/ändringar som inte är inskickade/i),
+    ).toHaveLength(1);
+    expect(
+      screen.getByText(/Den inskickade rapporten gäller tills du skickar\./),
+    ).toBeTruthy();
+  });
 });
 
 describe("ReportForm", () => {
@@ -1171,6 +1188,33 @@ describe("ReportForm", () => {
       screen.getByRole("button", { name: "Spara försäljningen" }),
     );
 
+  it("shows a tappable sale checkbox with its validation message", () => {
+    render(
+      <ReportForm
+        env="demo"
+        view={view()}
+        actions={sellingActions() as never}
+      />,
+    );
+    choose(1, "Såld");
+    spara();
+    const box = screen.getByRole<HTMLInputElement>("checkbox", {
+      name: ACK,
+      description: "Kryssa i rutan för att registrera försäljningen.",
+    });
+    const label = box.closest("label")!;
+    expect(label.querySelector("svg")).toBeTruthy();
+    expect(
+      parseFloat(getComputedStyle(label).minHeight),
+    ).toBeGreaterThanOrEqual(44);
+    expect(box.getAttribute("aria-invalid")).toBe("true");
+    expect(box.checked).toBe(false);
+    fireEvent.click(screen.getByText(ACK));
+    expect(box.checked).toBe(true);
+    expect(box.getAttribute("aria-invalid")).toBe("false");
+    expect(box.hasAttribute("aria-describedby")).toBe(false);
+  });
+
   it("registers a sale at once once the box is ticked, then lets go of the row and reads the view again", async () => {
     vi.useFakeTimers();
     const a = sellingActions();
@@ -1252,6 +1296,23 @@ describe("ReportForm", () => {
     expect(screen.getByText("Sålda").previousElementSibling?.textContent).toBe(
       "2",
     );
+  });
+
+  it("uses singular receipt labels for one rabbit in each category", () => {
+    const v = view({
+      report: {
+        ...submittedReport(),
+        submitted: {
+          rabbits: { "1": { val: "dod" }, "2": { val: "ej_angiven" } },
+          salda_direkt: [{ individual_id: 3 }],
+        },
+      },
+    });
+    render(<ReportForm env="demo" view={v} actions={actions()} />);
+    for (const label of ["Död", "Såld", "Ej angiven"])
+      expect(screen.getByText(label).previousElementSibling?.textContent).toBe(
+        "1",
+      );
   });
 
   it("keeps the dialog open with the server's refusal", async () => {
@@ -1400,7 +1461,7 @@ describe("ReportForm", () => {
       target: { value: "3" },
     });
     send();
-    const heading = await screen.findByText("1 kanin är inte klara");
+    const heading = await screen.findByText("1 kanin är inte klar");
     const errorBox = heading.closest("div")!;
     await waitFor(() => expect(document.activeElement).toBe(errorBox));
     expect(
@@ -2512,13 +2573,13 @@ describe("ReportForm", () => {
     render(<ReportForm env="demo" view={view()} actions={a} />);
     choose(2, "Död");
     send();
-    const box = (await screen.findByText("1 kanin är inte klara")).closest(
+    const box = (await screen.findByText("1 kanin är inte klar")).closest(
       "div",
     )!;
     expect(box.textContent).toContain("Välj månad.");
     expect(within(row(2)).getByText("Välj månad.")).toBeTruthy();
     choose(2, "Finns kvar");
-    expect(screen.queryByText("1 kanin är inte klara")).toBeNull();
+    expect(screen.queryByText("1 kanin är inte klar")).toBeNull();
     expect(within(row(2)).queryByText("Välj månad.")).toBeNull();
   });
 
@@ -2559,7 +2620,7 @@ describe("ReportForm", () => {
     const weight = within(row(1)).getByLabelText("Vikt");
     weight.focus();
     fireEvent.change(weight, { target: { value: "3" } });
-    expect(screen.getByText("1 kanin är inte klara")).toBeTruthy();
+    expect(screen.getByText("1 kanin är inte klar")).toBeTruthy();
     expect(document.activeElement).toBe(weight);
   });
 

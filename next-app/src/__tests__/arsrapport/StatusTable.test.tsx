@@ -109,6 +109,10 @@ const show = (
   );
 
 describe("StatusTable", () => {
+  it("uses singular wording for one omission", () => {
+    show(true, [{ ...sent, flags: { ...sent.flags, ej_angivna: 1 } }]);
+    expect(screen.getByText("1 ej angiven (påverkar stödet)")).toBeTruthy();
+  });
   it("links to Ej svarat with its count and explains an empty list", () => {
     const { unmount } = show(true);
     const tab = screen.getByRole("link", { name: /Ej svarat/ });

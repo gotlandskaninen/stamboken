@@ -8,6 +8,14 @@ import type { InboxDetail } from "../inkorg/lib";
 
 export const BEVIS_FROM_YEAR = 2027;
 
+export function wordForm(
+  count: number | null,
+  singular: string,
+  plural: string,
+) {
+  return count === 1 ? singular : plural;
+}
+
 export function reportLinkPath(path: string) {
   return `${path}${path.includes("?") ? "&" : "?"}via=lank`;
 }

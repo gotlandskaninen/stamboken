@@ -263,6 +263,20 @@ describe("LitterDialog", () => {
 });
 
 describe("ConfirmCountDialog", () => {
+  it("describes a litter with one kit in the singular", () => {
+    render(
+      <ConfirmCountDialog
+        litter={litter({ litter_size: 1, litter_size6w: 1 })}
+        change={vi.fn()}
+        onSaved={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText(/1 född\. Vi räknar just nu ungen som levande\./),
+    ).toBeTruthy();
+  });
+
   it("confirms the count of a preliminary litter, as it stands or changed", async () => {
     const change = vi.fn(() =>
       ok({ id: 7, litters: [litter({ preliminary: false })] }),

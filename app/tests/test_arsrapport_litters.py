@@ -524,6 +524,15 @@ class TestAddedReceipt(LitterApiTest):
 
 
 class TestReceiptSnapshot(LitterApiTest):
+    def test_single_kit_in_receipt_emails(self):
+        self.open_link()
+        self.assertEqual(self.litter(size=1).status_code, 201)
+        self.assertEqual(self.api("POST", f"{REPORT}/skicka", **self.body_for()).status_code, 200)
+        (row,) = db.MailMessage.select().where(db.MailMessage.kind == "arsrapport.kvitto")
+        for kind in ("arsrapport.kvitto", "arsrapport.andrad"):
+            _, body = mail.render(kind, mail.MAIL_KINDS[kind].build(row.params))
+            self.assertIn(f"efter {self.doe.number} född {BORN}, 1 född.", body)
+
     def test_the_receipt_mail_kinds_build(self):
         """Review P1: the mail worker calls the registered builder with the row's params."""
         self.open_link()

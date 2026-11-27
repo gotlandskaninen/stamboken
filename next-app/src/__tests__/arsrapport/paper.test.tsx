@@ -118,7 +118,45 @@ describe("ReportForm on paper", () => {
       ),
     ).toBeTruthy();
     typeNumber("1");
-    expect(screen.getByText("1 inmatade, 2 kvar")).toBeTruthy();
+    expect(screen.getByText("1 inmatad, 2 kvar")).toBeTruthy();
+  });
+
+  it("requires the sale on the paper form to be acknowledged", async () => {
+    const a = actions();
+    a.sellNow = vi.fn(() => ok({ operation_id: "op" }));
+    a.getGenebankHerds = vi.fn(async () => ({
+      success: true as const,
+      herds: [{ herd: "G9002", herd_name: null, is_active: true }],
+    }));
+    renderPaper(paperView(), a);
+    typeNumber("1");
+    fireEvent.click(within(row(1)).getByLabelText("Såld"));
+    fireEvent.keyDown(screen.getByLabelText("Köparens besättning"), {
+      key: "ArrowDown",
+    });
+    fireEvent.click(await screen.findByRole("option", { name: "G9002" }));
+    fireEvent.change(screen.getByLabelText("Månad"), {
+      target: { value: "6" },
+    });
+    const save = screen.getByRole("button", { name: "Spara försäljningen" });
+    fireEvent.click(save);
+    expect(a.sellNow).not.toHaveBeenCalled();
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: "Försäljningen står på blanketten.",
+        description: "Kryssa i rutan för att registrera försäljningen.",
+      }),
+    );
+    fireEvent.click(save);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(a.sellNow).toHaveBeenCalledWith(
+      "G9001",
+      2026,
+      1,
+      expect.objectContaining({ till: "G9002" }),
+      "demo",
+      5,
+    );
   });
   it("names the item and defaults the receipt date to the day it came in", () => {
     renderPaper();
@@ -345,7 +383,7 @@ describe("ReportForm on paper", () => {
     expect(a.dryRun.mock.calls[0][4]).toBe(5);
     await waitFor(() =>
       expect(p.leave).toHaveBeenCalledWith(
-        "G9001 inskickad: 1 finns kvar, 1 ej angivna.",
+        "G9001 inskickad: 1 finns kvar, 1 ej angiven.",
       ),
     );
     expect(refresh).not.toHaveBeenCalled();
