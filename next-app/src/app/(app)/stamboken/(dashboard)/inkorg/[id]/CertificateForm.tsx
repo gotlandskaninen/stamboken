@@ -77,16 +77,21 @@ export function CertificateForm({
     initialGrandparents(latest),
   );
   const [rex, setRex] = useState(false);
+  // Bumped at once on every change: an answer is shown only beside the values it was asked for.
+  const [version, setVersion] = useState(0);
   const setMode = (value: SaveMode) => {
     setTouched(true);
+    setVersion((v) => v + 1);
     setModeState(value);
   };
   const set = (key: RowKey, value: string) => {
     setTouched(true);
+    setVersion((v) => v + 1);
     if (key in grandparents) setGrandparents((g) => ({ ...g, [key]: value }));
     else setForm((f) => ({ ...f, [key]: value }));
   };
   const fill = (p: Proposal) => {
+    setVersion((v) => v + 1);
     setForm(initialCertForm(p));
     setGrandparents(initialGrandparents(p));
     setModeState(initialSaveMode(p));
@@ -99,15 +104,16 @@ export function CertificateForm({
   // Server Actions run one at a time, so at most one recompute is in flight:
   // changes meanwhile ask once more, for the latest values, and an answer to
   // values since changed is dropped. While Spara saves nothing is asked, so
-  // the save never waits behind a recompute it does not need. An answer is
-  // its mode's: after a switch the table waits for the new one. A failed
-  // recompute keeps the last answer and says so.
+  // the save never waits behind a recompute it does not need. An answer shows
+  // only for the version of the values it was asked for; until the current
+  // one has its answer the table waits. A failed recompute, or one the
+  // network rejected, shows the error line, and the next change asks again.
   const [answer, setAnswer] = useState<{
-    mode: SaveMode;
+    version: number;
     result: Reconciliation;
   } | null>(null);
   const [failed, setFailed] = useState(false);
-  const typed = useRef<Record<string, string>>({});
+  const typed = useRef({ version: 0, values: {} as Record<string, string> });
   const inFlight = useRef(false);
   const saving = useRef(false);
   const dirty = useRef(false);
@@ -117,24 +123,31 @@ export function CertificateForm({
       return;
     }
     inFlight.current = true;
-    let sent: Record<string, string>;
-    let result: Reconciliation | null;
-    do {
-      dirty.current = false;
-      sent = typed.current;
-      result = await reconcileDocument(itemId, doc.id, sent);
-    } while (dirty.current && !saving.current);
-    inFlight.current = false;
+    let sent = typed.current;
+    let result: Reconciliation | null = null;
+    try {
+      do {
+        dirty.current = false;
+        sent = typed.current;
+        try {
+          result = await reconcileDocument(itemId, doc.id, sent.values);
+        } catch {
+          result = null; // the request never reached the API
+        }
+      } while (dirty.current && !saving.current);
+    } finally {
+      inFlight.current = false;
+    }
     if (dirty.current) return; // asked again once the save is done
     setFailed(result === null);
-    if (result) setAnswer({ mode: sent.mode as SaveMode, result });
+    if (result) setAnswer({ version: sent.version, result });
   }, [itemId, doc.id]);
   useEffect(() => {
-    typed.current = { mode, ...form, ...grandparents };
+    typed.current = { version, values: { mode, ...form, ...grandparents } };
     const timer = setTimeout(ask, RECOMPUTE_MS);
     return () => clearTimeout(timer);
-  }, [mode, form, grandparents, latest, ask]);
-  const shown = answer?.mode === mode ? answer.result : null;
+  }, [version, mode, form, grandparents, latest, ask]);
+  const shown = answer?.version === version ? answer.result : null;
 
   return (
     <RegisterFromCertificate
@@ -149,8 +162,12 @@ export function CertificateForm({
       conflictHint="Stämmer pappret? Lämna ärendet till genbanksansvarig."
       onSave={async (payload) => {
         saving.current = true;
-        const res = await saveCertificate(itemId, doc.id, asMatched(payload));
-        saving.current = false;
+        let res;
+        try {
+          res = await saveCertificate(itemId, doc.id, asMatched(payload));
+        } finally {
+          saving.current = false;
+        }
         if (res.ok) onSaved(res.data.document);
         else if (dirty.current) void ask();
         return res;

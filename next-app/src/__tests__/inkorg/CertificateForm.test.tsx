@@ -596,23 +596,81 @@ describe("CertificateForm's table for a rabbit in Stamboken", () => {
     expect(screen.queryByText(/utan jämförelse/)).toBeNull();
   });
 
-  it("keeps the last answer when a recompute fails, and says so quietly", async () => {
+  it("says quietly when a recompute fails, and shows no rows of values since changed", async () => {
     vi.mocked(reconcileDocument)
       .mockResolvedValueOnce(ANSWER)
-      .mockResolvedValueOnce(null) // a 429 or a dropped connection
+      .mockResolvedValueOnce(null) // a 429 or a refusal
       .mockResolvedValueOnce(ANSWER);
     show(doc({ proposal: FOUND }));
     await wait(250);
     const failed = "Kontrollerna kunde inte räknas om just nu.";
     expect(screen.queryByText(failed)).toBeNull();
+    expect(within(rowOf("Intygsnummer")).getByText("skiljer sig")).toBeTruthy();
     type("Namn", "Elsa");
     await wait(250);
     expect(screen.getByText(failed)).toBeInTheDocument();
-    expect(within(rowOf("Intygsnummer")).getByText("skiljer sig")).toBeTruthy();
-    expect(screen.getByRole("list", { name: "Kontroller" })).toBeTruthy();
+    expect(screen.queryByText("skiljer sig")).toBeNull();
     type("Namn", "Elsa B");
     await wait(250);
     expect(screen.queryByText(failed)).toBeNull();
+    expect(within(rowOf("Intygsnummer")).getByText("skiljer sig")).toBeTruthy();
+  });
+
+  it("a request the network rejects shows the error line, and the next change asks again", async () => {
+    vi.mocked(reconcileDocument)
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockResolvedValueOnce(ANSWER);
+    show(doc({ proposal: FOUND }));
+    await wait(250);
+    expect(
+      screen.getByText("Kontrollerna kunde inte räknas om just nu."),
+    ).toBeInTheDocument();
+    type("Namn", "Elsa");
+    await wait(250);
+    expect(reconcileDocument).toHaveBeenCalledTimes(2);
+    expect(within(rowOf("Intygsnummer")).getByText("skiljer sig")).toBeTruthy();
+  });
+
+  it("never shows an answer beside a number it was not asked for", async () => {
+    let forA: (answer: Reconciliation) => void = () => undefined;
+    vi.mocked(reconcileDocument)
+      .mockResolvedValueOnce({ rows: {}, checks: [] })
+      .mockImplementationOnce(() => new Promise((answer) => (forA = answer)))
+      .mockResolvedValueOnce({
+        rows: {
+          individual: { registry: "G9001-2412 Ebbe", status: "stammer" },
+        },
+        checks: [{ ok: null, text: "G9001-2412 finns i Stamboken." }],
+      });
+    show(doc({ proposal: FOUND }));
+    await wait(250);
+    type("Individnummer i Stamboken", "G9011-2411"); // A
+    await wait(250);
+    type("Individnummer i Stamboken", "G9001-2412"); // B, before A's answer
+    await wait(100);
+    await act(async () =>
+      forA({
+        rows: {
+          individual: {
+            registry: "finns inte",
+            status: "skiljer",
+            near: [{ number: "G9001-2411", name: "Elsa", sex: "female" }],
+          },
+        },
+        checks: [{ ok: false, text: "G9011-2411 finns inte i Stamboken." }],
+      }),
+    );
+    expect(registryOf("Individnummer i Stamboken")).toHaveTextContent("–");
+    expect(screen.queryByText("Menar du:")).toBeNull();
+    expect(screen.queryByText(/G9011-2411 finns inte/)).toBeNull();
+    expect(screen.getByText("Jämför med registret …")).toBeInTheDocument();
+    await wait(250);
+    expect(registryOf("Individnummer i Stamboken")).toHaveTextContent(
+      "G9001-2412 Ebbe",
+    );
+    expect(
+      screen.getByText("G9001-2412 finns i Stamboken."),
+    ).toBeInTheDocument();
   });
 
   it("offers the numbers one character off, and one fills the field", async () => {
