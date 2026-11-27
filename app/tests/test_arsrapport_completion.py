@@ -399,6 +399,18 @@ class TestDraft(CompletionTest):
         self.assertEqual(stale.status_code, 409)  # an autosave from before the answer
         self.assertNotEqual(str(kept.submission_key), body["submission_key"])
 
+    def test_the_draft_keeps_its_author(self):  # review 4: a helper's paper draft stays the helper's own
+        draft = self.draft()
+        db.YearlyReportDraft.update(updated_by_access_code=None, updated_by_user=self.helper.id).execute()
+        self.open_link()
+        self.assertEqual(self.answer(self.kvar(self.buck, vikt=3.1))[0].status_code, 200)
+        kept = db.YearlyReportDraft.get_by_id(draft.id)
+        self.assertEqual((kept.updated_by_user_id, kept.updated_by_access_code_id), (self.helper.id, None))
+        self.assertGreater(kept.updated_at, draft.updated_at)
+        self.assertTrue(arsrapport.draft_json(kept, db.User.get_by_id(self.helper.id))["own"])
+        latest = arsrapport._submissions(self.current())[-1]
+        self.assertEqual((latest.access_code_id, latest.user_id), (self.code.id, None))  # the answer's actor
+
     def test_a_draft_bound_to_the_completion_key_lets_it_go(self):
         draft = self.draft()
         self.open_link()

@@ -3295,7 +3295,7 @@ def submit(herd, round_, access, user, sub, *, now=None, completion=False) -> di
         if paper:  # after the writes: InboxGrant needs the item "tagen"
             inbox.close_if_done(item, user)
         if completion:
-            keep_draft_after_completion(herd, round_, answered, user, sub.key)
+            keep_draft_after_completion(herd, round_, answered, sub.key)
         else:
             drop_kept_buyers(set(kept.values()), user)  # FB6: the draft goes, and a kept buyer not linked again with it
             YearlyReportDraft.delete().where(
@@ -3387,13 +3387,14 @@ def _draft_entry(entry, form):
     return stored
 
 
-def keep_draft_after_completion(herd, round_, answered, user, key):
+def keep_draft_after_completion(herd, round_, answered, key):
     """
     Question 1, alternative A (Jonas 2026-11-26): a partial answer is sent on its own and the member's other unsent
     edits stay in the draft, with its kept buyers (no drop_kept_buyers). An answered rabbit the draft still has as
     "Ej angiven" (or not at all) takes the answer, in the body and in the form copy alike; one the member had
     changed stays as they left it. The version moves on, so an autosave from before gets the 409, and the draft never
-    keeps the completion's key.
+    keeps the completion's key. Its author stays (review 4): a helper's paper draft is still the helper's own to go on
+    with; the answer's actor is on its submission.
     """
     draft = _draft(herd, round_)
     if draft is None:
@@ -3411,8 +3412,6 @@ def keep_draft_after_completion(herd, round_, answered, user, key):
         return
     draft.data, draft.submission_key = data, None if draft.submission_key == key else draft.submission_key
     draft.updated_at = max(now(), draft.updated_at + timedelta(microseconds=1)).astimezone(timezone.utc)
-    for name, value in _by(user, "updated_by_user", "updated_by_access_code").items():
-        setattr(draft, name, value)
     draft.save()
 
 
