@@ -6,7 +6,12 @@ import { useRouter } from "next/navigation";
 import type { Mode } from "@/lib/mode";
 import { useMode } from "@/lib/mode-context";
 import { ConfirmDialog } from "../../../admin/_components/ConfirmDialog";
-import { newLink, sendReminder, setOnTime } from "../../actions";
+import {
+  newLink,
+  sendReminder,
+  setOnTime,
+  undoAccountLink,
+} from "../../actions";
 import {
   INVITATION_TEXT,
   ROW_STATES,
@@ -108,6 +113,10 @@ export function StatusTable({
   const [busy, setBusy] = useState(false);
   const [ask, setAsk] = useState<string | null>(null); // the herd whose "Ny länk" awaits its confirmation
   const [sales, setSales] = useState<string | null>(null); // the herd whose "Försäljningar" is open
+  // the herd and account link whose "Koppla bort" awaits its yes
+  const [unlink, setUnlink] = useState<{ herd: string; id: number } | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const errorRef = useRef<HTMLParagraphElement>(null);
@@ -201,8 +210,33 @@ export function StatusTable({
     }
   }
 
+  async function undoLink(link: { herd: string; id: number }) {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await undoAccountLink(link.herd, year, link.id, env);
+      if (!res.ok) setError(res.problem.detail || res.problem.title);
+      else startTransition(() => router.refresh());
+    } catch {
+      setError("Det gick inte att nå servern. Försök igen.");
+    } finally {
+      setBusy(false);
+      setUnlink(null);
+    }
+  }
+
   return (
     <>
+      <ConfirmDialog
+        open={unlink !== null}
+        title="Koppla bort kontot"
+        body="Koppla bort kontot från medlemskapet? Åtkomsten som medlemskapskopplingen gav försvinner för medlemskapets besättningar. Andra behörigheter påverkas inte."
+        confirmLabel="Koppla bort"
+        busy={busy}
+        onConfirm={() => unlink !== null && undoLink(unlink)}
+        onClose={() => setUnlink(null)}
+      />
       <ConfirmDialog
         open={ask !== null}
         title={`Ny länk till ${ask ?? ""}`}
@@ -286,6 +320,7 @@ export function StatusTable({
                   onNewLink={setAsk}
                   onReminder={remind}
                   onSales={setSales}
+                  onUnlink={setUnlink}
                 />
               ))}
             </tbody>
@@ -305,6 +340,7 @@ function Row({
   onNewLink,
   onReminder,
   onSales,
+  onUnlink,
 }: {
   row: StatusRow;
   year: number;
@@ -314,6 +350,7 @@ function Row({
   onNewLink: (herd: string) => void;
   onReminder: (herd: string) => void;
   onSales: (herd: string) => void;
+  onUnlink: (link: { herd: string; id: number }) => void;
 }) {
   const reported = row.received_at !== null;
   const reminder = reminderText(row.last_reminder);
@@ -329,6 +366,11 @@ function Row({
     f.forsaljning_avvisad > 0 ||
     f.kopt_efter_inskick > 0 ||
     f.kop_anmalt > 0 ||
+    !!f.andring_vantar ||
+    !!f.kontobyte_vantar ||
+    !!f.kontobyte_forfoll ||
+    !!f.inte_jag ||
+    !!f.nytt_konto ||
     row.statistik.preliminart;
   return (
     <tr>
@@ -431,6 +473,25 @@ function Row({
                   : `${f.kop_anmalt} köp anmälda`}
               </Link>
             )}
+            {!!f.andring_vantar && (
+              <span className="sb-badge">Ändring väntar på bekräftelse</span>
+            )}
+            {f.kontobyte_vantar && (
+              <span className={`sb-badge ${inkorg.badgeWarn}`}>
+                Kontobyte väntar på bekräftelse
+              </span>
+            )}
+            {f.kontobyte_forfoll && (
+              <span className={`sb-badge ${inkorg.badgeWarn}`}>
+                Kontobyte förföll
+              </span>
+            )}
+            {f.inte_jag && (
+              <span className={`sb-badge ${inkorg.badgeWarn}`}>
+                Det var inte jag
+              </span>
+            )}
+            {!!f.nytt_konto && <span className="sb-badge">Nytt konto</span>}
           </div>
         ) : (
           "–"
@@ -467,6 +528,18 @@ function Row({
               onClick={() => onReminder(row.herd)}
             >
               Skicka påminnelse
+            </button>
+          )}
+          {canEdit && !!row.flags.nytt_konto && (
+            <button
+              type="button"
+              className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
+              disabled={locked}
+              onClick={() =>
+                onUnlink({ herd: row.herd, id: row.flags.nytt_konto! })
+              }
+            >
+              Koppla bort kontot
             </button>
           )}
           {canEdit && row.flags.forsaljning_vantar > 0 && (

@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { codeLoginEnabled } from "@/lib/code-login-enabled";
 import { LinkGate, type Missing } from "./LinkGate";
 import {
   addLitter,
@@ -91,12 +92,14 @@ export default async function RapportPage({
     const missing: Missing = status === 401 ? "ute" : "fel";
     return <LinkGate missing={missing} />;
   }
+  const accountOffer = await codeLoginEnabled(); // off in the demo API (fråga 9)
   return (
     <LinkGate>
       <ReportForm
         key={`${entry.herd}-${entry.year}`}
         link
         env="prod"
+        accountOffer={accountOffer}
         view={report.data}
         actions={{
           ...actions,

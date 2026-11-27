@@ -74,6 +74,16 @@ describe("matrikelBody", () => {
     });
   });
 
+  it("sends the account's box with its number, and a box alone not at all", () => {
+    const f = emptyPaperFields();
+    f.konto.typ = "bankgiro";
+    expect(matrikelBody(f)).toBeNull();
+    f.konto.konto = "123-4567";
+    expect(matrikelBody(f)).toEqual({
+      konto: { typ: "bankgiro", konto: "123-4567" },
+    });
+  });
+
   it("gives Nej as {ja: false, utom: []} and Ja with its exceptions", () => {
     const nej = { ...emptyPaperFields(), consent: "nej" as const };
     expect(matrikelBody(nej)).toEqual({ publicering: { ja: false, utom: [] } });

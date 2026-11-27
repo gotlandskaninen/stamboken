@@ -14,7 +14,8 @@ import {
   CONFLICT_TEXT,
   DISEASES,
   EMPTY_ENTRY,
-  emptyPaperFields,
+  detailsBody,
+  detailsFields,
   emptyState,
   fmtDate,
   fmtDayOrMonth,
@@ -53,6 +54,7 @@ import {
   type Submission,
 } from "./lib";
 import { NumberRow } from "./NumberRow";
+import { MemberDetails } from "./MemberDetails";
 import { PaperChanges } from "./PaperChanges";
 import { PurchaseDialog } from "./PurchaseDialog";
 import { RabbitRow } from "./RabbitRow";
@@ -301,32 +303,6 @@ const refusalField: Record<string, string> = {
   epost_kan_inte_anvandas: "paper-email",
 };
 
-// Logged in, the page asks nothing about the matrikel: the profile holds the
-// address, the phone and the answer about Koharen (D13).
-const ProfileCard = (
-  <MbCard title="Dina uppgifter">
-    <p style={{ margin: "0 0 12px" }}>
-      Adress, telefon och svaret om Koharen ändrar du i din profil.
-    </p>
-    <Link
-      href="/stamboken/profil"
-      className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
-    >
-      Gå till profilen
-    </Link>
-  </MbCard>
-);
-
-// Through the personal link there is no profile: the genebank manager changes these (the inline version is step 5).
-const LinkContactCard = (
-  <MbCard title="Dina uppgifter">
-    <p style={{ margin: 0 }}>
-      Har din adress, e-post, ditt konto för stödet eller ditt svar om Koharen
-      ändrats? Kontakta genbanksansvarig.
-    </p>
-  </MbCard>
-);
-
 // Publishes the side column's height as --side-h on the layout, so that Skicka, which
 // comes after the list in the DOM, can stick right under the sticky side column.
 function trackSideHeight(el: HTMLDivElement | null) {
@@ -348,6 +324,7 @@ export function ReportForm({
   post,
   env,
   paper,
+  accountOffer,
 }: {
   view: ReportView;
   actions: ReportActions;
@@ -360,6 +337,8 @@ export function ReportForm({
   // The data environment the view was read from; the page mounts the form
   // with key={env}, so a switch starts over from the other one's draft.
   env: Mode;
+  // The link's receipt offers an account through code login, where that is on (5.1).
+  accountOffer?: boolean;
 }) {
   const router = useRouter();
   const { herd, year, round } = view;
@@ -404,11 +383,21 @@ export function ReportForm({
     startFrom(view, isPaper),
   );
   const [gate, setGate] = React.useState<Gate>(() => gateOf(view, isPaper));
-  const [fields, setFields] = React.useState<PaperFields>(emptyPaperFields);
+  // "Dina uppgifter": the paper form's, or the report's (5.11), in memory only
+  const [fields, setFields] = React.useState<PaperFields>(() =>
+    detailsFields(view.member_details),
+  );
+  // Sent or changed elsewhere: the fields start again from what the server holds now (U15).
+  const detailsKey = JSON.stringify(view.member_details ?? null);
+  const [shownDetails, setShownDetails] = React.useState(detailsKey);
+  if (shownDetails !== detailsKey) {
+    setShownDetails(detailsKey);
+    setFields(detailsFields(view.member_details));
+  }
   const [receivedOn, setReceivedOn] = React.useState(() =>
     item ? stockholmDay(item.received_at) : "",
   );
-  const [signedOn, setSignedOn] = React.useState<string | null>(null); // null: the day it came in
+  const [signedOn, setSignedOn] = React.useState("");
   const [entered, setEntered] = React.useState<number[]>(() =>
     enteredFrom(view.rabbits, startFrom(view, isPaper)),
   );
@@ -1114,6 +1103,7 @@ export function ReportForm({
       // On paper the submit has closed the item: ReportView is not read again
       // (with ?post= it would be refused), and the Receipt is the answer.
       if (!isPaper) {
+        setFields(detailsFields(view.member_details)); // sent: the private fields leave memory (U15)
         // a first Skicka replaced nothing: Receipt shows no actions until the view has the report
         setReplaced(body.revision ?? undefined);
         refreshView();
@@ -1136,9 +1126,8 @@ export function ReportForm({
       view.rabbits.map((r) => r.id),
     );
     if (isPaper) {
-      const signed = signedOn ?? receivedOn;
       if (!receivedOn) return fail("Ange dagen blanketten kom in.");
-      if (signed > receivedOn)
+      if (signedOn > receivedOn)
         return fail(
           "Blankettens datum kan inte vara senare än dagen den kom in.",
         );
@@ -1147,9 +1136,12 @@ export function ReportForm({
         ...body,
         inbox_item_id: item.id,
         received_on: receivedOn,
-        signed_on: signed,
+        ...(signedOn ? { signed_on: signedOn, signed_on_confirmed: true } : {}),
         ...(matrikel ? { matrikel } : {}),
       };
+    } else {
+      const matrikel = detailsBody(view.member_details, fields);
+      if (matrikel) body = { ...body, matrikel };
     }
     return body;
   };
@@ -1478,6 +1470,7 @@ export function ReportForm({
         <Receipt
           view={view}
           receipt={receipt}
+          accountOffer={accountOffer}
           hasDraft={!!view.draft || localCopy}
           busy={withdrawing || syncing || refreshing}
           onChange={startChange}
@@ -2040,7 +2033,7 @@ export function ReportForm({
                       type="date"
                       className={styles.field}
                       style={{ width: "100%", boxSizing: "border-box" }}
-                      value={signedOn ?? receivedOn}
+                      value={signedOn}
                       max={receivedOn || undefined}
                       onChange={(e) => setSignedOn(e.target.value)}
                     />
@@ -2552,7 +2545,15 @@ export function ReportForm({
             {!isPaper && endCard}
 
             {!isPaper &&
-              (contactSlot ?? (link ? LinkContactCard : ProfileCard))}
+              (contactSlot ?? (
+                <MemberDetails
+                  details={view.member_details}
+                  fields={fields}
+                  onChange={setFields}
+                  track={(call) => track(key, call)}
+                  returnTo={`/stamboken/arsrapport/${herd.herd}/${year}`}
+                />
+              ))}
 
             {(isPaper ? needReason : editor) && (
               <MbCard title="Orsak">
