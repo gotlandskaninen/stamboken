@@ -152,7 +152,7 @@ describe("the queue's server actions", () => {
     expect(body(0)).toEqual({
       rotation: 90,
       mask_rects: [],
-      copy_frame: { x: 0.3333, y: 0, w: 0.6667, h: 1 },
+      copy_frame: { x: 0.3334, y: 0, w: 0.6666, h: 1 }, // inwards: the copy keeps no more than shown
       matches_registry: false,
     });
   });

@@ -6,6 +6,7 @@ import {
   initialRects,
   MAX_RECTS,
   MIN_FRAME,
+  toApiFrame,
   moveRect,
   resizeRect,
   rotateRect,
@@ -35,7 +36,7 @@ describe("resizeRect", () => {
   it("never past the image, never below the minimum", () => {
     close(resizeRect(r, 5, 5), { w: 0.9, h: 0.8 });
     close(resizeRect(r, -5, -5), { w: 0.02, h: 0.02 });
-    close(resizeRect(r, -5, -5, MIN_FRAME), { w: 0.1, h: 0.1 });
+    close(resizeRect(r, -5, -5, MIN_FRAME), { w: 0.101, h: 0.101 });
   });
 });
 
@@ -114,13 +115,32 @@ describe("initialFrame", () => {
   });
 });
 
+describe("toApiFrame", () => {
+  it("rounds to four decimals inwards, never past what the frame shows", () => {
+    expect(toApiFrame({ x: 0, y: 0, w: 1, h: 0.66545 })).toEqual({
+      x: 0,
+      y: 0,
+      w: 1,
+      h: 0.6654,
+    });
+    expect(toApiFrame({ x: 0.12341, y: 0.5, w: 0.5, h: 0.5 })).toEqual({
+      x: 0.1235,
+      y: 0.5,
+      w: 0.4999,
+      h: 0.5,
+    });
+    expect(toApiFrame(UPPER_TWO_THIRDS)).toEqual(UPPER_TWO_THIRDS); // already four decimals: unchanged
+  });
+});
+
 describe("crops", () => {
   it("is a frame that leaves part of the photo out", () => {
     expect(crops(UPPER_TWO_THIRDS)).toBe(true);
     expect(crops({ x: 0, y: 0, w: 1, h: 1 })).toBe(false);
     expect(crops({ x: 0, y: 0, w: 1, h: 0.995 })).toBe(false);
-    // judged as the API gets it, rounded to four decimals: 0.98996 is 0.99 there
-    expect(crops({ x: 0, y: 0, w: 1, h: 0.98996 })).toBe(false);
+    // judged as the API gets it, rounded inwards: 0.98996 goes as 0.9899, 0.99004 as 0.99
+    expect(crops({ x: 0, y: 0, w: 1, h: 0.98996 })).toBe(true);
+    expect(crops({ x: 0, y: 0, w: 1, h: 0.99004 })).toBe(false);
     expect(crops(null)).toBe(false);
   });
 });

@@ -5,7 +5,7 @@ import { cookies } from "next/headers";
 import { MODE_COOKIE, parseMode, type Mode } from "@/lib/mode";
 import type { SaleBuyer } from "@/components/individual/BuyerFields";
 import { fetchApi, ApiError } from "@/lib/api";
-import { crops, toApiRects } from "./image";
+import { crops, toApiFrame } from "./image";
 import type {
   InboxDocument,
   InboxItem,
@@ -276,7 +276,7 @@ export async function confirmMask(
   return call<DocResult>(id, `/${id}/dokument/${doc}/maskning`, "POST", {
     rotation,
     mask_rects: rects,
-    copy_frame: frame && toApiRects([frame])[0],
+    copy_frame: frame && toApiFrame(frame),
     ...(rects.length === 0 && !crops(frame) ? { no_personal_data: true } : {}),
     matches_registry: matchesRegistry === true,
   });

@@ -5,8 +5,11 @@ import type { InboxDocument, Rect } from "./lib";
 
 export const MAX_RECTS = 20;
 const MIN_SIZE = 0.02;
-/** The frame around the copy keeps at least a tenth of the photo each way, as the API requires. */
-export const MIN_FRAME = 0.1;
+/**
+ * The frame around the copy keeps at least a tenth of the photo each way, as
+ * the API requires; a hair more, which the inward rounding of toApiFrame may take.
+ */
+export const MIN_FRAME = 0.101;
 /** The copy of the green certificate: all but its lower third, the seller and buyer block. */
 export const UPPER_TWO_THIRDS: Rect = { x: 0, y: 0, w: 1, h: 0.6667 };
 
@@ -73,13 +76,28 @@ export const initialFrame = (
   doc.copy_frame ??
   (doc.mask_rects ? null : (doc.frame_suggestion ?? UPPER_TWO_THIRDS));
 
+const up = (v: number) => Math.ceil(v * 1e4 - 1e-6) / 1e4;
+const down = (v: number) => Math.floor(v * 1e4 + 1e-6) / 1e4;
+
+/**
+ * The frame as the API gets it: four decimals, rounded inwards, so the copy
+ * never keeps a row or column the frame shown leaves out.
+ */
+export const toApiFrame = (r: Rect): Rect => {
+  const x = clamp(up(r.x), 0, 1);
+  const y = clamp(up(r.y), 0, 1);
+  const w = Math.round((clamp(down(r.x + r.w), 0, 1) - x) * 1e4) / 1e4;
+  const h = Math.round((clamp(down(r.y + r.h), 0, 1) - y) * 1e4) / 1e4;
+  return { x, y, w, h };
+};
+
 /**
  * A frame over (almost) the whole photo leaves nothing out: it is no cover for
- * the seller and the buyer. Judged as the API gets it, rounded.
+ * the seller and the buyer. Judged as the API gets it.
  */
 export const crops = (frame: Rect | null): boolean => {
   if (!frame) return false;
-  const [sent] = toApiRects([frame]);
+  const sent = toApiFrame(frame);
   return sent.w * sent.h < 0.99;
 };
 
