@@ -1067,7 +1067,9 @@ def remove_copy(item_id, document_id):
             item = inbox.lock_item(item_id)
             path = inbox.remove_copy(item, inbox.document_of(item, document_id), current_user)
             document = inbox.document_of(item, document_id)
-            answer = {"item": inbox.items_json([item])[0], "document": inbox.documents_json([document])[0]}
+            # The rabbit's manager may not work the item's genebank.
+            shown = inbox.documents_json([document], user=current_user)[0]
+            answer = {"item": inbox.items_json([item])[0], "document": shown}
     except inbox.InboxError as exc:
         return problem(exc.status, exc.title, exc.detail)
     inbox.remove_files([path])

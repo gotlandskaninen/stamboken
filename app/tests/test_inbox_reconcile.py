@@ -554,3 +554,40 @@ class TestTheReadingsChecksFromWhatIsTyped(ReconcileTest):
         self.assertIn(line, self.texts(self.answer(father="", birth_date="")))  # the mother's litters
         self.assertNotIn(line, self.texts(self.answer(birth_date="2025-05-12")))  # that one is the litter
 
+
+class TestTheStoredProposalShown(ReconcileTest):
+    """Everyone in the queue may open the item; the registry's side of its reading only those who work it."""
+
+    def test_only_what_the_photo_shows_to_someone_who_does_not_work_the_genebank(self):
+        proposal = {
+            "fields": {
+                "mother": {"value": "G9001-2211", "source": "läst", "read": "G9001 2211"},
+                "farfar": {"value": None, "source": "avviker", "read": "G9002 2011", "registry": "G9003-2011"},
+                "farmor": {"value": "G9003-2112", "source": "härlett"},
+            },
+            "checks": [
+                {"ok": False, "text": "Far: far- och morföräldrarna på intyget är inte registrets för G9003-2311."}
+            ],
+        }
+        db.InboxDocument.update(interpretation_status="klar", proposal=proposal).where(
+            db.InboxDocument.id == self.document.id
+        ).execute()
+
+        def shown(username):
+            self.login(username)
+            resp = self.client.get(f"/api/v2/inkorg/{self.queue_item.id}")
+            self.assertEqual(resp.status_code, 200, resp.get_json())
+            return resp.get_json()["documents"][0]["proposal"]
+
+        self.assertEqual(shown("hjalp"), proposal)  # a worker of Gotland: as stored
+        self.assertEqual(
+            shown("mhjalp"),
+            {
+                "fields": {
+                    "mother": {"source": "läst", "read": "G9001 2211"},
+                    "farfar": {"source": "avviker", "read": "G9002 2011"},
+                    "farmor": {"source": "härlett"},
+                },
+                "checks": [],
+            },
+        )
