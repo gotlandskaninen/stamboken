@@ -284,7 +284,10 @@ test("3b. Tillbaka från profilen behåller det sparade", async ({
   let saved = saveOf();
   await kvar(rabbit(page, "M9006-2411")).check();
   await saved;
-  await page.getByRole("link", { name: "Gå till profilen" }).click();
+  // "Dina uppgifter" are in the report now (step 5): the menu's profile link leaves it the same way.
+  // The tests run at phone width, where the menu sits behind its button.
+  await page.getByRole("button", { name: "Meny" }).click();
+  await page.locator('a[href="/stamboken/profil"]:visible').first().click();
   await page.waitForURL("**/stamboken/profil");
   await page.goBack();
   await expect(kvar(rabbit(page, "M9006-2411"))).toBeChecked();
@@ -867,6 +870,10 @@ test("12. Dina uppgifter: huvudmedlemmen ändrar i rapporten, andra ser vem som 
   await page.getByRole("button", { name: /^(Ändra|Fortsätt ändra)$/ }).click();
   await expect(page.getByText(/^E-post: /)).toBeVisible();
   await page.getByLabel("Telefon").fill("0709-555 666");
+  // test 9 sold M9007-2412 to M9001 on 31 December, so the report now asks about her too
+  const bought = rabbit(page, "M9007-2412");
+  await kvar(bought).check();
+  await weight(bought).fill("2,8");
   await page.getByRole("button", { name: SEND }).click();
   await submitted(page);
   await expect(page.getByText("Sparat i matrikeln: telefon.")).toBeVisible();
