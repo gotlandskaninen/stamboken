@@ -4,6 +4,8 @@ far the paper is tilted and where it lies once straightened. numpy and Pillow on
 runs within the request. Nothing here changes a document: the handler applies what it finds and saves the angle.
 """
 
+import math
+
 import numpy as np
 from PIL import Image, ImageFilter
 
@@ -17,6 +19,8 @@ PAPER_SHARE = 0.5  # of the largest share of light pixels in a row (or column): 
 PAPER_MARGIN = 0.015  # added to each side of the paper found
 CLOSING = 9  # pixels: writing up to this size is closed over before the light rows and columns are counted
 PAPER_AREA = (0.2, 0.97)  # the paper found covers this share of the photo, or it is no paper
+EDGE_STRIP = 0.02  # of the photo's side: the strip outside the paper where the table must show
+MAX_PIXELS = 40_000_000  # F never has more pixels than an upload may (blueprints/uploads.MAX_PIXELS)
 
 
 def turned(image, rotation, straighten=0):
@@ -28,7 +32,41 @@ def turned(image, rotation, straighten=0):
     image = image.convert("RGB")
     if not straighten:
         return image.rotate(-rotation, expand=True)
+    size = fitted(*image.size, rotation + straighten)
+    if size != image.size:  # a long, thin photo turned would grow past MAX_PIXELS: smaller first
+        image = image.resize(size, Image.Resampling.BICUBIC)
     return image.rotate(-(rotation + straighten), expand=True, resample=Image.Resampling.BICUBIC, fillcolor="white")
+
+
+def turned_size(width, height, degrees):
+    """The size of a width x height image turned `degrees` clockwise with expand: Pillow's own sum (Image.rotate)."""
+    angle = -degrees % 360.0
+    if angle in (0, 180):
+        return width, height
+    if angle in (90, 270):
+        return height, width
+    angle = -math.radians(angle)
+    matrix = [round(math.cos(angle), 15), round(math.sin(angle), 15), 0.0]
+    matrix += [round(-math.sin(angle), 15), round(math.cos(angle), 15), 0.0]
+
+    def transform(x, y):
+        a, b, c, d, e, f = matrix
+        return a * x + b * y + c, d * x + e * y + f
+
+    matrix[2], matrix[5] = transform(-width / 2, -height / 2)
+    matrix[2] += width / 2
+    matrix[5] += height / 2
+    xs, ys = zip(*(transform(x, y) for x, y in ((0, 0), (width, 0), (width, height), (0, height))), strict=True)
+    return math.ceil(max(xs)) - math.floor(min(xs)), math.ceil(max(ys)) - math.floor(min(ys))
+
+
+def fitted(width, height, degrees):
+    """The size a width x height photo is shrunk to before it is turned `degrees`, so that F has at most MAX_PIXELS."""
+    turned_width, turned_height = turned_size(width, height, degrees)
+    if turned_width * turned_height <= MAX_PIXELS:
+        return width, height
+    scale = math.sqrt(MAX_PIXELS / (turned_width * turned_height)) * 0.99  # the bounding box rounds outwards
+    return max(1, math.floor(width * scale)), max(1, math.floor(height * scale))
 
 
 def _otsu(grey):
@@ -91,15 +129,44 @@ def _run(shares):
     return best
 
 
-def _paper(grey):
-    """The light area (the paper) on the straightened copy, as fractions {x, y, w, h}, or None."""
-    light = Image.fromarray(((grey > _otsu(grey)) * 255).astype(np.uint8))
+def _shares(light, inside, axis):
+    """Each row's (axis 1) or column's (axis 0) share of light pixels, of the photo's own pixels in it."""
+    counts = inside.sum(axis=axis)
+    return np.divide(light.sum(axis=axis), counts, out=np.zeros(counts.shape), where=counts > 0)
+
+
+def _edge(light, inside):
+    """A strip just outside the paper shows the table: mostly the photo's own pixels, and mostly not light."""
+    seen = inside.sum()
+    return bool(seen >= inside.size / 2 and light.sum() < seen / 2)
+
+
+def _paper(grey, inside):
+    """
+    The light area (the paper) on the straightened copy, as fractions {x, y, w, h}, or None. `inside` marks the
+    photo's own pixels: the corners the turn adds count neither as paper nor as table. The paper must show an edge
+    against the table on at least two sides: on a light table the light area is the table, and runs to the photo's
+    edges.
+    """
+    if not inside.any():
+        return None
+    light = Image.fromarray((((grey > _otsu(grey[inside])) & inside) * 255).astype(np.uint8))
     light = np.asarray(light.filter(ImageFilter.MaxFilter(CLOSING)).filter(ImageFilter.MinFilter(CLOSING)), bool)
+    light &= inside
     if not light.any():
         return None
     height, width = light.shape
-    top, bottom = _run(light.mean(axis=1))
-    left, right = _run(light.mean(axis=0))
+    top, bottom = _run(_shares(light, inside, 1))
+    left, right = _run(_shares(light, inside, 0))
+    strip_x, strip_y = max(3, round(EDGE_STRIP * width)), max(3, round(EDGE_STRIP * height))
+    strips = (
+        np.s_[max(0, top - strip_y) : top, left:right],
+        np.s_[bottom : bottom + strip_y, left:right],
+        np.s_[top:bottom, max(0, left - strip_x) : left],
+        np.s_[top:bottom, right : right + strip_x],
+    )
+    if sum(_edge(light[strip], inside[strip]) for strip in strips if inside[strip].size) < 2:
+        return None
     x0, y0 = max(0.0, left / width - PAPER_MARGIN), max(0.0, top / height - PAPER_MARGIN)
     x1, y1 = min(1.0, right / width + PAPER_MARGIN), min(1.0, bottom / height + PAPER_MARGIN)
     if not PAPER_AREA[0] <= (x1 - x0) * (y1 - y0) <= PAPER_AREA[1]:
@@ -120,6 +187,7 @@ def find_paper(source, rotation, straighten=None):
     grey.thumbnail((WORK_SIDE, WORK_SIDE))
     grey = grey.rotate(-rotation, expand=True)
     angle = _tilt(np.asarray(grey)) if straighten is None else straighten
-    # The corners the turn adds are black here, so that they are never taken for paper; F's are white.
-    straightened = grey.rotate(-angle, expand=True, resample=Image.Resampling.BILINEAR, fillcolor=0)
-    return {"angle": angle, "paper": _paper(np.asarray(straightened))}
+    straightened = grey.rotate(-angle, expand=True, resample=Image.Resampling.BILINEAR)
+    # The photo's own pixels, less the edge the resampling blends with the corners the turn adds.
+    inside = Image.new("L", grey.size, 255).rotate(-angle, expand=True).filter(ImageFilter.MinFilter(3))
+    return {"angle": angle, "paper": _paper(np.asarray(straightened), np.asarray(inside, bool))}

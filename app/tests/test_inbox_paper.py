@@ -6,6 +6,7 @@ isort:skip_file
 import io
 import os
 import unittest
+import unittest.mock
 
 import numpy as np
 import utils.database as db  # noqa: E402
@@ -16,6 +17,7 @@ from playhouse.shortcuts import model_to_dict  # noqa: E402
 from tests.inbox_fixtures import InboxTest, encoded  # noqa: E402
 
 DARK = (50, 45, 40)
+GREEN = (30, 200, 30)
 
 
 def paper(width=1200, height=1600):
@@ -79,8 +81,83 @@ class TestFindPaper(unittest.TestCase):
             with self.subTest(name):
                 self.assertEqual(find(image), {"angle": 0.0, "paper": None})
 
+    def test_on_a_light_table_the_frame_never_keeps_the_lower_third(self):
+        """The table is as light as the paper: either no paper, or one whose upper two thirds miss its lower third."""
+        certificate = paper()
+        ImageDraw.Draw(certificate).rectangle([100, 1250, 1099, 1269], fill=GREEN)  # in the seller and buyer block
+        for table, shadow in (
+            ((250, 250, 248), False),
+            ((215, 210, 200), False),
+            ((170, 160, 150), False),
+            ((250, 250, 248), True),  # the light area runs to three edges of the photo: it is the table
+        ):
+            with self.subTest(table=table, shadow=shadow):
+                photo = Image.new("RGB", (2000, 2400), table)
+                if shadow:
+                    ImageDraw.Draw(photo).rectangle([1550, 0, 1999, 2399], fill=DARK)
+                tilted = certificate.convert("RGBA").rotate(5, expand=True, resample=Image.Resampling.BICUBIC)
+                photo.paste(tilted, (150, 100), tilted)  # off the middle
+                found = find(photo)
+                if found["paper"] is None:
+                    continue
+                straightened, box = inbox_paper.turned(photo, 0, found["angle"]), found["paper"]
+                width, height = straightened.size
+                kept = straightened.crop(
+                    (
+                        round(box["x"] * width),
+                        round(box["y"] * height),
+                        round((box["x"] + box["w"]) * width),
+                        round((box["y"] + box["h"] * 0.6667) * height),
+                    )
+                )
+                green = (np.abs(np.asarray(kept, np.int16) - GREEN) < 50).all(axis=-1)
+                self.assertFalse(green.any())
+        self.assertIsNone(find(photographed(paper(), 5, background=(250, 250, 248)))["paper"])
+
     def test_a_paper_too_small_to_believe_is_no_paper(self):
         self.assertIsNone(find(photographed(paper(700, 900), 6))["paper"])  # 13 % of the photo
+
+
+class TestTurnedSize(unittest.TestCase):
+    # Pillow's sizes, the same as next-app's turnedSize test: the preview and F are the same shape.
+    PILLOW = {
+        (1200, 1600, 5): (1336, 1700),
+        (1200, 1600, -3.7): (1302, 1676),
+        (4000, 3000, 102.5): (3796, 4556),
+        (3024, 4032, -15): (3966, 4678),
+        (401, 301, 7.3): (437, 351),
+        (1200, 1600, 270.4): (1610, 1212),
+    }
+
+    def test_it_is_the_size_pillow_turns_to(self):
+        for (width, height, degrees), size in self.PILLOW.items():
+            with self.subTest((width, height, degrees)):
+                self.assertEqual(inbox_paper.turned_size(width, height, degrees), size)
+                if width * height < 2_000_000:
+                    self.assertEqual(Image.new("1", (width, height)).rotate(-degrees, expand=True).size, size)
+        for degrees in (0, 90, 180, 270, -90):  # Pillow's quarter turns transpose
+            size = Image.new("1", (401, 301)).rotate(-degrees, expand=True).size
+            self.assertEqual(inbox_paper.turned_size(401, 301, degrees), size)
+
+    def test_a_long_thin_photo_is_made_smaller_before_it_is_turned(self):
+        # 40 MP, the most an upload may have: turned 15° its bounding box would be 440 MP.
+        self.assertGreater(
+            inbox_paper.turned_size(40_000, 1_000, 15)[0] * inbox_paper.turned_size(40_000, 1_000, 15)[1], 400_000_000
+        )
+        width, height = inbox_paper.fitted(40_000, 1_000, 15)
+        turned_width, turned_height = inbox_paper.turned_size(width, height, 15)
+        self.assertLessEqual(turned_width * turned_height, inbox_paper.MAX_PIXELS)
+        self.assertGreater(turned_width * turned_height, inbox_paper.MAX_PIXELS * 0.95)
+        self.assertAlmostEqual(width / height, 40, delta=0.2)
+        self.assertEqual(inbox_paper.fitted(4000, 3000, 15), (4000, 3000))  # an ordinary photo keeps its size
+
+    def test_turned_shrinks_the_photo_it_was_given_to_that_size(self):
+        photo = Image.new("RGB", (400, 10), "white")
+        with unittest.mock.patch.object(inbox_paper, "MAX_PIXELS", 2_000):
+            width, height = inbox_paper.fitted(400, 10, 15)
+            self.assertLess(width, 400)
+            self.assertEqual(inbox_paper.turned(photo, 0, 15).size, inbox_paper.turned_size(width, height, 15))
+        self.assertEqual(inbox_paper.turned(photo, 0, 15).size, inbox_paper.turned_size(400, 10, 15))
 
 
 class TestEndpoint(InboxTest):
