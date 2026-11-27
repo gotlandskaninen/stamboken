@@ -1937,8 +1937,7 @@ STALE_ACCOUNT = "Kontot för stödet har ändrats sedan sidan lästes in. Ladda 
 def support_account_revision(membership_id):
     """
     The id of the membership's latest logged change of its support account, 0 before the first (migration 58 logs
-    none): every writer logs one kontakt_andrad row naming the columns. A herd form read before the upgrade carries
-    none, so it counts as 0, which holds only while the account is the migrated one.
+    none): every writer logs one kontakt_andrad row naming the columns, a data correction too, in its transaction.
     """
     if membership_id is None:
         return 0
@@ -1963,9 +1962,9 @@ def _herd_account_change(herd, sent, user, revision=None):
     clears, a bank alone never changes, and a mask that is not the stored account's any more is a stale form, which
     must not write an old account back. A non-writer gets the same Forbidden for every value, so it never tells
     whether a guess was right (as legacy_contact_form). A herd without a membership has no account. A change needs
-    `revision`, the support_account_revision the form read (none: a form from before the upgrade, 0), to be the
-    current one: a form read before another change, or before migration 58 when the herd page showed the whole number,
-    gets a reload message instead of writing back what it read.
+    `revision`, the support_account_revision the form read, to be the current one: a form read before another change
+    or a correction, or one without a revision (read before migration 58, when the herd page showed the whole number,
+    or the old yearly report's contact step), gets a reload message instead of writing back what it read.
     """
     if not sent:
         return None, None
@@ -1998,9 +1997,9 @@ def _herd_account_change(herd, sent, user, revision=None):
         changes = {"bank_account_type": None, "bank_account_number": number, "bank_name": bank}
     changes = {column: value for column, value in changes.items() if value != _account_text(getattr(stored, column))}
     try:
-        read = int(revision or 0)
+        read = int(revision)
     except (TypeError, ValueError):
-        read = -1
+        read = None
     if changes and read != support_account_revision(herd.membership_id):
         return None, {"status": "error", "message": STALE_ACCOUNT}
     return changes or None, None

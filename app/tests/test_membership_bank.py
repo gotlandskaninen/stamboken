@@ -431,26 +431,54 @@ class TestKeptOnHerd(SupportAccountTest):
             self.assertEqual(da.update_herd(form, manager.uuid, legacy=True), {"status": "updated"})
         self.assertEqual(self.kept(), {self.g7.id: OTHER, self.g8.id: "5555-12345"})
         # a new account goes to the membership, never to the herd; a herd without one has nowhere to put it
-        self.assertEqual(da.update_herd({"id": self.g7.id, "bank_account_number": "7777-12345"}, manager.uuid),
+        typed = {"id": self.g7.id, "bank_account_number": "7777-12345", "bank_account_revision": 0}
+        self.assertEqual(da.update_herd(typed, manager.uuid),
                          {"status": "updated"})  # fmt: skip
         self.assertEqual(db.Membership.get_by_id(self.unclear.id).bank_account_number, "7777-12345")
         refused = da.update_herd({"id": self.g8.id, "bank_account_number": "7777-12345"}, manager.uuid)
         self.assertEqual(refused["status"], "error")
         self.assertEqual(self.kept(), {self.g7.id: OTHER, self.g8.id: "5555-12345"})
 
+    def read(self, user, herd):
+        data = da.get_herd(herd.herd, user.uuid)
+        data.pop("individuals")
+        return data
+
+    def test_a_form_from_before_the_upgrade_never_chooses_a_kept_account(self):
+        """Codex #278 r3: before 58 the herd page showed admin the herd's own account, and the old app sends it back;
+        a form without a revision never changes the account, also while the membership has none."""
+        admin = db.User.get_by_id(self.admin.id)
+        old_form = {**self.read(admin, self.g7), "bank_account_number": OTHER, "herd_name": "Ny"}
+        del old_form["bank_account_revision"]
+        self.assertEqual(da.update_herd(old_form, admin.uuid, legacy=True), RELOAD)
+        self.assertIsNone(db.Membership.get_by_id(self.unclear.id).bank_account_number)
+        self.assertNotEqual(db.Herd.get_by_id(self.g7.id).herd_name, "Ny")
+
     def test_a_data_correction_moves_a_kept_account(self):
-        """What stamboken-main's correction does: the membership's account written, the herd's columns emptied,
-        with no account value in audit_log."""
+        """What stamboken-main's correction does, in one transaction: the membership's account written, the herd's
+        columns emptied, and a kontakt_andrad row naming the columns, which makes a herd form read before it reload.
+        No account value reaches audit_log."""
+        manager = db.User.get_by_id(self.manager.id)
+        open_form = self.read(manager, self.g7)
+        fields = '{"fields": ["bank_account_type", "bank_account_number", "bank_name"], "source": "rattning"}'
         with db.DB_PROXY.atomic():
-            db.Membership.update(bank_account_number=OTHER, bank_name="Gamla").where(
-                db.Membership.id == self.unclear.id
-            ).execute()
-            db.Herd.update(bank_account_number=None, bank_name=None).where(db.Herd.id == self.g7.id).execute()
+            _sql(
+                "UPDATE membership SET bank_account_number = %s, bank_name = %s WHERE membership_id = %s",
+                (OTHER, "Gamla", self.unclear.id),
+            )
+            _sql("UPDATE herd SET bank_account_number = NULL, bank_name = NULL WHERE herd_id = %s", (self.g7.id,))
+            _sql(
+                "INSERT INTO matrikel_audit (actor_id, action, membership_id, payload, created_at)"
+                " VALUES (NULL, 'kontakt_andrad', %s, %s, localtimestamp)",
+                (self.unclear.id, fields),
+            )
         self.assertEqual(self.kept(), {self.g8.id: "5555-12345"})
         copies = _sql("SELECT count(*) FROM audit_log WHERE (old_data::text || new_data::text) LIKE '%%9420%%'")
         self.assertEqual(copies.fetchone(), (0,))
-        manager = db.User.get_by_id(self.manager.id)
         self.assertEqual(db.Herd.get_by_id(self.g7.id).filtered_dict(manager)["bank_account_number"], "••77")
+        typed = {**open_form, "bank_account_number": "7777-12345"}
+        self.assertEqual(da.update_herd(typed, manager.uuid, legacy=True), RELOAD)
+        self.assertEqual(db.Membership.get_by_id(self.unclear.id).bank_account_number, OTHER)
 
 
 class TestPayoutRead(SupportAccountTest):
@@ -497,7 +525,8 @@ class TestLegacyWriters(SupportAccountTest):
         self.assertEqual(self.audits(), [])  # no change, no log
 
     def test_new_account_goes_to_the_membership_and_is_logged_by_name(self):
-        self.assertEqual(self.save(self.main, bank_account_number="1234-567 890"), {"status": "updated"})
+        self.assertEqual(self.save(self.main, bank_account_number="1234-567 890", bank_account_revision=0),
+                         {"status": "updated"})  # fmt: skip
         # the legacy form has no type, and the old bank goes with the old account
         self.assertEqual(self.stored(), (None, "1234-567 890", None))
         herd = self.herd()
@@ -520,7 +549,8 @@ class TestLegacyWriters(SupportAccountTest):
         db.Membership.update(bank_account_type="bankgiro", bank_account_number="BG 123-4566").where(
             db.Membership.id == self.ms.id
         ).execute()
-        self.assertEqual(self.save(self.main, bank_account_number="PG 123456-6"), {"status": "updated"})
+        first = {"bank_account_number": "PG 123456-6", "bank_account_revision": self.revision()}
+        self.assertEqual(self.save(self.main, **first), {"status": "updated"})
         self.assertEqual(self.stored(), (None, "PG 123456-6", None))  # the bank went with the old account
         again = {"bank_account_number": "pg 1234566", "bank_name": "Nya", "bank_account_revision": self.revision()}
         self.assertEqual(self.save(self.main, **again), {"status": "updated"})
@@ -541,8 +571,8 @@ class TestLegacyWriters(SupportAccountTest):
         admin, manager = db.User.get_by_id(self.admin.id), db.User.get_by_id(self.manager.id)
         db.Membership.update(bank_account_number=None, bank_name=None).where(db.Membership.id == self.ms.id).execute()
         empty_form = self.herd().filtered_dict(admin)  # read while there is no account
-        self.assertEqual(da.update_herd({"id": self.herds[1].id, "bank_account_number": ACCOUNT, "bank_name": "Banken"},
-                                        manager.uuid, legacy=True), {"status": "updated"})  # fmt: skip
+        first = {**self.read(manager, 1), "bank_account_number": ACCOUNT, "bank_name": "Banken"}
+        self.assertEqual(da.update_herd(first, manager.uuid, legacy=True), {"status": "updated"})
         forms = {"admin": self.herd().filtered_dict(admin), "manager": self.herd().filtered_dict(manager)}
         # then the account changes again, to one ending like the first, with another bank
         again = {**self.read(manager, 1), "bank_account_number": "9999-112", "bank_name": "Nya"}
