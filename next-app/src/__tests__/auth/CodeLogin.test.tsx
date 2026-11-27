@@ -33,12 +33,17 @@ it("shows the same delivery message and accepts grouped digits on a phone", asyn
   vi.mocked(actions.verifyLoginCode).mockResolvedValue({
     error: "invalidCode",
   });
-  render(<CodeLoginForm />);
+  const report = "/stamboken/arsrapport/G9002/2025";
+  render(<CodeLoginForm returnTo={report} />);
   fireEvent.change(screen.getByLabelText("E-postadress i matrikeln"), {
     target: { value: "member@example.org" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Skicka kod" }));
   const code = await screen.findByLabelText("Engångskod");
+  expect(actions.requestLoginCode).toHaveBeenCalledWith(
+    "member@example.org",
+    report,
+  );
   expect(screen.getByRole("status")).toHaveTextContent("inom en minut");
   expect(code).toHaveAttribute("inputmode", "numeric");
   expect(code).toHaveAttribute("autocomplete", "one-time-code");
@@ -47,7 +52,7 @@ it("shows the same delivery message and accepts grouped digits on a phone", asyn
   await screen.findByRole("alert");
   expect(actions.verifyLoginCode).toHaveBeenCalledWith(
     "01234567",
-    undefined,
+    report,
     undefined,
   );
 });

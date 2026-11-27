@@ -26,6 +26,7 @@ import {
   forgetTabWrites,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/ReportForm";
 import type { Receipt } from "@/app/(app)/stamboken/(dashboard)/arsrapport/lib";
+import "@/i18n"; // BuyerFields' labels
 import { view } from "./fixtures";
 
 // The page behind the personal link (/rapport): the same form in link mode.
@@ -57,9 +58,10 @@ const actions = (over: Partial<Record<keyof ReportActions, unknown>> = {}) =>
   }) as never as {
     [K in keyof ReportActions]: ReturnType<typeof vi.fn>;
   } & ReportActions;
-const linkForm = (a: ReportActions) => (
+const linkForm = (a: ReportActions, loginTip?: true) => (
   <ReportForm
     link
+    loginTip={loginTip}
     env="prod"
     view={view({ access: "code", source: "link" })}
     actions={a}
@@ -269,6 +271,226 @@ describe("ReportForm in link mode", () => {
         "Ärende 12 · Köpt kanin finns inte i registret: G9002-2511 · Väntar på genbanksansvarig",
       ),
     ).toBeTruthy();
+  });
+
+  it("recommends signing in on the link page only where code login is on", () => {
+    render(linkForm(actions()));
+    expect(screen.queryByText(/Logga gärna in i Stamboken/)).toBeNull();
+    cleanup();
+    render(linkForm(actions(), true));
+    expect(
+      screen.getByText(/Logga gärna in i Stamboken, så kan du sälja direkt/)
+        .textContent,
+    ).toBe(
+      "Logga gärna in i Stamboken, så kan du sälja direkt och ändra dina uppgifter. Logga in Rapporterar du åt någon annan? Fortsätt då här utan att logga in.",
+    );
+    expect(
+      screen.getByRole("link", { name: "Logga in" }).getAttribute("href"),
+    ).toBe("/auth/sign-in?return_to=/stamboken/arsrapport/G9001/2026");
+    // a full navigation, so the beforeunload guard runs: a client-side Link would call preventDefault
+    expect(
+      fireEvent.click(screen.getByRole("link", { name: "Logga in" })),
+    ).toBe(true);
+  });
+
+  it("waits for the last edit before following the sign-in tip", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    const first =
+      Promise.withResolvers<Awaited<ReturnType<ReportActions["saveDraft"]>>>();
+    const second =
+      Promise.withResolvers<Awaited<ReturnType<ReportActions["saveDraft"]>>>();
+    a.saveDraft
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    render(linkForm(a, true));
+    choose(1, "Finns kvar");
+    const anchor = screen.getByRole<HTMLAnchorElement>("link", {
+      name: "Logga in",
+    });
+    // jsdom implements same-document navigation. The destination itself is checked above.
+    anchor.href = "#signed-in";
+    expect(fireEvent.click(anchor)).toBe(false);
+    expect(a.saveDraft).toHaveBeenCalledTimes(1);
+    expect(location.hash).toBe("");
+    choose(2, "Finns kvar");
+    const saved = {
+      updated_at: "2026-12-31T10:00:00+00:00",
+      submission_key: null,
+    };
+    await act(async () => first.resolve(await ok(saved)));
+    expect(a.saveDraft).toHaveBeenCalledTimes(2);
+    expect(a.saveDraft.mock.calls[1][2].rabbits["2"].val).toBe("kvar");
+    expect(a.saveDraft.mock.calls[1][3]).toBe(saved.updated_at);
+    expect(location.hash).toBe("");
+    await act(async () => second.resolve(await ok(saved)));
+    expect(location.hash).toBe("#signed-in");
+    history.replaceState(null, "", location.pathname);
+  });
+
+  it("stays on the report when the in-flight save fails", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    const pending =
+      Promise.withResolvers<Awaited<ReturnType<ReportActions["saveDraft"]>>>();
+    a.saveDraft.mockReturnValueOnce(pending.promise);
+    render(linkForm(a, true));
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    const anchor = screen.getByRole<HTMLAnchorElement>("link", {
+      name: "Logga in",
+    });
+    anchor.href = "#signed-in";
+    expect(fireEvent.click(anchor)).toBe(false);
+    await act(async () => pending.resolve(await fail(502)));
+    expect(screen.getByText(/Inte sparat än, ingen anslutning/)).toBeTruthy();
+    expect(location.hash).toBe("");
+    expect(a.saveDraft).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks before leaving with changed member details", () => {
+    const leave = () => {
+      const e = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    render(
+      <ReportForm
+        link
+        loginTip
+        env="prod"
+        view={view({
+          access: "code",
+          source: "link",
+          member_details: { mode: "link", changes: [] },
+        })}
+        actions={actions()}
+        stickyTop={0}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Ny adress eller telefon" }),
+    );
+    expect(leave()).toBe(false);
+    fireEvent.change(screen.getByLabelText("Telefon"), {
+      target: { value: "070-000 00 00" },
+    });
+    expect(leave()).toBe(true);
+  });
+
+  it("saves again when Skicka is refused while a save was on its way", async () => {
+    vi.useFakeTimers();
+    const pending =
+      Promise.withResolvers<Awaited<ReturnType<ReportActions["saveDraft"]>>>();
+    const a = actions({
+      dryRun: vi.fn(() =>
+        ok({
+          ok: false,
+          refusals: [{ individual_id: null, code: "fel", message: "Nej" }],
+          warnings: [],
+        }),
+      ),
+    });
+    a.saveDraft.mockReturnValueOnce(pending.promise);
+    render(linkForm(a));
+    fillAll();
+    fireEvent.click(
+      screen.getByRole("radio", { name: "Inga sjukdomsfall eller defekter" }),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(a.saveDraft).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Skicka årsrapporten" }),
+      );
+    });
+    expect(a.dryRun).toHaveBeenCalledTimes(1);
+    await act(async () => pending.resolve(await fail(502)));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(a.saveDraft).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a typed buyer until discard is confirmed", () => {
+    const leave = () => {
+      const e = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    render(
+      linkForm(
+        actions({ getGenebankHerds: vi.fn(() => new Promise(() => {})) }),
+      ),
+    );
+    choose(1, "Såld");
+    fireEvent.click(screen.getByLabelText("Utanför genbanken"));
+    fireEvent.click(screen.getByRole("radio", { name: "Ja" }));
+    expect(leave()).toBe(false); // nothing typed yet
+    fireEvent.change(screen.getByLabelText(/Köparens namn/), {
+      target: { value: "Ola Köpare" },
+    });
+    expect(leave()).toBe(true);
+    const dialog = screen.getByRole("dialog");
+    const backdrop = dialog.closest(".MuiDialog-container")!;
+    for (const dismiss of [
+      () => fireEvent.keyDown(dialog, { key: "Escape" }),
+      () => {
+        fireEvent.mouseDown(backdrop);
+        fireEvent.click(backdrop);
+      },
+      () => fireEvent.click(screen.getByRole("button", { name: "Stäng" })),
+    ]) {
+      dismiss();
+      expect(screen.getByRole("alertdialog")).toBeTruthy();
+      expect(
+        screen.queryByRole("textbox", { name: /Köparens namn/ }),
+      ).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Fortsätt" }));
+      expect(screen.getByDisplayValue("Ola Köpare")).toBeTruthy();
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Avbryt" }));
+    fireEvent.click(screen.getByText("Stäng"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(leave()).toBe(false);
+  });
+
+  it("asks before the tab is closed only while a typed buyer is unsent", () => {
+    const leave = () => {
+      const e = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    render(
+      linkForm(
+        actions({ getGenebankHerds: vi.fn(() => new Promise(() => {})) }),
+      ),
+    );
+    fillAll();
+    expect(leave()).toBe(false);
+    choose(1, "Såld");
+    fireEvent.click(screen.getByLabelText("Utanför genbanken"));
+    fireEvent.click(screen.getByRole("radio", { name: "Ja" }));
+    for (const [label, value] of [
+      [/Köparens namn/, "Ola Köpare"],
+      [/^Ort/, "Visby"],
+      [/^Postadress/, "Testgatan 1"],
+      [/^E-post/, "ola@example.invalid"],
+    ] as const)
+      fireEvent.change(screen.getByLabelText(label), { target: { value } });
+    fireEvent.change(screen.getByLabelText("Månad"), {
+      target: { value: "6" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Spara försäljningen" }),
+    );
+    expect(leave()).toBe(true);
+    choose(1, "Finns kvar"); // the sale is gone, and the buyer with it
+    expect(leave()).toBe(false);
   });
 
   it("links the register extract above the rabbits", () => {
