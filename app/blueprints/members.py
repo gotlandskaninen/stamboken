@@ -737,7 +737,14 @@ def patch_me_consent():
         # (fail-closed).
         merged = {k: v is True for k, v in stored_consent(ms).items() if k in CONSENT_KEYS}
         merged.update(updates)
-        set_consent(ms, merged, source="profil", text_version=CONSENT_TEXT_VERSION, user=current_user.id)
+        set_consent(
+            ms,
+            merged,
+            source="profil",
+            text_version=CONSENT_TEXT_VERSION,
+            user=current_user.id,
+            whole_answer=len(updates) == len(CONSENT_KEYS),
+        )
     return jsonify(_me_response(m))
 
 

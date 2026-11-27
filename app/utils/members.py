@@ -14,11 +14,12 @@ membership → user → person FOR UPDATE itself. Callers pass ids only.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 
-from peewee import fn
+from peewee import JOIN, fn
 
-from utils.database import MatrikelAudit, Member, Membership, PublicationConsentChange, User
+from utils.database import MatrikelAudit, Member, Membership, PublicationConsentChange, User, YearlyReportSubmission
 from utils.matrikel import ConfirmRequired, LinkError, link_member_user
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,7 @@ CONSENT_TEXT_VERSION = "2026-11-20"  # the profile asks the same question since 
 # new text that says more applies only after a new answer (5.11). A bump that says more drops the older versions here.
 CONSENT_TEXT_VERSIONS = ("2026-11", "2026-11-16", "2026-11-18", CONSENT_TEXT_VERSION)
 NEJ = dict.fromkeys(CONSENT_KEYS, False)
+STOCKHOLM = ZoneInfo("Europe/Stockholm")
 
 # Only Phase 9-provisioned Workspace addresses may auto-link. The
 # /api/auth/google flow enforces this domain, but the flask-dance
@@ -56,6 +58,16 @@ def holder_since(membership_ids) -> dict[int, datetime]:
     return {row.membership_id: row.since.astimezone() for row in rows}  # created_at is naive server time
 
 
+def paper_signature(signed_on, received_on, confirmed):
+    """Older forms and stored submissions filled a missing signature with the receipt date."""
+    return signed_on if confirmed is True or (received_on is not None and signed_on != received_on) else None
+
+
+def paper_from_holder(signed_on: date | None, since: datetime | None) -> bool:
+    """A day-only signature can identify the new holder only from the day after the change."""
+    return since is None or (signed_on is not None and signed_on > since.astimezone(STOCKHOLM).date())
+
+
 def counted_answers(membership_ids) -> set[int]:
     """
     The memberships whose stored answer counts (5.11): its latest publication_consent_change row answers this
@@ -64,14 +76,35 @@ def counted_answers(membership_ids) -> set[int]:
     """
     change, ids = PublicationConsentChange, list(membership_ids)
     last = change.select(fn.MAX(change.id)).where(change.membership.in_(ids)).group_by(change.membership)
-    rows = change.select(change.membership, change.text_version, change.at).where(change.id.in_(last))
+    sub = YearlyReportSubmission
+    rows = (
+        change.select(
+            change.membership,
+            change.at,
+            change.source,
+            sub.data["signed_on"],
+            sub.data["received_on"],
+            sub.data["signed_on_confirmed"].as_json(),
+        )
+        .join(sub, JOIN.LEFT_OUTER, on=(change.submission_id == sub.id))
+        .where(change.id.in_(last), change.text_version.in_(CONSENT_TEXT_VERSIONS))
+        .tuples()
+    )
     since = holder_since(ids)
-    return {
-        row.membership_id
-        for row in rows
-        if row.text_version in CONSENT_TEXT_VERSIONS
-        and (row.membership_id not in since or row.at >= since[row.membership_id])
-    }
+    counted = set()
+    for membership_id, at, source, signed, received, confirmed in rows:
+        start = since.get(membership_id)
+        if start is not None and at < start:
+            continue
+        if start is not None and source == "paper":
+            try:
+                day = date.fromisoformat(paper_signature(signed, received, confirmed))
+            except (TypeError, ValueError):
+                day = None
+            if not paper_from_holder(day, start):
+                continue
+        counted.add(membership_id)
+    return counted
 
 
 def stored_consent(row, counted=None) -> dict:
@@ -119,15 +152,17 @@ def consent_from_answer(ja: bool, utom: list[str]) -> dict[str, bool]:
     return {key: ja and key not in utom for key in CONSENT_KEYS}
 
 
-def set_consent(membership, value, *, source, text_version, user=None, report=None, submission=None, at=None) -> bool:
+def set_consent(
+    membership, value, *, source, text_version, user=None, report=None, submission=None, at=None, whole_answer=False
+) -> bool:
     """
     Writes `value` as the membership's publication consent, with one publication_consent_change row (D9, art. 7.1),
     when it differs from the stored answer to this question, `{}` included: the same answer to an older text is new.
-    A Nej is written also when unchanged: an explicit Nej wins over an older Ja, so a form signed before it must see
-    it (later_fields). Consent only: never the whole row. A report's write names its `report` and `submission` ids.
+    Record a whole answer even when unchanged: a form signed before it must respect the holder's exclusions.
+    Consent only: never the whole row. A report's write names its `report` and `submission` ids.
     The caller holds the membership's lock. Returns whether it wrote.
     """
-    if value == stored_consent(membership) and value != NEJ:
+    if not whole_answer and value != NEJ and value == stored_consent(membership):
         return False
     membership.publication_consent = value
     membership.save(only=[Membership.publication_consent, Membership.updated_at])

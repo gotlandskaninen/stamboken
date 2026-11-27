@@ -15,7 +15,6 @@ from collections import Counter
 from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
-from zoneinfo import ZoneInfo
 
 from flask import current_app
 from peewee import JOIN, IntegrityError, OperationalError, fn
@@ -116,17 +115,17 @@ from utils.matrikel import (
 from utils.members import (
     CONSENT_TEXT_VERSION,
     CONSENT_TEXT_VERSIONS,
-    NEJ,
+    STOCKHOLM,
     consent_from_answer,
     effective_consent,
     holder_since,
+    paper_from_holder,
+    paper_signature,
     set_consent,
-    stored_consent,
 )
 from utils.reference_population import _alive_by_note
 from utils.report_code import actor_key
 
-STOCKHOLM = ZoneInfo("Europe/Stockholm")
 BLANK_FORM = "arsrapport/arsblankett.pdf"  # under settings.service.private_upload_folder (D14)
 STATES = ("avslutar", "inskickad", "blankett_vantar", "blankett_inkommen", "paborjad", "ingen_epost", "ej_rapporterad")
 DATE_FIELDS = ("start_date", "deadline", "end_date")
@@ -1490,7 +1489,7 @@ BODY_KEYS = (
     "defects",
     "message",
 )
-PAPER_KEYS = ("inbox_item_id", "received_on", "signed_on", "matrikel")
+PAPER_KEYS = ("inbox_item_id", "received_on", "signed_on", "signed_on_confirmed", "matrikel")
 PAPER_FIELDS = ("konto", "adress", "telefon", "epost", "publicering")  # the form's "Dina uppgifter"
 MATRIKEL_PARTS = {"adress": ("address", "postal_code", "city"), "konto": ("clearing", "konto", "bank")}
 UTOM = ("phone", "email", "address")  # the consent keys a Ja may leave out; the name never
@@ -1527,7 +1526,7 @@ class Submission:
     reason: str | None
     rabbits: dict[int, RabbitEntry]
     report: dict  # yearlyherdreport.data (section 6); not_weighed and not_stated come from the rabbits
-    paper: dict | None  # inbox_item_id, received_on, signed_on (default received_on), matrikel
+    paper: dict | None  # inbox_item_id, received_on, signed_on (None if unknown), matrikel
 
 
 def _bad(field_, detail):
@@ -1667,9 +1666,10 @@ def _paper(body):
     if not _is_int(item_id):
         raise _bad("inbox_item_id", "Ange posten som ett nummer.")
     received = _day(body.get("received_on"), "received_on")  # P40: required, the client always sends it
-    signed = _day(body["signed_on"], "signed_on") if body.get("signed_on") is not None else received
-    if signed > received:
+    signed = _day(body["signed_on"], "signed_on") if body.get("signed_on") is not None else None
+    if signed is not None and signed > received:
         raise _bad("signed_on", "Blankettens datum kan inte vara senare än dagen den kom in.")
+    signed = paper_signature(signed, received, body.get("signed_on_confirmed"))
     return {"inbox_item_id": item_id, "received_on": received, "signed_on": signed, "matrikel": _matrikel(body)}
 
 
@@ -2474,39 +2474,42 @@ def _matrikel_refusals(herd, paper, submissions, *, check_email):
         and login_address_taken(email, member.id)
     ):
         # A more recent matrikel change takes precedence, so this address would never be written.
-        later = later_fields(herd, member.membership, member, paper["signed_on"], {s.id for s in submissions})
+        later, _ = _paper_conflicts(herd, member.membership, member, paper, {s.id for s in submissions})
         if "epost" not in later:
             refusals.append(_refusal(None, "epost_kan_inte_anvandas"))
     return refusals
 
 
-def later_fields(herd, membership, member, signed_on: date, own=frozenset()) -> set[str]:
+def _paper_conflicts(herd, membership, member, paper, own) -> tuple[set[str], bool]:
     """
-    D19: the PAPER_FIELDS the matrikel changed after the form's date, that is from the next day in Stockholm: the
-    account by the herd's audit_log, the consent by publication_consent_change, and the rest by matrikel_audit, whose
-    created_at is naive server time. Phone and e-mail count only from rows about `member`, and every swap of the main
-    member counts for them (I2). The paper writes of the submissions in `own`, the herd's report for the round, do not
+    D19: conflicting fields and whether the form can speak for the current main member. Contact changes count from
+    the next day in Stockholm (using receipt for an undated form). Consent changes count from the signature day,
+    or all history if undated. The paper writes of the submissions in `own`, the herd's report for the round, do not
     count, so that Ändra from paper can correct its own typo (I1): their kontakt_andrad rows, the herd's audit rows
     of the same transactions, and their paper consent rows. That holds only for a form not withdrawn and signed on or
     before `signed_on`: a newer signed form's write still wins over an older form entered after it.
     """
     # shortcut: the matrikel importer in cli/members.py leaves no trace, so this misses its changes; log them if it
     # ever runs during a round.
-    after = datetime.combine(signed_on + timedelta(days=1), datetime.min.time(), STOCKHOLM)
+    signed_on = paper["signed_on"]
+    day = signed_on or paper["received_on"]
+    midnight = datetime.combine(day, datetime.min.time(), STOCKHOLM)
+    after = midnight + timedelta(days=1)
     own = {
         submission.id
-        for submission in YearlyReportSubmission.select(YearlyReportSubmission.id, YearlyReportSubmission.data)
+        for submission in YearlyReportSubmission.select(YearlyReportSubmission.id)
         .join(YearlyHerdReport)
         .where(
             YearlyReportSubmission.id.in_(own),
             YearlyReportSubmission.source == "paper",
             YearlyHerdReport.status != "voided",
+            fn.COALESCE(YearlyReportSubmission.data["signed_on"], YearlyReportSubmission.data["received_on"])
+            <= day.isoformat(),
         )
-        if date.fromisoformat(submission.data["signed_on"]) <= signed_on
     }
-    audits = MatrikelAudit.select(MatrikelAudit.action, MatrikelAudit.payload).where(
+    audits = MatrikelAudit.select(MatrikelAudit.payload).where(
         MatrikelAudit.membership == membership.id,
-        MatrikelAudit.action.in_(("membership_updated", "person_updated", "kontakt_andrad", "main_member_changed")),
+        MatrikelAudit.action.in_(("membership_updated", "person_updated", "kontakt_andrad")),
         MatrikelAudit.created_at >= after.astimezone().replace(tzinfo=None),
     )
     fields, transactions = set(), set()
@@ -2515,8 +2518,6 @@ def later_fields(herd, membership, member, signed_on: date, own=frozenset()) -> 
         if payload.get("submission_id") in own:
             transactions.add(payload.get("transaction_id"))
             continue
-        if audit.action == "main_member_changed":  # the form's signer may not be the main member written to
-            fields |= {"telefon", "epost"}
         mine = payload.get("person_id", member.id) == member.id  # membership_updated names no person
         for column in payload.get("fields") or payload.get("after") or ():
             if column in COLUMN_FIELDS and (mine or COLUMN_FIELDS[column] == "adress"):
@@ -2532,12 +2533,16 @@ def later_fields(herd, membership, member, signed_on: date, own=frozenset()) -> 
         fields.add("konto")
     consent = PublicationConsentChange.select(PublicationConsentChange.submission_id).where(
         PublicationConsentChange.membership == membership.id,
-        PublicationConsentChange.at >= after,
         PublicationConsentChange.text_version.in_(CONSENT_TEXT_VERSIONS),  # an answer to an older text is none (5.11)
     )
-    if any(row.submission_id not in own for row in consent):  # a profile row has none
+    if signed_on is not None:
+        consent = consent.where(PublicationConsentChange.at >= midnight)
+    if any(signed_on is None or row.submission_id not in own for row in consent):
         fields.add("publicering")
-    return fields
+    current_holder = paper_from_holder(signed_on, holder_since([membership.id]).get(membership.id))
+    if not current_holder:
+        fields.update(("telefon", "epost"))
+    return fields, current_holder
 
 
 def _same(column, stored, value):
@@ -2548,7 +2553,7 @@ def _same(column, stored, value):
     return (stored.lower() if column == "email" else stored) == value
 
 
-def apply_paper_matrikel(herd, membership, member, submission, item, user, matrikel, signed_on):
+def apply_paper_matrikel(herd, membership, member, submission, item, user, paper):
     """
     5.5: the form's consent and contact changes written into the matrikel and never read back: the consent first and
     the address to `membership`, phone and e-mail to its main `member`, the account to the herd (D8). The caller holds
@@ -2565,6 +2570,7 @@ def apply_paper_matrikel(herd, membership, member, submission, item, user, matri
     same = (YearlyHerdReport.herd == report.herd_id) & (YearlyHerdReport.round == report.round_id)
     own = YearlyReportSubmission.select(YearlyReportSubmission.id).join(YearlyHerdReport).where(same)
     rows = {"adress": membership, "telefon": member, "epost": member, "konto": stored}
+    matrikel = paper["matrikel"] or {}
     changes = {}
     for name, columns in _contact(matrikel)[0].items():
         row = rows[name]
@@ -2577,22 +2583,22 @@ def apply_paper_matrikel(herd, membership, member, submission, item, user, matri
             }
         if differ:
             changes[name] = differ
-    answer = (matrikel or {}).get("publicering")
+    answer = matrikel.get("publicering")
+    if answer is None and not changes:
+        return [], []
     consent = consent_from_answer(answer["ja"], answer["utom"]) if answer is not None else None
-    consent = None if consent == stored_consent(membership) and consent != NEJ else consent  # a Nej always counts
-    # The answer is the signer's: a form signed on or before the day the main member changed is the former one's (5.11)
-    since = holder_since([membership.id]).get(membership.id)
-    former = consent is not None and since is not None and since.astimezone(STOCKHOLM).date() >= signed_on
-    consent = None if former else consent
-    asked = changes or consent is not None
-    later = later_fields(stored, membership, member, signed_on, {row.id for row in own}) if asked else set()
-    skipped = [name for name in PAPER_FIELDS if name in changes and name in later] + (["publicering"] if former else [])
+    later, current_holder = _paper_conflicts(stored, membership, member, paper, own)
+    skipped = [name for name in PAPER_FIELDS if name in changes and name in later]
     written = {name: changes[name] for name in PAPER_FIELDS if name in changes and name not in later}
-    if consent is not None and "publicering" in later:  # only what the form adds waits for the member
+    if consent is not None and not current_holder:
+        skipped.append("publicering")
+        consent = None
+    elif consent is not None and "publicering" in later:  # only what the form adds waits for the member
         current = effective_consent(membership)
         narrowed = {key: allowed and current[key] for key, allowed in consent.items()}
-        skipped += ["publicering"] if narrowed != consent else []
-        consent = narrowed if narrowed != current else None  # a stored blob of fewer keys is no reason to write
+        if narrowed != consent:
+            skipped.append("publicering")
+            consent = narrowed if narrowed != current else None
     consented = consent is not None and set_consent(
         membership,
         consent,
@@ -2602,6 +2608,7 @@ def apply_paper_matrikel(herd, membership, member, submission, item, user, matri
         report=submission.report_id,
         submission=submission.id,
         at=submission.created_at,
+        whole_answer=True,
     )
     old_email = member.email
     if "epost" in written:
@@ -2679,7 +2686,7 @@ def log_and_mail_paper_contact(herd, item, submission, user, member, fields, ski
 
 
 def _later_change(name):
-    message = f"Matrikeln har ändrats efter blankettens datum ({FIELD_LABELS[name]}). Fråga medlemmen."
+    message = f"Kontrollera blankettens uppgift om {FIELD_LABELS[name]} med medlemmen."
     return Refusal(None, "senare_andring", message)
 
 
@@ -2698,7 +2705,7 @@ def _lock_matrikel(herd):
     """
     The herd's membership FOR UPDATE, which the matrikel's own writers take first, then the herd's row, whose account
     apply_paper_matrikel checks and writes (Opus 5): an account change on the herd page waits, or comes before
-    later_fields reads it. FOR NO KEY UPDATE, as lock_individuals, so rows that refer to the herd are not held up.
+    the paper conflict check. FOR NO KEY UPDATE, as lock_individuals, so rows that refer to the herd are not held up.
     The main member is read under them: (membership, member), each None when missing. A herd moved to another
     membership meanwhile is a 409.
     """
@@ -2766,6 +2773,12 @@ def request_hash(sub: Submission) -> str:
     matrikel and every buyer. Nothing in it depends on today, so a retry from an old tab matches.
     """
     fields = {name: value for name, value in asdict(sub).items() if name not in ("key", "revision")}
+    if paper := fields["paper"]:
+        # Keep retries from the old form (which defaulted signed_on to received_on) on their original receipt.
+        if paper["signed_on"] == paper["received_on"]:
+            paper["signed_on_confirmed"] = True
+        elif paper["signed_on"] is None:
+            paper["signed_on"] = paper["received_on"]
     canonical = json.dumps(fields, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
     return hmac.new(current_app.secret_key.encode(), canonical.encode(), hashlib.sha256).hexdigest()
 
@@ -2854,6 +2867,8 @@ def submitted_body(sub: Submission) -> dict:
     if sub.paper is not None:
         paper = sub.paper
         body |= {"inbox_item_id": paper["inbox_item_id"]} | {k: _iso(paper[k]) for k in ("received_on", "signed_on")}
+        if paper["signed_on"] == paper["received_on"]:
+            body["signed_on_confirmed"] = True  # distinguish an entered date from the old receipt-date default
     return body
 
 
@@ -3271,8 +3286,7 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
             raise ArsrapportError(409, KEY_TAKEN) from exc
         _propose(report, submission, proposed)
         if member is not None:  # check() refused a contact change without one (ingen_huvudmedlem)
-            matrikel, signed = sub.paper["matrikel"], sub.paper["signed_on"]
-            fields, skipped = apply_paper_matrikel(herd, membership, member, submission, item, user, matrikel, signed)
+            fields, skipped = apply_paper_matrikel(herd, membership, member, submission, item, user, sub.paper)
             log_and_mail_paper_contact(herd, item, submission, user, member, fields, skipped, old_email)
         for page in pages:  # every page of the form; the photo goes once the report cannot be withdrawn (fråga 31)
             page.done_at, page.purge_after = page.done_at or at, at + timedelta(days=WITHDRAW_DAYS)
