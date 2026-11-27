@@ -340,7 +340,8 @@ för en post med `ref_type` `sale_proposal`, vars statusvy avgör förslaget, oc
   lästes bredvid kaninen: mor och far, far- och morföräldrarna, födelsedatum, antal, namn, kön och färg
   är `läst` (eller `härlett`) när de är kaninens, annars `avviker` med kaninens värde som `registry`.
   Med digitalt intyg och allt i ordning finns bara `individual`. `checks` är kontrollerna i ord; `ok` är
-  `true`, `false` eller `null` (upplysning).
+  `true`, `false` eller `null` (upplysning). Den som inte arbetar i postens genbank, men ser posten i kön,
+  får bara det fotot visar: varje fälts `source` och `read`, och inga `checks`.
   Förslaget sparas aldrig av sig självt: det är handläggarens `…/spara` som skriver.
 - `individual`: kaninens nummer när dokumentet är sparat, annars `null`.
 - `herd_tracking_id`: raden i besättningshistoriken för försäljningen som registrerats genom
@@ -787,12 +788,12 @@ värde för raden: ett nummer med kaninens namn, ett datum ÅÅÅÅ-MM-DD, ett a
 Bara det inskrivna slås upp, aldrig det tolkningen läste: en förälder som bara är läst väljer aldrig
 en kull. Ett nummer slås upp med bokstaven som den skrivits. Allt söks i postens genbank. En post utan
 genbank söker i den genbank vars besättningar börjar med bokstaven i det inskrivna numret
-(`individual`, annars `paper_number`), men bara om anroparen arbetar i den genbanken; annars jämförs
-inget och kontrollen säger det. En kanin eller kull nämns bara för den som får läsa den, som i
+(`individual`, annars `paper_number`), men bara om anroparen arbetar i den genbanken (läsrätt räcker
+inte); annars jämförs inget och kontrollen säger det. En kanin eller kull nämns bara för den som får läsa den, som i
 `GET /api/v2/individual/{nummer}`: kaninens besättning är i en av anroparens genbanker. En annan står
 som `"en kanin i en annan genbank"` och jämförs inte. `stammer` betyder det `…/spara` tar emot: ett
-intygsnummer jämförs som det skrivits, bara utan mellanslag först och sist, och en färg bara med
-genbankens stavning.
+intygsnummer jämförs som det skrivits, bara utan mellanslag först och sist, och är det längre än 20
+tecken skiljer det sig. En färg stämmer bara med genbankens stavning.
 
 - `pappersintyg`: finns `individual` i genbanken kommer varje rads `registry` från den kaninen:
   numret, intygsnumret, namnet, könet, färgen, kullens födelsedatum och antal, mor och far, och deras
@@ -800,7 +801,8 @@ genbankens stavning.
   `"digitalt intyg"`, och en kontroll säger att pappersintyget ersätter det digitala när det sparas.
 - `ny_kanin`: mor och far är kaninerna med de inskrivna numren, och far- och morföräldrarna är deras
   föräldrar i registret. Har mor och far rätt kön och är födelsedatumet helt prövas `paper_number` som
-  vid registreringen: `registry` är numret Stamboken ger. Födelsedatum och antal kommer från deras
+  vid registreringen: `registry` är numret Stamboken ger, skrivet som registreringen skriver det
+(G1-25012 är G1-2512). Födelsedatum och antal kommer från deras
   kull född samma dag, om den finns. `paper_certificate` stämmer med `registry: "ledigt"` när
   intygsnumret är ledigt. En kanin i genbanken som redan har det står som `registry`; finns det i en
   annan genbank står `"används redan"`. `color` stämmer när färgen finns i genbankens färglista.
