@@ -400,7 +400,7 @@ export function ReportForm({
   const [receivedOn, setReceivedOn] = React.useState(() =>
     item ? stockholmDay(item.received_at) : "",
   );
-  const [signedOn, setSignedOn] = React.useState<string | null>(null); // null: the day it came in
+  const [signedOn, setSignedOn] = React.useState("");
   const [entered, setEntered] = React.useState<number[]>(() =>
     enteredFrom(view.rabbits, startFrom(view, isPaper)),
   );
@@ -1087,9 +1087,8 @@ export function ReportForm({
       view.rabbits.map((r) => r.id),
     );
     if (isPaper) {
-      const signed = signedOn ?? receivedOn;
       if (!receivedOn) return fail("Ange dagen blanketten kom in.");
-      if (signed > receivedOn)
+      if (signedOn > receivedOn)
         return fail(
           "Blankettens datum kan inte vara senare än dagen den kom in.",
         );
@@ -1098,7 +1097,7 @@ export function ReportForm({
         ...body,
         inbox_item_id: item.id,
         received_on: receivedOn,
-        signed_on: signed,
+        ...(signedOn ? { signed_on: signedOn, signed_on_confirmed: true } : {}),
         ...(matrikel ? { matrikel } : {}),
       };
     }
@@ -1780,7 +1779,7 @@ export function ReportForm({
                       type="date"
                       className={styles.field}
                       style={{ width: "100%", boxSizing: "border-box" }}
-                      value={signedOn ?? receivedOn}
+                      value={signedOn}
                       max={receivedOn || undefined}
                       onChange={(e) => setSignedOn(e.target.value)}
                     />

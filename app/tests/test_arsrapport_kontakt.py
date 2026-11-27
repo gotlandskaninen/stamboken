@@ -61,7 +61,7 @@ def later(field):
     return {
         "individual_id": None,
         "code": "senare_andring",
-        "message": f"Matrikeln har ändrats efter blankettens datum ({field}). Fråga medlemmen.",
+        "message": f"Kontrollera blankettens uppgift om {field} med medlemmen.",
     }
 
 
@@ -588,7 +588,7 @@ class KontaktTest(PaperTest):
 
         lock = first('FROM "herd"', "FOR NO KEY UPDATE")
         self.assertIsNotNone(lock)
-        self.assertLess(lock, first('FROM "audit_log"'))  # later_fields reads the account's changes under it
+        self.assertLess(lock, first('FROM "audit_log"'))  # read the account's changes under the lock
         self.assertLess(lock, first('UPDATE "herd"'))
 
     def test_profile_contact_change_is_logged(self):  # D19
