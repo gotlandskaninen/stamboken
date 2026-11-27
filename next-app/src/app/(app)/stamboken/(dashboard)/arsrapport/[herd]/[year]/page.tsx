@@ -56,7 +56,7 @@ export default async function ReportPage({
     const item = await fetchApi<InboxDetail>(`/v2/inkorg/${post}`);
     return (
       <PaperEntry
-        key={env}
+        key={`${env}:${post}`}
         env={env}
         view={view}
         item={item}

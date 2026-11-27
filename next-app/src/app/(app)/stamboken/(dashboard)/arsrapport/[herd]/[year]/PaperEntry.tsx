@@ -9,6 +9,7 @@ import { turn } from "../../../inkorg/image";
 import { updateDocument } from "../../../inkorg/actions";
 import { PhotoViewer } from "../../../inkorg/[id]/PhotoViewer";
 import type { InboxDetail } from "../../../inkorg/lib";
+import { nextPaperForm } from "../../actions";
 import { formDocumentIds, intygPending, type ReportView } from "../../lib";
 import { ReportForm, type ReportActions } from "../../ReportForm";
 import styles from "../../arsrapport.module.css";
@@ -36,6 +37,7 @@ export function PaperEntry({
   env: Mode;
 }) {
   const router = useRouter();
+  const leaving = React.useRef(false);
   const { showSnackbar } = useSnackbar();
   const mode = useMode();
   const apiBase =
@@ -107,9 +109,16 @@ export function PaperEntry({
           intygPending: intygPending(item),
           archive: (id) =>
             updateDocument(item.id, id, { dismissed: true }, env),
-          leave: (message) => {
-            showSnackbar(message);
-            router.push("/stamboken/inkorg");
+          leave: async (message, destination) => {
+            if (leaving.current) return;
+            leaving.current = true;
+            const inbox = "/stamboken/inkorg";
+            const href =
+              destination === "next"
+                ? await nextPaperForm(view.year, env).catch(() => inbox)
+                : inbox;
+            if (message) showSnackbar(message);
+            router.push(href);
           },
         }}
       />

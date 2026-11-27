@@ -1162,26 +1162,25 @@ const AFTER_VAL: Record<string, PaperField> = {
   dod: "month",
   sald: "sold",
 };
-export function paperKey(state: PaperState, key: string): PaperState {
+export function paperKey(
+  state: PaperState,
+  key: string,
+  weight = "",
+): PaperState {
   const { field } = state;
   if (field === "val" && key in VAL_KEYS) {
     const val = VAL_KEYS[key];
     return { field: AFTER_VAL[val], val };
   }
-  if (key === "Enter" || key === "Tab") {
-    if (field === "number" && key === "Enter")
-      return { ...state, field: "val" };
+  if (key === "Tab") {
     if (field === "vikt") return { ...state, field: "ej_vagd" };
     if (field === "ej_vagd") return { ...state, field: "hull" };
-    // a dead rabbit: month, day, Slaktad, Anteckning, then the next row
-    if (key === "Enter" && field === "month") return { ...state, field: "day" };
-    if (key === "Enter" && field === "day")
-      return { ...state, field: "slaktad" };
-    if (key === "Enter" && field === "slaktad")
-      return { ...state, field: "note" };
-    // the last field of a row: Enter starts the next row
-    if (key === "Enter" && ["hull", "note", "sold"].includes(field))
-      return { ...state, field: "number" };
+  }
+  if (key === "Enter") {
+    if (field === "number") return { ...state, field: "val" };
+    if (field === "vikt" && !weight.trim())
+      return { ...state, field: "ej_vagd" };
+    if (field !== "val") return { ...state, field: "number" };
   }
   return state;
 }

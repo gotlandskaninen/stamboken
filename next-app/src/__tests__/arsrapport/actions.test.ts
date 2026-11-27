@@ -21,6 +21,7 @@ import {
   dryRun,
   dryRunCompletion,
   newLink,
+  nextPaperForm,
   saveDraft,
   saveRound,
   sellNow,
@@ -62,6 +63,52 @@ beforeEach(() => {
 });
 
 describe("arsrapport actions", () => {
+  const rounds = {
+    rounds: [
+      {
+        year: 2026,
+        start_date: "2026-12-31",
+        end_date: "2027-03-31",
+        genebanks: [{ genebank_id: 1 }],
+      },
+    ],
+  };
+  it("opens the first available paper entry across pages and competing claims", async () => {
+    const item = { id: 8, genebank_id: 1, herd: "G9002" };
+    const conflict = { status: 409, title: "Conflict", detail: "Taget." };
+    fetchApi
+      .mockResolvedValueOnce(rounds)
+      .mockResolvedValueOnce({
+        items: [{ id: 2, genebank_id: 2, herd: "M9001" }],
+        total: 3,
+      })
+      .mockResolvedValueOnce({ items: [{ ...item, id: 3 }, item], total: 3 })
+      .mockRejectedValueOnce(Object.assign(new ApiError(conflict), conflict))
+      .mockResolvedValueOnce(item);
+    expect(await nextPaperForm(2025, "demo")).toBe(
+      "/stamboken/arsrapport/G9002/2026?post=8",
+    );
+    expect(fetchApi.mock.calls.map(([url]) => url)).toEqual([
+      "/v2/arsrapport/rundor",
+      "/v2/inkorg?paper_entry=1&offset=0",
+      "/v2/inkorg?paper_entry=1&offset=1",
+      "/v2/inkorg/3/ta",
+      "/v2/inkorg/8/ta",
+    ]);
+    expect(fetchApi.mock.calls.at(-1)?.[1]).toMatchObject({
+      method: "POST",
+      isolateDemo: true,
+    });
+  });
+
+  it("returns to the inbox when the paper queue is empty", async () => {
+    fetchApi
+      .mockResolvedValueOnce(rounds)
+      .mockResolvedValueOnce({ items: [], total: 0 });
+    expect(await nextPaperForm(2026, "demo")).toBe("/stamboken/inkorg");
+    expect(fetchApi).toHaveBeenCalledTimes(2);
+  });
+
   it.each([
     ["/komplettera/torrkorning", dryRunCompletion, linkDryRunCompletion],
     ["/komplettera", submitCompletion, linkSubmitCompletion],

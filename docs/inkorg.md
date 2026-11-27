@@ -490,6 +490,7 @@ Kölistan, äldst först (`received_at`). Ett foto från årsrapporten som håll
 | `herd=<besättningsnummer>` | en besättning |
 | `state=<läge>[,<läge>…]` | ett eller flera lägen; utan `state` gäller vald vy, annars alla öppna; `state=alla` lägger inte till något lägesfilter |
 | `kind=<typ>` | posttyp |
+| `paper_entry=1` | öppna ärenden med besättning och en oavslutad årsblankett, utan annan ärendekoppling, som är otagna eller tilldelade anroparen |
 | `limit`, `offset` | sidindelning; `limit` 1–200, standard 50 |
 
 **Svar 200:**

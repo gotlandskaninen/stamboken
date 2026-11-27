@@ -4,8 +4,10 @@ import { cookies } from "next/headers";
 import { fetchApi, ApiError } from "@/lib/api";
 import { MODE_COOKIE, parseMode, type Mode } from "@/lib/mode";
 import type { ActionResult } from "../inkorg/actions";
+import { reportYears, type QueueList, type RoundRow } from "../inkorg/lib";
 import {
   SUBMIT_TIMEOUT_MS,
+  todayStockholm,
   type Completion,
   type DraftData,
   type Father,
@@ -128,6 +130,50 @@ export async function submitReport(
     timeout: SUBMIT_TIMEOUT_MS,
     isolateDemo: true,
   });
+}
+
+export async function nextPaperForm(year: number, env: Mode): Promise<string> {
+  const inbox = "/stamboken/inkorg";
+  const rounds = await call<{ rounds: RoundRow[] }>(
+    env,
+    "/v2/arsrapport/rundor",
+    "GET",
+    undefined,
+    { isolateDemo: true },
+  );
+  if (!rounds.ok) return inbox;
+  const today = todayStockholm();
+  let offset = 0;
+  while (true) {
+    const page = await call<QueueList>(
+      env,
+      `/v2/inkorg?paper_entry=1&offset=${offset}`,
+      "GET",
+      undefined,
+      { isolateDemo: true },
+    );
+    if (!page.ok || !page.data.items.length) return inbox;
+    for (const item of page.data.items) {
+      const years = reportYears(rounds.data.rounds, item.genebank_id, today);
+      if (!item.herd || !years.length) continue;
+      // /ta also resumes our own waiting item. It refuses a competing claim under the item lock.
+      const taken = await call(
+        env,
+        `/v2/inkorg/${item.id}/ta`,
+        "POST",
+        undefined,
+        { isolateDemo: true },
+      );
+      if (!taken.ok) {
+        if (![404, 409].includes(taken.problem.status)) return inbox;
+        continue;
+      }
+      const nextYear = years.includes(year) ? year : years[0];
+      return `/stamboken/arsrapport/${item.herd}/${nextYear}?post=${item.id}`;
+    }
+    if (offset + page.data.items.length >= page.data.total) return inbox;
+    offset += page.data.items.length; // an item lost to another helper may be skipped, never looped on
+  }
 }
 
 export async function dryRunCompletion(

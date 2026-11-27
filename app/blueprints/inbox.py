@@ -399,6 +399,17 @@ def queue():
         query = query.where(InboxItem.herd.in_(matching))
     if args.get("kind"):
         query = query.where(InboxItem.kind == args["kind"])
+    if args.get("paper_entry") == "1":
+        forms = InboxDocument.select(InboxDocument.item).where(
+            InboxDocument.doc_type == "arsblankett", InboxDocument.done_at.is_null()
+        )
+        query = query.where(
+            InboxItem.id.in_(forms),
+            InboxItem.herd.in_(Herd.select(Herd.id).where(Herd.herd.not_in(OUTSIDE_GENEBANK_HERDS))),
+            InboxItem.ref_type.is_null(),
+            open_item,
+            InboxItem.assigned_to.is_null() | (InboxItem.assigned_to == current_user.id),
+        )
     counts = dict(query.select(InboxItem.state, fn.COUNT(InboxItem.id)).group_by(InboxItem.state).tuples())
     if mode:
         query = query.where(modes[mode])

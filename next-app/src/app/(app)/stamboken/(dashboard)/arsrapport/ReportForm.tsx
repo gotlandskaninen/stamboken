@@ -102,7 +102,7 @@ export interface PaperProps {
   documentIds: number[]; // formDocumentIds(item): the form pages still open
   intygPending: boolean; // the item's intyg come first (5.8)
   archive: (documentId: number) => Promise<ActionResult<unknown>>; // dismiss one page
-  leave: (message: string) => void; // back to the queue, with a message
+  leave: (message: string | null, destination: "next" | "inbox") => void;
 }
 const QUEUE = "/stamboken/inkorg";
 const UNSTATED: Entry = { ...EMPTY_ENTRY, val: "ej_angiven" };
@@ -894,10 +894,19 @@ export function ReportForm({
     if (!field || !row || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey)
       return;
     const id = Number(row.id.slice("rabbit-".length));
-    const before = { field, val: stateRef.current.rabbits[id]?.val ?? null };
-    const next = paperKey(before, e.key);
+    const entry = stateRef.current.rabbits[id];
+    const before = { field, val: entry?.val ?? null };
+    const next = paperKey(before, e.key, entry?.vikt);
     if (next.field === before.field && next.val === before.val) return;
     e.preventDefault();
+    // Enter ticks Ej vägd only for a row with no weight: the toggle clears a typed weight
+    if (
+      e.key === "Enter" &&
+      field === "ej_vagd" &&
+      entry?.ej_vagd === null &&
+      !entry.vikt.trim()
+    )
+      t.click();
     if (next.val !== before.val)
       document.getElementById(`val-${id}-${next.val}`)?.click(); // the row's own choose()
     focusLater(
@@ -1169,7 +1178,7 @@ export function ReportForm({
         setReplaced(body.revision ?? undefined);
         refreshView();
       } else if (!res.data.warnings.length && !res.data.matrikel.length)
-        paper!.leave(summaryLine(herd.herd, res.data));
+        paper!.leave(summaryLine(herd.herd, res.data), "next");
     } else if (
       res.problem.status === 408 ||
       res.problem.status === 502 ||
@@ -1513,9 +1522,13 @@ export function ReportForm({
           </div>
         )}
         <div className={styles.actions}>
-          <Link href={QUEUE} className={`sb-btn ${styles.btn}`}>
+          <button
+            type="button"
+            className={`sb-btn ${styles.btn}`}
+            onClick={() => paper!.leave(null, "next")}
+          >
             Nästa blankett
-          </Link>
+          </button>
         </div>
       </div>
     );
@@ -1557,7 +1570,7 @@ export function ReportForm({
     }
     setArchiving(false);
     if (error) setArchiveError(error);
-    else paper!.leave(`Blanketten för ${herd.herd} är arkiverad.`);
+    else paper!.leave(`Blanketten för ${herd.herd} är arkiverad.`, "inbox");
   };
   if (isPaper && (paper!.intygPending || gate)) {
     return (

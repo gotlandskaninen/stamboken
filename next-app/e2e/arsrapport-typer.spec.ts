@@ -525,6 +525,8 @@ test("7. Typ E: pappersblankett som hjälparen matar in", async ({
   await submitted(page);
   await expect(page.getByText(/Sparat i matrikeln: .*telefon/)).toBeVisible();
   await shot(page, "typ-e-kvitto");
+  await page.getByRole("button", { name: "Nästa blankett" }).click();
+  await expect(page).toHaveURL(/\/arsrapport\/M9006\/2025\?post=\d+$/);
 });
 
 test("8. Typ F: rapporterad både digitalt och på papper", async ({
@@ -569,10 +571,13 @@ test("8. Typ F: rapporterad både digitalt och på papper", async ({
   await markDead(rabbit(page, "M9006-2415"), "10");
   await shot(page, "typ-f-andra-rapporten");
   await page.getByRole("button", { name: "Skicka och nästa blankett" }).click();
-  await page.waitForURL(/\/stamboken\/inkorg/);
+  await expect(page).toHaveURL(/\/arsrapport\/M9102\/2025\?post=\d+$/, {
+    timeout: SUBMIT_TIMEOUT_MS,
+  });
   await expect(
     page.getByText("M9006 inskickad: 5 finns kvar, 1 död."),
   ).toBeVisible();
+  await expect(page.getByLabel("Nummer efter M9102-")).toBeVisible();
 
   await loginInline(page, context, USERS.manager);
   const changed = await storedReport(page, "M9006");
@@ -693,21 +698,33 @@ test("10. Paritet: samma svar på papper och digitalt ger samma data", async ({
   await loginInline(page, context, USERS.helper);
   await takePaperForm(page, "M9102");
   const order = [2415, 2411, 2412, 2413, 2414, 2520];
+  const number = page.getByLabel("Nummer efter M9102-");
+  await number.focus();
   for (const [k, n] of order.entries()) {
-    const number = page.getByLabel("Nummer efter M9102-");
-    await number.fill(String(n));
-    await number.press("Enter");
+    await expect(number).toBeFocused();
+    await page.keyboard.type(String(n));
+    await page.keyboard.press("Enter");
     const r = rows(page).nth(k);
-    if (n === 2415) await markDead(r, "10");
-    else {
-      await kvar(r).check();
-      if (weights[n]) await weight(r).fill(weights[n]);
+    await expect(kvar(r)).toBeFocused();
+    if (n === 2415) {
+      await page.keyboard.press("2");
+      const month = r.getByLabel("Månad");
+      await month.selectOption("10");
+      await month.press("Enter");
+    } else {
+      await page.keyboard.press("1");
+      if (weights[n]) {
+        await weight(r).fill(weights[n]);
+        await weight(r).press("Enter");
+      }
     }
   }
   await page.getByRole("radio", { name: NO_DISEASE }).check();
   await shot(page, "paritet-papper");
   await page.getByRole("button", { name: "Skicka och nästa blankett" }).click();
-  await page.waitForURL(/\/stamboken\/inkorg/);
+  await expect(page).toHaveURL(/\/stamboken\/inkorg$/, {
+    timeout: SUBMIT_TIMEOUT_MS,
+  });
 
   await expect(
     page.getByText("M9102 inskickad: 5 finns kvar, 1 död."),

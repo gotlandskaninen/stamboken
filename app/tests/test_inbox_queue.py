@@ -212,6 +212,23 @@ class TestVisibility(InboxTest):
             response = self.client.get(f"/api/v2/inkorg?after={selected.id}&mode=mina&order=newest")
             self.assertEqual(response.get_json()["next_untaken"], expected)
 
+    def test_paper_entry_lists_only_available_open_forms_in_queue_order(self):
+        self.item()  # certificate only
+        theirs, closed, archived, related, mine, free = [self.item() for _ in range(6)]
+        db.InboxDocument.update(doc_type="arsblankett").where(
+            db.InboxDocument.item.in_([theirs, closed, archived, related, mine, free])
+        ).execute()
+        inbox.take(theirs, self.manager, over=False)
+        inbox.take(mine, self.helper, over=False)
+        db.InboxItem.update(state="klar").where(db.InboxItem.id == closed).execute()
+        db.InboxDocument.update(done_at=inbox.now()).where(db.InboxDocument.item == archived).execute()
+        db.InboxItem.update(ref_type="individual").where(db.InboxItem.id == related).execute()
+        db.InboxItem.update(received_at=mine.received_at - timedelta(days=1)).where(db.InboxItem.id == free).execute()
+        self.login("hjalp")
+        body = self.client.get("/api/v2/inkorg?paper_entry=1").get_json()
+        self.assertEqual([item["id"] for item in body["items"]], [free.id, mine.id])
+        self.assertEqual(body["total"], 2)
+
     def test_opening_an_item_is_logged_and_reads_its_notices(self):
         item = self.item(0)
         self.login("hjalp")

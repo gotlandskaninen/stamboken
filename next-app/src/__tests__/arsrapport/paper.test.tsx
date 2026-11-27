@@ -173,7 +173,7 @@ describe("ReportForm on paper", () => {
     expect(screen.queryByRole("link", { name: "Gå till profilen" })).toBeNull();
   });
 
-  it("enters a rabbit by its number, and keys 1 then Enter walk the row", () => {
+  it("returns to the number after a filled weight or Hull", () => {
     renderPaper();
     typeNumber("2");
     expect(row(2)).toBeTruthy();
@@ -185,16 +185,35 @@ describe("ReportForm on paper", () => {
     expect(document.activeElement).toBe(vikt);
     fireEvent.keyDown(vikt, { key: "1" }); // a digit in the field, not a choice
     expect(document.activeElement).toBe(vikt);
+    fireEvent.change(vikt, { target: { value: "2,4" } });
     fireEvent.keyDown(vikt, { key: "Enter" });
-    expect(document.activeElement).toBe(
-      within(row(2)).getByRole("button", { name: "Ej vägd" }),
-    );
-    fireEvent.keyDown(document.activeElement!, { key: "Enter" });
-    expect(document.activeElement).toBe(within(row(2)).getByLabelText(/^Hull/));
-    fireEvent.keyDown(document.activeElement!, { key: "Enter" });
-    expect(document.activeElement).toBe(
-      screen.getByLabelText("Nummer efter G9001-"),
-    );
+    const number = screen.getByLabelText("Nummer efter G9001-");
+    expect(document.activeElement).toBe(number);
+    const hull = within(row(2)).getByLabelText(/^Hull/);
+    hull.focus();
+    expect(fireEvent.keyDown(hull, { key: "Enter" })).toBe(false);
+    expect(document.activeElement).toBe(number);
+  });
+
+  it("marks or keeps Ej vägd after an empty weight", () => {
+    renderPaper();
+    typeNumber("2");
+    fireEvent.keyDown(within(row(2)).getByLabelText("Finns kvar"), {
+      key: "1",
+    });
+    const vikt = within(row(2)).getByLabelText("Vikt");
+    const unweighed = within(row(2)).getByRole("button", { name: "Ej vägd" });
+    for (const pressed of ["false", "true"]) {
+      expect(unweighed.getAttribute("aria-pressed")).toBe(pressed);
+      vikt.focus();
+      fireEvent.keyDown(vikt, { key: "Enter" });
+      expect(document.activeElement).toBe(unweighed);
+      fireEvent.keyDown(unweighed, { key: "Enter" });
+      expect(unweighed.getAttribute("aria-pressed")).toBe("true");
+      expect(document.activeElement).toBe(
+        screen.getByLabelText("Nummer efter G9001-"),
+      );
+    }
   });
 
   it("takes a full number from another herd as written", () => {
@@ -207,7 +226,7 @@ describe("ReportForm on paper", () => {
     expect(screen.getByRole("group", { name: /G9002-77/ })).toBeTruthy();
   });
 
-  it("walks a dead rabbit's fields with Enter before the next row", () => {
+  it("returns to the number from Månad or Anteckning", () => {
     renderPaper();
     typeNumber("2");
     fireEvent.keyDown(within(row(2)).getByLabelText("Finns kvar"), {
@@ -215,22 +234,14 @@ describe("ReportForm on paper", () => {
     });
     const month = within(row(2)).getByLabelText("Månad");
     expect(document.activeElement).toBe(month);
-    const step = (label: RegExp | string, tag?: string) => {
-      fireEvent.keyDown(document.activeElement!, { key: "Enter" });
-      void tag;
-      expect(document.activeElement).toBe(
-        typeof label === "string"
-          ? document.getElementById(label)
-          : within(row(2)).getByLabelText(label),
-      );
-    };
-    step(/^Dag/);
-    step("slaktad-2-ja");
-    step("note-2");
-    fireEvent.keyDown(document.activeElement!, { key: "Enter" });
-    expect(document.activeElement).toBe(
-      screen.getByLabelText("Nummer efter G9001-"),
-    );
+    fireEvent.change(month, { target: { value: "10" } });
+    fireEvent.keyDown(month, { key: "Enter" });
+    const number = screen.getByLabelText("Nummer efter G9001-");
+    expect(document.activeElement).toBe(number);
+    const note = within(row(2)).getByLabelText("Anteckning");
+    note.focus();
+    expect(fireEvent.keyDown(note, { key: "Enter" })).toBe(false);
+    expect(document.activeElement).toBe(number);
   });
 
   it("does not adopt a local copy behind the member-draft gate, and Börja clears it", async () => {
@@ -384,6 +395,7 @@ describe("ReportForm on paper", () => {
     await waitFor(() =>
       expect(p.leave).toHaveBeenCalledWith(
         "G9001 inskickad: 1 finns kvar, 1 ej angiven.",
+        "next",
       ),
     );
     expect(refresh).not.toHaveBeenCalled();
@@ -603,9 +615,10 @@ describe("ReportForm on paper", () => {
         "Kontrollera blankettens uppgift om adress med medlemmen.",
       ),
     ).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Nästa blankett" })).toBeTruthy();
     expect(screen.queryByText(/070-1234567/)).toBeNull();
     expect(p.leave).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Nästa blankett" }));
+    expect(p.leave).toHaveBeenCalledWith(null, "next");
     expect(refresh).not.toHaveBeenCalled();
   });
 
@@ -832,7 +845,12 @@ describe("ReportForm on paper", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Arkivera blanketten" }),
     );
-    await waitFor(() => expect(p.leave).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(p.leave).toHaveBeenCalledWith(
+        "Blanketten för G9001 är arkiverad.",
+        "inbox",
+      ),
+    );
     expect(p.archive).toHaveBeenCalledTimes(2);
     expect(p.archive).toHaveBeenNthCalledWith(1, 11);
     expect(p.archive).toHaveBeenNthCalledWith(2, 12);
