@@ -1,10 +1,14 @@
 import "@/i18n";
 import "@testing-library/jest-dom/vitest";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { PhotoViewer } from "@/app/(app)/stamboken/(dashboard)/inkorg/[id]/PhotoViewer";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 const WIDTH = 400;
 const HEIGHT = 300;
@@ -170,5 +174,46 @@ describe("PhotoViewer: the mouse wheel zooms", () => {
     wheel(region, 100, { x: 200, y: 150 });
     // 600 px wide now (at most 200 px of scroll): 375 px into it under the pointer.
     expect(region.scrollLeft).toBe(175);
+  });
+});
+
+describe("PhotoViewer: the frame around the copy", () => {
+  it("is named apart from the black boxes, which are counted without it", async () => {
+    // The rectangles lie on the photo once it has loaded; jsdom draws nothing.
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+    vi.stubGlobal(
+      "Image",
+      class {
+        onload = () => {};
+        set src(_: string) {
+          queueMicrotask(() => this.onload());
+        }
+      },
+    );
+    const noop = () => {};
+    render(
+      <PhotoViewer
+        src="/foto.jpg"
+        rotation={0}
+        onRotate={noop}
+        mask={{
+          rects: [
+            { x: 0, y: 0, w: 1, h: 0.6667 },
+            { x: 0.35, y: 0.45, w: 0.3, h: 0.1 },
+          ],
+          frameAt: 0,
+          selected: null,
+          onSelect: noop,
+          onChange: noop,
+          onRemove: noop,
+        }}
+      />,
+    );
+    const frame = await screen.findByRole("button", {
+      name: /^Ramen runt kopian\./,
+    });
+    const box = screen.getByRole("button", { name: /^Svart ruta 1 av 1\./ });
+    expect(frame.className).toMatch(/copyFrame/);
+    expect(box.className).not.toMatch(/copyFrame/);
   });
 });
