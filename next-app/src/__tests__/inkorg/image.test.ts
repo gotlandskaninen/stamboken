@@ -9,6 +9,7 @@ import {
   MIN_FRAME,
   toApiFrame,
   moveRect,
+  paperFrame,
   resizeRect,
   rotateRect,
   toApiRects,
@@ -203,5 +204,16 @@ describe("degrees", () => {
   it("writes the angle with a decimal comma and a minus sign", () => {
     expect(degrees(4)).toBe("4,0°");
     expect(degrees(-2.5)).toBe("−2,5°");
+  });
+});
+
+describe("paperFrame", () => {
+  it("keeps the margin on three sides and cuts at two thirds of the tight paper", () => {
+    const tight = { x: 0.2, y: 0.15, w: 0.6, h: 0.72 };
+    const padded = { x: 0.185, y: 0.135, w: 0.63, h: 0.75 };
+    // The padded box's own two thirds would end at 0.635, inside the tight paper's lower third (from 0.63).
+    const frame = paperFrame(padded, tight);
+    expect(frame).toMatchObject({ x: 0.185, y: 0.135, w: 0.63 });
+    expect(frame.y + frame.h).toBeCloseTo(0.15 + 0.72 * 0.6667, 9);
   });
 });

@@ -188,15 +188,16 @@ describe("the queue's server actions", () => {
     });
   });
 
-  it("send the masking's fixed angle to 'Hitta pappret', and nothing without one", async () => {
-    await findPaper(12, 31);
+  it("send the view's turn to 'Hitta pappret', and the masking's fixed angle when there is one", async () => {
+    await findPaper(12, 31, 90);
     expect(api.mock.calls[0][0]).toBe(
       "/v2/inkorg/12/dokument/31/hitta-pappret",
     );
-    expect(api.mock.calls[0][1]?.body).toBeUndefined();
-    await findPaper(12, 31, 2.5);
-    expect(body(1)).toEqual({ straighten: 2.5 });
-    expect((await findPaper(12, 31, NaN)).ok).toBe(false);
+    expect(body(0)).toEqual({ rotation: 90 });
+    await findPaper(12, 31, 0, 2.5);
+    expect(body(1)).toEqual({ rotation: 0, straighten: 2.5 });
+    expect((await findPaper(12, 31, 0, NaN)).ok).toBe(false);
+    expect((await findPaper(12, 31, 45)).ok).toBe(false);
     expect(api).toHaveBeenCalledTimes(2);
   });
 

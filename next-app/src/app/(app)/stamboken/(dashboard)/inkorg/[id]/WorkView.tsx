@@ -23,6 +23,7 @@ import {
   initialFrame,
   initialRects,
   MAX_RECTS,
+  paperFrame,
   rotateRect,
   toApiRects,
   turn,
@@ -253,7 +254,8 @@ export function WorkView({
   // The masking card: a registered report photo is compared with its rabbit instead, and has no masking.
   const maskStep = masking && !(item.registered && doc?.doc_type === "intyg");
   // What a "Hitta pappret" answer is for, and what is shown now (after the render that showed it).
-  const paperFor = `${doc?.id}:${maskStep}:${rotation}:${straighten}`;
+  // A frame moved, resized or removed meanwhile is the handler's: the answer is dropped too.
+  const paperFor = `${doc?.id}:${maskStep}:${rotation}:${straighten}:${JSON.stringify(copyFrame)}`;
   const shownPaperFor = useRef(paperFor);
   useEffect(() => {
     shownPaperFor.current = paperFor;
@@ -327,29 +329,29 @@ export function WorkView({
   };
 
   // "Hitta pappret": the angle. In the masking step the angle is fixed: the paper is looked for at it, and the
-  // frame goes round its upper two thirds. The paper is in the stored rotation. An answer that comes after
-  // another document, step, turn or angle is shown is dropped.
+  // frame goes round its upper two thirds. An answer that comes after another document, step, turn, angle or
+  // frame is shown is dropped.
   const findPaperOnPhoto = () => {
     if (!doc) return;
     const asked = paperFor;
     const stale = () => shownPaperFor.current !== asked;
+    // The paper is in the turn the view shows: the API refuses any other.
     if (maskStep)
       return run(
-        () => findPaper(item.id, doc.id, straighten),
-        ({ paper }) => {
+        () => findPaper(item.id, doc.id, rotation, straighten),
+        ({ paper, paper_tight }) => {
           if (stale()) return;
-          const found =
-            paper && rotateRect(paper, (rotation - doc.rotation) / 90);
-          if (found) setCopyFrame({ ...found, h: found.h * 0.6667 });
+          if (paper && paper_tight)
+            setCopyFrame(paperFrame(paper, paper_tight));
           setAngleNote(
-            found
+            paper && paper_tight
               ? "Ramen ligger runt pappret utom dess nedre tredjedel."
               : "Pappret hittades inte, så ramen är kvar.",
           );
         },
       );
     run(
-      () => findPaper(item.id, doc.id),
+      () => findPaper(item.id, doc.id, rotation),
       ({ angle }) => {
         if (stale()) return;
         straightenView(angle);

@@ -82,6 +82,19 @@ export function turnedSize(w: number, h: number, angle: number) {
   };
 }
 
+/**
+ * The frame round the paper "Hitta pappret" found, all but its lower third:
+ * the margin round the paper on three sides, and the bottom at two thirds of
+ * the tight paper, so that the margin never reaches into the seller and buyer
+ * block.
+ */
+export const paperFrame = (paper: Rect, tight: Rect): Rect => ({
+  x: paper.x,
+  y: paper.y,
+  w: paper.w,
+  h: tight.y + tight.h * UPPER_TWO_THIRDS.h - paper.y,
+});
+
 /** "4,5°", "−2,0°": the straighten as the handler reads it. */
 export const degrees = (value: number) =>
   `${value.toLocaleString("sv-SE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}°`;

@@ -58,7 +58,11 @@ vi.mock("@/app/(app)/stamboken/(dashboard)/inkorg/[id]/PhotoViewer", () => ({
           key={i}
           aria-pressed={mask.selected === i}
           onClick={() => mask.onSelect(i)}
-          onKeyDown={(e) => e.key === "Delete" && mask.onRemove(i)}
+          onKeyDown={(e) =>
+            e.key === "Delete"
+              ? mask.onRemove(i)
+              : e.key === "m" && mask.onChange(i, MOVED)
+          }
         >
           {i === mask.frameAt ? "Ramen" : `Ruta ${i}`}
         </button>
@@ -66,6 +70,8 @@ vi.mock("@/app/(app)/stamboken/(dashboard)/inkorg/[id]/PhotoViewer", () => ({
     </div>
   ),
 }));
+// "m" on a rectangle moves it here: the handler's own frame.
+const MOVED = { x: 0.2, y: 0.1, w: 0.6, h: 0.5 };
 vi.mock("@/app/(app)/stamboken/(dashboard)/inkorg/[id]/AskBreeder", () => ({
   AskBreeder: ({
     documentId,
@@ -539,7 +545,9 @@ describe("WorkView: masking", () => {
 });
 
 describe("WorkView: straightening the photo", () => {
+  // The paper with its margin, and tight: 0.015 in from each side.
   const paper = { x: 0.1, y: 0.05, w: 0.8, h: 0.9 };
+  const paper_tight = { x: 0.115, y: 0.065, w: 0.77, h: 0.87 };
 
   it("keeps an angle unsaved until the handler saves it, with no part of the photo or new reading meanwhile", async () => {
     render(
@@ -597,29 +605,31 @@ describe("WorkView: straightening the photo", () => {
     expect(screen.getByTestId("straighten")).toHaveTextContent("0"); // another handler: the stored angle
   });
 
-  it("'Hitta pappret' in the masking sends the angle and keeps it, and sets the frame round the paper's upper two thirds, in the view's turn", async () => {
+  it("'Hitta pappret' in the masking sends the view's turn and the angle and keeps it, and cuts the frame at the tight paper's two thirds", async () => {
     // Even an answer with another angle changes nothing but the frame: the angle is locked in the masking.
     actions.findPaper.mockResolvedValue({
       ok: true,
-      data: { angle: 0, paper },
+      data: { angle: 0, paper, paper_tight },
     });
     render(view(item({ documents: [doc({ straighten: 2.5 })] })));
     fireEvent.click(screen.getByRole("button", { name: "Lägg till ruta" }));
-    fireEvent.click(screen.getByRole("button", { name: "Vrid" })); // turned for the masking, not yet stored
+    fireEvent.click(screen.getByRole("button", { name: "Vrid" }));
+    const confirm = screen.getByRole("button", {
+      name: "Bekräfta maskningen och nästa",
+    });
+    await waitFor(() => expect(confirm).toBeEnabled()); // the turn is saved
     fireEvent.click(screen.getByRole("button", { name: "Hitta pappret" }));
     expect(
       await screen.findByText(
         "Ramen ligger runt pappret utom dess nedre tredjedel.",
       ),
     ).toBeInTheDocument();
-    expect(actions.findPaper).toHaveBeenCalledWith(12, 31, 2.5);
+    expect(actions.findPaper).toHaveBeenCalledWith(12, 31, 90, 2.5);
     expect(screen.getByTestId("straighten")).toHaveTextContent("2.5");
-    const confirm = screen.getByRole("button", {
-      name: "Bekräfta maskningen och nästa",
-    });
-    await waitFor(() => expect(confirm).toBeEnabled()); // the saved turn and the search are done
+    await waitFor(() => expect(confirm).toBeEnabled());
     fireEvent.click(confirm);
-    // The paper was found in the stored rotation (0): a quarter turn on, its upper two thirds. The box stays.
+    // In the view's turn as the API found it: the margin on three sides, the bottom at two thirds of the tight
+    // paper (0.065 + 0.87 × 0.6667), not of the padded one. The box stays.
     expect(actions.confirmMask).toHaveBeenCalledWith(
       12,
       31,
@@ -627,11 +637,42 @@ describe("WorkView: straightening the photo", () => {
       2.5,
       [{ x: 0.45, y: 0.35, w: 0.1, h: 0.3 }],
       {
-        x: expect.closeTo(0.05, 4),
-        y: expect.closeTo(0.1, 4),
-        w: expect.closeTo(0.9, 4),
-        h: expect.closeTo(0.8 * 0.6667, 4),
+        x: 0.1,
+        y: 0.05,
+        w: 0.8,
+        h: expect.closeTo(0.065 + 0.87 * 0.6667 - 0.05, 6),
       },
+      false,
+      false,
+    );
+  });
+
+  it("'Hitta pappret' refused for a turn not yet saved leaves the frame as it was", async () => {
+    actions.findPaper.mockResolvedValue({
+      ok: false,
+      problem: {
+        status: 409,
+        title: "Conflict",
+        detail:
+          "Fotot visas inte med den sparade vridningen. Ladda om sidan och sök igen.",
+      },
+    });
+    render(view(item({ documents: [doc()] })));
+    fireEvent.click(screen.getByRole("button", { name: "Hitta pappret" }));
+    expect(
+      await screen.findByText(/inte med den sparade vridningen/),
+    ).toBeInTheDocument();
+    expect(actions.findPaper).toHaveBeenCalledWith(12, 31, 0, 0);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Bekräfta maskningen och nästa" }),
+    );
+    expect(actions.confirmMask).toHaveBeenCalledWith(
+      12,
+      31,
+      0,
+      0,
+      [],
+      UPPER_TWO_THIRDS,
       false,
       false,
     );
@@ -655,7 +696,9 @@ describe("WorkView: straightening the photo", () => {
         new Promise((resolve) => (answer = resolve)),
       );
     const arrives = (angle: number) =>
-      act(async () => answer({ ok: true, data: { angle, paper } }));
+      act(async () =>
+        answer({ ok: true, data: { angle, paper, paper_tight } }),
+      );
 
     it("is dropped after another document is chosen", async () => {
       late();
@@ -674,6 +717,30 @@ describe("WorkView: straightening the photo", () => {
       await arrives(4);
       expect(screen.getByTestId("straighten")).toHaveTextContent("1.5");
       expect(screen.queryByText(/Fotot lutar/)).toBeNull();
+    });
+
+    it("is dropped after the handler moves the frame", async () => {
+      late();
+      render(view(item({ documents: [doc()] })));
+      fireEvent.click(screen.getByRole("button", { name: "Hitta pappret" }));
+      fireEvent.keyDown(screen.getByRole("button", { name: "Ramen" }), {
+        key: "m",
+      });
+      await arrives(0);
+      expect(screen.queryByText(/Ramen ligger runt pappret/)).toBeNull();
+      fireEvent.click(
+        screen.getByRole("button", { name: "Bekräfta maskningen och nästa" }),
+      );
+      expect(actions.confirmMask).toHaveBeenCalledWith(
+        12,
+        31,
+        0,
+        0,
+        [],
+        MOVED,
+        false,
+        false,
+      );
     });
 
     it("is dropped after a turn, outside the masking and in it", async () => {
@@ -728,7 +795,7 @@ describe("WorkView: straightening the photo", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.getByTestId("straighten")).toHaveTextContent("0");
-    expect(actions.findPaper).toHaveBeenCalledWith(12, 31); // outside the masking the tilt is looked for
+    expect(actions.findPaper).toHaveBeenCalledWith(12, 31, 0); // outside the masking the tilt is looked for
     unmount();
     render(view(item({ assigned_to: other, documents: [doc()] }), boss));
     expect(screen.queryByRole("button", { name: "Hitta pappret" })).toBeNull();
