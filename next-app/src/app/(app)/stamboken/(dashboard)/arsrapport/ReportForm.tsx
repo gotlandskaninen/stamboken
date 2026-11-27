@@ -937,7 +937,9 @@ export function ReportForm({
   const onSell = React.useCallback((id: number) => setSoldFor(id), []);
   // Jonas 2026-11-26: before the first Skicka a sale is registered at once, as Sälj does; then the row lets go
   // of it, and the view (the rabbit off the list, or counted by its move) shows it.
-  const direct = !!actions.sellNow && view.can_sell && !view.report && canEdit;
+  // after the last day a sale needs the reason Skicka asks for, so it goes with Skicka
+  const direct =
+    !!actions.sellNow && view.can_sell && !view.report && canEdit && !late;
   const register = async (s: SaldState) => {
     const id = soldFor!;
     const res = await track(

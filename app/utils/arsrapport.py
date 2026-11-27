@@ -3386,7 +3386,8 @@ def sell_now(herd, round_, access, user, rabbit_id, sald, *, now=None):
         _lock_rabbits([rabbit_id], items)
         transfers = {}
         refusals, _ = check(herd, round_, access, None, sub, on=on, check_email=False, transfers=transfers)
-        refusals = [r for r in refusals if r.individual_id == rabbit_id or r.code == "rundan_stangd"]
+        # the rabbit's own, the round's, and the reason a late entry needs (orsak_kravs): that sale goes with Skicka
+        refusals = [r for r in refusals if r.individual_id == rabbit_id or r.code in ("rundan_stangd", "orsak_kravs")]
         if refusals:
             raise _cannot(refusals, "Försäljningen kan inte registreras.")
         transfer = transfers.get(rabbit_id)

@@ -243,6 +243,12 @@ class SellNowTest(ArsrapportTest):
         sold, _ = arsrapport_pdf._sold_and_dead(self.h, self.round_)  # pylint: disable=protected-access
         self.assertEqual([entry["date"] for entry in sold], ["2025-10"])
 
+    def test_after_the_last_day_the_sale_needs_the_reason_skicka_asks(self):  # review r1: it goes with Skicka
+        self.at(date(2026, 3, 31))
+        self.login("man")
+        self.assertEqual([c for c, _ in self.refusals(kopare=BUYER)], ["orsak_kravs"])
+        self.assertEqual(sales(self.a), [])
+
     def test_paper_rechecks_the_item_under_the_locks(self):
         item, _ = inbox.create_upload(self.owner, self.h, None, [("inkorg/original/x.jpg", "0" * 64, QUALITY)])
         db.InboxDocument.update(doc_type="arsblankett").where(db.InboxDocument.item == item.id).execute()

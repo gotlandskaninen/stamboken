@@ -570,6 +570,28 @@ describe("ReportForm", () => {
     expect(data?.rabbits["1"]).toBeUndefined(); // the register holds the sale now, not the draft
   });
 
+  it("leaves a late sale to Skicka, which asks for the reason", () => {
+    const a = sellingActions();
+    const round = {
+      start_date: "2025-12-31",
+      deadline: "2026-01-31",
+      end_date: "2026-03-01",
+      activated: true,
+      open: false,
+    };
+    render(
+      <ReportForm
+        env="demo"
+        view={view({ access: "manager", round })}
+        actions={a as never}
+      />,
+    );
+    typeSaleOutside();
+    expect(screen.queryByLabelText(ACK)).toBeNull();
+    spara();
+    expect(a.sellNow).not.toHaveBeenCalled();
+  });
+
   it("keeps the dialog open with the server's refusal", async () => {
     const a = sellingActions();
     a.sellNow.mockImplementationOnce(() =>
