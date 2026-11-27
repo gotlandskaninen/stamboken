@@ -221,10 +221,15 @@ class _Registry:
         rabbit = self.rabbit(f"{self.letter}{herd}-{ind}")
         if rabbit is not None:
             return rabbit, DERIVED if swapped else READ
-        near = [r for r in self._rabbits(Individual.number.endswith(f"-{ind}")) if self._near(r.number, herd, ind)]
+        near = self.near(herd, ind)
         if len(near) == 1:
             return near[0], DERIVED
         return None, _SEVERAL if near else _NONE
+
+    def near(self, herd, ind):
+        """The rabbits numbered `ind` in a herd at most one character from `herd`, by number."""
+        rabbits = self._rabbits(Individual.number.endswith(f"-{ind}")).order_by(Individual.number)
+        return [r for r in rabbits if self._near(r.number, herd, ind)]
 
     @staticmethod
     def _near(number, herd, ind):

@@ -21,18 +21,19 @@ Driften av mejlläsningen står i [inkorg-gmail.md](inkorg-gmail.md).
 9. [Ta, ta över och tilldela](#ta-ta-över-och-tilldela)
 10. [Byta läge](#byta-läge)
 11. [Dokument](#dokument)
-12. [Spara det intyget visar](#spara-det-intyget-visar)
-13. [Registrera en försäljning](#registrera-en-försäljning)
-14. [Maskning och kopian på kaninen](#maskning-och-kopian-på-kaninen)
-15. [Bilderna](#bilderna)
-16. [Fråga uppfödaren](#fråga-uppfödaren)
-17. [Mejlade poster](#mejlade-poster)
-18. [Mina inskick](#mina-inskick)
-19. [Notiser](#notiser)
-20. [Mejl](#mejl)
-21. [Tolkning](#tolkning)
-22. [Gallring](#gallring)
-23. [Gränser och sådant gränssnittet behöver veta](#gränser-och-sådant-gränssnittet-behöver-veta)
+12. [Avstämning](#avstämning)
+13. [Spara det intyget visar](#spara-det-intyget-visar)
+14. [Registrera en försäljning](#registrera-en-försäljning)
+15. [Maskning och kopian på kaninen](#maskning-och-kopian-på-kaninen)
+16. [Bilderna](#bilderna)
+17. [Fråga uppfödaren](#fråga-uppfödaren)
+18. [Mejlade poster](#mejlade-poster)
+19. [Mina inskick](#mina-inskick)
+20. [Notiser](#notiser)
+21. [Mejl](#mejl)
+22. [Tolkning](#tolkning)
+23. [Gallring](#gallring)
+24. [Gränser och sådant gränssnittet behöver veta](#gränser-och-sådant-gränssnittet-behöver-veta)
 
 ## Begrepp
 
@@ -149,7 +150,7 @@ Allt annat nekas med 409. `ny` och `vantar_uppfodare` kan inte sättas med `…/
 1. Ta posten (`…/ta`), eller få den tilldelad.
 2. Gå igenom dokumenten: vrid dem rätt och ange typ och format (`PATCH …/dokument/{dok}`).
 3. Ett intyg: spara det intyget visar (`…/spara`), en ny kanin eller pappersintyget på en kanin
-   som finns. Visar intyget också en försäljning, registrera den nu (`…/overlat`): ett dokument som
+   som finns. Medan handläggaren skriver av pappret ställs det bredvid registret (`…/avstamning`). Visar intyget också en försäljning, registrera den nu (`…/overlat`): ett dokument som
    är klart går inte att spara eller sälja från.
 4. Bekräfta vridning och maskning (`…/maskning`). Kopian läggs på kaninen och dokumentet blir klart.
 5. Ett försäljningsbevis: typen `bevis`, sedan `…/overlat`. Beviset blir klart med försäljningen.
@@ -711,6 +712,93 @@ genbank kan ta posten, som andra poster.
 **Fel:** 400 för ett annat `outcome`; 404 när dokumentet inte hör till posten; 409 när posten inte
 är ett foto från årsrapporten, när anroparen inte är handläggare eller posten inte är tagen, när
 posten och dokumentet inte pekar på samma registrerade kanin, eller när dokumentet redan är klart.
+
+## Avstämning
+
+### `POST /api/v2/inkorg/{id}/dokument/{dok}/avstamning`
+
+Avstämningstabellen i intygsformuläret: det handläggaren har skrivit av från pappret, rad för rad
+bredvid registret, och kontrollerna i ord. Formuläret anropar den medan handläggaren skriver. Den
+läser bara: inget skrivs och posten låses inte.
+
+**Vem:** som för [Kön](#kön): admin, genbanksansvarig och genbankshjälpare.
+
+Kroppen har formulärets fält och far- och morföräldrarna, som strängar (antalen får vara tal). Alla
+är valfria:
+
+```json
+{
+  "mode": "ny_kanin",
+  "paper_number": "G1-2511",
+  "paper_certificate": "123456",
+  "name": "Stina",
+  "sex": "female",
+  "birth_date": "2025-05-10",
+  "color": "viltgrå",
+  "litter_size": 5,
+  "litter_size6w": 4,
+  "mother": "G1-1911",
+  "father": "G2-1711",
+  "morfar": "G1-1611",
+  "mormor": "G1-1712",
+  "farfar": "G2-1411",
+  "farmor": "G2-1512"
+}
+```
+
+`mode` är `ny_kanin` eller `pappersintyg`. Med `pappersintyg` kommer också `individual`, kaninens
+nummer i Stamboken.
+
+**Svar 200:**
+
+```json
+{
+  "rows": {
+    "mother": {"registry": "G1-1911 Stina", "status": "stammer"},
+    "father": {
+      "registry": "finns inte",
+      "status": "skiljer",
+      "near": [{"number": "G2-1711", "name": "Olle", "sex": "male"}]
+    },
+    "birth_date": {"registry": null, "status": "osaker"}
+  },
+  "checks": [{"ok": false, "text": "Far G3-1711 finns inte i Stamboken."}]
+}
+```
+
+Raderna är fälten i kroppen, med `pappersintyg` och `individual` först. `registry` är registrets
+värde för raden: ett nummer med kaninens namn, ett datum ÅÅÅÅ-MM-DD, ett antal, kön som `female` eller
+`male`, eller `null`. `status` är
+
+- `stammer`: det inskrivna är registrets värde. Nummer jämförs som registret skriver dem (`g1 2511`
+  är `G1-2511`), datum som ÅÅÅÅ-MM-DD.
+- `skiljer`: det inskrivna är något annat, eller ett nummer som inte finns i registret
+  (`registry: "finns inte"`). `near` listar då kaninerna vars besättningsnummer är ett tecken ifrån,
+  med samma individsiffror. Ingen av dem väljs.
+- `osaker`: inget är inskrivet, men tolkningen läste något där (`read` i dokumentets `proposal`).
+- `ingen`: registret har inget att jämföra med, eller inget är inskrivet eller läst.
+
+Bara det inskrivna slås upp, aldrig det tolkningen läste: en förälder som bara är läst väljer aldrig
+en kull. Ett nummer slås upp med bokstaven som den skrivits. Allt söks i postens genbank. En post utan
+genbank söker i den genbank vars besättningar börjar med bokstaven i det inskrivna numret
+(`individual`, annars `paper_number`).
+
+- `pappersintyg`: finns `individual` i genbanken kommer varje rads `registry` från den kaninen:
+  numret, intygsnumret, namnet, könet, färgen, kullens födelsedatum och antal, mor och far, och deras
+  föräldrar som far- och morföräldrar.
+- `ny_kanin`: mor och far är kaninerna med de inskrivna numren, och far- och morföräldrarna är deras
+  föräldrar i registret. Har mor och far rätt kön och är födelsedatumet helt prövas `paper_number` som
+  vid registreringen: `registry` är numret Stamboken ger. Födelsedatum och antal kommer från deras
+  kull född samma dag, om den finns. `paper_certificate` stämmer med `registry: "ledigt"` när
+  intygsnumret är ledigt. En kanin i genbanken som redan har det står som `registry`; finns det i en
+  annan genbank står `"används redan"`. `color` stämmer när färgen finns i genbankens färglista.
+
+Kontrollerna säger bland annat om individnumrets bokstav inte är genbankens, om en far- eller
+morförälder har samma nummer som föräldern, om mor och far finns, om numret stämmer med kullen och om
+intygsnumret är ledigt.
+
+**Fel:** 403 för den som inte arbetar i kön; 404 när posten inte finns eller dokumentet inte hör
+till den.
 
 ## Spara det intyget visar
 

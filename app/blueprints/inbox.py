@@ -19,6 +19,7 @@ import utils.data_access as da
 import utils.inbox as inbox
 import utils.inbox_interpreter as interpreter
 import utils.inbox_purge as inbox_purge
+import utils.inbox_reconcile as inbox_reconcile
 import utils.purchase_notice as purchase_notice
 import utils.settings as settings
 from extensions import limiter
@@ -620,6 +621,22 @@ def check_report_photo(item_id, document_id):
         return jsonify({"item": inbox.items_json([item])[0], "document": inbox.documents_json([document], True)[0]})
 
     return _locked(item_id, action)
+
+
+# [Next.js] The reconciliation table: what the handler typed off the certificate beside the registry, recomputed as
+# she types. A read: no lock, nothing written.
+@inbox_bp.route("/inkorg/<int:item_id>/dokument/<int:document_id>/avstamning", methods=["POST"])
+@json_login_required
+@_queue_worker
+def reconcile_document(item_id, document_id):
+    item = InboxItem.get_or_none(InboxItem.id == item_id)
+    try:
+        if item is None:
+            raise inbox.InboxError(404, "Posten finns inte.")
+        document = inbox.document_of(item, document_id)
+    except inbox.InboxError as exc:
+        return problem(exc.status, exc.title, exc.detail)
+    return jsonify(inbox_reconcile.reconcile(item, document, _body()))
 
 
 # [Next.js] "Mina inskick": the user's own uploads, in plain words.
