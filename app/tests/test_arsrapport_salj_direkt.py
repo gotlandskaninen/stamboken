@@ -18,6 +18,7 @@ import utils.inbox as inbox
 import utils.settings as settings
 from herdbook import APP
 from utils.herd_tracking import BUYER_REMOVED, CONTACT_OR_MEMBERSHIP_NEEDED, REPORT_BEVIS_NOT_YET
+from utils.individual_commands import record_sale
 
 from tests.arsrapport_fixtures import ArsrapportTest
 from tests.inbox_fixtures import QUALITY
@@ -190,6 +191,39 @@ class SellNowTest(ArsrapportTest):
         self.assertEqual(sales(self.a), [])
         self.assertFalse(db.BuyerContact.select().exists())
         self.assertIn(self.a.id, [row["id"] for row in self.page()["rabbits"]])  # back on the list
+
+    def undo(self, sale):
+        return self.client.post(
+            f"/api/v2/herd-tracking/{sale.id}/void", json={"reason": "Ångrad av den som registrerade den"}
+        )
+
+    def test_angra_on_the_row_is_for_the_move_it_shows(self):  # review r1: a buyback and a resale after it
+        self.sold(ar=2026, manad=1, dag=5, till="G9002")
+        record_sale(db.User.get_by_id(self.admin.id), self.a.id, "G9001", "2026-01-07")  # bought back
+        record_sale(db.User.get_by_id(self.owner.id), self.a.id, "GX1", "2026-01-08", buyer=OTHER)  # sold again
+        row = next(row for row in self.page()["rabbits"] if row["id"] == self.a.id)
+        self.assertEqual((row["later"]["date"], row["undo"], row["undo_to"]), ("2026-01-05", None, "G9002"))
+
+    def test_an_erasure_outlives_angra(self):  # review r1: the voided direct sale keeps blocking that buyer
+        self.sold(kopare=BUYER)
+        (sale,) = sales(self.a)
+        buyer_contact.erase_buyer_contact(sale.holder_contact_id, self.admin)
+        self.assertEqual(self.undo(sale).status_code, 200)
+        self.assertEqual(self.refusals(kopare=BUYER), [("kopare", BUYER_REMOVED)])
+        self.assertEqual(self.refusals(kopare=OTHER), [("kopare", BUYER_REMOVED)])
+        self.sold(manad=11, kopare=OTHER)  # another sale, another day
+
+    def test_an_erasure_takes_the_paper_form_behind_a_direct_sale(self):  # review r1: every page of it
+        stored = [(f"inkorg/original/{n}.jpg", f"{n}".rjust(64, "0"), QUALITY) for n in range(2)]
+        item, _ = inbox.create_upload(self.owner, self.h, None, stored)
+        db.InboxDocument.update(doc_type="arsblankett").where(db.InboxDocument.item == item.id).execute()
+        inbox.take(db.InboxItem.get_by_id(item.id), db.User.get_by_id(self.helper.id), over=False)
+        self.login("hjalp")
+        self.sold(post=item.id, kopare=BUYER)
+        (sale,) = sales(self.a)
+        buyer_contact.erase_buyer_contact(sale.holder_contact_id, self.admin)
+        pages = db.InboxDocument.select().where(db.InboxDocument.item == item.id)
+        self.assertEqual([page.original_path for page in pages], [None, None])
 
     def test_paper_rechecks_the_item_under_the_locks(self):
         item, _ = inbox.create_upload(self.owner, self.h, None, [("inkorg/original/x.jpg", "0" * 64, QUALITY)])

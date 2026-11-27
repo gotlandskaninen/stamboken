@@ -28,6 +28,7 @@ from utils.database import (
     HerdTracking,
     InboxDocument,
     InboxItem,
+    InboxOperation,
     Individual,
     IndividualCommand,
     SaleProposal,
@@ -239,8 +240,13 @@ def buyer_items(rows, lock=False):
         return set()
     individual_ids = {r.individual_id for r in rows}
     sales = HerdTracking.select(HerdTracking.id).where(HerdTracking.individual.in_(individual_ids))
+    # a sale entered from a paper form traces its operation to the form's page (InboxOperation)
+    ops = HerdTracking.select(HerdTracking.operation_id).where(HerdTracking.individual.in_(individual_ids))
+    traced = InboxOperation.select(InboxOperation.document).where(InboxOperation.operation_id.in_(ops))
     documents = InboxDocument.select(InboxDocument.item).where(
-        InboxDocument.individual.in_(individual_ids) | InboxDocument.herd_tracking_id.in_(sales)
+        InboxDocument.individual.in_(individual_ids)
+        | InboxDocument.herd_tracking_id.in_(sales)
+        | InboxDocument.id.in_(traced)
     )
     query = InboxItem.select(InboxItem.id).where(InboxItem.id.in_(documents)).order_by(InboxItem.id)
     return {item_id for (item_id,) in (query.for_update() if lock else query).tuples()}

@@ -1093,7 +1093,7 @@ def report_view(herd, round_, access, user):
         rabbit for rabbit, row in rabbits.items() if row["state"] == "via_flytt" and row["later"]["kind"] == "TRANSFER"
     }
     later_sales = (
-        HerdTracking.select(HerdTracking.id, HerdTracking.individual, Herd.herd)
+        HerdTracking.select(HerdTracking.id, HerdTracking.individual, Herd.herd, HerdTracking.herd_tracking_date)
         .join(Herd, on=(HerdTracking.herd == Herd.id))
         .where(
             HerdTracking.individual.in_(sorted(moved)),
@@ -1103,7 +1103,12 @@ def report_view(herd, round_, access, user):
             HerdTracking.herd_tracking_date > last,
         )
     )
-    later_sales = {row_id: (rabbit, to) for row_id, rabbit, to in later_sales.tuples()}
+    # the sale the row shows (`later`, its first move): a buyback and a resale after it are not that one
+    shown = {}
+    for row_id, rabbit, to, day in later_sales.order_by(HerdTracking.herd_tracking_date, HerdTracking.id).tuples():
+        if rabbit not in shown and _iso(day) == rabbits[rabbit]["later"]["date"]:
+            shown[rabbit] = (row_id, to)
+    later_sales = {row_id: (rabbit, to) for rabbit, (row_id, to) in shown.items()}
     undo = _undoable(user, access, [row["id"] for row in sales.dicts()] + list(later_sales))
     for row_id, (rabbit, to) in later_sales.items():  # `undo_to`: the buyer's herd, for Ångra's question
         rabbits[rabbit] |= {"undo": row_id if row_id in undo else None, "undo_to": to}
@@ -2154,7 +2159,8 @@ def _removed_buyers(herd, round_, rabbits, current_ops):
             HerdTracking.buyer_removed,
             Herd.genebank == herd.genebank_id,
             Herd.herd.in_(OUTSIDE_GENEBANK_HERDS),
-            ht_not_voided() | own_sale,
+            # an erasure on request counts on a voided sale too: Ångra of a direct sale, or one undone elsewhere
+            ht_not_voided() | own_sale | fn.EXISTS(erased_contact),
             ~fn.EXISTS(bought_back),
         )
         .order_by(HerdTracking.id)
