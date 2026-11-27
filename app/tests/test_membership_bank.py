@@ -112,6 +112,7 @@ class TestMigration58(IsolatedSchemaTest):
     def test_boot_from_v57_without_audit_triggers(self):
         with db.DB_PROXY.atomic() as tx:
             self.to_v57({})
+            db.SchemaHistory.delete().where(db.SchemaHistory.version > 57).execute()  # later migrations run again too
             db.SchemaHistory.create(version=57, comment="Bootstrapped")
             _sql("DROP FUNCTION audit_trigger_func() CASCADE")
             _sql("DROP TABLE audit_log")
