@@ -147,7 +147,8 @@ Allt annat nekas med 409. `ny` och `vantar_uppfodare` kan inte sättas med `…/
 ## Arbetsgången
 
 1. Ta posten (`…/ta`), eller få den tilldelad.
-2. Gå igenom dokumenten: vrid dem rätt och ange typ och format (`PATCH …/dokument/{dok}`).
+2. Gå igenom dokumenten: vrid dem rätt, räta upp ett snett foto, och ange typ och format
+   (`PATCH …/dokument/{dok}`; vinkeln kan hittas med `…/hitta-pappret`).
 3. Ett intyg: spara det intyget visar (`…/spara`), en ny kanin eller pappersintyget på en kanin
    som finns. Visar intyget också en försäljning, registrera den nu (`…/overlat`): ett dokument som
    är klart går inte att spara eller sälja från.
@@ -274,6 +275,7 @@ för en post med `ref_type` `sale_proposal`, vars statusvy avgör förslaget, oc
   "doc_type": "intyg",
   "cert_format": null,
   "rotation": 0,
+  "straighten": 0,
   "mask_rects": null,
   "copy_frame": null,
   "frame_suggestion": null,
@@ -300,6 +302,11 @@ för en post med `ref_type` `sale_proposal`, vars statusvy avgör förslaget, oc
   `v1_pdf` (utskriven v1-PDF), `intyg_b` (det nya tomma intyget B), `digitalt_v2` (digitalt intyg
   med QR-kod).
 - `rotation`: 0, 90, 180 eller 270 grader medurs, så att intyget står rätt.
+- `straighten`: grader medurs som fotot rätas upp med efter `rotation`, från −15 till 15 med en
+  decimal; 0 för ett foto som inte rätats upp. Kopian, tolkningen och utsnittet till uppfödaren
+  görs av fotot vridet `rotation` + `straighten` grader: bilden blir den vridna bildens omskrivna
+  rektangel, med vitt i hörnen (ram F). Är `straighten` 0 är bilden exakt den kvartsvridna, bildpunkt
+  för bildpunkt. Rektanglar, ram och utsnitt är bråkdelar av ram F.
 - `mask_rects`: rektanglarna som täcker säljaren och köparen, se
   [Maskning](#maskning-och-kopian-på-kaninen). `null` tills handläggaren har angett dem.
 - `copy_frame`: ramen som kopian beskärs till, en rektangel som i
@@ -372,10 +379,10 @@ för en post med `ref_type` `sale_proposal`, vars statusvy avgör förslaget, oc
 | `lage` | `{"from": "tagen", "to": "ofullstandig", "note": "Pappersintyget saknas"}`; `note` bara när den gavs, `duplicate_of` vid `dubblett` |
 | `dokument` | `{"document": 31, "fields": ["mask_rects", "rotation"]}` |
 | `sparad` | `{"document": 31, "action": "ny_kanin" \| "pappersintyg", "individual": "G1-2511"}`, eller vid en försäljning `{"document": 31, "action": "overlatelse", "individual": "G1-2111", "herd": "G2", "missing_proof": true}`; `"action": "bevis"` när ett bevis kopplas till en försäljning som redan är registrerad |
-| `kopia` | `{"document": 31, "rects": 1, "frame": true, "rotation": 90, "stammer": true}`; varje anrop till `…/maskning`; `frame` är om kopian beskars till en ram, `stammer` är `matches_registry` |
+| `kopia` | `{"document": 31, "rects": 1, "frame": true, "rotation": 90, "straighten": 2.5, "stammer": true}`; varje anrop till `…/maskning`; `frame` är om kopian beskars till en ram, `stammer` är `matches_registry` |
 | `original_visat` | `{"document": 31}` |
 | `foralder_inlagd` | `{"individual": "G1-2431"}`; en kanin som posten väntade på är inlagd |
-| `fraga` | `{"text": "Står det G1-2112?", "document": 31, "rotation": 0, "crop": {"x": 0, "y": 0, "w": 0.5, "h": 0.25}}`; de tre sista bara med utsnitt |
+| `fraga` | `{"text": "Står det G1-2112?", "document": 31, "rotation": 0, "straighten": 0, "crop": {"x": 0, "y": 0, "w": 0.5, "h": 0.25}}`; de fyra sista bara med utsnitt. En fråga från före upprätningen saknar `straighten`, som då är 0 |
 | `svar` | `{"text": "Ja.", "documents": [33], "not_saved": ["brev.docx"]}`; `user` är `null`, `not_saved` bara när något inte sparades |
 | `tolka_igen` | `{"document": 31}`; handläggaren lade dokumentet i tolkningens kö igen |
 | `kontrollerad` | `{"document": 31, "outcome": "stammer" \| "rattat"}`; ett foto från årsrapporten är jämfört med kaninen (`…/kontrollerad`) |
@@ -658,11 +665,12 @@ Stamboken (numren tas då bort, se [Dokument](#dokument)).
 | `doc_type` | `intyg`, `bevis`, `arsblankett` eller `annat`. Blir dokumentet ett intyg läggs det i tolkningens kö (när tolkningen är på); andra typer tolkas inte (`interpretation_status: "av"`) |
 | `cert_format` | `null` eller ett av formaten under [Dokument](#dokument) i objekten |
 | `rotation` | 0, 90, 180 eller 270 (grader medurs) |
+| `straighten` | ett tal från −15 till 15 (grader medurs efter `rotation`), avrundat till en decimal. Inte `true`/`false`, NaN eller oändligt |
 | `mask_rects` | `null` eller en lista med högst 20 rektanglar, se [Maskning](#maskning-och-kopian-på-kaninen) |
 | `waiting_for` | `null`, `[]` eller en lista med ett eller två individnummer (till exempel `G1-2431`) som inte finns i Stamboken än |
 | `dismissed` | `true` avfärdar dokumentet (klart utan att något sparas, till exempel ett foto som inte är ett intyg); `false` ångrar det, om inget har sparats från dokumentet |
 
-När dokumentet har en kopia nekas `rotation`, `mask_rects` och `doc_type` (409): kopian görs bara om
+När dokumentet har en kopia nekas `rotation`, `straighten`, `mask_rects` och `doc_type` (409): kopian görs bara om
 med `…/maskning`. `doc_type` nekas också när något har sparats från dokumentet (en kanin eller en
 försäljning). Blir det sista dokumentet avfärdat blir posten `klar`.
 
@@ -671,7 +679,8 @@ försäljning). Blir det sista dokumentet avfärdat blir posten `klar`.
 **Fel:** 400 för ett okänt fält, ett ogiltigt värde, ett nummer som inte går att läsa eller som
 redan finns i Stamboken (`"G1-2111 finns redan i Stamboken."`); 404 när dokumentet inte hör till
 posten; 409 när anroparen inte är handläggare, när kopian är gjord och anropet ändrar `rotation`,
-`mask_rects` eller `doc_type`, eller när typen ändras på ett dokument som något har sparats från.
+`straighten`, `mask_rects` eller `doc_type`, eller när typen ändras på ett dokument som något har
+sparats från.
 
 **Väntar på förälder.** Saknas en förälder i Stamboken: ange förälderns nummer i `waiting_for`
 och byt läge till `vantar_foralder`. Finns redan alla nummer i `waiting_for` i Stamboken nekas bytet
@@ -698,6 +707,32 @@ tolkningen är avstängd (`Bildtolkningen är avstängd.`), när dokumentet inte
 inte sparats än (`Bara ett intyg som inte är sparat kan tolkas.`) eller när originalet är raderat.
 Ett foto från årsrapporten (`kind: "kontroll"`, `ref_type: "individual"`) tolkas också när kaninen
 redan är sparad, eftersom tolkningen jämförs med det uppfödaren registrerade.
+
+### `POST /api/v2/inkorg/{id}/dokument/{dok}/hitta-pappret`
+
+"Hitta pappret": hur mycket fotot lutar och var pappret ligger. Ingenting ändras: gränssnittet
+visar vinkeln, och handläggaren sparar den med `PATCH` (`straighten`) eller med maskningen. Ingen
+händelse loggas.
+
+**Svar 200:** `{"angle": 4.0, "paper": {"x": 0.18, "y": 0.14, "w": 0.64, "h": 0.72}}`.
+
+- `angle`: den `straighten` som lägger fotots skrift vågrätt, i steg om 0,1 grad. 0,0 när ingen
+  vinkel tydligt slår fotot som det är, och när lutningen är under 0,3 grader.
+- `paper`: pappret, i bråkdelar av fotot vridet dokumentets `rotation` plus `angle`, med 1,5 %
+  marginal; `null` när inget ljust område av rimlig storlek (20–97 % av fotot) sticker ut, till
+  exempel på ett ljust bord eller när fotot bara är papper.
+
+Letas på en grå kopia med högst 800 bildpunkter på längsta sidan (`app/utils/inbox_paper.py`).
+Vinkeln: de mörka bildpunkterna (Otsus tröskel) vrids från −15 till 15 grader i steg om 0,5 och
+sedan 0,1, och för varje vinkel summeras kvadraten av skillnaden mellan intilliggande raders andel
+mörka bildpunkter. Den bästa vinkeln gäller bara när den slår vinkeln 0 med minst 50 %. Pappret:
+de ljusa bildpunkterna på det upprätade fotot, med skrift upp till 9 bildpunkter igenfylld; den
+längsta följden av rader och kolumner där andelen ljust är minst hälften av den största andelen.
+
+**Vem:** handläggaren (posten i ett läge med handläggare).
+
+**Fel:** 403 för den som inte arbetar i kön eller i postens genbank; 404 när posten eller
+dokumentet inte finns; 409 när anroparen inte är handläggare eller originalet är raderat.
 
 ### `POST /api/v2/inkorg/{id}/dokument/{dok}/kontrollerad`
 
@@ -903,7 +938,8 @@ sin plats i historiken. Alla andra får 400.
 
 ## Maskning och kopian på kaninen
 
-Kopian på kaninen är originalet vridet `rotation` grader medurs, med svarta rektanglar över det
+Kopian på kaninen är originalet vridet `rotation` + `straighten` grader medurs (ram F, se
+[Dokument](#dokument) i objekten), med svarta rektanglar över det
 som ska döljas, och beskuret till ramen när det finns en. Den ska inte visa andra personuppgifter
 än uppfödarens.
 
@@ -913,7 +949,7 @@ svarta rektanglarna täcker det som ändå syns innanför ramen. Originalet och 
 ändras inte. En ram som täcker hela fotot (minst 99 %) lämnar inget utanför och räknas som ingen
 ram. I arbetsvyn tar bara ramens kant och hörn emot musen; inne i ramen flyttar ett drag fotot.
 
-**Rektanglarna** och ramen anges i bråkdelar av bilden *efter* vridningen: `x` och `y` är det övre
+**Rektanglarna** och ramen anges i bråkdelar av bilden *efter* vridningen och upprätningen: `x` och `y` är det övre
 vänstra hörnet, `w` och `h` bredd och höjd, alla mellan 0 och 1, och rektangeln måste ligga inom
 bilden. `{"x": 0, "y": 0.5, "w": 1, "h": 0.5}` täcker den nedre halvan. Kopian görs i den ordningen:
 originalet vrids, rektanglarna målas svarta, och sedan beskärs bilden till ramen. Gränssnittet
@@ -922,21 +958,22 @@ fotot utanför ramen.
 
 ### `POST /api/v2/inkorg/{id}/dokument/{dok}/maskning`
 
-Bekräftar vridningen, rektanglarna och ramen tillsammans och gör kopian av just dem.
+Bekräftar vridningen, upprätningen, rektanglarna och ramen tillsammans och gör kopian av just dem.
 
 ```json
-{"rotation": 90, "mask_rects": [], "copy_frame": {"x": 0, "y": 0, "w": 1, "h": 0.6667}}
+{"rotation": 90, "straighten": 2.5, "mask_rects": [], "copy_frame": {"x": 0, "y": 0, "w": 1, "h": 0.6667}}
 ```
 
 | Fält | |
 |---|---|
 | `rotation` | krävs: 0, 90, 180 eller 270 grader medurs |
-| `mask_rects` | krävs: rektanglarna i bråkdelar av bilden vriden `rotation` grader. Får inte vara `null` |
-| `copy_frame` | valfritt: ramen som kopian beskärs till, i bråkdelar av bilden vriden `rotation` grader, minst 0,1 bred och hög. Utelämnad eller `null`: hela fotot |
+| `straighten` | valfritt: vinkeln som rektanglarna och ramen ritades i, från −15 till 15 som i `PATCH`. Utelämnad eller `null`: dokumentets |
+| `mask_rects` | krävs: rektanglarna i bråkdelar av bilden vriden `rotation` + `straighten` grader. Får inte vara `null` |
+| `copy_frame` | valfritt: ramen som kopian beskärs till, i bråkdelar av samma bild, minst 0,1 bred och hög. Utelämnad eller `null`: hela fotot |
 | `no_personal_data` | `true` krävs när `mask_rects` är en tom lista och `copy_frame` saknas eller täcker hela fotot (minst 99 %): intyget visar ingen säljare eller köpare |
 | `matches_registry` | `true` när handläggaren har jämfört intyget med registret och de stämmer. Ger kaninen märkningen "Intyget kontrollerat" (se nedan). Handläggaren kryssar i det själv varje gång, också när kopian görs om. Gränssnittet visar "Förslag: stämmer" när tolkningen läste kaninens eget nummer och intygsnumret (båda `läst`) och ingen kontroll gick emot, men handläggaren avgör (Jonas 2026-11-26). Utelämnat eller `false`: ingen märkning. Kaninen måste ha kvar det intygsnummer och individnummer som fotot sparades med (`saved_certificate`, `saved_number`), annars 409: kontrollen gäller det intyg handläggaren jämförde |
 
-Vridningen, rektanglarna och ramen sparas på dokumentet i samma transaktion som kopian görs, också
+Vridningen, vinkeln, rektanglarna och ramen sparas på dokumentet i samma transaktion som kopian görs, också
 en ram som saknas: en kopia som görs om utan ram är hela fotot. Det som redan står på dokumentet
 (från `PATCH`) används inte: kopian visar exakt det som skickades. Likaså
 `matches_registry`: varje anrop sätter `verified_at` och den som bekräftade (`verified_by`) på nytt,
@@ -960,7 +997,7 @@ Varje anrop loggas som händelsen `kopia`, med `stammer` (`true` eller `false`).
 
 **Svar 200:** `{"item": <post>, "document": <dokument>}`.
 
-**Fel:** 400 när `rotation` eller `mask_rects` saknas eller är ogiltiga, när `copy_frame` inte ligger
+**Fel:** 400 när `rotation` eller `mask_rects` saknas eller är ogiltiga, när `straighten` är ogiltig, när `copy_frame` inte ligger
 inom bilden eller är smalare eller lägre än 0,1, eller när `mask_rects` är tom utan `copy_frame` och
 utan `"no_personal_data": true`; 409 när dokumentet inte är ett sparat intyg, anroparen inte får göra
 kopian eller originalet är raderat.
@@ -1023,7 +1060,7 @@ allt i registret är oförändrat sedan dess.
 | Fält | |
 |---|---|
 | `text` | krävs, högst 2000 tecken |
-| `crop` | valfritt: utsnittet av fotot som frågan gäller, en rektangel som i [Maskning](#maskning-och-kopian-på-kaninen) (bråkdelar av bilden efter dokumentets vridning) |
+| `crop` | valfritt: utsnittet av fotot som frågan gäller, en rektangel som i [Maskning](#maskning-och-kopian-på-kaninen) (bråkdelar av bilden efter dokumentets sparade vridning och upprätning, som sparas med frågan) |
 | `document` | krävs med `crop`: dokumentet som utsnittet är ur |
 
 Frågan sparas som händelsen `fraga`, och mejlet `inlasning.fraga` köas till besättningens
@@ -1200,14 +1237,15 @@ formuläret. Förslaget är bara ifyllda fält: inget sparas förrän handlägga
 - Ett nytt dokument av typen `intyg` väntar (`vantar`) när tolkningen är på, liksom ett dokument
   som byter typ till `intyg` och ett som får "Tolka igen".
 - Schemaläggarens jobb `inbox_interpret` tar varje minut det äldsta väntande intyget i en öppen
-  post, om inget sparats från det: ett dokument per körning. Fotot vrids som handläggaren vridit
-  det, skalas ned till högst 2 000 bildpunkter på längsta sidan och förstärks (grön kanal, delad
+  post, om inget sparats från det: ett dokument per körning. Fotot vrids och rätas upp som
+  handläggaren gjort det (`rotation` + `straighten`), men beskärs aldrig till kopians ram, som
+  skär bort säljaren och köparen. Det skalas ned till högst 2 000 bildpunkter på längsta sidan och förstärks (grön kanal, delad
   med bakgrunden, sträckt kontrast). Ingen databastransaktion eller -anslutning hålls medan
   modellen läser.
 - Svaret hålls först mot schemat: okända nycklar tas bort, ett värde av fel typ räknas som saknat,
   en text kortas till 200 tecken och förlorar NUL-tecken. Det sparas sedan i `interpretation`,
   förslaget i `proposal`, tolkaren i `interpreter` och tiden i `interpreted_at`. Ett dokument får två försök, sedan är det `misslyckad`.
-- Vrids, köas om eller ändras dokumentet medan modellen läser kastas svaret, och dokumentet
+- Vrids, rätas upp, köas om eller ändras dokumentet medan modellen läser kastas svaret, och dokumentet
   väntar kvar.
 
 **Kontrollerna** (`app/utils/inbox_proposal.py`). Modellen gissar hellre än lämnar ett fält tomt,
