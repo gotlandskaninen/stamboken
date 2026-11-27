@@ -897,6 +897,9 @@ def transfer(item_id, document_id):
             item = inbox.lock_item(item_id)
             document = inbox.document_of(item, document_id)
             inbox.require_saving(item, document, user)
+            # A buyer the form filled from the photo (rule 5 b): only while that reading is still the document's.
+            if body.get("from_photo") is True and "sale" not in (document.proposal or {}):
+                raise inbox.InboxError(409, "Läsningen har ändrats, fyll i köparen igen.")
             individual = _live_individual(body.get("individual"))
             inbox.require_same_rabbit(document, individual)
             if document.herd_tracking_id is not None:

@@ -47,8 +47,12 @@ _NUMBER_CONFLICTS = {
 SAME_LITTER_DAYS = 35  # a litter of the same parents this close is the certificate's, registered on another date
 MAX_LISTED = 5  # litters listed for the handler when nothing read picks one
 _DIGIT_FOR = str.maketrans({"S": "5", "s": "5", "O": "0", "o": "0", "l": "1", "I": "1", "|": "1"})
-_SEVERAL, _NONE = "liknar flera kaniner i Stamboken", "finns inte i Stamboken"  # why a number read was not found
+# Why a number read was not found.
+_SEVERAL = "finns inte i Stamboken, men flera kaniner har nästan samma nummer"
+_NONE = "finns inte i Stamboken"
 _SEXES = {"HONA": "female", "HANE": "male"}
+SALE_READING = "forsaljning"  # the seller and buyer's key in a document's interpretation (inbox_interpreter)
+HERD_NUMBER = re.compile(r"\s*([A-Za-z]?)\s*(\d{1,5})\s*")  # as read: G1274, 1274 or G 1274
 
 
 def _text(value):
@@ -268,11 +272,28 @@ def _branch(registry, raw, struck, role, fields, checks):
         checks.append(_check(False, f"{label}: {text} {how}." if parsed else f"{label}: {how}."))
         return None, None
     litter = Breeding.get_or_none(Breeding.id == rabbit.breeding_id)
-    grandparents = []
-    for gp_key, theirs in ((father_key, litter and litter.father), (mother_key, litter and litter.mother)):
-        gp_entry = _entry(raw, gp_key)
-        parsed_gp = None if gp_key in struck else _parse_number(gp_entry, registry.letter)
-        grandparents.append((gp_key, _number_text(gp_entry), theirs, registry.compare(parsed_gp, theirs)))
+    boxes = [
+        (gp_key, _entry(raw, gp_key), theirs)
+        for gp_key, theirs in ((father_key, litter and litter.father), (mother_key, litter and litter.mother))
+    ]
+    on_paper = {
+        gp_key: None if gp_key in struck else _parse_number(entry, registry.letter) for gp_key, entry, _ in boxes
+    }
+    # No rabbit is its own parent: a box that finds the parent itself was read from the wrong place. When the model
+    # read the parents' row again, the other box holds the other parent's number: no comparison either.
+    copies = [gp_key for gp_key, p in on_paper.items() if registry.compare(p, rabbit) in (READ, DERIVED)]
+    itself = copies[0] if copies else None
+    if itself:
+        other = _parse_number(_entry(raw, _PARENTS["father" if role == "mother" else "mother"][0]), registry.letter)
+        other_rabbit = registry.find(other)[0] if other else None
+        for gp_key, p in on_paper.items():
+            again = p and other and (p[:2] == other[:2] or registry.compare(p, other_rabbit) in (READ, DERIVED))
+            if gp_key in copies or again:
+                on_paper[gp_key] = None
+    grandparents = [
+        (gp_key, _number_text(entry), theirs, registry.compare(on_paper[gp_key], theirs))
+        for gp_key, entry, theirs in boxes
+    ]
 
     if any(result == "differs" for *_, result in grandparents):
         # A number read as it stands is a known disagreement; one this code derived is merely unsure.
@@ -294,7 +315,10 @@ def _branch(registry, raw, struck, role, fields, checks):
     elif sibling := _littermate_doubt(rabbit, name):
         doubts.append(sibling)
     compared = any(result in (READ, DERIVED) for *_, result in grandparents)
-    if not compared:
+    if itself:
+        boxes_named = f"{' och '.join(copies)} är {'inlästa' if len(copies) > 1 else 'inläst'}"
+        doubts.append(f"{boxes_named} med {label.lower()}s eget nummer, så tolkningen har troligen tagit fel ruta")
+    elif not compared:
         doubts.append(f"far- och morföräldrarna går inte att jämföra med registrets för {rabbit.number}")
     if doubts:
         fields[role] = _field(UNSURE, read=text)
@@ -302,7 +326,8 @@ def _branch(registry, raw, struck, role, fields, checks):
             if gp_text:
                 fields[gp_key] = _field(UNSURE, read=gp_text)
         checks.append(_check(False, f"{label}: {'; '.join(doubts)}."))
-        return None, rabbit if len(doubts) == 1 and not compared else None
+        # A branch whose boxes were misread confirms nothing, and its parent is not the registry's way in either.
+        return None, rabbit if len(doubts) == 1 and not compared and not itself else None
 
     fields[role] = _field(how, rabbit.number, read=text)
     for gp_key, gp_text, theirs, result in grandparents:
@@ -329,7 +354,9 @@ def _registry_litter(registry, raw, struck, found, birth, herd_id, year, fields,
     certificate fits it: one read otherwise is a disagreement, and one struck through or ruled out by the checks
     is not taken back here. Otherwise the litters are listed for the handler. Returns the litter that filled it.
     """
-    anchor = next(((role, found[role]) for role in ("mother", "father") if found[role] is not None), None)
+    # A parent the checks confirmed before one only found: the litter of an unconfirmed one may not overrule it.
+    roles = sorted(("mother", "father"), key=lambda role: fields.get(role, {}).get("source") not in (READ, DERIVED))
+    anchor = next(((role, found[role]) for role in roles if found[role] is not None), None)
     if anchor is not None:
         query = Breeding.select().where(getattr(Breeding, anchor[0]) == anchor[1].id)
     elif not any(role in fields for role in found) and herd_id is not None:
@@ -593,12 +620,81 @@ def build_proposal(raw, genebank_id, herd_id=None, registered=None):
     interpreter's answer `raw` (inbox_interpreter.SCHEMA, untrusted): {"fields": {key: {value, source, read?,
     registry?}}, "checks": [{ok, text}]}. The keys are the registration form's (docs/inkorg.md, "Spara det intyget
     visar") and the grandparents': farfar, farmor, morfar, mormor. A report photo's rabbit, once registered from it
-    (`registered`), is what every field is set beside.
+    (`registered`), is what every field is set beside. The seller and buyer are a part of their own (sale_part).
     """
     raw = raw if isinstance(raw, dict) else {}
     struck = raw.get("overstruket")
     struck = {key for key in struck if isinstance(key, str)} if isinstance(struck, list) else set()
     registry = _Registry(genebank_id if genebank_id is not None else _genebank_of_letter(raw))
+    proposal = _proposal(registry, raw, struck, herd_id, registered)
+    lettered = re.match(r"([A-Za-z])\s*\d", _text(raw.get("genbanksnr")))  # "Nr 9001" has no letter to speak of
+    letter = lettered[1].upper() if lettered else ""
+    if letter and registry.letter and letter != registry.letter and "genbanksnr" not in struck:
+        # The reading or the item's genebank is wrong; which one, the handler sees on the photo.
+        proposal["checks"].insert(
+            0,
+            _check(
+                False,
+                f"Individnumret börjar med {letter} på intyget, men genbankens nummer börjar med {registry.letter}.",
+            ),
+        )
+    return proposal
+
+
+def _herd_read(text, letter):
+    """A herd number as it stands (HERD_NUMBER), with `letter` where none was read; None otherwise."""
+    match = HERD_NUMBER.fullmatch(text)
+    return f"{(match[1] or letter).upper()}{match[2]}" if match else None
+
+
+def sale_part(raw, genebank_id, fields):
+    """
+    proposal["sale"]: the seller and buyer read at the bottom of a queue certificate (SALE_READING, rule 5 b) beside
+    the rabbit's proposed `fields`, for the sale panel, or None without them: {"buyer_herd": {herd, found} | None,
+    "buyer": {name, postal_address, town, email} | None, "date": ISO | None, "seller_herd", "checks"}. Nothing in it
+    is confident: the handler fills the sale with a click and checks it against the photo. The buyer's herd is found
+    only when it is one of the genebank's as read, and kept as read otherwise; the buyer as read, its postal address
+    the street and the postcode (the town is a field of its own, as in the sale).
+    """
+    read = raw.get(SALE_READING)
+    read = {key: _text(read.get(key)) for key in read} if isinstance(read, dict) else {}
+    if not any(read.values()):
+        return None
+    registry = _Registry(genebank_id if genebank_id is not None else _genebank_of_letter(raw))
+    buyer = {
+        "name": read.get("kopare_namn", ""),
+        "postal_address": ", ".join(filter(None, (read.get("kopare_utdelningsadress"), read.get("kopare_postnummer")))),
+        "town": read.get("kopare_ort", ""),
+        "email": read.get("kopare_epost", ""),
+    }
+    checks = []
+    herd_text = read.get("kopare_besattning", "")
+    herd = _herd_read(herd_text, registry.letter)
+    found = herd in registry.herds
+    if herd_text and not found:
+        checks.append(_check(False, f"Köparens besättning {herd_text} finns inte i genbanken."))
+    # The seller against the rabbit's herd of origin: the registry's number, else the number as read.
+    seller_text = read.get("saljare_besattning", "")
+    seller = _herd_read(seller_text, registry.letter)
+    number = (fields.get("individual") or fields.get("paper_number") or {}).get("value")
+    origin = number.split("-")[0] if number else _herd_read(_text(raw.get("genbanksnr")), registry.letter)
+    if seller and origin and seller != origin:
+        text = f"Säljarens besättning {seller} avviker från kaninens ursprungsbesättning {origin}."
+        checks.append(_check(False, text))
+    elif seller and not number:
+        checks.append(_check(None, f"Säljarens besättning {seller} kan inte bekräftas mot registret."))
+    day = _date(read.get("datum", ""))
+    return {
+        "buyer_herd": {"herd": herd if found else herd_text, "found": found} if herd_text else None,
+        "buyer": buyer if any(buyer.values()) else None,
+        "date": day.isoformat() if day else None,
+        "seller_herd": seller_text or None,
+        "checks": checks,
+    }
+
+
+def _proposal(registry, raw, struck, herd_id, registered):
+    """build_proposal's fields and checks, but for the letter of the rabbit's own number."""
     if registered is not None:
         return _registered(registry, raw, struck, registered)
     fields, checks = {}, []

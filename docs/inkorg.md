@@ -304,8 +304,10 @@ för en post med `ref_type` `sale_proposal`, vars statusvy avgör förslaget, oc
   nedre tredjedelen, `[{"x": 0.0, "y": 0.6667, "w": 1.0, "h": 0.3333}]`. Annars `null`.
 - `waiting_for`: `null` eller en lista med de föräldranummer dokumentet väntar på.
 - `interpretation_status`: bildtolkningen av fotot, se [Tolkning](#tolkning). `av` (tolkningen är
-  avstängd, eller dokumentet är inget intyg), `vantar` (i kö), `klar` (förslaget finns) eller
-  `misslyckad` (två försök gick fel; handläggaren skriver av fälten själv).
+  avstängd, eller dokumentet är inget intyg), `vantar` (i kö), `klar` (förslaget finns),
+  `misslyckad` (två försök gick fel; handläggaren skriver av fälten själv) eller `for_litet`
+  (fotots kortsida är under 1000 pixlar, `MIN_READ_SIDE`, så det tolkas inte av sig självt;
+  "Tolka igen" tolkar det ändå).
 - `proposal`: `null`, eller förslaget från tolkningen när `interpretation_status` är `klar`:
 
   ```json
@@ -336,6 +338,8 @@ för en post med `ref_type` `sale_proposal`, vars statusvy avgör förslaget, oc
   säger vilken kanin det finns på. `checks` är kontrollerna i ord; `ok` är `true`, `false` eller
   `null` (upplysning).
   Förslaget sparas aldrig av sig självt: det är handläggarens `…/spara` som skriver.
+  Ett intyg i kön kan också ha `sale`, säljaren och köparen från fotot: se
+  [Säljare och köpare](#tolkning) under Tolkning.
 - `individual`: kaninens nummer när dokumentet är sparat, annars `null`.
 - `herd_tracking_id`: raden i besättningshistoriken för försäljningen som registrerats genom
   dokumentet (för ett bevis: försäljningen det visar).
@@ -865,6 +869,7 @@ En köpare utanför föreningen:
 | `herd` | köparens besättningsnummer. En köpare utanför föreningen: genbankens besättning för kaniner sålda utanför genbanken, `GX1` (gotlandskanin) eller `MX1` (mellerudskanin). |
 | `date` | försäljningsdatumet |
 | `buyer` | valfritt, bara till GX1/MX1: köparen utanför föreningen ([ADR-0016](adr/0016-agarbyte-flytt-dag-0-och-berattigat-intresse.md)). `name` och `town` krävs, och `postal_address` när den som registrerar varken är genbanksansvarig eller admin; `email` och `phone` bara med `contact_consent` eller `membership_optin`. Annars 400. Med `buyer` går också GX1 till GX1, för genbanksansvarig och admin. När beviset kopplas till en försäljning som redan finns sätts köparen på den bara om försäljningen saknar köpare (registrerad i gamla appen); har den redan en köpare blir svaret 409 |
+| `from_photo` | valfritt, `true` när panelen fylldes i från fotots läsning ([Säljare och köpare](#tolkning)). Har dokumentet inte längre någon `sale` blir svaret 409 "Läsningen har ändrats, fyll i köparen igen." Utan fältet prövas inget |
 
 **Vem:** handläggaren, med samma krav på posten som för `…/spara` men för alla dokumenttyper.
 En hjälpare får sälja kaniner i sin genbank som en ägare får.
@@ -893,7 +898,7 @@ sin plats i historiken. Alla andra får 400.
 | 400 | besättning eller datum saknas eller är okänd; `title: "Ogiltig försäljning"` med försäljningens regler: datumet i framtiden, före 43 dagars ålder eller före kaninens senaste händelse, en annan genbank, en kanin utan intyg till en annan besättning än GX1/MX1, kaninen finns redan där |
 | 403 | anroparen får inte sälja kaninen |
 | 404 | kaninen finns inte |
-| 409 | som för `…/spara`; en försäljning är redan registrerad genom dokumentet; eller besättningshistoriken skulle bli motsägelsefull (med `rows`) |
+| 409 | som för `…/spara`; en försäljning är redan registrerad genom dokumentet; `from_photo` utan läsning; eller besättningshistoriken skulle bli motsägelsefull (med `rows`) |
 
 ## Maskning och kopian på kaninen
 
@@ -1181,6 +1186,9 @@ formuläret. Förslaget är bara ifyllda fält: inget sparas förrän handlägga
 
 - Ett nytt dokument av typen `intyg` väntar (`vantar`) när tolkningen är på, liksom ett dokument
   som byter typ till `intyg` och ett som får "Tolka igen".
+- Ett foto vars kortsida är under 1000 bildpunkter (`MIN_READ_SIDE`) är för litet för handskriften
+  och får `for_litet` i stället. Det tolkas inte av sig självt. Handläggaren ser varför och kan be om
+  ett större foto, skriva av fälten eller klicka "Tolka igen", som tolkar det ändå.
 - Schemaläggarens jobb `inbox_interpret` tar varje minut det äldsta väntande intyget i en öppen
   post, om inget sparats från det: ett dokument per körning. Fotot vrids som handläggaren vridit
   det, skalas ned till högst 2 000 bildpunkter på längsta sidan och förstärks (grön kanal, delad
@@ -1202,14 +1210,20 @@ så hur säkert ett fält är avgörs av kontrollerna mot registret, aldrig av m
    ger en genbank (adressen finns inte där, eller medlemskapet har besättningar i båda genbankerna
    eller ingen) har ingen genbank; då söks den genbank vars besättningar börjar med bokstaven som
    lästes före kaninens besättningsnummer (G eller M). Det gäller bara sökningen: postens genbank,
-   som avgör vem som får ta posten, sätts aldrig från det modellen läste.
+   som avgör vem som får ta posten, sätts aldrig från det modellen läste. Börjar individnumret på
+   intyget med en annan bokstav än genbankens nummer säger en kontroll det: antingen är bokstaven
+   fel läst eller posten i fel genbank, och det ser handläggaren på fotot.
 3. En förälder är bekräftad när numret finns och förälderns egna föräldrar i registret stämmer
    med intyget, minst en av dem och ingen emot. Fel kön eller ett annat namn i registret gör
    föräldern osäker. Kullsyskon har samma föräldrar och födelsedatum, och en felläst siffra landar
    på ett av dem: en förälder med ett kullsyskon av samma kön är bekräftad bara när namnet på
    intyget är dess eget. Far- och morföräldrar föreslås bara under en bekräftad förälder. Står något
    annat på intyget markeras hela grenen, eftersom det lika gärna kan vara föräldern som är fel
-   läst.
+   läst. Är en far- eller morförälder inläst med förälderns eget nummer (mormor som mor) har
+   modellen läst fel ruta: ingen kanin är sin egen förälder. Då blir grenen osäker i stället för
+   avviker. Den rutan jämförs inte med registret, inte heller en ruta med den andra förälderns
+   nummer (modellen läste föräldrarnas rad två gånger), och föräldern används inte för att hitta
+   kullen. Den andra rutan jämförs som vanligt.
 4. Ett nummer ett tecken fel ger registrets nummer som `härlett`, om bara en kanin passar.
 5. Kaninens eget nummer: årssiffrorna mot födelsedatumet och numret mot kullen (samma kontroll
    som pappersnumret vid registreringen), och intygsnumret ska vara ledigt.
@@ -1223,7 +1237,7 @@ Stamboken prövas den på samma sätt: föräldrarna mot registret, kön och nam
 har ett kullsyskon av samma kön. Ett annat födelsedatum än kullens gör den `avviker`, utan värde.
 Har den digitalt intyg och går allt igenom blir förslaget bara "finns redan med digitalt intyg". Ger tolkningen inte två
 bekräftade föräldrar hjälper registret: en förälder som hittats, eller uppladdarens besättning när
-ingen förälder gick att läsa, ger sina kullar. En enda kull född det lästa datumet fyller i mor och
+ingen förälder gick att läsa, ger sina kullar. En bekräftad förälder går före en som bara hittats. En enda kull född det lästa datumet fyller i mor och
 far som `härlett`; annars listas kullarna i `checks`.
 
 Ett foto från årsrapporten som tolkas efter att kaninen sparats jämförs med den kaninen, vilket
@@ -1232,6 +1246,61 @@ registrerades, `avviker` med det registrerade värdet när det inte gör det, oc
 överstruket eller inte går att läsa. Kontrollerna är desamma som för en kanin som redan finns.
 Tolkades fotot innan kaninen sparades, jämförs den sparade tolkningen med kaninen när fotot kopplas
 till den, utan någon ny tolkning.
+
+**Säljare och köpare.** Förut skulle tolkningen inte skriva av intygets nedre del, och den vanliga
+läsningen ber fortfarande om det: "Säljarens och köparens uppgifter ska inte skrivas av". Jonas
+ändrade regeln 2026-11-27, så att försäljningen på ett gammalt intyg kan fyllas i (regel 5 b):
+
+- Den vanliga läsningen sparas först, i en egen kort transaktion. Sedan läser modellen säljaren och
+  köparen i ett andra anrop, med ett eget litet schema (`SALE_SCHEMA`: säljarens besättningsnummer,
+  köparens namn, utdelningsadress, postnummer, ort, e-post och besättningsnummer, och datumet) och
+  en egen prompt. Säljarens namn och telefonnumret skrivs aldrig av. Huvudschemat är oförändrat: ett
+  längre schema fick modellen att upprepa ett fält tills svaret klipptes. Dör jobbet under det andra
+  anropet finns den vanliga läsningen kvar, och inget försök går åt.
+- Svaret hålls mot schemat som det första. Dessutom stryks ett fält som inte kan vara det det
+  säger: en e-post som inte har formen av en adress, ett postnummer som inte är fem siffror
+  (mellanslag går bra), en säljares besättning som inte är ett besättningsnummer och varje värde
+  med ett telefonnummer i, också ett skrivet med 0046 eller med andra streck och mellanslag (U+2010
+  till U+2015, minustecknet och hårt mellanslag). Samma telefonkontroll gäller köparens postadress
+  när en försäljning sparas. Det som återstår sparas i `interpretation.forsaljning`.
+- Bara intyg i kön läses så, i en post utan `ref_type`. Foton som skickas in genom årsrapporten för
+  ett köp av en kanin som saknas i Stamboken (S7) blir en vanlig uppladdning och läses så. Ett foto
+  från årsrapporten som kontrollerar en registrerad kanin, och ett foto till en köpanmälan, läses
+  aldrig så. Ett foto som inte tolkas (`for_litet`) får ingen andra läsning heller, förrän "Tolka
+  igen" läser det. Misslyckas det andra anropet, eller är svaret tomt, står den vanliga läsningen kvar
+  utan säljare och köpare.
+- Det andra anropet görs bara om försäljningen fortfarande kan sparas från dokumentet: det är ett
+  intyg, inte klart, ingen försäljning är sparad från det, originalet och läsningen finns kvar och
+  posten är öppen. Det prövas under postens lås före anropet och igen innan svaret sparas. Redan när
+  dokumentet tas prövas under låset att posten inte har stängts och dokumentet inte blivit klart.
+  Har posten stängts, eller dokumentet avfärdats, bytt typ, blivit klart eller fått en försäljning
+  sedan läsningen började, sparas inte svaret, också om posten har öppnats igen (postens historik
+  avgör). "Tolka igen" efter en försäljning läser alltså bara kaninen.
+- Förslaget får `sale`: `buyer_herd` (`{"herd": "G123", "found": true}` när köparens
+  besättningsnummer finns i genbanken som det står; annars numret som det lästes, med `"found":
+  false` och en kontroll "Köparens besättning … finns inte i genbanken"), `buyer` (`name`,
+  `postal_address` som gata och postnummer, `town` och `email`, som de lästes), `date` (ÅÅÅÅ-MM-DD
+  när datumet går att tolka), `seller_herd` (som det lästes) och `checks`. Säljarens besättning
+  jämförs med kaninens ursprungsbesättning, registrets eller, när registret inte bekräftar kaninens
+  nummer, den lästa: en annan besättning "avviker", och utan registrets nummer "kan inte bekräftas".
+- Inget av det är säkert. Försäljningspanelen visar det under "Från fotot", och "Fyll i från fotot"
+  lägger in det först när handläggaren klickar: besättningen när den finns i genbanken, annars
+  köparen utanför föreningen med e-posten bara för föreningens mejl (`notice_only`) för en
+  försäljning till och med 2027. Köparen börjar då från tomma fält. Byter handläggaren till
+  försäljningsbeviset, eller flyttas datumet till ett år utan mejlet, försvinner e-posten från fotot,
+  så att den aldrig blir en kontaktadress; en e-post som handläggaren ändrat står kvar. Finns
+  besättningen som lästes inte i genbanken töms besättningen och köparen, och panelen ber
+  handläggaren välja. Telefon och köparens kryss fylls aldrig i. Ändras eller försvinner läsningen
+  (posten stängdes och öppnades igen) töms det som fylldes i från den, och sparandet skickar
+  `from_photo`, så att servern nekar en försäljning vars läsning är borta. När försäljningen är
+  sparad visar panelen bara det.
+- Bara köns arbetare (admin, genbanksansvariga och hjälpare) får `sale`, i `GET …/{id}` och i
+  svaren på dokumentets åtgärder. De ser redan originalet. Uppladdaren ser inte posten, och varken
+  "Mina inskick" eller årsrapportens ärenden visar tolkningen.
+- `sale` och `interpretation.forsaljning` tas bort när en försäljning sparas från dokumentet
+  (`…/overlat`; köparen finns sedan i `buyer_contact` under sina egna regler), när dokumentet blir
+  klart, avfärdas eller byter typ från intyg, och när posten stängs. Gallringen och raderingen tar
+  hela tolkningen med originalet, som förut.
 
 **Inställningar** (`.docker/api-variables.env`):
 

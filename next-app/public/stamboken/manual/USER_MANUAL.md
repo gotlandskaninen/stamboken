@@ -1290,6 +1290,9 @@ administratörer, genbanksansvariga och genbankshjälpare, och alla tre kan se h
    intyg", "Numret stämmer med kullen" och "Intygsnumret är ledigt". Jämför alltid förslaget med
    fotot innan du sparar; inget sparas förrän du klickar **Spara och nästa**. Har du vridit fotot
    rätt efteråt klickar du **Tolka igen**, så kommer ett nytt förslag några minuter senare.
+   Ett foto som är för litet (under 1000 bildpunkter på kortsidan) tolkas inte av sig självt:
+   be uppfödaren om ett större foto, skriv av fälten, eller klicka **Tolka igen** för att tolka det
+   ändå.
    Det du har skrivit skrivs aldrig över: har du redan börjat fylla i när förslaget kommer står
    "Det finns ett förslag från tolkningen", och först när du klickar **Fyll i förslaget** läggs
    det in.
@@ -1315,6 +1318,14 @@ administratörer, genbanksansvariga och genbankshjälpare, och alla tre kan se h
    Är köparen utanför föreningen fyller du i köparen med samma fält som när du säljer,
    se [Sälja eller flytta en kanin](#sälja-eller-flytta-en-kanin).
    Utan bevis märks ärendet "bevis saknas".
+   Har tolkningen läst köparen på fotot står det under **Från fotot**. Klicka **Fyll i från
+   fotot**, så läggs köparens besättning in om den finns i Stamboken, annars köparen utanför
+   föreningen med namn, postadress och ort, och datumet. Finns besättningen på fotot inte i
+   Stamboken fylls ingen köpare i: välj besättningen eller **Köparen är utanför föreningen**.
+   E-posten fylls bara i för en försäljning till och med 2027, så att föreningen kan mejla
+   köparen. Telefon och köparens kryss fylls aldrig i. Jämför med fotot innan du sparar.
+   Uppgifterna från fotot tas bort när försäljningen sparas, när dokumentet är klart, avfärdat
+   eller byter typ och när ärendet stängs.
 6. Ett bevis: välj typen **Bevis** och fyll i försäljningen. Beviset blir klart med den.
 7. Ett foto som inte ska sparas: **Avfärda**. **Hoppa över** går till nästa dokument utan
    att spara.
