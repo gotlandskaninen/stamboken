@@ -219,7 +219,8 @@ class TestPedigreeTemplateV2(unittest.TestCase):
 
     def test_breed_under_title(self):
         html = self._html(breed="Mellerudskanin", genebank="Mellerud")
-        self.assertIn('<p class="breed">Ras: Mellerudskanin</p>', html)
+        self.assertIn('<p class="breed">Mellerudskanin</p>', html)
+        self.assertNotIn("Ras:", html)
 
     def test_individual_number_in_one_field(self):
         # the whole number in one weight, the letter without a coloured box

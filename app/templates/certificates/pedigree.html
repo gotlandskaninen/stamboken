@@ -116,7 +116,7 @@ body {
   line-height: 1.1;
 }
 .fields td.vname { font-family: var(--serif); font-size: 11pt; font-weight: 600; }  /* as the parents' names */
-.head-mid .breed { font-size: 10.5pt; }
+.head-mid .breed { font-family: var(--serif); font-size: 15pt; font-weight: 600; margin-top: 1.2mm; }  /* bold like the rabbit's and parents' names, without a label (Anders 2026-11-24) */
 .cert-nr .lbl { font-family: var(--sans); font-size: 8.5pt; font-weight: 600; text-transform: none; letter-spacing: 0; color: var(--ink); }
 .cert-nr .sub { font-size: 7.5pt; color: var(--ink-2); margin-top: .8mm; }
 
@@ -290,7 +290,7 @@ h1, .sec, .breed { color:var(--skog) !important; }
     <div class="head-mid">
       <p class="eyebrow">Föreningen Gotlandskaninen</p>
       <h1>Genbanksintyg</h1>
-      <p class="breed">Ras: {{ breed }}</p>
+      <p class="breed">{{ breed }}</p>
     </div>
     <div class="cert-nr"><div class="lbl">Kaninens individnummer</div><div class="num">{{ genebank_number }}-{{ genebank_aki }}</div></div>
   </div>
