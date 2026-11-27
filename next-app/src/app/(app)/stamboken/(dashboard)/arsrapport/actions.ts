@@ -112,7 +112,7 @@ export async function dryRun(
     path(herd, year, "/torrkorning", post),
     "POST",
     body,
-    { timeout: SUBMIT_TIMEOUT_MS },
+    { timeout: SUBMIT_TIMEOUT_MS, isolateDemo: true },
   );
 }
 
@@ -125,6 +125,7 @@ export async function submitReport(
 ) {
   return call<Receipt>(env, path(herd, year, "/skicka", post), "POST", body, {
     timeout: SUBMIT_TIMEOUT_MS,
+    isolateDemo: true,
   });
 }
 

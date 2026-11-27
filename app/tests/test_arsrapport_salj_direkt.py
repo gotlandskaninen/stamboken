@@ -7,8 +7,10 @@ isort:skip_file
 """
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from unittest import mock
+from uuid import uuid4
 
 import utils.arsrapport as arsrapport
 import utils.arsrapport_pdf as arsrapport_pdf
@@ -18,6 +20,7 @@ import utils.herd_tracking as herd_tracking
 import utils.inbox as inbox
 import utils.settings as settings
 from herdbook import APP
+from peewee import OperationalError
 from utils.herd_tracking import BUYER_REMOVED, CONTACT_OR_MEMBERSHIP_NEEDED, REPORT_BEVIS_NOT_YET
 from utils.individual_commands import record_sale
 
@@ -221,6 +224,29 @@ class SellNowTest(ArsrapportTest):
         self.assertEqual(self.refusals(kopare=OTHER), [("kopare", BUYER_REMOVED)])
         self.sold(manad=11, kopare=OTHER)  # another sale, another day
 
+    def test_rabbit_page_sale_respects_erasure_after_angra(self):
+        self.sold(kopare=BUYER)
+        (sale,) = sales(self.a)
+        buyer_contact.erase_buyer_contact(sale.holder_contact_id, self.admin)
+        self.assertEqual(self.undo(sale).status_code, 200)
+        mails = self.buyer_mails()
+        path = f"/api/individual/{self.a.number}"
+        body = {"herd": "GX1", "selling_date": SOLD_ON.isoformat(), "buyer": BUYER}
+        refused = self.client.patch(path, json=body)
+        self.assertEqual((refused.status_code, refused.get_json()["detail"]), (409, BUYER_REMOVED))
+        self.assertFalse(sales(self.a))
+        self.assertFalse(db.BuyerContact.select().exists())
+        self.assertEqual(self.buyer_mails(), mails)
+
+        unnamed = self.client.patch(path, json={**body, "buyer": {"not_recorded": True}})
+        self.assertEqual(unnamed.status_code, 200, unnamed.get_data(as_text=True))
+        (unnamed_sale,) = sales(self.a)
+        self.assertTrue(unnamed_sale.buyer_removed)
+        self.assertEqual(self.undo(unnamed_sale, str(uuid4())).status_code, 200)
+        later = self.client.patch(path, json={**body, "selling_date": "2025-10-11", "buyer": OTHER})
+        self.assertEqual(later.status_code, 200, later.get_data(as_text=True))
+        self.assertEqual(sales(self.a)[0].holder_contact.name, OTHER["name"])
+
     def test_an_erasure_takes_the_paper_form_behind_a_direct_sale(self):  # review r1: every page of it
         stored = [(f"inkorg/original/{n}.jpg", f"{n}".rjust(64, "0"), QUALITY) for n in range(2)]
         item, _ = inbox.create_upload(self.owner, self.h, None, stored)
@@ -239,6 +265,28 @@ class SellNowTest(ArsrapportTest):
         sent = self.skicka(self.kvar(self.b, vikt=2.8), health="ja", defects=defects)
         self.assertEqual(sent.status_code, 200, sent.get_data(as_text=True))
         self.assertEqual(json.loads(db.YearlyHerdReport.get().data)["defects"], [{**defects[0], "foto": None}])
+
+    def test_sold_rabbit_defect_survives_withdrawal_and_resubmission(self):
+        self.sold(till="G9002")
+        defects = [{"individual_id": self.a.id, "beskrivning": "Skev tand"}]
+        body = self.body(self.kvar(self.b, vikt=2.8), health="ja", defects=defects)
+        path = "/besattning/G9001/2025"
+        self.assertEqual(self.api("POST", f"{path}/skicka", **body).status_code, 200)
+        data = arsrapport.stored_body(body)
+        saved = self.api(
+            "PUT", f"{path}/utkast", data={**data, "form": data}, updated_at=None, submission_key=None, revision=1
+        )
+        self.assertEqual(saved.status_code, 200, saved.get_data(as_text=True))
+        withdrawn = self.api("POST", f"{path}/dra-tillbaka", revision=1)
+        self.assertEqual(withdrawn.status_code, 200, withdrawn.get_data(as_text=True))
+        draft = withdrawn.get_json()["draft"]["data"]
+        self.assertEqual(draft.pop("form")["defects"], defects)
+        self.assertEqual(draft["defects"], defects)
+
+        resent = self.skicka(**draft)
+        self.assertEqual(resent.status_code, 200, resent.get_data(as_text=True))
+        report = db.YearlyHerdReport.get_by_id(resent.get_json()["report_id"])
+        self.assertEqual(json.loads(report.data)["defects"], [{**defects[0], "foto": None}])
 
     def test_a_month_only_sale_stays_month_only(self):  # review r1: in the view and the register extract
         self.sold(dag=None, kopare=BUYER)
@@ -271,6 +319,23 @@ class SellNowTest(ArsrapportTest):
         self.assertEqual((set(draft.data["rabbits"]), draft.data["message"]), ({str(self.b.id)}, "Från en annan flik"))
         self.assertEqual(set(draft.data["form"]["rabbits"]), {str(self.b.id)})
 
+    def test_january_sale_drops_stale_kvar_and_keeps_other_edits(self):
+        path = "/besattning/G9001/2025/utkast"
+        data = arsrapport.stored_body(self.body(self.kvar(self.a, vikt=2.8), self.kvar(self.b, vikt=2.8)))
+        put = {"submission_key": None, "revision": None}
+        first = self.api("PUT", path, data={**data, "form": data}, updated_at=None, **put)
+        self.assertEqual(first.status_code, 200)
+        self.sold(ar=2026, manad=1, dag=5, till="G9002")
+        data["message"] = "Från en annan flik"
+        second = self.api("PUT", path, data={**data, "form": data}, updated_at=first.json["updated_at"], **put)
+        self.assertEqual(second.status_code, 200, second.get_data(as_text=True))
+        draft = self.page()["draft"]["data"]
+        for copy in (draft.pop("form"), draft):
+            self.assertEqual(copy["rabbits"], {str(self.b.id): data["rabbits"][str(self.b.id)]})
+            self.assertEqual(copy["message"], data["message"])
+        sent = self.skicka(**draft)
+        self.assertEqual(sent.status_code, 200, sent.get_data(as_text=True))
+
     def test_the_receipt_counts_the_years_sales_besides_the_report(self):  # review r1: not "0 sålda"
         self.sold(dag=None, kopare=BUYER)
         sent = self.skicka(self.kvar(self.b, vikt=2.8))
@@ -284,6 +349,35 @@ class SellNowTest(ArsrapportTest):
         text = text_of(arsrapport_pdf.receipt_pdf(db.YearlyHerdReport.get(), submission))
         self.assertIn("Såld utanför genbanken", text)
         self.assertIn("2025-10", text)
+
+    def test_angra_waits_until_skicka_has_recorded_the_sale(self):
+        self.sold(till="G9002")
+        (sale,) = sales(self.a)
+        owner = db.User.get_by_id(self.owner.id)
+        access = arsrapport.report_access(owner, self.h)
+        sold_besides = arsrapport._sold_besides  # pylint: disable=protected-access
+
+        def try_undo():
+            with APP.app_context(), db.DB_PROXY.connection_context():
+                try:
+                    with db.DB_PROXY.atomic():
+                        db.DB_PROXY.execute_sql("SET LOCAL lock_timeout = '250ms'")
+                        arsrapport.undo_sale(self.h, access, owner, sale.id, uuid4())
+                except OperationalError as exc:
+                    self.assertEqual(exc.__context__.pgcode, "55P03")  # lock_not_available
+
+        def before_receipt(*args):
+            with ThreadPoolExecutor(max_workers=1) as worker:
+                worker.submit(try_undo).result(timeout=10)
+            return sold_besides(*args)
+
+        with mock.patch.object(arsrapport, "_sold_besides", side_effect=before_receipt) as snapshot:
+            sent = self.skicka(self.kvar(self.b, vikt=2.8))
+        snapshot.assert_called_once()
+        self.assertEqual(sent.status_code, 200, sent.get_data(as_text=True))
+        self.assertEqual(sent.get_json()["summary"]["salda"], 1)
+        self.assertEqual(self.undo(sale).status_code, 200)
+        self.assertEqual(db.YearlyReportSubmission.get().data["salda_direkt"][0]["individual_id"], self.a.id)
 
     def test_paper_rechecks_the_item_under_the_locks(self):
         item, _ = inbox.create_upload(self.owner, self.h, None, [("inkorg/original/x.jpg", "0" * 64, QUALITY)])

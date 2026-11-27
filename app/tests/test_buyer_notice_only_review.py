@@ -242,9 +242,13 @@ class TestSaleReview(NoticeOnlyTest):
         self.assertIsNotNone(db.HerdTracking.get_by_id(sale.id).voided_at)
         self.assertEqual(replacement.holder_contact.name, BUYER["name"])
 
-    def test_a_notice_not_sent_within_a_month_takes_only_an_unregistered_buyer(self):  # review of #276
+    def test_unsent_notices_lose_the_buyer_after_thirty_days(self):
         now = datetime.now(timezone.utc)
         stuck = self.sale()  # its mail still queued
+        sending = record_herd_tracking(self.individuals[3], self.gx1, DAY, "TRANSFER", self.manager, buyer=NOTICE)
+        db.MailMessage.update(status="sending").where(
+            db.MailMessage.recipient_id == sending.holder_contact_id
+        ).execute()
         withdrawn = record_herd_tracking(self.individuals[1], self.gx1, DAY, "TRANSFER", self.manager, buyer=NOTICE)
         # Dra tillbaka voids the sale and keeps the buyer for a new Skicka, which has not come
         herd_tracking.void_herd_tracking(
@@ -255,13 +259,13 @@ class TestSaleReview(NoticeOnlyTest):
         ).execute()
         db.BuyerContact.update(created_at=now - timedelta(days=29)).execute()
         buyer_contact.purge_uninformed(now)
-        self.assertIsNotNone(self.contact(stuck))
-        self.assertIsNotNone(db.BuyerContact.get_or_none(db.BuyerContact.id == withdrawn.holder_contact_id))
+        for sale in (stuck, sending, withdrawn):
+            self.assertIsNotNone(self.contact(sale))
         db.BuyerContact.update(created_at=now - timedelta(days=31)).execute()
         buyer_contact.purge_uninformed(now)
-        self.assertIsNotNone(self.contact(stuck))  # registered: its queued notice still goes
-        self.assertIsNone(db.BuyerContact.get_or_none(db.BuyerContact.id == withdrawn.holder_contact_id))
-        self.assertFalse(db.HerdTracking.get_by_id(stuck.id).buyer_removed)
+        for sale in (stuck, sending, withdrawn):
+            self.assertIsNone(self.contact(sale))
+            self.assertTrue(db.HerdTracking.get_by_id(sale.id).buyer_removed)
 
     def test_cancelled_notice_removes_the_buyer_only_when_the_sale_was_not_withdrawn(self):
         withdrawn = self.sale()
