@@ -54,14 +54,21 @@ const asMatched = (payload: Record<string, unknown>) =>
 export function CertificateForm({
   itemId,
   doc,
-  colors,
+  colors: itemColors,
+  colorsByLetter,
   canSave,
   onSaved,
   onSkip,
 }: {
   itemId: number;
   doc: InboxDocument;
+  /** The colours of the item's genebank; empty when the list could not be fetched. */
   colors: string[];
+  /**
+   * An item without a genebank: each genebank's colours by its letter, the list taken by the letter of the paper's
+   * number; null when the lists could not be fetched. Left out for an item with a genebank.
+   */
+  colorsByLetter?: Record<string, string[]> | null;
   canSave: boolean;
   onSaved: (document: InboxDocument) => void;
   onSkip: () => void;
@@ -152,6 +159,14 @@ export function CertificateForm({
   }, [version, mode, form, grandparents, latest, ask]);
   const shown = answer?.version === version ? answer.result : null;
   // Spara waits until nothing mandatory is left, as in "Registrera kanin" (Jonas 2026-11-27).
+  const letter = form.paper_number.trim().charAt(0).toUpperCase();
+  const colors =
+    colorsByLetter === undefined
+      ? itemColors
+      : (colorsByLetter?.[letter] ?? []);
+  // No list to choose from: the fetch failed, or an item without a genebank has no number to tell it yet.
+  const noList = mode === "ny_kanin" && colors.length === 0;
+  const unfetched = colorsByLetter === undefined || colorsByLetter === null;
   const lacking = missingRows(mode, { ...form, ...grandparents }, colors);
 
   return (
@@ -286,10 +301,16 @@ export function CertificateForm({
       }
       footer={
         <>
-          {canSave && mode === "ny_kanin" && colors.length === 0 && (
+          {canSave && noList && unfetched && (
             <p className={styles.error}>
               Färglistan kunde inte hämtas, så en ny kanin kan inte sparas här
               nu. Ladda om sidan, eller lämna ärendet till genbanksansvarig.
+            </p>
+          )}
+          {canSave && noList && !unfetched && (
+            <p className={styles.muted}>
+              Välj färg när individnumret på pappret är ifyllt: färgerna är
+              genbankens, och numret visar vilken genbank det är.
             </p>
           )}
           {canSave && lacking.length > 0 && (

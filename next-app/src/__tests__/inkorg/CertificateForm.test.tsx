@@ -926,6 +926,70 @@ describe("CertificateForm's mandatory rows", () => {
     expect(screen.queryByText(/Färglistan kunde inte hämtas/)).toBeNull(); // not needed there
   });
 
+  describe("an item without a genebank (a mail from a sender the register does not know)", () => {
+    const BY_LETTER = { G: ["viltgrå", "svart"], M: ["blå"] };
+    const open = (colorsByLetter: Record<string, string[]> | null) =>
+      render(
+        <CertificateForm
+          itemId={12}
+          doc={doc({ proposal: null, interpretation_status: "misslyckad" })}
+          colors={[]}
+          colorsByLetter={colorsByLetter}
+          canSave
+          onSaved={() => undefined}
+          onSkip={() => undefined}
+        />,
+      );
+    const options = () =>
+      within(screen.getByLabelText("Färg"))
+        .queryAllByRole("option")
+        .map((o) => o.textContent);
+
+    it("takes the colours of the genebank the paper's number names, and saves", async () => {
+      vi.mocked(saveCertificate).mockResolvedValue({
+        ok: true,
+        data: { item: {} as never, document: doc() },
+      });
+      open(BY_LETTER);
+      for (const [label, value] of FILLED) type(label, value);
+      expect(options()).toEqual(["Välj", "viltgrå", "svart"]); // G: Gotland's
+      expect(spara()).toBeEnabled();
+      expect(screen.queryByText(/Välj färg när/)).toBeNull();
+      fireEvent.click(spara());
+      await waitFor(() =>
+        expect(saveCertificate).toHaveBeenCalledWith(
+          12,
+          31,
+          expect.objectContaining({ color: "viltgrå" }),
+        ),
+      );
+    });
+
+    it("waits for the number before a colour can be chosen", () => {
+      open(BY_LETTER);
+      for (const [label, value] of FILLED)
+        if (label !== "Individnummer på pappret") type(label, value);
+      expect(spara()).toBeDisabled();
+      expect(
+        screen.getByText(/Välj färg när individnumret på pappret är ifyllt/),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/kunde inte hämtas/)).toBeNull();
+      type("Individnummer på pappret", "X9001-2511"); // a letter no genebank has
+      expect(spara()).toBeDisabled();
+      type("Individnummer på pappret", "M9001-2511");
+      expect(options()).toEqual(["Välj", "blå"]);
+    });
+
+    it("says so when the lists could not be fetched", () => {
+      open(null);
+      type("Individnummer på pappret", "G9001-2511");
+      expect(spara()).toBeDisabled();
+      expect(
+        screen.getByText(/Färglistan kunde inte hämtas/),
+      ).toBeInTheDocument();
+    });
+  });
+
   it("someone who may not save gets no list of what is left", () => {
     render(
       <CertificateForm
