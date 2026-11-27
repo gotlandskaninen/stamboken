@@ -178,6 +178,12 @@ export function CertificateForm({
                 </ul>
               )}
             <ProposalChecks checks={proposal.checks} />
+            {proposal.checks.length > 0 && (
+              <p className={styles.muted}>
+                Kontrollerna gäller det som lästes från fotot och räknas inte om
+                när du skriver. Spara prövar det du har skrivit.
+              </p>
+            )}
           </>
         )
       }
