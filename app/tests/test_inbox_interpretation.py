@@ -268,6 +268,14 @@ class TestSaleReading(InterpretationTest):
         interpreter.interpret_next()
         self.assertEqual(self.doc(document).interpretation["forsaljning"], {"kopare_namn": "Köpa Testsson"})
 
+    def test_a_seller_herd_that_is_no_herd_number_is_dropped(self):
+        _, (kept, dropped) = self.uploaded(files=2)
+        for document, herd in ((kept, " g 9002 "), (dropped, "Testgården")):
+            self.sale = {"kopare_namn": "Köpa Testsson", "saljare_besattning": herd}
+            self.assertEqual(interpreter.interpret_next(), document.id)
+        self.assertEqual(self.doc(kept).interpretation["forsaljning"]["saljare_besattning"], " g 9002 ")
+        self.assertNotIn("saljare_besattning", self.doc(dropped).interpretation["forsaljning"])
+
     def test_a_worker_dying_in_the_second_reading_keeps_the_first(self):
         _, (document,) = self.uploaded()
         self.sale = SystemExit("the worker stopped")

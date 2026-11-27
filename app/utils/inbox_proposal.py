@@ -52,6 +52,7 @@ _SEVERAL = "finns inte i Stamboken, men flera kaniner har nästan samma nummer"
 _NONE = "finns inte i Stamboken"
 _SEXES = {"HONA": "female", "HANE": "male"}
 SALE_READING = "forsaljning"  # the seller and buyer's key in a document's interpretation (inbox_interpreter)
+HERD_NUMBER = re.compile(r"\s*([A-Za-z]?)\s*(\d{1,5})\s*")  # as read: G1274, 1274 or G 1274
 
 
 def _text(value):
@@ -641,8 +642,8 @@ def build_proposal(raw, genebank_id, herd_id=None, registered=None):
 
 
 def _herd_read(text, letter):
-    """A herd number as it stands (G1274, 1274 or G 1274), with `letter` where none was read; None otherwise."""
-    match = re.fullmatch(r"\s*([A-Za-z]?)\s*(\d{1,5})\s*", text)
+    """A herd number as it stands (HERD_NUMBER), with `letter` where none was read; None otherwise."""
+    match = HERD_NUMBER.fullmatch(text)
     return f"{(match[1] or letter).upper()}{match[2]}" if match else None
 
 

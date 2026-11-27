@@ -20,7 +20,7 @@ from PIL import Image, ImageFilter
 import utils.settings as settings
 from utils.database import DB_PROXY, InboxDocument, InboxItem
 from utils.herd_tracking import has_phone
-from utils.inbox_proposal import SALE_READING, build_proposal, sale_part
+from utils.inbox_proposal import HERD_NUMBER, SALE_READING, build_proposal, sale_part
 from utils.log_masking import mask_cut
 from utils.mail import is_address
 from utils.postal import POSTAL_CODE_RE
@@ -238,11 +238,16 @@ def _locked(document_id, item_id):
 
 
 def _contact_shaped(key, value):
-    """A field of the sale reading that can be what it says: an e-mail address, a postcode, and never a phone number."""
+    """
+    A field of the sale reading that can be what it says: an e-mail address, a postcode, the seller's herd number, and
+    never a phone number.
+    """
     if key == "kopare_epost":
         return is_address(value) and not has_phone(value)
     if key == "kopare_postnummer":
         return POSTAL_CODE_RE.match(value) is not None
+    if key == "saljare_besattning":
+        return HERD_NUMBER.fullmatch(value) is not None
     return not has_phone(value)
 
 
