@@ -75,6 +75,8 @@ from utils.herd_tracking import (
     NOT_RECORDED,
     QUEUE_CHANGED,
     REPORT_LATER_ROW,
+    REPORT_ROW,
+    UNDO_REASON,
     HerdTrackingError,
     HerdTrackingInvalid,
     QueueChanged,
@@ -1118,7 +1120,8 @@ def report_view(herd, round_, access, user):
     for rabbit, (_, _, op) in shown.items():  # a sale the dialog gave without its day shows its month (5.3)
         rabbits[rabbit]["later"] = {**rabbits[rabbit]["later"], "day_known": str(op) not in dialog}
     later_sales = {row_id: (rabbit, to) for rabbit, (row_id, to, _) in shown.items()}
-    undo = _undoable(user, access, [row["id"] for row in sales.dicts()] + list(later_sales))
+    sales = list(sales.dicts())  # one read: each sale's label and its Ångra come from the same row
+    undo = _undoable(user, access, [row["id"] for row in sales] + list(later_sales))
     for row_id, (rabbit, to) in later_sales.items():  # `undo_to`: the buyer's herd, for Ångra's question
         rabbits[rabbit] |= {"undo": row_id if row_id in undo else None, "undo_to": to}
     claims = _kept_claims(draft.data) if draft and access.can_sell else {}
@@ -1156,7 +1159,7 @@ def report_view(herd, round_, access, user):
         "litters": report_litters(herd, year),
         "sales": [
             {**sale, "undo": row["id"] if row["id"] in undo else None}
-            for sale, row in zip(_sales_json(report, sales.dicts()), sales.dicts(), strict=True)
+            for sale, row in zip(_sales_json(report, sales), sales, strict=True)
         ],
         "forslag": _forslag_json(report),
         "kopanmalningar": purchase_notice.report_notices(herd, round_, access),  # closes the registered ones first
@@ -3349,6 +3352,32 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
 
 
 SOLD_WITH_SKICKA = "Rapporten är redan inskickad. Försäljningen registreras när du skickar ändringarna."
+
+
+def undo_sale(herd, access, user, row_id, operation_id):
+    """
+    The report's Ångra of a sale out of the herd (Jonas 2026-11-26): only as its seller may on the rabbit page,
+    checked again here under the rabbit's lock (sale_undo_denial: their own, the latest row, within
+    SALE_UNDO_WINDOW), never a sale a report wrote (REPORT_ROW) and never a link's. A manager's wider right stays on
+    the rabbit page. The same `operation_id` again changes nothing.
+    """
+    if access.code is not None:
+        raise ArsrapportError(403, "Länken kan inte ångra en försäljning.")
+    row = HerdTracking.get_or_none((HerdTracking.id == row_id) & (HerdTracking.from_herd == herd.id))
+    if row is None or row.kind != "TRANSFER":
+        raise ArsrapportError(404, "Försäljningen finns inte.")
+    with DB_PROXY.atomic():
+        buyer_items([row], lock=True)  # the queue's order, as void_herd_tracking takes them again: items, rabbit
+        lock_individuals([row.individual_id])
+        if HerdTracking.select().where(HerdTracking.voided_operation_id == operation_id).exists():
+            return
+        row = HerdTracking.get_by_id(row_id)
+        active = HerdTracking.select().where(HerdTracking.individual == row.individual_id, ht_not_voided())
+        denial = REPORT_ROW if report_owners([row.operation_id]) else None
+        denial = denial or sale_undo_denial(user, row, sorted(active, key=ht_sort_key))
+        if denial:
+            raise ArsrapportError(403, denial)
+        void_herd_tracking(row.id, user, UNDO_REASON, operation_id, typed=False)
 
 
 def sell_now(herd, round_, access, user, rabbit_id, sald, *, now=None):

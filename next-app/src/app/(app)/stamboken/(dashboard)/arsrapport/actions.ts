@@ -165,8 +165,10 @@ export async function sellNow(
   );
 }
 
-// Ångra a sale the view offers it for (`undo`), as the rabbit page's seller does.
+// Ångra a sale the view offers it for (`undo`): the report's route checks the seller's rule again now.
 export async function undoSale(
+  herd: string,
+  year: number,
   herdTrackingId: number,
   operationId: string,
   env: Mode,
@@ -175,12 +177,9 @@ export async function undoSale(
     return refused("Ogiltig försäljning.");
   return call<unknown>(
     env,
-    `/v2/herd-tracking/${herdTrackingId}/void`,
+    path(herd, year, `/forsaljning/${herdTrackingId}/angra`),
     "POST",
-    {
-      reason: "Ångrad av den som registrerade den",
-      operation_id: operationId,
-    },
+    { operation_id: operationId },
     { isolateDemo: true },
   );
 }

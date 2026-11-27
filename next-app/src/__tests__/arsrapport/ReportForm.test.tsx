@@ -655,7 +655,7 @@ describe("ReportForm", () => {
           within(dialog).getByRole("button", { name: "Ångra försäljning" }),
         ),
       );
-      expect(a.undoSale.mock.calls[i][0]).toBe(id);
+      expect(a.undoSale.mock.calls[i].slice(0, 3)).toEqual(["G9001", 2026, id]);
       await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     }
     expect(refresh).toHaveBeenCalled();

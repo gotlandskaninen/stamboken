@@ -54,10 +54,13 @@ describe("arsrapport actions", () => {
   it("keeps a demo sale and its Ångra in the demo environment, never on production", async () => {
     const sald = { till: "G9002", ar: 2026, manad: 6, dag: null, kopare: null };
     await sellNow("G9001", 2026, 1, sald, "demo");
-    await undoSale(55, "op", "demo");
+    await undoSale("G9001", 2026, 55, "op", "demo");
     expect(
-      fetchApi.mock.calls.map(([, options]) => options.isolateDemo),
-    ).toEqual([true, true]);
+      fetchApi.mock.calls.map(([url, options]) => [url, options.isolateDemo]),
+    ).toEqual([
+      ["/v2/arsrapport/besattning/G9001/2026/forsaljning", true],
+      ["/v2/arsrapport/besattning/G9001/2026/forsaljning/55/angra", true],
+    ]);
   });
 
   it("gives dryRun, submitReport and withdrawReport the long timeout", async () => {

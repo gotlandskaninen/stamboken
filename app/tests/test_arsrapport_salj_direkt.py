@@ -176,27 +176,33 @@ class SellNowTest(ArsrapportTest):
         self.assertEqual(self.skicka(self.kvar(self.b, vikt=2.8)).status_code, 200)
         self.assertEqual(len(sales(self.a)), 1)
 
+    def undo(self, sale, op="00000000-0000-4000-8000-000000000001"):
+        """The report's Ångra: its own route, which checks the seller's rule again now."""
+        return self.api("POST", f"/besattning/G9001/2025/forsaljning/{sale.id}/angra", operation_id=op)
+
     def test_the_seller_undoes_it_within_seven_days(self):
         self.sold(kopare=BUYER)
         (sale,) = sales(self.a)
-        self.login("man")  # a manager's wider right stays on the rabbit page
+        self.login("man")  # a manager's wider right stays on the rabbit page, also through this route
         self.assertIsNone(self.page()["sales"][0]["undo"])
+        self.assertEqual(self.undo(sale).status_code, 403)
         self.login("owner")
         later = datetime.now(timezone.utc) + herd_tracking.SALE_UNDO_WINDOW + timedelta(minutes=1)
         with mock.patch.object(herd_tracking, "_now_utc", return_value=later):
             self.assertIsNone(self.page()["sales"][0]["undo"])
-        response = self.client.post(
-            f"/api/v2/herd-tracking/{sale.id}/void", json={"reason": "Ångrad av den som registrerade den"}
-        )
+            self.assertEqual(self.undo(sale).status_code, 403)  # checked at undo time, not only when shown
+        response = self.undo(sale)
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertEqual(self.undo(sale).status_code, 200)  # the same Ångra again: nothing more happens
         self.assertEqual(sales(self.a), [])
         self.assertFalse(db.BuyerContact.select().exists())
         self.assertIn(self.a.id, [row["id"] for row in self.page()["rabbits"]])  # back on the list
 
-    def undo(self, sale):
-        return self.client.post(
-            f"/api/v2/herd-tracking/{sale.id}/void", json={"reason": "Ångrad av den som registrerade den"}
-        )
+    def test_angra_here_never_undoes_a_sale_the_report_wrote(self):  # REPORT_ROW: Ändra changes it
+        sent = self.skicka(self.sald(self.a, "utanfor", 2025, 10, 10, kopare=BUYER), self.kvar(self.b, vikt=2.8))
+        self.assertEqual(sent.status_code, 200)
+        self.assertEqual(self.undo(sales(self.a)[0]).status_code, 403)
+        self.assertEqual(len(sales(self.a)), 1)
 
     def test_angra_on_the_row_is_for_the_move_it_shows(self):  # review r1: a buyback and a resale after it
         self.sold(ar=2026, manad=1, dag=5, till="G9002")

@@ -308,6 +308,20 @@ def sell_now(herd, year):
     return jsonify({"operation_id": operation_id})
 
 
+# [Next.js] Ångra of a sale out of the herd, as its seller may on the rabbit page; checked again now.
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/forsaljning/<int:row_id>/angra", methods=["POST"])
+@report_actor_required
+def undo_sale(herd, year, row_id):
+    herd, _, access = _report_target(herd, year)
+    body = request.get_json(silent=True) or {}
+    try:
+        operation_id = uuid.UUID(body.get("operation_id"))
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise ArsrapportError(400, "Ange operation_id som ett UUID.") from exc
+    arsrapport.undo_sale(herd, access, _actor(access), row_id, operation_id)
+    return jsonify({"ok": True})
+
+
 # [Next.js] Autosave of the server draft; a stale version is a 409 with the current draft.
 @arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/utkast", methods=["PUT"])
 @report_actor_required

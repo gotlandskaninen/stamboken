@@ -979,7 +979,7 @@ export function ReportForm({
     setUndoBusy(true);
     const res = await track(
       key,
-      actions.undoSale!(undoing!.id, operationId, env),
+      actions.undoSale!(herd.herd, year, undoing!.id, operationId, env),
     );
     setUndoBusy(false);
     refreshView();
