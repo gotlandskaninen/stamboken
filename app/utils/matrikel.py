@@ -38,6 +38,7 @@ from utils.database import (
     BILLING_FIELDS,
     DB_PROXY,
     OUTSIDE_GENEBANK_HERDS,
+    SUPPORT_ACCOUNT_FIELDS,
     Herd,
     HerdAccessGrant,
     LoginCode,
@@ -49,6 +50,7 @@ from utils.database import (
     MemberPreviousAddress,
     Membership,
     User,
+    redact_herd_account_audits,
     snapshot_read,
 )
 from utils.herd_contact import (
@@ -95,9 +97,7 @@ HOUSEHOLD_PII_FIELDS = (
     "organization_number",
     *BILLING_FIELDS,
     # the support account (migration 58): no payout without a person (U14)
-    "bank_account_type",
-    "bank_account_number",
-    "bank_name",
+    *SUPPORT_ACCOUNT_FIELDS,
 )
 # postal_address is the pre-v29 spelling, still present in old payloads.
 HOUSEHOLD_PII_KEYS = frozenset((*HOUSEHOLD_PII_FIELDS, "postal_address"))
@@ -812,6 +812,10 @@ def _applications_of(person):
     return where
 
 
+def _has_active_person(membership):
+    return Member.select().where(Member.membership == membership, Member.end_date.is_null(True)).exists()
+
+
 def anonymize_person(member, actor, deferred_originals=None, deferred_accounts=None):
     """GDPR erasure: anonymize the person row, keep membership history.
 
@@ -888,10 +892,20 @@ def anonymize_person(member, actor, deferred_originals=None, deferred_accounts=N
         # until then, and rows added after that erasure stay
         if not erased_before and all(map(is_anonymized, Member.select().where(Member.membership == membership))):
             on_household_erased(membership.id)
-        if not Member.select().where(Member.membership == membership, Member.end_date.is_null(True)).exists():
+        payload = {"person_id": person.id}
+        clear_household = not _has_active_person(membership)
+        if clear_household:
             # Last active person gone: erase household details. payment_note stays for accounting.
+            cleared = [field for field in SUPPORT_ACCOUNT_FIELDS if getattr(membership, field) is not None]
+            if cleared:
+                payload["fields"] = cleared
             Membership.update(**dict.fromkeys(HOUSEHOLD_PII_FIELDS), updated_at=now).where(
                 Membership.id == membership.id
+            ).execute()
+            # and an account migration 58 left on its herds (no safe target), which the herd audit does not copy
+            Herd.update(bank_account_number=None, bank_name=None).where(
+                Herd.membership == membership.id,
+                Herd.bank_account_number.is_null(False) | Herd.bank_name.is_null(False),
             ).execute()
             redact_household_from_audits(membership)
         application_ids = [
@@ -918,7 +932,7 @@ def anonymize_person(member, actor, deferred_originals=None, deferred_accounts=N
             .returning(MemberApplication.id)
             .execute()
         ]
-        applications_redacted = len(application_ids)
+        payload["applications_redacted"] = len(application_ids)
         forget_recipient("member", person.id)  # the queue keeps no address hash or dedupe key of the erased
         if user is not None:
             forget_recipient("user", user.id)  # nor of the account's mail (notices, applications, the intake queue)
@@ -932,12 +946,7 @@ def anonymize_person(member, actor, deferred_originals=None, deferred_accounts=N
             forget_recipient("login_code", code.id)
         for application_id in application_ids:
             forget_recipient("application", application_id)
-        write_matrikel_audit(
-            actor,
-            "person_anonymized",
-            membership,
-            {"person_id": person.id, "applications_redacted": applications_redacted},
-        )
+        write_matrikel_audit(actor, "person_anonymized", membership, payload)
         if user is not None:
             erase_account(user)  # `user` keeps the values read under the lock
         lost = before - User.get_by_id(user.id).effective_herd_ids() if user is not None else set()
@@ -950,6 +959,8 @@ def anonymize_person(member, actor, deferred_originals=None, deferred_accounts=N
         if user is not None and deferred_accounts is None:
             pictures = profile_pictures_of(user)  # before the purge takes their names
             purge_user_audit_pii(user.id, user.username, user.email)  # last: it locks audit_log until the commit
+        if clear_household and deferred_accounts is None:
+            redact_herd_account_audits([membership.id])
     if deferred_originals is None:
         remove_originals(originals)  # only after the commit: a row never names a removed file
     else:
@@ -1102,6 +1113,8 @@ def anonymize_ended_persons(now):
                     pictures |= profile_pictures_of(account)  # before the purge takes their names
                 for account in erased:  # last: the purge locks audit_log until the commit
                     purge_user_audit_pii(account.id, account.username, account.email)
+                if due and not _has_active_person(membership):
+                    redact_herd_account_audits([membership.id])
         except Exception:  # pylint: disable=broad-exception-caught
             logger.exception("Automatic anonymization failed for membership=%s", membership.id)
             failed += 1

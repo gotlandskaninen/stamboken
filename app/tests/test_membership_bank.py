@@ -12,6 +12,7 @@ from datetime import date
 import utils.data_access as da
 import utils.database as db
 from peewee import IntegrityError
+from utils.herd_contact import link_herd
 from utils.matrikel import anonymize_person
 
 from tests.database_test import _USE_POSTGRES, IsolatedSchemaTest
@@ -108,13 +109,24 @@ class TestMigration58(IsolatedSchemaTest):
             self.assertEqual(snapshot(), self.bootstrapped)
             tx.rollback()
 
+    def test_boot_from_v57_without_audit_triggers(self):
+        with db.DB_PROXY.atomic() as tx:
+            self.to_v57({})
+            db.SchemaHistory.create(version=57, comment="Bootstrapped")
+            _sql("DROP FUNCTION audit_trigger_func() CASCADE")
+            _sql("DROP TABLE audit_log")
+            db.check_migrations()
+            self.assertEqual(snapshot(), self.bootstrapped)
+            self.assertEqual(db.SchemaHistory.get_by_id(58).comment, f"{db.SUPPORT_ACCOUNT_58}; 0 herds keep theirs")
+            tx.rollback()
+
     def test_moves_one_account_per_membership_without_audit_copies(self):
         g1, g2, m3 = self.herds
         with db.DB_PROXY.atomic() as tx:
-            # G2 has the same account written otherwise; M3 (inactive) only a bank name; G4, without a membership,
-            # only blanks: tab, newline, no-break space
-            self.to_v57({g1: (f" {ACCOUNT} ", "Banken"), g2: ("8327-44715512", " banken\t"), m3: (None, " Bara bank "),
-                         self.orphan: ("\t\n", "\u00a0")})  # fmt: skip
+            # G2 has the same account written otherwise (an en dash for the hyphen); M3 (inactive) only a bank name;
+            # G4, without a membership, only blanks: tab, newline, no-break space
+            self.to_v57({g1: (f" {ACCOUNT} ", "Banken"), g2: ("8327\u201344715512", " banken\t"),
+                         m3: (None, " Bara bank "), self.orphan: ("\t\n", "\u00a0")})  # fmt: skip
             audit_rows = self.herd_audit_rows()
             db.migrate_57_to_58()
             self.assertEqual(self.account(self.a), (None, ACCOUNT, "Banken"))  # the type is not guessed
@@ -162,6 +174,14 @@ class TestMigration58(IsolatedSchemaTest):
             "giro formats": {g1: ("123-4566", None), g2: ("123456-6", None)},
             "clearing boundary": {g1: ("8327-4471 5512", None), g2: ("83274471-5512", None)},
             "a dash on one": {g1: ("1234566", None), g2: ("123-4566", None)},
+            # an en dash or a minus is the same boundary as a hyphen
+            "giro formats, en dash": {g1: ("123\u20134566", None), g2: ("123456\u20136", None)},
+            "giro formats, minus and hyphen": {g1: ("123\u22124566", None), g2: ("123456-6", None)},
+            "label dash": {g1: ("Konto – 123-4566", None), g2: ("Konto – 123456-6", None)},
+            "second numeric dash": {g1: ("12-3-4566", None), g2: ("12-3456-6", None)},
+            "soft hyphen": {g1: ("123\u00ad4566", None), g2: ("123456\u00ad6", None)},
+            "unclear separator": {g1: ("123/4566", None), g2: ("123456/6", None)},
+            "digits in free text": {g1: ("1 eller 234566", None), g2: ("123456 eller 6", None)},
             "no membership": {self.orphan: (OTHER, " Banken ")},
         }
         for case, accounts in cases.items():
@@ -201,6 +221,55 @@ class TestMigration58(IsolatedSchemaTest):
             self.assertEqual(self.account(self.a), (None, None, None))
             self.assertEqual(self.account(self.b), (None, OTHER, "Banken"))
             self.assertEqual(self.herd_accounts(), [])
+            tx.rollback()
+
+    def test_boot_puts_back_guards_an_interrupted_bootstrap_left_out(self):
+        """Codex #278 r3: init() stamps the version before it creates the guards; a bootstrap that died in between
+        must not serve without them. Every boot checks them under the migration lock."""
+        with db.DB_PROXY.atomic() as tx:
+            _sql("DROP TRIGGER herd_bank_guard ON herd")
+            _sql("ALTER TABLE membership DROP CONSTRAINT ck_membership_bank_account_type")
+            with self.assertLogs("herdbook.db", "WARNING"):
+                db.check_migrations()
+            self.assertEqual(snapshot(), self.bootstrapped)
+            with self.assertRaises(IntegrityError), db.DB_PROXY.atomic():
+                db.Herd.update(bank_account_number="1234-5").where(db.Herd.id == self.orphan.id).execute()
+            tx.rollback()
+
+    def test_v57_audit_snapshots_follow_household_erasure(self):
+        herd = self.herds[0]
+        admin = db.User.get_by_id(self.admin.id)
+        gone, remaining = [
+            db.Member.create(first_name="Test", last_name="Medlem", membership=ms, role="huvudmedlem")
+            for ms in (self.a, self.b)
+        ]
+        anonymize_person(gone, admin)
+
+        with db.DB_PROXY.atomic() as tx:
+            self.to_v57({herd: (ACCOUNT, "Bank A")})
+            # A has only historical values. The two halves of this v57 row belong to different households.
+            _sql(
+                "UPDATE herd SET membership_id = %s, bank_account_number = %s, bank_name = 'Bank B' WHERE herd_id = %s",
+                (self.b.id, OTHER, herd.id),
+            )
+            row = (
+                db.AuditLog.select()
+                .where(db.AuditLog.table_name == "herd", db.AuditLog.record_id == str(herd.id))
+                .order_by(db.AuditLog.id.desc())
+                .get()
+            )
+            self.assertEqual(
+                (row.old_data["bank_account_number"], row.new_data["bank_account_number"]), (ACCOUNT, OTHER)
+            )
+            old, new = (
+                {k: v for k, v in side.items() if k not in db.HERD_BANK_FIELDS} for side in (row.old_data, row.new_data)
+            )
+            db.migrate_57_to_58()
+            migrated = db.AuditLog.get_by_id(row.id)
+            self.assertEqual((migrated.old_data, migrated.new_data), (old, row.new_data))
+            anonymize_person(remaining, admin)
+            erased = db.AuditLog.get_by_id(row.id)
+            self.assertEqual((erased.old_data, erased.new_data), (old, new))
             tx.rollback()
 
     def test_the_herd_columns_and_the_type_are_guarded(self):
@@ -428,26 +497,72 @@ class TestKeptOnHerd(SupportAccountTest):
             self.assertEqual(da.update_herd(form, manager.uuid, legacy=True), {"status": "updated"})
         self.assertEqual(self.kept(), {self.g7.id: OTHER, self.g8.id: "5555-12345"})
         # a new account goes to the membership, never to the herd; a herd without one has nowhere to put it
-        self.assertEqual(da.update_herd({"id": self.g7.id, "bank_account_number": "7777-12345"}, manager.uuid),
+        revision = self.read(manager, self.g7)["bank_account_revision"]
+        typed = {"id": self.g7.id, "bank_account_number": "7777-12345", "bank_account_revision": revision}
+        self.assertEqual(da.update_herd(typed, manager.uuid),
                          {"status": "updated"})  # fmt: skip
         self.assertEqual(db.Membership.get_by_id(self.unclear.id).bank_account_number, "7777-12345")
         refused = da.update_herd({"id": self.g8.id, "bank_account_number": "7777-12345"}, manager.uuid)
         self.assertEqual(refused["status"], "error")
         self.assertEqual(self.kept(), {self.g7.id: OTHER, self.g8.id: "5555-12345"})
 
+    def test_erasing_the_household_clears_its_herds_kept_accounts(self):
+        """Codex #278 r3: anonymising the last person clears the membership's account and every account its herds
+        kept; another household's herd keeps its own."""
+        g9 = db.Herd.create(genebank=self.genebanks[0], herd="G9", membership=self.unclear)
+        _sql("ALTER TABLE herd DISABLE TRIGGER herd_bank_guard")
+        try:
+            _sql("UPDATE herd SET bank_account_number = %s, bank_name = 'Annan' WHERE herd_id = %s", (ACCOUNT, g9.id))
+        finally:
+            _sql("ALTER TABLE herd ENABLE TRIGGER herd_bank_guard")
+        person = db.Member.create(first_name="Test", last_name="Sist", membership=self.unclear, role="huvudmedlem")
+        anonymize_person(person, db.User.get_by_id(self.admin.id))
+        self.assertEqual(self.kept(), {self.g8.id: "5555-12345"})
+        names = _sql("SELECT count(*) FROM herd WHERE bank_name IS NOT NULL AND membership_id = %s", (self.unclear.id,))
+        self.assertEqual(names.fetchone(), (0,))
+        copies = _sql("SELECT count(*) FROM audit_log WHERE (old_data::text || new_data::text) LIKE '%%8327%%'")
+        self.assertEqual(copies.fetchone(), (0,))
+
+    def read(self, user, herd):
+        data = da.get_herd(herd.herd, user.uuid)
+        data.pop("individuals")
+        return data
+
+    def test_a_form_from_before_the_upgrade_never_chooses_a_kept_account(self):
+        """Codex #278 r3: before 58 the herd page showed admin the herd's own account, and the old app sends it back;
+        a form without a revision never changes the account, also while the membership has none."""
+        admin = db.User.get_by_id(self.admin.id)
+        old_form = {**self.read(admin, self.g7), "bank_account_number": OTHER, "herd_name": "Ny"}
+        del old_form["bank_account_revision"]
+        self.assertEqual(da.update_herd(old_form, admin.uuid, legacy=True), RELOAD)
+        self.assertIsNone(db.Membership.get_by_id(self.unclear.id).bank_account_number)
+        self.assertNotEqual(db.Herd.get_by_id(self.g7.id).herd_name, "Ny")
+
     def test_a_data_correction_moves_a_kept_account(self):
-        """What stamboken-main's correction does: the membership's account written, the herd's columns emptied,
-        with no account value in audit_log."""
+        """What stamboken-main's correction does, in one transaction: the membership's account written, the herd's
+        columns emptied, and a kontakt_andrad row naming the columns, which makes a herd form read before it reload.
+        No account value reaches audit_log."""
+        manager = db.User.get_by_id(self.manager.id)
+        open_form = self.read(manager, self.g7)
+        fields = '{"fields": ["bank_account_type", "bank_account_number", "bank_name"], "source": "rattning"}'
         with db.DB_PROXY.atomic():
-            db.Membership.update(bank_account_number=OTHER, bank_name="Gamla").where(
-                db.Membership.id == self.unclear.id
-            ).execute()
-            db.Herd.update(bank_account_number=None, bank_name=None).where(db.Herd.id == self.g7.id).execute()
+            _sql(
+                "UPDATE membership SET bank_account_number = %s, bank_name = %s WHERE membership_id = %s",
+                (OTHER, "Gamla", self.unclear.id),
+            )
+            _sql("UPDATE herd SET bank_account_number = NULL, bank_name = NULL WHERE herd_id = %s", (self.g7.id,))
+            _sql(
+                "INSERT INTO matrikel_audit (actor_id, action, membership_id, payload, created_at)"
+                " VALUES (NULL, 'kontakt_andrad', %s, %s, localtimestamp)",
+                (self.unclear.id, fields),
+            )
         self.assertEqual(self.kept(), {self.g8.id: "5555-12345"})
         copies = _sql("SELECT count(*) FROM audit_log WHERE (old_data::text || new_data::text) LIKE '%%9420%%'")
         self.assertEqual(copies.fetchone(), (0,))
-        manager = db.User.get_by_id(self.manager.id)
         self.assertEqual(db.Herd.get_by_id(self.g7.id).filtered_dict(manager)["bank_account_number"], "••77")
+        typed = {**open_form, "bank_account_number": "7777-12345"}
+        self.assertEqual(da.update_herd(typed, manager.uuid, legacy=True), RELOAD)
+        self.assertEqual(db.Membership.get_by_id(self.unclear.id).bank_account_number, OTHER)
 
 
 class TestPayoutRead(SupportAccountTest):
@@ -494,7 +609,8 @@ class TestLegacyWriters(SupportAccountTest):
         self.assertEqual(self.audits(), [])  # no change, no log
 
     def test_new_account_goes_to_the_membership_and_is_logged_by_name(self):
-        self.assertEqual(self.save(self.main, bank_account_number="1234-567 890"), {"status": "updated"})
+        form = {"bank_account_number": "1234-567 890", "bank_account_revision": self.revision()}
+        self.assertEqual(self.save(self.main, **form), {"status": "updated"})
         # the legacy form has no type, and the old bank goes with the old account
         self.assertEqual(self.stored(), (None, "1234-567 890", None))
         herd = self.herd()
@@ -517,11 +633,49 @@ class TestLegacyWriters(SupportAccountTest):
         db.Membership.update(bank_account_type="bankgiro", bank_account_number="BG 123-4566").where(
             db.Membership.id == self.ms.id
         ).execute()
-        self.assertEqual(self.save(self.main, bank_account_number="PG 123456-6"), {"status": "updated"})
+        first = {"bank_account_number": "PG 123456-6", "bank_account_revision": self.revision()}
+        self.assertEqual(self.save(self.main, **first), {"status": "updated"})
         self.assertEqual(self.stored(), (None, "PG 123456-6", None))  # the bank went with the old account
         again = {"bank_account_number": "pg 1234566", "bank_name": "Nya", "bank_account_revision": self.revision()}
         self.assertEqual(self.save(self.main, **again), {"status": "updated"})
         self.assertEqual(self.stored(), (None, "PG 123456-6", "Nya"))  # the same account written otherwise: the bank
+
+    def test_giro_marker_in_a_label_changes_destination(self):
+        old = "BG 1234566"
+        cases = (
+            ("Bankgiro nr. 1234566", ("bankgiro", old)),
+            ("PG nr 1234566", (None, "PG nr 1234566")),
+            ("Plusgiro nr. 1234566", (None, "Plusgiro nr. 1234566")),
+            ("Reserv 1234566", (None, "Reserv 1234566")),
+        )
+        for new, expected in cases:
+            with self.subTest(new):
+                db.Membership.update(bank_account_type="bankgiro", bank_account_number=old).where(
+                    db.Membership.id == self.ms.id
+                ).execute()
+                form = {**self.read(self.manager), "bank_account_number": new}
+                self.assertEqual(self.save(self.manager, **form), {"status": "updated"})
+                self.assertEqual(self.stored()[:2], expected)
+
+    def test_form_is_bound_to_the_membership_it_read(self):
+        linked = self.read(self.manager)["bank_account_revision"]
+        herd_id = self.herds[0].id
+        db.Herd.update(membership=None).where(db.Herd.id == herd_id).execute()
+        unlinked = self.read(self.manager)["bank_account_revision"]
+        target = db.Membership.create(member_number=903, bank_account_number=OTHER)
+        link_herd(herd_id, target.id)
+        for revision in (unlinked, linked):
+            with self.subTest(revision=revision):
+                self.assertEqual(
+                    self.save(self.manager, bank_account_number="7777-12345", bank_account_revision=revision), RELOAD
+                )
+                self.assertEqual(db.Membership.get_by_id(target.id).bank_account_number, OTHER)
+
+    def test_form_read_before_erasure_cannot_restore_the_account(self):
+        revision = self.read(self.manager)["bank_account_revision"]
+        anonymize_person(self.person, db.User.get_by_id(self.admin.id))
+        self.assertEqual(self.save(self.manager, bank_account_number=ACCOUNT, bank_account_revision=revision), RELOAD)
+        self.assertEqual(self.stored(), (None, None, None))
 
     def test_no_one_blanks_it_on_the_herd_page(self):
         """Everyone reads the mask there, so a blank is never what was shown: it could be a stale form's."""
@@ -538,8 +692,8 @@ class TestLegacyWriters(SupportAccountTest):
         admin, manager = db.User.get_by_id(self.admin.id), db.User.get_by_id(self.manager.id)
         db.Membership.update(bank_account_number=None, bank_name=None).where(db.Membership.id == self.ms.id).execute()
         empty_form = self.herd().filtered_dict(admin)  # read while there is no account
-        self.assertEqual(da.update_herd({"id": self.herds[1].id, "bank_account_number": ACCOUNT, "bank_name": "Banken"},
-                                        manager.uuid, legacy=True), {"status": "updated"})  # fmt: skip
+        first = {**self.read(manager, 1), "bank_account_number": ACCOUNT, "bank_name": "Banken"}
+        self.assertEqual(da.update_herd(first, manager.uuid, legacy=True), {"status": "updated"})
         forms = {"admin": self.herd().filtered_dict(admin), "manager": self.herd().filtered_dict(manager)}
         # then the account changes again, to one ending like the first, with another bank
         again = {**self.read(manager, 1), "bank_account_number": "9999-112", "bank_name": "Nya"}
