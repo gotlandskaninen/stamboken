@@ -49,7 +49,7 @@ from utils.database import ACTIVE_WINDOW_DAYS  # isort: skip
 from utils.database import AUDIT_LOG_NO_UPDATE_RULE  # isort: skip
 from utils.database import OUTSIDE_GENEBANK_HERDS  # isort: skip
 from utils.database import ACCOUNT_MASK, BANK_PRIVACY_FIELDS, HERD_BANK_FIELDS, PRIVACY_LEVELS, account_end  # isort: skip
-from utils.database import MatrikelAudit, same_destination  # isort: skip
+from utils.database import SUPPORT_ACCOUNT_FIELDS, MatrikelAudit, same_destination  # isort: skip
 from utils.database import HERD_CONTACT_COLUMNS  # isort: skip
 from utils.database import ht_not_voided  # isort: skip
 from utils.database import ht_order_desc  # isort: skip
@@ -1936,17 +1936,17 @@ STALE_ACCOUNT = "Kontot för stödet har ändrats sedan sidan lästes in. Ladda 
 
 def support_account_revision(membership_id):
     """
-    The id of the membership's latest logged change of its support account, 0 before the first (migration 58 logs
-    none): every writer logs one kontakt_andrad row naming the columns, a data correction too, in its transaction.
+    Bind the form to its membership and latest logged account change, including a correction or erasure.
+    Migration 58 logs no change, so two untouched memberships still need distinct revisions.
     """
     if membership_id is None:
-        return 0
+        return None
     latest = MatrikelAudit.select(fn.MAX(MatrikelAudit.id)).where(
         MatrikelAudit.membership == membership_id,
-        MatrikelAudit.action == "kontakt_andrad",
-        SQL("payload->'fields' ?| %s", (["bank_account_type", "bank_account_number", "bank_name"],)),
+        MatrikelAudit.action.in_(("kontakt_andrad", "person_anonymized")),
+        SQL("payload->'fields' ?| %s", (list(SUPPORT_ACCOUNT_FIELDS),)),
     )
-    return latest.scalar() or 0
+    return f"{membership_id}:{latest.scalar() or 0}"
 
 
 def _herd_account_change(herd, sent, user, revision=None):
@@ -1996,11 +1996,7 @@ def _herd_account_change(herd, sent, user, revision=None):
         bank = _account_text(sent.get("bank_name"))
         changes = {"bank_account_type": None, "bank_account_number": number, "bank_name": bank}
     changes = {column: value for column, value in changes.items() if value != _account_text(getattr(stored, column))}
-    try:
-        read = int(revision)
-    except (TypeError, ValueError):
-        read = None
-    if changes and read != support_account_revision(herd.membership_id):
+    if changes and revision != support_account_revision(herd.membership_id):
         return None, {"status": "error", "message": STALE_ACCOUNT}
     return changes or None, None
 
