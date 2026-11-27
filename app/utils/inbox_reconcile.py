@@ -20,6 +20,7 @@ import operator
 import re
 
 from utils.database import Breeding, Individual
+from utils.inbox import can_handle
 from utils.inbox_proposal import (
     _PARENTS,
     _SEXES,
@@ -162,9 +163,9 @@ def reconcile(item, document, body, user):
         return {"registry": theirs, "status": UNSURE if key in read else NOTHING}
 
     genebank = item.genebank_id
-    if genebank is None:  # the letter typed names one; searched only when it is the user's
+    if genebank is None:  # the letter typed names one; searched only when the user works it, not only reads it
         genebank = _genebank_of_letter({"genbanksnr": typed["individual"] or typed["paper_number"]})
-        if genebank not in view.genebanks:
+        if genebank is None or not can_handle(user, genebank):
             rows = {key: empty(key, None) if not typed[key] else {"registry": None, "status": NOTHING} for key in order}
             return {"rows": rows, "checks": [_check(None, NOT_SEARCHED)]}
     registry = _Registry(genebank)
@@ -316,8 +317,9 @@ def _new_number(registry, view, typed, paper, fit, litter, birth, empty, checks,
     field = scratch["paper_number"]
     if field["source"] == DEVIATES:
         return {"registry": field.get("registry"), "status": DIFFERS}
-    if field["source"] == READ:
-        return {"registry": paper, "status": MATCH}
+    if field["source"] == READ:  # the litter gives the paper's number: as registration writes it (G1-25012 is G1-2512)
+        herd, year, litter_number, position = parse_number(paper)
+        return {"registry": f"{herd}-{year}{litter_number}{position}", "status": MATCH}
     return {"registry": None, "status": NOTHING}  # the litter gives no number to compare with
 
 
@@ -352,6 +354,9 @@ def _certificate(view, typed, rabbit, empty, checks):
     digital = rabbit is not None and rabbit.digital_certificate is not None
     if not value:
         return empty("paper_certificate", own or (DIGITAL if digital else None))
+    if len(value) > Individual.certificate.max_length:
+        checks.append(_check(False, f"Intygsnumret är för långt: högst {Individual.certificate.max_length} tecken."))
+        return {"registry": None, "status": DIFFERS}
     if own:
         if value == own:
             checks.append(_check(True, "Intygsnumret är kaninens."))

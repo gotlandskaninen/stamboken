@@ -130,6 +130,16 @@ class TestNewRabbit(ReconcileTest):
         self.assertEqual(self.row(answer, "mother"), ("skiljer", "G9003-2311 Max (hane)"))
         self.assertIn("Mor G9003-2311 är en hane i Stamboken.", self.texts(answer, False))
 
+    def test_a_zero_padded_litter_number_is_shown_as_registration_writes_it(self):
+        # G9001-25011 is the year's first litter, written with a zero: registration gives it as G9001-2511.
+        self.assertEqual(self.row(self.answer(paper_number="G9001-25011"), "paper_number"), ("stammer", "G9001-2511"))
+
+    def test_a_certificate_number_too_long_to_save_differs(self):
+        answer = self.answer(paper_certificate="X" * 21)
+        self.assertEqual(self.row(answer, "paper_certificate"), ("skiljer", None))
+        self.assertIn("Intygsnumret är för långt: högst 20 tecken.", self.texts(answer, False))
+        self.assertNotIn("Intygsnumret är ledigt.", self.texts(answer))
+
     def test_a_certificate_number_in_use_differs(self):
         answer = self.answer(paper_certificate="C-G9003-2312")
         self.assertEqual(self.row(answer, "paper_certificate"), ("skiljer", "G9003-2312"))
@@ -420,6 +430,14 @@ class TestWhatTheUserMayRead(ReconcileTest):
         self.login("admin")  # an admin works every genebank
         self.assertEqual(self.row(self.answer(**typed), "mother"), ("stammer", "M9005-2112"))
 
+    def test_read_access_to_the_genebank_is_not_enough(self):
+        # Gotland's manager may read Mellerud, but does not work it: an item without a genebank searches nothing there.
+        self.manager.add_role("viewer", self.genebanks[1].id)
+        db.InboxItem.update(genebank=None).where(db.InboxItem.id == self.queue_item.id).execute()
+        typed = {"paper_number": "M9005-2511", "father": "M9005-2399", "farfar": "", "farmor": ""}
+        answer = self.answer(**typed)
+        self.assertEqual(answer, {"rows": rows_of(NEW_ROWS), "checks": [{"ok": None, "text": NOT_SEARCHED}]})
+
     def test_a_rabbit_moved_to_another_genebank_is_never_named(self):
         # Max, the father, now lives in a Mellerud herd: Gotland's helper may no longer read him.
         ht_row(
@@ -535,3 +553,4 @@ class TestTheReadingsChecksFromWhatIsTyped(ReconcileTest):
         self.assertIn(line, self.texts(self.answer()))  # typed born the 10th
         self.assertIn(line, self.texts(self.answer(father="", birth_date="")))  # the mother's litters
         self.assertNotIn(line, self.texts(self.answer(birth_date="2025-05-12")))  # that one is the litter
+
