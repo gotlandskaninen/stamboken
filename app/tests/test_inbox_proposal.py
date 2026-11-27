@@ -457,6 +457,43 @@ class TestExistingRabbit(ProposalTest):
         self.assertEqual(self.source(proposal, "paper_certificate"), ("läst", "SYN-777"))
         self.assertIn("Föräldrarna på intyget stämmer med registret.", self.texts(proposal, True))
 
+    def test_every_row_read_is_set_beside_the_rabbit(self):
+        # What the handler compares in "Pappersintyg på en kanin som finns": each row read, against the rabbit.
+        db.Individual.update(color=self.colors[1]).where(db.Individual.number == "G9001-2411").execute()
+        reading_ = self.existing(
+            "2411",
+            namn="Elsa",
+            levande_efter_6_veckor="3",
+            farfar=ancestor("G9002", "2011"),
+            farmor=ancestor("G", "??"),
+        )
+        proposal = self.propose(reading_)
+        expected = {
+            "individual": ("läst", "G9001-2411"),  # as before
+            "paper_number": ("läst", "G9001-2411"),
+            "paper_certificate": ("läst", "SYN-777"),
+            "mother": ("läst", "G9001-2211"),
+            "father": ("läst", "G9003-2311"),
+            "birth_date": ("läst", "2024-04-20"),
+            "litter_size": ("avviker", None),  # 5 read, 2 registered
+            "litter_size6w": ("avviker", None),
+            "name": ("läst", "Elsa"),
+            "sex": ("läst", "female"),
+            "color": ("avviker", None),  # bleighe read, stgröhn registered
+            "morfar": ("läst", "G9004-2011"),
+            "mormor": ("läst", "G9004-2112"),
+            "farfar": ("avviker", None),  # G9002-2011 is not the father's father
+            "farmor": ("osäker", None),
+        }
+        self.assertEqual({key: self.source(proposal, key) for key in proposal["fields"]}, expected)
+        registry = {key: proposal["fields"][key].get("registry") for key in ("litter_size", "color", "farfar")}
+        self.assertEqual(registry, {"litter_size": 2, "color": "stgröhn", "farfar": "G9003-2011"})
+        self.assertEqual(proposal["fields"]["farmor"]["read"], "G ??")
+        self.assertEqual(self.texts(proposal, False), [])  # the checks are as they were
+        struck = self.propose({**reading_, "overstruket": ["namn", "mormor"]})
+        self.assertEqual(self.source(struck, "name"), ("osäker", None))
+        self.assertEqual(self.source(struck, "mormor"), ("osäker", None))
+
     def test_a_digital_rabbit_that_does_not_fit_gets_the_checks(self):
         proposal = self.propose(self.existing("2412", kon="Hona"))
         self.assertEqual(self.source(proposal, "individual"), ("osäker", None))

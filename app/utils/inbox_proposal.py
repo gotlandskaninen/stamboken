@@ -552,7 +552,74 @@ def _existing(registry, raw, struck, rabbit, own_text, swapped):
     if rabbit.certificate and rabbit.certificate != re.sub(r"\s", "", _text(raw.get("intygsnummer"))):
         checks.append(_check(False, f"{rabbit.number} har redan intyg {rabbit.certificate} i Stamboken."))
     _certificate(raw, struck, rabbit, fields, checks)
+    # The rest of the paper beside the rabbit, so the handler sees every row read and compared.
+    _beside(registry, raw, struck, rabbit, litter, fields)
+    for role in ("mother", "father"):
+        _, father_key, mother_key, _, _ = _PARENTS[role]
+        parent = litter and getattr(litter, role)
+        theirs = Breeding.get_or_none(Breeding.id == parent.breeding_id) if parent else None
+        for gp_key, gp_role in ((father_key, "father"), (mother_key, "mother")):
+            entry = _entry(raw, gp_key)
+            parsed = None if gp_key in struck else _parse_number(entry, registry.letter)
+            _number_beside(registry, fields, gp_key, _number_text(entry), parsed, theirs and getattr(theirs, gp_role))
     return {"fields": fields, "checks": checks}
+
+
+def _number_beside(registry, fields, key, text, parsed, theirs):
+    """A number read beside the registry's rabbit `theirs`: läst or härlett when it is that one, avviker when another
+    or none, osäker when it cannot tell (or the registry has no rabbit there)."""
+    how = registry.compare(parsed, theirs)
+    if how in (READ, DERIVED):
+        fields[key] = _field(how, theirs.number, read=text)
+    elif how == "differs":
+        fields[key] = _field(DEVIATES, read=text, registry=theirs.number)
+    elif text:
+        fields[key] = _field(UNSURE, read=text)
+
+
+def _beside(registry, raw, struck, rabbit, litter, fields):
+    """
+    The fields of the rabbit's certificate read beside the rabbit as registered, where `fields` has none yet: its
+    parents, birth date, litter counts, name, sex and colour. Read as registered is läst (härlett for a number read
+    with letters as digits or one character off), read otherwise avviker with the registered value as `registry`,
+    struck through or not readable osäker.
+    """
+    found = {}
+    for role in ("mother", "father"):
+        key = _PARENTS[role][0]
+        entry = _entry(raw, key)
+        parsed = None if key in struck else _parse_number(entry, registry.letter)
+        _number_beside(registry, found, role, _number_text(entry), parsed, litter and getattr(litter, role))
+
+    def iso(day):
+        return day.isoformat() if day else None
+
+    for key, raw_key, parse, theirs in (
+        ("birth_date", "fodelsedatum", lambda text: iso(_date(text)), iso(litter and litter.birth_date)),
+        ("litter_size", "fodda_i_kullen", _count, litter and litter.litter_size),
+        ("litter_size6w", "levande_efter_6_veckor", _count, litter and litter.litter_size6w),
+    ):
+        text = _text(raw.get(raw_key))
+        value = None if raw_key in struck else parse(text)
+        if not value:  # a litter has at least one, as registration requires
+            if text:
+                found[key] = _field(UNSURE, read=text)
+        elif theirs is None or value == theirs:
+            found[key] = _field(READ, value, read=text)
+        else:
+            found[key] = _field(DEVIATES, read=text, registry=theirs)
+
+    _plain_fields(registry, raw, struck, found)
+    for key, theirs, same in (
+        ("name", rabbit.name, _same_name),
+        ("sex", rabbit.sex, lambda read, sex: read == _sex(sex)),
+        ("color", rabbit.color.name if rabbit.color_id else None, operator.eq),
+    ):
+        field = found.get(key)
+        if field and field["value"] is not None and theirs and not same(field["value"], theirs):
+            found[key] = _field(DEVIATES, read=field.get("read"), registry=theirs)
+    for key, field in found.items():
+        fields.setdefault(key, field)
 
 
 def _registered(registry, raw, struck, rabbit):
@@ -568,52 +635,12 @@ def _registered(registry, raw, struck, rabbit):
     checks = _existing(registry, raw, struck, rabbit, own_text, bool(own and own[2]))["checks"]
     litter = Breeding.get_or_none(Breeding.id == rabbit.breeding_id)
     fields = {}
-
-    def number(key, text, parsed, theirs):
-        how = registry.compare(parsed, theirs)
-        if how in (READ, DERIVED):
-            fields[key] = _field(how, theirs.number, read=text)
-        elif how == "differs":
-            fields[key] = _field(DEVIATES, read=text, registry=theirs.number)
-        elif text:
-            fields[key] = _field(UNSURE, read=text)
-
-    number("paper_number", own_text, own, rabbit)
-    for role in ("mother", "father"):
-        key = _PARENTS[role][0]
-        entry = _entry(raw, key)
-        parsed = None if key in struck else _parse_number(entry, registry.letter)
-        number(role, _number_text(entry), parsed, litter and getattr(litter, role))
-
-    def iso(day):
-        return day.isoformat() if day else None
-
-    for key, raw_key, parse, theirs in (
-        ("birth_date", "fodelsedatum", lambda text: iso(_date(text)), iso(litter and litter.birth_date)),
-        ("litter_size", "fodda_i_kullen", _count, litter and litter.litter_size),
-        ("litter_size6w", "levande_efter_6_veckor", _count, litter and litter.litter_size6w),
-    ):
-        text = _text(raw.get(raw_key))
-        value = None if raw_key in struck else parse(text)
-        if not value:  # a litter has at least one, as registration requires
-            if text:
-                fields[key] = _field(UNSURE, read=text)
-        elif theirs is None or value == theirs:
-            fields[key] = _field(READ, value, read=text)
-        else:
-            fields[key] = _field(DEVIATES, read=text, registry=theirs)
-
+    _number_beside(registry, fields, "paper_number", own_text, own, rabbit)
+    _beside(registry, raw, struck, rabbit, litter, fields)
     _certificate(raw, struck, rabbit, fields, [])  # its checks are among _existing's
-    _plain_fields(registry, raw, struck, fields)
-    for key, theirs, same in (
-        ("paper_certificate", rabbit.certificate, operator.eq),
-        ("name", rabbit.name, _same_name),
-        ("sex", rabbit.sex, lambda read, sex: read == _sex(sex)),
-        ("color", rabbit.color.name if rabbit.color_id else None, operator.eq),
-    ):
-        field = fields.get(key)
-        if field and field["value"] is not None and theirs and not same(field["value"], theirs):
-            fields[key] = _field(DEVIATES, read=field.get("read"), registry=theirs)
+    field = fields.get("paper_certificate")
+    if field and field["value"] is not None and rabbit.certificate and field["value"] != rabbit.certificate:
+        fields["paper_certificate"] = _field(DEVIATES, read=field.get("read"), registry=rabbit.certificate)
     return {"fields": fields, "checks": checks}
 
 
