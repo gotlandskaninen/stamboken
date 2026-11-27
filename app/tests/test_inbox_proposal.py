@@ -9,7 +9,7 @@ from datetime import date
 
 import utils.database as db
 from utils.herd_tracking import buyer_contact_fields
-from utils.inbox_proposal import build_proposal
+from utils.inbox_proposal import build_proposal, sale_part
 
 from tests.database_test import DatabaseTest
 from tests.ht_helpers import ht_row, make_individual
@@ -523,12 +523,14 @@ class TestRegistryOnly(ProposalTest):
 class TestSale(ProposalTest):
     """Rule 5 b: the seller and buyer read at the bottom of the certificate, for the sale panel; nothing confident."""
 
-    def sale(self, **read):
-        return self.propose(reading(forsaljning=read))["sale"]
+    def sale(self, own=None, **read):
+        """The sale part of a reading of the seller and buyer `read`, on the certificate `own` (default: reading())."""
+        raw = {**(own or reading()), "forsaljning": read}
+        return sale_part(raw, self.genebanks[0].id, self.propose(raw)["fields"])
 
-    def test_the_buyers_herd_only_when_it_is_the_genebanks_as_read(self):
+    def test_the_buyers_herd_is_filled_only_when_it_is_the_genebanks_as_read(self):
         db.Herd.create(genebank=self.genebanks[0], herd="GX1")
-        for written, herd in (
+        for written, found in (
             ("G9002", "G9002"),
             ("9002", "G9002"),
             ("g 9002", "G9002"),
@@ -539,7 +541,12 @@ class TestSale(ProposalTest):
         ):
             with self.subTest(written):
                 sale = self.sale(kopare_besattning=written, kopare_namn="Köpa Testsson")
-                self.assertEqual(sale["buyer_herd"], {"herd": herd} if herd else None)
+                if found:
+                    self.assertEqual((sale["buyer_herd"], sale["checks"]), ({"herd": found, "found": True}, []))
+                else:  # kept as read, and said
+                    self.assertEqual(sale["buyer_herd"], {"herd": written, "found": False})
+                    text = f"Köparens besättning {written} finns inte i genbanken."
+                    self.assertEqual(sale["checks"], [{"ok": False, "text": text}])
 
     def test_a_buyer_outside_the_association_in_the_form_the_sale_takes(self):
         sale = self.sale(
@@ -566,18 +573,24 @@ class TestSale(ProposalTest):
             with self.subTest(written):
                 self.assertIsNone(self.sale(datum=written, kopare_namn="Köpa Testsson")["date"])
 
-    def test_a_seller_not_of_the_rabbits_herd_of_origin_is_said(self):
+    def test_the_seller_against_the_rabbits_herd_of_origin(self):
         self.litter("G9001", "G9001-2211", "G9003-2311", date(2025, 5, 10), [], size=5)  # the number is läst
-        sale = self.sale(saljare_namn="Sälja Testsson", saljare_besattning="G9002")
-        self.assertEqual(sale["seller"], {"name": "Sälja Testsson", "herd": "G9002"})
-        text = "Säljarens besättning G9002 är inte kaninens ursprungsbesättning G9001."
+        sale = self.sale(saljare_besattning="G9002")
+        self.assertEqual(sale["seller_herd"], "G9002")
+        text = "Säljarens besättning G9002 avviker från kaninens ursprungsbesättning G9001."
         self.assertEqual(sale["checks"], [{"ok": False, "text": text}])
         self.assertEqual(self.sale(saljare_besattning="9001")["checks"], [])
+
+    def test_the_seller_against_the_number_as_read_when_the_registry_does_not_confirm_it(self):
+        unread = reading(ar_kull_individ="")  # the rabbit's number cannot be looked up
+        text = "Säljarens besättning G9002 avviker från kaninens ursprungsbesättning G9001."
+        self.assertEqual(self.sale(unread, saljare_besattning="G9002")["checks"], [{"ok": False, "text": text}])
+        text = "Säljarens besättning G9001 kan inte bekräftas mot registret."
+        self.assertEqual(self.sale(unread, saljare_besattning="G9001")["checks"], [{"ok": None, "text": text}])
 
     def test_no_sale_part_without_a_reading_of_it(self):
         for read in (None, {}, {"kopare_namn": " "}, "Köpa Testsson"):
             with self.subTest(read):
                 raw = reading() if read is None else reading(forsaljning=read)
-                self.assertNotIn("sale", self.propose(raw))
-        with_sale = self.propose(reading(forsaljning={"kopare_namn": "Köpa Testsson"}))
-        self.assertEqual(with_sale["fields"], self.propose(reading())["fields"])  # the rabbit's fields as they were
+                self.assertIsNone(sale_part(raw, self.genebanks[0].id, {}))
+        self.assertNotIn("sale", self.propose(reading(forsaljning={"kopare_namn": "Köpa Testsson"})))

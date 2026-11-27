@@ -19,7 +19,7 @@ from PIL import Image, ImageFilter
 
 import utils.settings as settings
 from utils.database import DB_PROXY, InboxDocument, InboxItem
-from utils.inbox_proposal import build_proposal
+from utils.inbox_proposal import SALE_READING, build_proposal, sale_part
 from utils.log_masking import mask_cut
 
 logger = logging.getLogger(__name__)
@@ -69,9 +69,7 @@ PROMPT = (
     "rättat: skriv det som gäller. Gissa aldrig: lämna en tom sträng när "
     "fältet är tomt eller oläsligt. Säljarens och köparens uppgifter ska inte skrivas av."
 )
-SALE_READING = "forsaljning"  # the seller and buyer's key in a document's interpretation
 _SALE = (
-    "saljare_namn",
     "saljare_besattning",
     "kopare_namn",
     "kopare_utdelningsadress",
@@ -84,11 +82,11 @@ _SALE = (
 # Rule 5 b (Jonas 2026-11-27): the seller and buyer at the bottom of a queue certificate, read in a second call of
 # their own so that a sale can be filled in. Not in SCHEMA: a longer schema made Gemma repeat a field until the
 # answer was cut (the list of struck-through fields, above), and a failure here must not cost the rabbit's reading.
-# Flat strings, and never a phone number.
+# Flat strings, and never a phone number. The seller's name is of no use to the sale, so it is not read either.
 SALE_SCHEMA = {"type": "object", "properties": {key: {"type": "string"} for key in _SALE}, "required": list(_SALE)}
 SALE_PROMPT = (
     "Fotot visar ett svenskt genbanksintyg för en kanin. Läs bara rutorna för säljaren och köparen längst ner på "
-    "intyget, och skriv av dem precis som de står. Säljaren: namn och besättningsnummer (en bokstav och siffror). "
+    "intyget, och skriv av dem precis som de står. Säljaren: besättningsnummer (en bokstav och siffror). "
     "Köparen: namn, utdelningsadress (gata eller box), postnummer, ort, e-postadress och "
     "besättningsnummer. Datum: dagen då kaninen såldes. Gissa aldrig: lämna en tom sträng när fältet är tomt eller "
     "oläsligt. Tryckt text, rubriker och tryckta exempel på blanketten är aldrig svar. Skriv inte av telefonnumret."
@@ -246,6 +244,21 @@ def _sale_reading(image):
     return sale if any(value.strip() for value in sale.values()) else None
 
 
+def _sale_wanted(document, item_id):
+    """
+    The sale reading is still of use, under the item's lock: a certificate of an open queue item (inbox.require_saving:
+    never a report photo's or a notice's), not done and no sale saved from it.
+    """
+    item = InboxItem.get_by_id(item_id)
+    return (
+        item.ref_type is None
+        and item.closed_at is None
+        and document.doc_type == "intyg"
+        and document.done_at is None
+        and document.herd_tracking_id is None
+    )
+
+
 def _finish(document, status, **values):
     document.interpretation_status, document.interpreted_at = status, datetime.now(timezone.utc)
     document.interpreter = settings.interpretation.interpreter
@@ -260,7 +273,9 @@ def interpret_next():
     run. The attempt is counted before the model runs, so a run that dies counts too; after MAX_ATTEMPTS the
     document is "misslyckad". No transaction and no connection is held while the model reads, which takes
     minutes: the claim and the result are short transactions of their own, and a document turned, requeued or
-    changed meanwhile keeps waiting and the stale reading is dropped. Returns the document's id, or None.
+    changed meanwhile keeps waiting and the stale reading is dropped. A queue certificate's seller and buyer are read
+    after the rabbit's reading is stored, and kept only if a sale may still be saved from it and nothing ended that
+    since the claim (inbox.sale_ended_since). Returns the document's id, or None.
     """
     if not enabled():
         return None
@@ -279,6 +294,7 @@ def interpret_next():
         document.attempts += 1
         document.save()
     document_id, claimed = document.id, ("vantar", document.attempts, document.rotation, document.doc_type)
+    claimed_at = datetime.now(timezone.utc)
     DB_PROXY.close()
     try:
         image = prepare_image(os.path.join(settings.service.private_upload_folder, document.original_path), claimed[2])
@@ -286,27 +302,45 @@ def interpret_next():
     except Exception as exc:  # pylint: disable=broad-except  # whatever failed, it was an attempt
         logger.warning("Interpreting inbox document %s failed (attempt %s): %s", document_id, claimed[1], exc)
         raw = None
-    # Only the queue saves a sale from a document (inbox.require_saving): never a report photo's or a notice's.
-    sale = _sale_reading(image) if raw is not None and item.ref_type is None else None
     with DB_PROXY.atomic():
         document = _locked(document_id, item.id)
         if document is None or (
             (document.interpretation_status, document.attempts, document.rotation, document.doc_type) != claimed
         ):
             return document_id
-        if raw is not None:
-            # Not on a document finished or sold meanwhile, nor in a closed item: what removes it has run (inbox).
-            finished = document.done_at or document.herd_tracking_id or InboxItem.get_by_id(item.id).closed_at
-            if sale is not None and not finished:
-                raw = {**raw, SALE_READING: sale}
-            # A report photo (utils/inbox.report_photo, which imports this module) is set beside the rabbit registered
-            # from it: the document re-read under the item's lock, as the registration binds it under that lock.
-            report_photo = item.kind == "kontroll" and item.ref_type == "individual"
-            registered = document.individual if report_photo else None
-            proposal = build_proposal(raw, item.genebank_id, item.herd_id, registered)
-            _finish(document, "klar", interpretation=raw, proposal=proposal)
-        elif document.attempts >= MAX_ATTEMPTS:
-            _finish(document, "misslyckad")
+        if raw is None:
+            if document.attempts >= MAX_ATTEMPTS:
+                _finish(document, "misslyckad")
+            return document_id
+        # A report photo (utils/inbox.report_photo, which imports this module) is set beside the rabbit registered
+        # from it: the document re-read under the item's lock, as the registration binds it under that lock.
+        report_photo = item.kind == "kontroll" and item.ref_type == "individual"
+        registered = document.individual if report_photo else None
+        proposal = build_proposal(raw, item.genebank_id, item.herd_id, registered)
+        _finish(document, "klar", interpretation=raw, proposal=proposal)
+        read_at = document.interpreted_at
+        if not _sale_wanted(document, item.id):
+            return document_id
+    # The seller and buyer (rule 5 b) after the rabbit's reading is stored: a run that dies here loses nothing.
+    DB_PROXY.close()
+    sale = _sale_reading(image)
+    if sale is None:
+        return document_id
+    from utils.inbox import sale_ended_since  # pylint: disable=import-outside-toplevel  # it imports us
+
+    with DB_PROXY.atomic():
+        document = _locked(document_id, item.id)
+        if (
+            document is None
+            or (document.interpretation_status, document.interpreted_at) != ("klar", read_at)
+            or not _sale_wanted(document, item.id)
+            or sale_ended_since(item.id, document_id, claimed_at)  # closed or finished meanwhile, even if undone
+        ):
+            return document_id
+        raw = {**document.interpretation, SALE_READING: sale}
+        part = sale_part(raw, item.genebank_id, document.proposal["fields"])
+        document.interpretation, document.proposal = raw, {**document.proposal, "sale": part}
+        document.save(only=[InboxDocument.interpretation, InboxDocument.proposal])
     return document_id
 
 

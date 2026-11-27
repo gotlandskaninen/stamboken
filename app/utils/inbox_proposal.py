@@ -51,6 +51,7 @@ _DIGIT_FOR = str.maketrans({"S": "5", "s": "5", "O": "0", "o": "0", "l": "1", "I
 _SEVERAL = "finns inte i Stamboken, men flera kaniner har nästan samma nummer"
 _NONE = "finns inte i Stamboken"
 _SEXES = {"HONA": "female", "HANE": "male"}
+SALE_READING = "forsaljning"  # the seller and buyer's key in a document's interpretation (inbox_interpreter)
 
 
 def _text(value):
@@ -618,7 +619,7 @@ def build_proposal(raw, genebank_id, herd_id=None, registered=None):
     interpreter's answer `raw` (inbox_interpreter.SCHEMA, untrusted): {"fields": {key: {value, source, read?,
     registry?}}, "checks": [{ok, text}]}. The keys are the registration form's (docs/inkorg.md, "Spara det intyget
     visar") and the grandparents': farfar, farmor, morfar, mormor. A report photo's rabbit, once registered from it
-    (`registered`), is what every field is set beside. A reading of the seller and buyer adds a "sale" (_sale).
+    (`registered`), is what every field is set beside. The seller and buyer are a part of their own (sale_part).
     """
     raw = raw if isinstance(raw, dict) else {}
     struck = raw.get("overstruket")
@@ -636,47 +637,57 @@ def build_proposal(raw, genebank_id, herd_id=None, registered=None):
                 f"Individnumret börjar med {letter} på intyget, men genbankens nummer börjar med {registry.letter}.",
             ),
         )
-    if sale := _sale(registry, raw, proposal["fields"]):
-        proposal["sale"] = sale
     return proposal
 
 
-def _herd_of(registry, text):
-    """The genebank's herd a number read names as it stands (G1274, 1274 or G 1274), or None."""
-    match = re.fullmatch(r"([A-Za-z]?)\s*(\d{1,5})", text)
-    herd = match and f"{registry.letter}{match[2]}"
-    return herd if herd in registry.herds and match[1].upper() in ("", registry.letter) else None
+def _herd_read(text, letter):
+    """A herd number as it stands (G1274, 1274 or G 1274), with `letter` where none was read; None otherwise."""
+    match = re.fullmatch(r"\s*([A-Za-z]?)\s*(\d{1,5})\s*", text)
+    return f"{(match[1] or letter).upper()}{match[2]}" if match else None
 
 
-def _sale(registry, raw, fields):
+def sale_part(raw, genebank_id, fields):
     """
-    The seller and buyer read at the bottom of a queue certificate (inbox_interpreter.SALE_READING, rule 5 b), for the
-    sale panel, or None: {"buyer_herd": {"herd"} | None, "buyer": {name, postal_address, town, email} | None, "date":
-    ISO | None, "seller": {name, herd}, "checks"}. Nothing in it is confident: the handler fills the sale with a click
-    and checks it against the photo. The buyer's herd only when it is one of the genebank's as read; the buyer as
-    read, its postal address the street and the postcode (the town is a field of its own, as in the sale).
+    proposal["sale"]: the seller and buyer read at the bottom of a queue certificate (SALE_READING, rule 5 b) beside
+    the rabbit's proposed `fields`, for the sale panel, or None without them: {"buyer_herd": {herd, found} | None,
+    "buyer": {name, postal_address, town, email} | None, "date": ISO | None, "seller_herd", "checks"}. Nothing in it
+    is confident: the handler fills the sale with a click and checks it against the photo. The buyer's herd is found
+    only when it is one of the genebank's as read, and kept as read otherwise; the buyer as read, its postal address
+    the street and the postcode (the town is a field of its own, as in the sale).
     """
-    read = raw.get("forsaljning")
+    read = raw.get(SALE_READING)
     read = {key: _text(read.get(key)) for key in read} if isinstance(read, dict) else {}
     if not any(read.values()):
         return None
+    registry = _Registry(genebank_id if genebank_id is not None else _genebank_of_letter(raw))
     buyer = {
         "name": read.get("kopare_namn", ""),
         "postal_address": ", ".join(filter(None, (read.get("kopare_utdelningsadress"), read.get("kopare_postnummer")))),
         "town": read.get("kopare_ort", ""),
         "email": read.get("kopare_epost", ""),
     }
-    herd, day = _herd_of(registry, read.get("kopare_besattning", "")), _date(read.get("datum", ""))
     checks = []
+    herd_text = read.get("kopare_besattning", "")
+    herd = _herd_read(herd_text, registry.letter)
+    found = herd in registry.herds
+    if herd_text and not found:
+        checks.append(_check(False, f"Köparens besättning {herd_text} finns inte i genbanken."))
+    # The seller against the rabbit's herd of origin: the registry's number, else the number as read.
+    seller_text = read.get("saljare_besattning", "")
+    seller = _herd_read(seller_text, registry.letter)
     number = (fields.get("individual") or fields.get("paper_number") or {}).get("value")
-    origin, seller = number and number.split("-")[0], _herd_of(registry, read.get("saljare_besattning", ""))
-    if origin and seller and seller != origin:
-        checks.append(_check(False, f"Säljarens besättning {seller} är inte kaninens ursprungsbesättning {origin}."))
+    origin = number.split("-")[0] if number else _herd_read(_text(raw.get("genbanksnr")), registry.letter)
+    if seller and origin and seller != origin:
+        text = f"Säljarens besättning {seller} avviker från kaninens ursprungsbesättning {origin}."
+        checks.append(_check(False, text))
+    elif seller and not number:
+        checks.append(_check(None, f"Säljarens besättning {seller} kan inte bekräftas mot registret."))
+    day = _date(read.get("datum", ""))
     return {
-        "buyer_herd": {"herd": herd} if herd else None,
+        "buyer_herd": {"herd": herd if found else herd_text, "found": found} if herd_text else None,
         "buyer": buyer if any(buyer.values()) else None,
         "date": day.isoformat() if day else None,
-        "seller": {"name": read.get("saljare_namn") or None, "herd": read.get("saljare_besattning") or None},
+        "seller_herd": seller_text or None,
         "checks": checks,
     }
 

@@ -46,7 +46,7 @@ class InterpretationTest(InboxTest):
         main = schema is interpreter.SCHEMA
         (self.calls if main else self.sale_calls).append((image, schema))
         answer = self.answer if main else self.sale
-        if isinstance(answer, Exception):
+        if isinstance(answer, BaseException):
             raise answer
         return answer
 
@@ -236,6 +236,48 @@ class TestSaleReading(InterpretationTest):
                 with mock.patch.dict(interpreter.INTERPRETERS, {"gemma": finished_meanwhile}):
                     self.assertEqual(interpreter.interpret_next(), document.id)
                 self.assertEqual(self.doc(document).interpretation, READING)
+
+    def test_a_worker_dying_in_the_second_reading_keeps_the_first(self):
+        _, (document,) = self.uploaded()
+        self.sale = SystemExit("the worker stopped")
+        with self.assertRaises(SystemExit):
+            interpreter.interpret_next()
+        kept = self.doc(document)
+        self.assertEqual((kept.interpretation_status, kept.attempts, kept.interpretation), ("klar", 1, READING))
+        self.assertIsNone(interpreter.interpret_next())  # read: it does not wait again
+
+    def test_a_reading_in_flight_over_a_close_and_a_reopen_brings_no_buyer_back(self):
+        item, (document,) = self.uploaded()
+        inbox.take(item, self.helper, over=False)
+
+        def closed_and_reopened(image, schema):
+            if schema is interpreter.SCHEMA:
+                return READING
+            with db.DB_PROXY.atomic():
+                inbox.change_state(inbox.lock_item(item.id), self.helper, "skrap")
+            with db.DB_PROXY.atomic():
+                inbox.change_state(inbox.lock_item(item.id), self.manager, "tagen")  # "Öppna igen"
+            return SALE
+
+        with mock.patch.dict(interpreter.INTERPRETERS, {"gemma": closed_and_reopened}):
+            self.assertEqual(interpreter.interpret_next(), document.id)
+        self.assertEqual(self.reload(item).state, "tagen")
+        self.assertEqual(self.doc(document).interpretation, READING)
+
+    def test_tolka_igen_after_a_sale_reads_only_the_rabbit(self):
+        item, (document,) = self.uploaded()
+        self.sale = SALE
+        interpreter.interpret_next()
+        inbox.take(item, self.manager, over=False)
+        self.login("man")
+        body = {"individual": "G1-2111", "herd": "G2", "date": date.today().isoformat()}
+        resp = self.client.post(f"/api/v2/inkorg/{item.id}/dokument/{document.id}/overlat", json=body)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        resp = self.client.post(f"/api/v2/inkorg/{item.id}/dokument/{document.id}/tolka-igen")
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        interpreter.interpret_next()
+        self.assertEqual((len(self.calls), len(self.sale_calls)), (2, 1))
+        self.assertEqual(self.doc(document).interpretation, READING)
 
     def test_tolka_igen_reads_both_again(self):
         item, (document,) = self.uploaded()

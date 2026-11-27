@@ -58,6 +58,9 @@ class TestInterpreter(unittest.TestCase):
         # Flat strings, and never a phone number.
         self.assertEqual({p["type"] for p in interpreter.SALE_SCHEMA["properties"].values()}, {"string"})
         self.assertNotIn("telefon", json.dumps(interpreter.SALE_SCHEMA))
+        # The seller's name is of no use to the sale: never read.
+        self.assertNotIn("saljare_namn", interpreter.SALE_SCHEMA["properties"])
+        self.assertIn("Säljaren: besättningsnummer", interpreter.SALE_PROMPT)
 
     def test_the_sale_answer_is_held_to_its_schema(self):
         answer = {
