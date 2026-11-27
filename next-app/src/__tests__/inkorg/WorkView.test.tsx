@@ -2,6 +2,7 @@ import "@/i18n";
 import "@testing-library/jest-dom/vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -14,6 +15,7 @@ const actions = vi.hoisted(() => ({
   changeState: vi.fn(),
   checkReportPhoto: vi.fn(),
   confirmMask: vi.fn(),
+  findPaper: vi.fn(),
   reinterpretDocument: vi.fn(),
   takeItem: vi.fn(),
   undoAssignment: vi.fn(),
@@ -22,27 +24,45 @@ const actions = vi.hoisted(() => ({
 }));
 vi.mock("@/app/(app)/stamboken/(dashboard)/inkorg/actions", () => actions);
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
-// The canvas needs a browser: a stub that shows the rotation and can turn, and
-// a button per rectangle on the photo that selects it (Delete removes it).
+// The canvas needs a browser: a stub that shows the rotation and the angle and
+// can turn and straighten, and a button per rectangle on the photo that selects
+// it (Delete removes it).
 vi.mock("@/app/(app)/stamboken/(dashboard)/inkorg/[id]/PhotoViewer", () => ({
   PhotoViewer: ({
     rotation,
     onRotate,
+    straighten,
+    onStraighten,
+    straightenLocked,
+    onFindPaper,
     mask,
   }: {
     rotation: number;
     onRotate: (q: number) => void;
+    straighten: number;
+    onStraighten: (d: number) => void;
+    straightenLocked: boolean;
+    onFindPaper?: () => void;
     mask?: MaskLayer;
   }) => (
     <div>
       <span data-testid="rotation">{rotation}</span>
+      <span data-testid="straighten">{straighten}</span>
       <button onClick={() => onRotate(1)}>Vrid</button>
+      <button disabled={straightenLocked} onClick={() => onStraighten(4)}>
+        Räta
+      </button>
+      {onFindPaper && <button onClick={onFindPaper}>Hitta pappret</button>}
       {mask?.rects.map((_, i) => (
         <button
           key={i}
           aria-pressed={mask.selected === i}
           onClick={() => mask.onSelect(i)}
-          onKeyDown={(e) => e.key === "Delete" && mask.onRemove(i)}
+          onKeyDown={(e) =>
+            e.key === "Delete"
+              ? mask.onRemove(i)
+              : e.key === "m" && mask.onChange(i, MOVED)
+          }
         >
           {i === mask.frameAt ? "Ramen" : `Ruta ${i}`}
         </button>
@@ -50,8 +70,30 @@ vi.mock("@/app/(app)/stamboken/(dashboard)/inkorg/[id]/PhotoViewer", () => ({
     </div>
   ),
 }));
+// "m" on a rectangle moves it here: the handler's own frame.
+const MOVED = { x: 0.2, y: 0.1, w: 0.6, h: 0.5 };
 vi.mock("@/app/(app)/stamboken/(dashboard)/inkorg/[id]/AskBreeder", () => ({
-  AskBreeder: () => null,
+  AskBreeder: ({
+    documentId,
+    crop,
+    turn,
+    onFrame,
+  }: {
+    documentId: number | null;
+    crop: unknown;
+    turn: { rotation: number; straighten: number } | null;
+    onFrame: (on: boolean) => void;
+  }) => (
+    <div>
+      {turn && (
+        <span data-testid="turn">{`${turn.rotation}:${turn.straighten}`}</span>
+      )}
+      {documentId !== null && (
+        <button onClick={() => onFrame(true)}>Bifoga utsnitt</button>
+      )}
+      {crop ? <span>Utsnittet är ritat</span> : null}
+    </div>
+  ),
 }));
 vi.mock("@/app/(app)/stamboken/(dashboard)/inkorg/[id]/SalePanel", () => ({
   SalePanel: () => null,
@@ -88,6 +130,7 @@ const doc = (changes: Partial<InboxDocument> = {}): InboxDocument => ({
   doc_type: "intyg",
   cert_format: null,
   rotation: 0,
+  straighten: 0,
   mask_rects: null,
   copy_frame: null,
   frame_suggestion: null,
@@ -271,6 +314,7 @@ describe("WorkView: masking", () => {
       12,
       31,
       90,
+      0,
       [{ x: 0.45, y: 0.35, w: 0.1, h: 0.3 }],
       { x: expect.closeTo(0.3333, 4), y: 0, w: 0.6667, h: 1 },
       false,
@@ -318,6 +362,7 @@ describe("WorkView: masking", () => {
       12,
       31,
       0,
+      0,
       [],
       UPPER_TWO_THIRDS,
       false,
@@ -351,6 +396,7 @@ describe("WorkView: masking", () => {
       12,
       31,
       0,
+      0,
       [],
       null,
       true,
@@ -381,6 +427,7 @@ describe("WorkView: masking", () => {
       12,
       31,
       90,
+      0,
       [{ x: 0.1, y: 0.1, w: 0.2, h: 0.2 }],
       { x: 0, y: 0, w: 1, h: 0.5 },
       false,
@@ -421,6 +468,7 @@ describe("WorkView: masking", () => {
     expect(actions.confirmMask).toHaveBeenLastCalledWith(
       12,
       31,
+      0,
       0,
       expect.any(Array),
       null,
@@ -503,6 +551,264 @@ describe("WorkView: masking", () => {
     expect(
       screen.queryByRole("button", { name: "Gör om maskningen" }),
     ).toBeNull();
+  });
+});
+
+describe("WorkView: straightening the photo", () => {
+  // The paper with its margin, and tight: 0.015 in from each side.
+  const paper = { x: 0.1, y: 0.05, w: 0.8, h: 0.9 };
+  const paper_tight = { x: 0.115, y: 0.065, w: 0.77, h: 0.87 };
+
+  it("keeps an angle unsaved until the handler saves it, with no part of the photo or new reading meanwhile", async () => {
+    render(
+      view(
+        item({
+          documents: [doc({ status: "ny", interpretation_status: "klar" })],
+        }),
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Bifoga utsnitt" }));
+    expect(screen.getByText("Utsnittet är ritat")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Räta" }));
+    expect(screen.getByTestId("straighten")).toHaveTextContent("4");
+    // The part framed at the old angle is gone, and none is framed until the angle is saved.
+    expect(screen.queryByText("Utsnittet är ritat")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Bifoga utsnitt" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Tolka igen" })).toBeDisabled();
+    expect(screen.getByText(/Vinkeln 4,0° är inte sparad/)).toBeInTheDocument();
+    expect(actions.updateDocument).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Spara vinkeln" }));
+    expect(actions.updateDocument).toHaveBeenCalledWith(12, 31, {
+      straighten: 4,
+    });
+    expect(
+      await screen.findByText(/Vinkeln är sparad\. Klicka Tolka igen/),
+    ).toBeInTheDocument();
+  });
+
+  it("takes an unsaved angle into the masking, locks it there and sends it with the masking", () => {
+    const { rerender } = render(
+      view(item({ documents: [doc({ status: "ny" })] })),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Räta" }));
+    rerender(view(item({ documents: [doc()] }))); // the rabbit is saved: the masking step
+    expect(screen.getByTestId("straighten")).toHaveTextContent("4");
+    expect(screen.getByRole("button", { name: "Räta" })).toBeDisabled();
+    expect(
+      screen.getByText(/Vinkeln 4,0° sparas när du bekräftar maskningen/),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Lägg till ruta" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Bekräfta maskningen och nästa" }),
+    );
+    expect(actions.confirmMask).toHaveBeenCalledWith(
+      12,
+      31,
+      0,
+      4,
+      [{ x: 0.35, y: 0.45, w: 0.3, h: 0.1 }],
+      UPPER_TWO_THIRDS,
+      false,
+      false,
+    );
+    rerender(view(item({ assigned_to: other, documents: [doc()] })));
+    expect(screen.getByTestId("straighten")).toHaveTextContent("0"); // another handler: the stored angle
+  });
+
+  it("'Hitta pappret' in the masking sends the view's turn and the angle and keeps it, and cuts the frame at the tight paper's two thirds", async () => {
+    // Even an answer with another angle changes nothing but the frame: the angle is locked in the masking.
+    actions.findPaper.mockResolvedValue({
+      ok: true,
+      data: { angle: 0, paper, paper_tight },
+    });
+    render(view(item({ documents: [doc({ straighten: 2.5 })] })));
+    fireEvent.click(screen.getByRole("button", { name: "Lägg till ruta" }));
+    fireEvent.click(screen.getByRole("button", { name: "Vrid" }));
+    const confirm = screen.getByRole("button", {
+      name: "Bekräfta maskningen och nästa",
+    });
+    await waitFor(() => expect(confirm).toBeEnabled()); // the turn is saved
+    fireEvent.click(screen.getByRole("button", { name: "Hitta pappret" }));
+    expect(
+      await screen.findByText(
+        "Ramen ligger runt pappret utom dess nedre tredjedel.",
+      ),
+    ).toBeInTheDocument();
+    expect(actions.findPaper).toHaveBeenCalledWith(12, 31, 90, 2.5);
+    expect(screen.getByTestId("straighten")).toHaveTextContent("2.5");
+    await waitFor(() => expect(confirm).toBeEnabled());
+    fireEvent.click(confirm);
+    // In the view's turn as the API found it: the margin on three sides, the bottom at two thirds of the tight
+    // paper (0.065 + 0.87 × 0.6667), not of the padded one. The box stays.
+    expect(actions.confirmMask).toHaveBeenCalledWith(
+      12,
+      31,
+      90,
+      2.5,
+      [{ x: 0.45, y: 0.35, w: 0.1, h: 0.3 }],
+      {
+        x: 0.1,
+        y: 0.05,
+        w: 0.8,
+        h: expect.closeTo(0.065 + 0.87 * 0.6667 - 0.05, 6),
+      },
+      false,
+      false,
+    );
+  });
+
+  it("'Hitta pappret' refused for a turn not yet saved leaves the frame as it was", async () => {
+    actions.findPaper.mockResolvedValue({
+      ok: false,
+      problem: {
+        status: 409,
+        title: "Conflict",
+        detail:
+          "Fotot visas inte med den sparade vridningen. Ladda om sidan och sök igen.",
+      },
+    });
+    render(view(item({ documents: [doc()] })));
+    fireEvent.click(screen.getByRole("button", { name: "Hitta pappret" }));
+    expect(
+      await screen.findByText(/inte med den sparade vridningen/),
+    ).toBeInTheDocument();
+    expect(actions.findPaper).toHaveBeenCalledWith(12, 31, 0, 0);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Bekräfta maskningen och nästa" }),
+    );
+    expect(actions.confirmMask).toHaveBeenCalledWith(
+      12,
+      31,
+      0,
+      0,
+      [],
+      UPPER_TWO_THIRDS,
+      false,
+      false,
+    );
+  });
+
+  it("sends the part of the photo with the turn it was drawn in", () => {
+    render(
+      view(
+        item({
+          documents: [doc({ status: "ny", rotation: 90, straighten: 2.5 })],
+        }),
+      ),
+    );
+    expect(screen.getByTestId("turn")).toHaveTextContent("90:2.5");
+  });
+
+  describe("a late answer to 'Hitta pappret'", () => {
+    let answer: (value: unknown) => void = () => {};
+    const late = () =>
+      actions.findPaper.mockReturnValue(
+        new Promise((resolve) => (answer = resolve)),
+      );
+    const arrives = (angle: number) =>
+      act(async () =>
+        answer({ ok: true, data: { angle, paper, paper_tight } }),
+      );
+
+    it("is dropped after another document is chosen", async () => {
+      late();
+      render(
+        view(
+          item({
+            documents: [
+              doc({ status: "ny" }),
+              doc({ id: 32, status: "ny", straighten: 1.5 }),
+            ],
+          }),
+        ),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Hitta pappret" }));
+      fireEvent.click(screen.getByRole("button", { name: /^2\. / }));
+      await arrives(4);
+      expect(screen.getByTestId("straighten")).toHaveTextContent("1.5");
+      expect(screen.queryByText(/Fotot lutar/)).toBeNull();
+    });
+
+    it("is dropped after the handler moves the frame", async () => {
+      late();
+      render(view(item({ documents: [doc()] })));
+      fireEvent.click(screen.getByRole("button", { name: "Hitta pappret" }));
+      fireEvent.keyDown(screen.getByRole("button", { name: "Ramen" }), {
+        key: "m",
+      });
+      await arrives(0);
+      expect(screen.queryByText(/Ramen ligger runt pappret/)).toBeNull();
+      fireEvent.click(
+        screen.getByRole("button", { name: "Bekräfta maskningen och nästa" }),
+      );
+      expect(actions.confirmMask).toHaveBeenCalledWith(
+        12,
+        31,
+        0,
+        0,
+        [],
+        MOVED,
+        false,
+        false,
+      );
+    });
+
+    it("is dropped after a turn, outside the masking and in it", async () => {
+      late();
+      const { unmount } = render(
+        view(item({ documents: [doc({ status: "ny" })] })),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Hitta pappret" }));
+      fireEvent.click(screen.getByRole("button", { name: "Vrid" }));
+      await arrives(4);
+      expect(screen.getByTestId("straighten")).toHaveTextContent("0");
+      unmount();
+
+      late();
+      render(view(item({ documents: [doc()] })));
+      fireEvent.click(screen.getByRole("button", { name: "Hitta pappret" }));
+      fireEvent.click(screen.getByRole("button", { name: "Vrid" }));
+      await arrives(0);
+      expect(screen.queryByText(/Ramen ligger runt pappret/)).toBeNull();
+      const confirm = screen.getByRole("button", {
+        name: "Bekräfta maskningen och nästa",
+      });
+      await waitFor(() => expect(confirm).toBeEnabled());
+      fireEvent.click(confirm);
+      // The frame the step started with, turned with the view: not the paper's.
+      expect(actions.confirmMask).toHaveBeenCalledWith(
+        12,
+        31,
+        90,
+        0,
+        [],
+        { x: expect.closeTo(0.3333, 4), y: 0, w: 0.6667, h: 1 },
+        false,
+        false,
+      );
+    });
+  });
+
+  it("'Hitta pappret' without a clear tilt sets 0°, and is only the handler's", async () => {
+    actions.findPaper.mockResolvedValue({
+      ok: true,
+      data: { angle: 0, paper: null },
+    });
+    const { unmount } = render(
+      view(item({ documents: [doc({ status: "ny", straighten: 3 })] })),
+    );
+    expect(screen.getByTestId("straighten")).toHaveTextContent("3");
+    fireEvent.click(screen.getByRole("button", { name: "Hitta pappret" }));
+    expect(
+      await screen.findByText(
+        "Ingen tydlig lutning hittades, så vinkeln är 0°.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("straighten")).toHaveTextContent("0");
+    expect(actions.findPaper).toHaveBeenCalledWith(12, 31, 0); // outside the masking the tilt is looked for
+    unmount();
+    render(view(item({ assigned_to: other, documents: [doc()] }), boss));
+    expect(screen.queryByRole("button", { name: "Hitta pappret" })).toBeNull();
   });
 });
 
@@ -745,6 +1051,18 @@ describe("ReportPhotoCheck's buttons", () => {
     await waitFor(() =>
       expect(actions.reinterpretDocument).toHaveBeenCalledWith(12, 31),
     );
+  });
+
+  it("lets the handler straighten it, and reads it again only once the angle is saved: it has no masking", () => {
+    render(view(photoItem()));
+    const straighten = screen.getByRole("button", { name: "Räta" });
+    expect(straighten).toBeEnabled();
+    fireEvent.click(straighten);
+    expect(screen.getByRole("button", { name: "Tolka igen" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Spara vinkeln" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/bekräftar maskningen/)).toBeNull();
   });
 
   it("before it is taken: no closing, and the take button where the note is", () => {

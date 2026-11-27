@@ -20,6 +20,7 @@ from PIL import Image, ImageFilter
 import utils.settings as settings
 from utils.database import DB_PROXY, InboxDocument, InboxItem
 from utils.herd_tracking import has_phone
+from utils.inbox_paper import turned
 from utils.inbox_proposal import HERD_NUMBER, SALE_READING, build_proposal, sale_part
 from utils.log_masking import mask_cut
 from utils.mail import is_address
@@ -117,16 +118,17 @@ def conform(value, schema):
     return None
 
 
-def prepare_image(source, rotation):
+def prepare_image(source, rotation, straighten=0):
     """
-    The photo (a path or a file) as the interpreter gets it, a greyscale JPEG: turned `rotation` degrees
-    clockwise as the handler set it, at most MAX_SIDE pixels on its longest side, and enhanced as in the trial.
+    The photo (a path or a file) as the interpreter gets it, a greyscale JPEG: turned `rotation` + `straighten`
+    degrees clockwise as the handler set it (inbox_paper.turned, never cropped to the copy's frame), at most
+    MAX_SIDE pixels on its longest side, and enhanced as in the trial.
     The green channel fades the form, which is printed in green, and keeps the writing; dividing by the
     paper's background takes away shadows and uneven light; the stretch darkens the midtones so that faint
     pencil shows.
     """
     with Image.open(source) as original:
-        image = original.convert("RGB").rotate(-rotation, expand=True)
+        image = turned(original, rotation, straighten)
     image.thumbnail((MAX_SIDE, MAX_SIDE))
     green = image.getchannel("G")
     # A closing (max, then min) wipes out the writing and a median smooths what is left. On a smaller copy,
@@ -290,6 +292,17 @@ def _finish(document, status, **values):
     document.save()
 
 
+def _claim(document):
+    """What a reading is of: a document changed in any of these while the model reads keeps waiting."""
+    return (
+        document.interpretation_status,
+        document.attempts,
+        document.rotation,
+        document.doc_type,
+        document.straighten,
+    )
+
+
 def interpret_next():
     """
     The scheduler's inbox_interpret: the oldest certificate waiting is read and checked into a proposal, one per
@@ -319,19 +332,18 @@ def interpret_next():
         document.save()
         # under the lock: whatever ends the sale after the claim is logged later
         claimed_at = datetime.now(timezone.utc)
-    document_id, claimed = document.id, ("vantar", document.attempts, document.rotation, document.doc_type)
+    document_id, claimed = document.id, _claim(document)
     DB_PROXY.close()
     try:
-        image = prepare_image(os.path.join(settings.service.private_upload_folder, document.original_path), claimed[2])
+        source = os.path.join(settings.service.private_upload_folder, document.original_path)
+        image = prepare_image(source, document.rotation, document.straighten)
         raw = interpret(image)
     except Exception as exc:  # pylint: disable=broad-except  # whatever failed, it was an attempt
         logger.warning("Interpreting inbox document %s failed (attempt %s): %s", document_id, claimed[1], exc)
         raw = None
     with DB_PROXY.atomic():
         document = _locked(document_id, item.id)
-        if document is None or (
-            (document.interpretation_status, document.attempts, document.rotation, document.doc_type) != claimed
-        ):
+        if document is None or _claim(document) != claimed:
             return document_id
         if raw is None:
             if document.attempts >= MAX_ATTEMPTS:

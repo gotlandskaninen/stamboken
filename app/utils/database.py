@@ -80,8 +80,9 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # verified_at and verified_by (56) + a buyer's e-mail kept only for the notice, buyer_contact.email_notice_only (57) +
 # the support account on the membership, with its type (58) + why a report link's change was revoked,
 # member_change_request.revoked_reason (59) + the frame a paper certificate's copy is cropped to,
-# inbox_document.copy_frame (60).
-CURRENT_SCHEMA_VERSION = 60
+# inbox_document.copy_frame (60) + the degrees a paper certificate's photo is straightened by,
+# inbox_document.straighten (61).
+CURRENT_SCHEMA_VERSION = 61
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -2554,6 +2555,7 @@ class InboxDocument(BaseModel):
     doc_type = TextField(default="intyg")
     cert_format = TextField(null=True)
     rotation = SmallIntegerField(default=0)
+    straighten = FloatField(default=0)  # degrees clockwise after the rotation, -15 to 15
     mask_rects = BinaryJSONField(null=True, index=False)
     copy_frame = BinaryJSONField(null=True, index=False)  # the part of the turned photo the copy keeps
     interpretation_status = TextField(default=_initial_interpretation)  # av, vantar, klar, misslyckad or for_litet
@@ -5303,6 +5305,15 @@ def migrate_59_to_60():
         ).execute()
 
 
+def migrate_60_to_61():
+    """A paper certificate's photo is straightened: a few degrees more than its quarter turns."""
+    with DATABASE.atomic():
+        DATABASE.execute_sql("ALTER TABLE inbox_document ADD COLUMN IF NOT EXISTS straighten REAL NOT NULL DEFAULT 0")
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=61, comment="inbox_document.straighten", applied=datetime.now()
+        ).execute()
+
+
 def migrate_21_to_22():
     """Add litter_number to Breeding table and backfill from minted numbers."""
     with DATABASE.atomic():
@@ -5834,6 +5845,7 @@ MIGRATIONS = {
     (57, 58): migrate_57_to_58,  # the support account on the membership
     (58, 59): migrate_58_to_59,  # member_change_request.revoked_reason
     (59, 60): migrate_59_to_60,  # inbox_document.copy_frame
+    (60, 61): migrate_60_to_61,  # inbox_document.straighten
 }
 
 

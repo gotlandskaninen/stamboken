@@ -19,21 +19,24 @@ describe("Fråga uppfödaren", () => {
   it("never puts an id that is not a whole number into the URL", async () => {
     const crop = { x: 0, y: 0, w: 1, h: 1 };
     expect((await askBreeder(1.5, "Fråga")).ok).toBe(false);
-    expect((await askBreeder(12, "Fråga", { document: -1, crop })).ok).toBe(
-      false,
-    );
+    const part = { document: -1, crop, rotation: 0, straighten: 0 };
+    expect((await askBreeder(12, "Fråga", part)).ok).toBe(false);
     expect(api).not.toHaveBeenCalled();
   });
 
-  it("sends the question, and the frame only with its document", async () => {
+  it("sends the question, and the frame only with its document and the turn it was drawn in", async () => {
     const crop = { x: 0.1, y: 0.2, w: 0.3, h: 0.4 };
+    const turn = { rotation: 90, straighten: 2.5 };
     await askBreeder(12, "Vilken färg?");
-    await askBreeder(12, "Vilken färg?", { document: 31, crop });
+    await askBreeder(12, "Vilken färg?", { document: 31, crop, ...turn });
     expect(
       api.mock.calls.map((c) => [c[0], JSON.parse(c[1]!.body as string)]),
     ).toEqual([
       ["/v2/inkorg/12/fraga", { text: "Vilken färg?" }],
-      ["/v2/inkorg/12/fraga", { text: "Vilken färg?", document: 31, crop }],
+      [
+        "/v2/inkorg/12/fraga",
+        { text: "Vilken färg?", document: 31, crop, ...turn },
+      ],
     ]);
   });
 });

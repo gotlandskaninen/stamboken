@@ -1296,6 +1296,11 @@ administratörer, genbanksansvariga och genbankshjälpare, och alla tre kan se h
    innan kopian finns; den följer också med när du bekräftar maskningen, och kopian görs
    efter den. Har du vridit fotot utan att ha ärendet börjar du om från den sparade
    vridningen när du tar det.
+   Är fotot taget snett rätar du upp det med reglaget **Räta upp**, upp till 15 grader åt
+   vardera hållet, eller klickar **Hitta pappret**: då räknar Stamboken ut hur mycket fotot
+   lutar och sätter vinkeln. Ingenting ändras förrän du klickar **Spara vinkeln**; kopian,
+   tolkningen och utsnittet till uppfödaren görs av fotot med den sparade vinkeln. Klicka
+   **Tolka igen** efteråt om fotot ska läsas om. **Nollställ** sätter vinkeln till 0.
    Zoom, **Kontrast** och **Förstärk blyerts** ändrar bara hur fotot visas. Med musens
    rullhjul zoomar du in och ut där pekaren står. Ange **Typ**
    (Intyg, Bevis, Årsblankett eller Annat) och **Format**.
@@ -1351,8 +1356,9 @@ administratörer, genbanksansvariga och genbankshjälpare, och alla tre kan se h
    hamnar utanför, eller välj den och använd piltangenterna (Skift ändrar storleken, Delete
    tar bort den). Inne i ramen flyttar du fotot som vanligt när det är inzoomat. **Ta bort ramen** tar bort den; utan ram blir hela fotot kopian. Syns något mer innanför ramen täcker du det med
    en svart ruta: **Lägg till ruta**, och flytta den på samma sätt. Klicka **Bekräfta
-   maskningen och nästa**. Ramen, rutorna och fotots vridning skickas tillsammans, så kopian
-   görs som du ser fotot. Visar intyget ingen säljare eller köpare tar du bort ramen och
+   maskningen och nästa**. Ramen, rutorna och fotots vridning och vinkel skickas tillsammans, så
+   kopian görs som du ser fotot. Vinkeln går inte att ändra här. **Hitta pappret** lägger
+   ramen runt pappret utom dess nedre tredjedel, med fotot vridet som du ser det. Visar intyget ingen säljare eller köpare tar du bort ramen och
    rutorna, kryssar i **Fotot visar inga säljar- eller köparuppgifter** och klickar
    **Bekräfta maskningen och nästa**. Har du
    jämfört intyget med registret och de stämmer, kryssa i **Jag har jämfört intyget med
