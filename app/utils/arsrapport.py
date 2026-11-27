@@ -1093,7 +1093,13 @@ def report_view(herd, round_, access, user):
         rabbit for rabbit, row in rabbits.items() if row["state"] == "via_flytt" and row["later"]["kind"] == "TRANSFER"
     }
     later_sales = (
-        HerdTracking.select(HerdTracking.id, HerdTracking.individual, Herd.herd, HerdTracking.herd_tracking_date)
+        HerdTracking.select(
+            HerdTracking.id,
+            HerdTracking.individual,
+            Herd.herd,
+            HerdTracking.herd_tracking_date,
+            HerdTracking.operation_id,
+        )
         .join(Herd, on=(HerdTracking.herd == Herd.id))
         .where(
             HerdTracking.individual.in_(sorted(moved)),
@@ -1105,10 +1111,13 @@ def report_view(herd, round_, access, user):
     )
     # the sale the row shows (`later`, its first move): a buyback and a resale after it are not that one
     shown = {}
-    for row_id, rabbit, to, day in later_sales.order_by(HerdTracking.herd_tracking_date, HerdTracking.id).tuples():
+    for row_id, rabbit, to, day, op in later_sales.order_by(HerdTracking.herd_tracking_date, HerdTracking.id).tuples():
         if rabbit not in shown and _iso(day) == rabbits[rabbit]["later"]["date"]:
-            shown[rabbit] = (row_id, to)
-    later_sales = {row_id: (rabbit, to) for rabbit, (row_id, to) in shown.items()}
+            shown[rabbit] = (row_id, to, op)
+    dialog = month_only([op for _, _, op in shown.values()])
+    for rabbit, (_, _, op) in shown.items():  # a sale the dialog gave without its day shows its month (5.3)
+        rabbits[rabbit]["later"] = {**rabbits[rabbit]["later"], "day_known": str(op) not in dialog}
+    later_sales = {row_id: (rabbit, to) for rabbit, (row_id, to, _) in shown.items()}
     undo = _undoable(user, access, [row["id"] for row in sales.dicts()] + list(later_sales))
     for row_id, (rabbit, to) in later_sales.items():  # `undo_to`: the buyer's herd, for Ångra's question
         rabbits[rabbit] |= {"undo": row_id if row_id in undo else None, "undo_to": to}
@@ -1168,6 +1177,15 @@ def report_view(herd, round_, access, user):
     }
 
 
+def month_only(op_ids):
+    """The sales among `op_ids` (operation ids) that the report's sale dialog registered without their day (5.3)."""
+    rows = IndividualCommand.select(IndividualCommand.operation_id).where(
+        IndividualCommand.operation_id.in_([str(op) for op in op_ids]),
+        IndividualCommand.after.contains({"month_only": True}),
+    )
+    return {str(op) for (op,) in rows.tuples()} if op_ids else set()
+
+
 def _undoable(user, access, row_ids):
     """
     The sales among `row_ids` (TRANSFER rows) that the viewer may undo now as the seller does on the rabbit page
@@ -1200,13 +1218,15 @@ def _sales_json(report, rows):
             .where(SaleProposal.report == report.id, SaleProposal.herd_tracking_id.is_null(False))
         )
         approved = dict(proposals.tuples())
+    dialog = month_only([row["operation_id"] for row in rows])
     return [
         {
             "individual_id": row["individual_id"],
             "number": row["number"],
             "to_herd": row["to_herd"],
             "date": _iso(row["date"]),
-            "day_known": not dayless(
+            "day_known": str(row["operation_id"]) not in dialog
+            and not dayless(
                 written.get(str(row["operation_id"])) or approved.get(row["id"]), row["individual_id"], "sald"
             ),
         }
@@ -3370,6 +3390,8 @@ def sell_now(herd, round_, access, user, rabbit_id, sald, *, now=None):
         if refusals:
             raise _cannot(refusals, "Försäljningen kan inte registreras.")
         transfer = transfers.get(rabbit_id)
+        if transfer is not None:
+            transfer = replace(transfer, month_only=entry.sald["dag"] is None)
         if transfer is None:  # check() left nothing to write
             raise _cannot([_refusal(rabbit_id, "senare_handelse")], "Försäljningen kan inte registreras.")
         if transfer.buyer and lock_sale_buyers({rabbit_id: transfer.buyer}, proposal=False):

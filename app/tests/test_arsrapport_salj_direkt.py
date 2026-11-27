@@ -11,6 +11,7 @@ from datetime import date, datetime, timedelta, timezone
 from unittest import mock
 
 import utils.arsrapport as arsrapport
+import utils.arsrapport_pdf as arsrapport_pdf
 import utils.buyer_contact as buyer_contact
 import utils.database as db
 import utils.herd_tracking as herd_tracking
@@ -231,6 +232,16 @@ class SellNowTest(ArsrapportTest):
         sent = self.skicka(self.kvar(self.b, vikt=2.8), health="ja", defects=defects)
         self.assertEqual(sent.status_code, 200, sent.get_data(as_text=True))
         self.assertEqual(json.loads(db.YearlyHerdReport.get().data)["defects"], [{**defects[0], "foto": None}])
+
+    def test_a_month_only_sale_stays_month_only(self):  # review r1: in the view and the register extract
+        self.sold(dag=None, kopare=BUYER)
+        self.sold(rabbit=self.b, ar=2026, manad=1, dag=None, till="G9002")
+        page = self.page()
+        self.assertEqual([(s["date"], s["day_known"]) for s in page["sales"]], [("2025-10-31", False)])
+        row = next(row for row in page["rabbits"] if row["id"] == self.b.id)
+        self.assertEqual((row["later"]["date"], row["later"]["day_known"]), ("2026-01-10", False))
+        sold, _ = arsrapport_pdf._sold_and_dead(self.h, self.round_)  # pylint: disable=protected-access
+        self.assertEqual([entry["date"] for entry in sold], ["2025-10"])
 
     def test_paper_rechecks_the_item_under_the_locks(self):
         item, _ = inbox.create_upload(self.owner, self.h, None, [("inkorg/original/x.jpg", "0" * 64, QUALITY)])

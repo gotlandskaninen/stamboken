@@ -147,7 +147,11 @@ function RabbitRowImpl({
       )}
       {r.state === "via_flytt" && !e.val && (
         <p>
-          Flyttad {r.later ? fmtDate(r.later.date) : ""}, räknas via flytten
+          Flyttad{" "}
+          {r.later
+            ? fmtDayOrMonth(r.later.date, r.later.day_known ?? true)
+            : ""}
+          , räknas via flytten
           {r.undo && onUndo && (
             <>
               {" "}

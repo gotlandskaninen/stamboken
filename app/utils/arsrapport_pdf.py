@@ -70,11 +70,14 @@ def _sold_and_dead(herd, round_):
         )
         .order_by(HerdTracking.herd_tracking_date, HerdTracking.id)
     )
+    sold = list(sold)
+    dialog = arsrapport.month_only([row.operation_id for row in sold])  # the sale dialog's, without their day
     sold = [
         (
             row.individual_id,
             row.herd_tracking_date,
-            arsrapport.dayless(written.get(str(row.operation_id)), row.individual_id, "sald"),
+            str(row.operation_id) in dialog
+            or arsrapport.dayless(written.get(str(row.operation_id)), row.individual_id, "sald"),
         )
         for row in sold
     ]

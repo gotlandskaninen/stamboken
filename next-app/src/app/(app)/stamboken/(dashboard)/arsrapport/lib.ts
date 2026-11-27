@@ -30,7 +30,8 @@ export interface RabbitView {
   death_date: string | null;
   death_day_known: boolean; // false: the report gave it without its day, so its month is shown
   state: "att_valja" | "redan_rapporterad" | "via_flytt";
-  later: { kind: string; date: string } | null;
+  // day_known false: the report's sale dialog gave it without its day, so its month is shown
+  later: { kind: string; date: string; day_known?: boolean } | null;
   undo?: number | null; // a sale after 31 December the viewer may Ångra (the `later` move)
   undo_to?: string; // that sale's buyer herd, for Ångra's question
   buyer_removed?: boolean;
