@@ -732,6 +732,7 @@ _REFUSED_AS_FORBIDDEN = {"Forbidden", AssignPaperCertificate(None).denied().enve
 _FIELD_BY_DETAIL = (
     (re.compile(r"^Välj mor och far|^Modern "), "mother"),
     (re.compile(r"^Fadern "), "father"),
+    (re.compile(r"^Välj kön"), "sex"),
     (re.compile(r"levande vid 6 veckor|litter_size6w", re.I), "litter_size6w"),
     (re.compile(r"antal födda", re.I), "litter_size"),
     (re.compile(r"^Födelsedatum"), "birth_date"),
@@ -792,8 +793,32 @@ def _live_individual(number):
     return individual
 
 
+def _missing_from_paper(body):
+    """
+    What the queue asks for beyond POST /v2/individual, as "Registrera kanin" does (Jonas 2026-11-27): the colour,
+    the sex (female, male, or null for Okänt, sent as normal registration sends it) and both counts. A certificate
+    that cannot be read is not saved with gaps: the handler finds the details first. The refusal, or None.
+    """
+
+    def count(key):
+        value = body.get(key)
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    if not isinstance(body.get("color"), str) or not body["color"].strip():
+        return "Välj färg."
+    if "sex" not in body or body["sex"] not in ("female", "male", None):
+        return "Välj kön: hona, hane eller okänt."
+    if not (count("litter_size") or 0) >= 1:
+        return "Ange antal födda (minst 1)."
+    if not (count("litter_size6w") or 0) >= 1:
+        return "Ange antal levande vid 6 veckor (minst 1)."
+    return None
+
+
 def _register_new(body, user, grant):
     """A new rabbit from the certificate, as POST /v2/individual registers it, with a paper certificate."""
+    if missing := _missing_from_paper(body):
+        raise inbox.InboxError(400, missing)
     form = {key: body[key] for key in REGISTRATION_FIELDS if key in body}
     form["certificate_type"] = "paper"
     created = []

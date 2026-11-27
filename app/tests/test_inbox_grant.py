@@ -445,6 +445,30 @@ class TestSaveEndpoint(GrantTest):
         resp = self.save(item, document, action="okand")
         self.assertNotIn("field", resp.get_json())
 
+    def test_the_queue_asks_for_everything_the_paper_has(self):
+        # Jonas 2026-11-27: as in "Registrera kanin", colour, sex and both counts are not left out in the queue.
+        item, document = self.taken(self.helper)
+        self.login("hjalp")
+        missing = {
+            "color": [None, ""],
+            "sex": ["", "hona"],  # and left out: not chosen. Okänt is null with the key present, as below
+            "litter_size": [None, "", 0, "fem"],
+            "litter_size6w": [None, "", 0],
+        }
+        for field, values in missing.items():
+            for value in [*values, "left out"]:
+                body = {key: v for key, v in NEW_RABBIT.items() if key != field}
+                if value != "left out":
+                    body[field] = value
+                with self.subTest(field=field, value=value):
+                    resp = self.save(item, document, **body)
+                    self.assertEqual(resp.status_code, 400, resp.get_json())
+                    self.assertEqual(resp.get_json().get("field"), field, resp.get_json())
+        self.assertFalse(db.Individual.select().where(db.Individual.number == "G1-2511").exists())
+        resp = self.save(item, document, **{**NEW_RABBIT, "sex": None})  # Okänt, as normal registration sends it
+        self.assertEqual(resp.status_code, 201, resp.get_json())
+        self.assertIsNone(self.rabbit("G1-2511").sex)
+
     def test_the_trace_outlives_the_item(self):
         item, document = self.taken(self.helper)
         self.certify(self.helper, item, document)
