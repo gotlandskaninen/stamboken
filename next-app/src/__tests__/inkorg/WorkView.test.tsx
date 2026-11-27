@@ -614,9 +614,11 @@ describe("WorkView: straightening the photo", () => {
     ).toBeInTheDocument();
     expect(actions.findPaper).toHaveBeenCalledWith(12, 31, 2.5);
     expect(screen.getByTestId("straighten")).toHaveTextContent("2.5");
-    fireEvent.click(
-      screen.getByRole("button", { name: "Bekräfta maskningen och nästa" }),
-    );
+    const confirm = screen.getByRole("button", {
+      name: "Bekräfta maskningen och nästa",
+    });
+    await waitFor(() => expect(confirm).toBeEnabled()); // the saved turn and the search are done
+    fireEvent.click(confirm);
     // The paper was found in the stored rotation (0): a quarter turn on, its upper two thirds. The box stays.
     expect(actions.confirmMask).toHaveBeenCalledWith(
       12,
@@ -691,9 +693,11 @@ describe("WorkView: straightening the photo", () => {
       fireEvent.click(screen.getByRole("button", { name: "Vrid" }));
       await arrives(0);
       expect(screen.queryByText(/Ramen ligger runt pappret/)).toBeNull();
-      fireEvent.click(
-        screen.getByRole("button", { name: "Bekräfta maskningen och nästa" }),
-      );
+      const confirm = screen.getByRole("button", {
+        name: "Bekräfta maskningen och nästa",
+      });
+      await waitFor(() => expect(confirm).toBeEnabled());
+      fireEvent.click(confirm);
       // The frame the step started with, turned with the view: not the paper's.
       expect(actions.confirmMask).toHaveBeenCalledWith(
         12,
