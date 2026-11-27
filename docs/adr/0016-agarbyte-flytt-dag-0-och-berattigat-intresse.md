@@ -296,7 +296,9 @@ vänta i rapporten till Skicka.
   adressen väntar på genbanksansvarigs kontroll: köparen ska få veta inom
   en månad, annars sparas inget. Månaden räknas från att försäljningen
   eller förslaget registrerades, inte från att en pappersblankett kom in
-  i inkorgen (Jonas 2026-11-27).
+  i inkorgen (Jonas 2026-11-27). Att en blankett som visar en köpare
+  hanteras inom en månad från att den kom in står i föreningens rutin,
+  inte i koden.
 
 ## Mer information
 
