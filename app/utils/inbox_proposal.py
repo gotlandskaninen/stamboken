@@ -270,15 +270,25 @@ def _branch(registry, raw, struck, role, fields, checks):
         checks.append(_check(False, f"{label}: {text} {how}." if parsed else f"{label}: {how}."))
         return None, None
     litter = Breeding.get_or_none(Breeding.id == rabbit.breeding_id)
-    grandparents, itself = [], None
-    for gp_key, theirs in ((father_key, litter and litter.father), (mother_key, litter and litter.mother)):
-        gp_entry = _entry(raw, gp_key)
-        parsed_gp = None if gp_key in struck else _parse_number(gp_entry, registry.letter)
-        if parsed_gp and parsed_gp[:2] == parsed[:2]:  # no rabbit is its own parent: the model read the wrong box
-            itself, parsed_gp = gp_key, None
-        grandparents.append((gp_key, _number_text(gp_entry), theirs, registry.compare(parsed_gp, theirs)))
-    if itself:  # then neither grandparent read is the certificate's to compare with
-        grandparents = [(gp_key, gp_text, theirs, None) for gp_key, gp_text, theirs, _ in grandparents]
+    boxes = [
+        (gp_key, _entry(raw, gp_key), theirs)
+        for gp_key, theirs in ((father_key, litter and litter.father), (mother_key, litter and litter.mother))
+    ]
+    on_paper = {
+        gp_key: None if gp_key in struck else _parse_number(entry, registry.letter) for gp_key, entry, _ in boxes
+    }
+    # No rabbit is its own parent: a box that finds the parent itself was read from the wrong place. When the model
+    # read the parents' row again, the other box holds the other parent's number: no comparison either.
+    itself = next((gp_key for gp_key, p in on_paper.items() if registry.compare(p, rabbit) in (READ, DERIVED)), None)
+    if itself:
+        other = _parse_number(_entry(raw, _PARENTS["father" if role == "mother" else "mother"][0]), registry.letter)
+        for gp_key, p in on_paper.items():
+            if gp_key == itself or (p and other and p[:2] == other[:2]):
+                on_paper[gp_key] = None
+    grandparents = [
+        (gp_key, _number_text(entry), theirs, registry.compare(on_paper[gp_key], theirs))
+        for gp_key, entry, theirs in boxes
+    ]
 
     if any(result == "differs" for *_, result in grandparents):
         # A number read as it stands is a known disagreement; one this code derived is merely unsure.
@@ -301,7 +311,7 @@ def _branch(registry, raw, struck, role, fields, checks):
         doubts.append(sibling)
     compared = any(result in (READ, DERIVED) for *_, result in grandparents)
     if itself:
-        doubts.append(f"{text} är inläst också som {itself}, så tolkningen har troligen tagit fel ruta")
+        doubts.append(f"{itself} är inläst med {label.lower()}s eget nummer, så tolkningen har troligen tagit fel ruta")
     elif not compared:
         doubts.append(f"far- och morföräldrarna går inte att jämföra med registrets för {rabbit.number}")
     if doubts:
@@ -612,7 +622,8 @@ def build_proposal(raw, genebank_id, herd_id=None, registered=None):
     registry = _Registry(genebank_id if genebank_id is not None else _genebank_of_letter(raw))
     proposal = _proposal(registry, raw, struck, herd_id, registered)
     letter = _text(raw.get("genbanksnr"))[:1].upper()
-    if letter.isalpha() and registry.letter and letter != registry.letter and "genbanksnr" not in struck:
+    shaped = _parse_number(raw, registry.letter) is not None  # "Nr 9001" has no letter to speak of
+    if shaped and letter.isalpha() and registry.letter and letter != registry.letter and "genbanksnr" not in struck:
         # The reading or the item's genebank is wrong; which one, the handler sees on the photo.
         proposal["checks"].insert(
             0,

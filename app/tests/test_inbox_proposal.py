@@ -164,7 +164,7 @@ class TestGenebank(ProposalTest):
             "Individnumret börjar med M på intyget, men genbankens nummer börjar med G.", self.texts(proposal)
         )
         self.assertEqual(self.source(proposal, "paper_number")[0], "härlett")  # a letter not the genebank's
-        for herd in ("G9001", "9001", "g9001"):
+        for herd in ("G9001", "9001", "g9001", "Nr 9001"):
             with self.subTest(herd):
                 self.assertNotIn("börjar med", " ".join(self.texts(self.propose(reading(genbanksnr=herd)))))
         struck = self.propose(reading(genbanksnr="M9001", overstruket=["genbanksnr"]))
@@ -213,7 +213,7 @@ class TestPedigree(ProposalTest):
             self.assertEqual(self.source(proposal, key), ("osäker", None), key)
             self.assertNotIn("registry", proposal["fields"][key], key)
         self.assertIn(
-            "Mor: G9001 2211 är inläst också som mormor, så tolkningen har troligen tagit fel ruta.",
+            "Mor: mormor är inläst med mors eget nummer, så tolkningen har troligen tagit fel ruta.",
             self.texts(proposal, False),
         )
         self.assertNotIn("far- och morföräldrarna på intyget", " ".join(self.texts(proposal)))
@@ -224,6 +224,19 @@ class TestPedigree(ProposalTest):
         self.assertEqual(self.source(proposal, "mother"), ("osäker", None))
         self.assertIn(
             "Kull i Stamboken: född 2025-05-10, mor G9001-2211, far G9003-2311, 5 födda.", self.texts(proposal)
+        )
+
+    def test_a_misread_box_near_the_parent_is_caught_and_the_other_box_still_counts(self):
+        # Mormor one character from the mother finds her too.
+        proposal = self.propose(reading(mormor=ancestor("G9011", "2211")))
+        self.assertEqual(self.source(proposal, "mother"), ("osäker", None))
+        self.assertIn("Mor: mormor är inläst med mors eget nummer", " ".join(self.texts(proposal, False)))
+        # Farmor copies the father, but farfar, read on its own, is not G9002-2311's father: still a disagreement.
+        proposal = self.propose(reading(far=ancestor("G9002", "2311", "Max"), farmor=ancestor("G9002", "2311")))
+        self.assertEqual(self.source(proposal, "father"), ("avviker", None))
+        self.assertEqual(proposal["fields"]["farfar"]["registry"], "G9002-2011")
+        self.assertIn(
+            "Far: far- och morföräldrarna på intyget är inte registrets för G9002-2311.", self.texts(proposal, False)
         )
 
     def test_a_misread_box_does_not_lead_to_another_rabbits_litter(self):
@@ -291,11 +304,14 @@ class TestNearestMatch(ProposalTest):
 
     def test_several_or_no_near_numbers_are_unsure(self):
         # G9000 is one digit from both G9002 and G9003; G7777 is a herd nobody has.
-        for herd, why in (("G9000", "flera kaniner har nästan samma nummer"), ("G7777", "finns inte")):
+        for herd, why in (
+            ("G9000", "finns inte i Stamboken, men flera kaniner har nästan samma nummer"),
+            ("G7777", "finns inte i Stamboken"),
+        ):
             with self.subTest(herd):
                 proposal = self.propose(reading(far=ancestor(herd, "2311")))
                 self.assertEqual(self.source(proposal, "father"), ("osäker", None))
-                self.assertTrue(any(why in text for text in self.texts(proposal, False)), proposal["checks"])
+                self.assertIn(f"Far: {herd} 2311 {why}.", self.texts(proposal, False))
         proposal = self.propose(reading(genbanksnr="G7777"))  # the rabbit's own herd
         self.assertEqual(self.source(proposal, "paper_number"), ("osäker", None))
 
