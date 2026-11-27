@@ -869,6 +869,7 @@ En köpare utanför föreningen:
 | `herd` | köparens besättningsnummer. En köpare utanför föreningen: genbankens besättning för kaniner sålda utanför genbanken, `GX1` (gotlandskanin) eller `MX1` (mellerudskanin). |
 | `date` | försäljningsdatumet |
 | `buyer` | valfritt, bara till GX1/MX1: köparen utanför föreningen ([ADR-0016](adr/0016-agarbyte-flytt-dag-0-och-berattigat-intresse.md)). `name` och `town` krävs, och `postal_address` när den som registrerar varken är genbanksansvarig eller admin; `email` och `phone` bara med `contact_consent` eller `membership_optin`. Annars 400. Med `buyer` går också GX1 till GX1, för genbanksansvarig och admin. När beviset kopplas till en försäljning som redan finns sätts köparen på den bara om försäljningen saknar köpare (registrerad i gamla appen); har den redan en köpare blir svaret 409 |
+| `from_photo` | valfritt, `true` när panelen fylldes i från fotots läsning ([Säljare och köpare](#tolkning)). Har dokumentet inte längre någon `sale` blir svaret 409 "Läsningen har ändrats, fyll i köparen igen." Utan fältet prövas inget |
 
 **Vem:** handläggaren, med samma krav på posten som för `…/spara` men för alla dokumenttyper.
 En hjälpare får sälja kaniner i sin genbank som en ägare får.
@@ -897,7 +898,7 @@ sin plats i historiken. Alla andra får 400.
 | 400 | besättning eller datum saknas eller är okänd; `title: "Ogiltig försäljning"` med försäljningens regler: datumet i framtiden, före 43 dagars ålder eller före kaninens senaste händelse, en annan genbank, en kanin utan intyg till en annan besättning än GX1/MX1, kaninen finns redan där |
 | 403 | anroparen får inte sälja kaninen |
 | 404 | kaninen finns inte |
-| 409 | som för `…/spara`; en försäljning är redan registrerad genom dokumentet; eller besättningshistoriken skulle bli motsägelsefull (med `rows`) |
+| 409 | som för `…/spara`; en försäljning är redan registrerad genom dokumentet; `from_photo` utan läsning; eller besättningshistoriken skulle bli motsägelsefull (med `rows`) |
 
 ## Maskning och kopian på kaninen
 
@@ -1258,8 +1259,10 @@ läsningen ber fortfarande om det: "Säljarens och köparens uppgifter ska inte 
   anropet finns den vanliga läsningen kvar, och inget försök går åt.
 - Svaret hålls mot schemat som det första. Dessutom stryks ett fält som inte kan vara det det
   säger: en e-post som inte har formen av en adress, ett postnummer som inte är fem siffror
-  (mellanslag går bra) och varje värde med ett telefonnummer i. Det som återstår sparas i
-  `interpretation.forsaljning`.
+  (mellanslag går bra), en säljares besättning som inte är ett besättningsnummer och varje värde
+  med ett telefonnummer i, också ett skrivet med 0046 eller med andra streck och mellanslag (U+2010
+  till U+2015, minustecknet och hårt mellanslag). Samma telefonkontroll gäller köparens postadress
+  när en försäljning sparas. Det som återstår sparas i `interpretation.forsaljning`.
 - Bara intyg i kön läses så, i en post utan `ref_type`. Foton som skickas in genom årsrapporten för
   ett köp av en kanin som saknas i Stamboken (S7) blir en vanlig uppladdning och läses så. Ett foto
   från årsrapporten som kontrollerar en registrerad kanin, och ett foto till en köpanmälan, läses
@@ -1267,11 +1270,12 @@ läsningen ber fortfarande om det: "Säljarens och köparens uppgifter ska inte 
   igen" läser det. Misslyckas det andra anropet, eller är svaret tomt, står den vanliga läsningen kvar
   utan säljare och köpare.
 - Det andra anropet görs bara om försäljningen fortfarande kan sparas från dokumentet: det är ett
-  intyg, inte klart, ingen försäljning är sparad från det och posten är öppen. Det prövas under
-  postens lås före anropet och igen innan svaret sparas. Har posten stängts, eller dokumentet
-  avfärdats, bytt typ, blivit klart eller fått en försäljning sedan läsningen började, sparas inte
-  svaret, också om posten har öppnats igen (postens historik avgör). "Tolka igen" efter en
-  försäljning läser alltså bara kaninen.
+  intyg, inte klart, ingen försäljning är sparad från det, originalet och läsningen finns kvar och
+  posten är öppen. Det prövas under postens lås före anropet och igen innan svaret sparas. Redan när
+  dokumentet tas prövas under låset att posten inte har stängts och dokumentet inte blivit klart.
+  Har posten stängts, eller dokumentet avfärdats, bytt typ, blivit klart eller fått en försäljning
+  sedan läsningen började, sparas inte svaret, också om posten har öppnats igen (postens historik
+  avgör). "Tolka igen" efter en försäljning läser alltså bara kaninen.
 - Förslaget får `sale`: `buyer_herd` (`{"herd": "G123", "found": true}` när köparens
   besättningsnummer finns i genbanken som det står; annars numret som det lästes, med `"found":
   false` och en kontroll "Köparens besättning … finns inte i genbanken"), `buyer` (`name`,
@@ -1284,9 +1288,12 @@ läsningen ber fortfarande om det: "Säljarens och köparens uppgifter ska inte 
   köparen utanför föreningen med e-posten bara för föreningens mejl (`notice_only`) för en
   försäljning till och med 2027. Köparen börjar då från tomma fält. Byter handläggaren till
   försäljningsbeviset, eller flyttas datumet till ett år utan mejlet, försvinner e-posten från fotot,
-  så att den aldrig blir en kontaktadress. Finns besättningen som lästes inte i genbanken fylls ingen
-  köpare i, och panelen ber handläggaren välja. Telefon och köparens kryss fylls aldrig i. När
-  försäljningen är sparad visar panelen bara det.
+  så att den aldrig blir en kontaktadress; en e-post som handläggaren ändrat står kvar. Finns
+  besättningen som lästes inte i genbanken töms besättningen och köparen, och panelen ber
+  handläggaren välja. Telefon och köparens kryss fylls aldrig i. Ändras eller försvinner läsningen
+  (posten stängdes och öppnades igen) töms det som fylldes i från den, och sparandet skickar
+  `from_photo`, så att servern nekar en försäljning vars läsning är borta. När försäljningen är
+  sparad visar panelen bara det.
 - Bara köns arbetare (admin, genbanksansvariga och hjälpare) får `sale`, i `GET …/{id}` och i
   svaren på dokumentets åtgärder. De ser redan originalet. Uppladdaren ser inte posten, och varken
   "Mina inskick" eller årsrapportens ärenden visar tolkningen.
