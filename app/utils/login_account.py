@@ -79,25 +79,27 @@ def published_rules():
 
 
 def _existing_account(person, address):
-    addresses = {a.strip().lower() for a in (person.email, address, person.workspace_email) if a}
+    addresses = {a.strip().lower() for a in (person.email, address) if a}
     linked_accounts = Member.select(Member.user).where(Member.user.is_null(False))
-    if (
-        User.select()
-        .where(
-            User.id.not_in(linked_accounts),
-            fn.LOWER(fn.BTRIM(User.email)).in_(addresses) | fn.LOWER(fn.BTRIM(User.google_email)).in_(addresses),
-        )
-        .exists()
-    ):
+    email, google = fn.LOWER(fn.BTRIM(User.email)), fn.LOWER(fn.BTRIM(User.google_email))
+    mine = User.id.not_in(linked_accounts) & (email.in_(addresses) | google.in_(addresses))
+    if workspace := (person.workspace_email or "").strip().lower():
+        # Her provisioned Workspace address is her own sign-in, also on an account linked to someone else.
+        mine |= (email == workspace) | (google == workspace)
+    if User.select().where(mine).exists():
         return True
 
     herd_ids = {str(h.id) for h in Herd.select(Herd.id).where(Herd.membership == person.membership_id)}
     granted = {str(g.herd_id) for g in _grants(person)} - herd_ids
     owners = User.select(User._privileges).where(User._privileges.contains('"owner"'))
     unlinked = owners.where(User.id.not_in(linked_accounts))
-    # The main member's own herds: any owner may be her. Anyone else's, and a granted herd of another membership: the
-    # linked accounts there are other people's, so only an unlinked owner may be this person.
-    return _owns(herd_ids, owners if person.role == "huvudmedlem" else unlinked) or _owns(granted, unlinked)
+    # The main member's own herds: an account linked to another active person of her membership, a keeper or family
+    # member, is that person's (#316). Any other owner may be her: an account linked to an ended row from before she
+    # rejoined, or to her row in another membership (migration 29 kept one link per account). Anyone else's, and a
+    # granted herd of another membership: the linked accounts there are other people's, so only an unlinked owner.
+    household = linked_accounts.where(Member.membership == person.membership_id, Member.end_date.is_null(True))
+    maybe_hers = owners.where(User.id.not_in(household))
+    return _owns(herd_ids, maybe_hers if person.role == "huvudmedlem" else unlinked) or _owns(granted, unlinked)
 
 
 def _owns(herd_ids, accounts):
