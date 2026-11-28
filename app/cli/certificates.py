@@ -12,7 +12,7 @@ summary says why:
 - the PDF's Nummer is the rabbit's digital certificate number (the file belongs to this certificate);
 - exactly one account, active or not, has the IntygasAv name, and it is active and may issue for the origin herd (the
   old app let a buyer press "Uppdatera", so the name can be the buyer's);
-- IntygasNummer, the herd the rabbit was in when the v1 certificate was made, is the origin herd;
+- IntygasNummer, the herd the rabbit was in when the v1 certificate was made, is filled in and is the origin herd;
 - every other field equals what the certificate would say today, so nothing corrected since is put under the
   original attester's name.
 
@@ -96,12 +96,17 @@ def v1_pdf(rabbit):
         raise  # access or connection: the whole run stops rather than report every rabbit as missing
 
 
-def attester(rabbit, fields, names):
+def accounts_named(name):
+    """Every account, active or not, whose name normalises to `name`: read anew for each rabbit."""
+    return [user for user in db.User.select() if normalised(user.fullname) == name]
+
+
+def attester(rabbit, fields):
     """The one account that may attest the new certificate, or Stop."""
     name = normalised(fields.get("IntygasAv"))
     if not name:
         raise Stop(NO_NAME)
-    accounts = names.get(name, [])
+    accounts = accounts_named(name)
     if len(accounts) > 1:
         raise Stop(SEVERAL)
     if not accounts:
@@ -111,20 +116,19 @@ def attester(rabbit, fields, names):
         raise Stop(INACTIVE)
     if not user.can_issue_certificate(rabbit):
         raise Stop(NO_RIGHT)
-    herd = normalised(fields.get("IntygasNummer"))
-    if herd and herd != normalised(rabbit.origin_herd.herd):
+    if normalised(fields.get("IntygasNummer")) != normalised(rabbit.origin_herd.herd):  # empty proves nothing either
         raise Stop(OTHER_HERD)
     return user
 
 
-def check(rabbit, pdf, names):
+def check(rabbit, pdf):
     """The account to attest `rabbit`'s v2 certificate, or Stop. Reads the database and the PDF, writes nothing."""
     if rabbit.cert_state() != CertState.DIGITAL_NUMBER:
         raise Stop(STATE)
     fields = v1_fields(pdf)
     if normalised(fields.get("Nummer")) != normalised(rabbit.digital_certificate):
         raise Stop(OTHER_CERTIFICATE)
-    user = attester(rabbit, fields, names)
+    user = attester(rabbit, fields)
     today = get_certificate_data(rabbit.as_dict(), user.uuid)
     changed = sorted(
         field
@@ -136,7 +140,7 @@ def check(rabbit, pdf, names):
     return user
 
 
-def reissue(rabbit, names):
+def reissue(rabbit):
     """
     Check and reissue one rabbit in its own transaction, under its row lock and then its number lock, or Stop. The
     number lock is a session lock held past the commit, so no renumber moves the key before the v1 file there gives
@@ -150,7 +154,7 @@ def reissue(rabbit, names):
             rabbit = db.Individual.get_by_id(rabbit.id)
             number_assets.lock_number(rabbit.number)
             locked = rabbit.number
-            user = check(rabbit, v1_pdf(rabbit), names)
+            user = check(rabbit, v1_pdf(rabbit))
             _, signed = generate_and_store(
                 rabbit, user, rabbit.as_dict(), user.uuid, replaces_v1=True, upload_legacy=False
             )
@@ -173,11 +177,6 @@ def reissue(rabbit, names):
 @click.option("--visa-namn", is_flag=True, help="Visa intygarna i besättningar med flera intygare.")
 def reissue_v1(run, limit, number, visa_namn):
     """Give the v1 certificates a v2 certificate attested by the original issuer (stamboken #142)."""
-    names = defaultdict(list)
-    for user in db.User.select():
-        if normalised(user.fullname):
-            names[normalised(user.fullname)].append(user)
-
     current = db.DigitalCertificateV2.select().where(
         (db.DigitalCertificateV2.individual == db.Individual.id) & db.DigitalCertificateV2.is_current
     )
@@ -196,7 +195,7 @@ def reissue_v1(run, limit, number, visa_namn):
         try:
             if run:
                 try:
-                    if not reissue(rabbit, names):
+                    if not reissue(rabbit):
                         legacy_left.append(rabbit.number)  # committed; only the number's key still holds v1
                 except (Stop, SigningUnavailableError, ClientError, BotoCoreError):
                     raise
@@ -208,7 +207,7 @@ def reissue_v1(run, limit, number, visa_namn):
                     attesters[herd].add(normalised(v1_fields(pdf).get("IntygasAv")))
                 except Stop:
                     pass
-                check(rabbit, pdf, names)
+                check(rabbit, pdf)
             done += 1
         except Stop as stop:
             stopped.append((rabbit.number, herd, stop.reason))

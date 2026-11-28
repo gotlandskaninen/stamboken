@@ -136,6 +136,10 @@ class ReissueV1Test(CertV2Mixin, FlaskTest):
         self.rabbit = self.v1_rabbit(self.rabbit, 4711, IntygasNummer="G2")
         self.assert_stopped(reissue_cli.OTHER_HERD)
 
+    def test_an_empty_herd_in_the_v1_certificate_stops_the_rabbit(self):
+        self.rabbit = self.v1_rabbit(self.rabbit, 4711, IntygasNummer="")
+        self.assert_stopped(reissue_cli.OTHER_HERD)
+
     def test_a_pdf_of_another_certificate_stops_the_rabbit(self):
         self.rabbit = self.v1_rabbit(self.rabbit, 4711, Nummer="4712")
         self.assert_stopped(reissue_cli.OTHER_CERTIFICATE)
