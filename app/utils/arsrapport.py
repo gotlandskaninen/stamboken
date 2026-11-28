@@ -494,13 +494,16 @@ def require_valid_code(code_id, herd, on=None, *, lock=False):
 
 def _recheck_access(access, user, herd, on=None):
     """
-    E4 again, under the report's lock: the manager may have revoked the code since the page. An account's right is
-    read again too, so a grant revoked or expired since the route read it writes nothing (#326).
+    E4 again, under the report's lock: the manager may have revoked the code since the page. An account's
+    membership and grant rows are read again too, so a grant revoked or expired since the route read it writes
+    nothing (#326). Owner and caretaker have the same rights here, so a switch between them is no refusal.
     """
     if access.code is not None:
         require_valid_code(access.code.id, herd, on, lock=True)
-    elif access.source == "login" and report_access(user, herd) != access:
-        raise ArsrapportError(403, "Du har inte tillgång till årsrapporten för besättningen.")
+    elif access.source == "login":
+        now_access = report_access(user, herd)
+        if now_access is None or now_access.editor != access.editor:
+            raise ArsrapportError(403, "Du har inte tillgång till årsrapporten för besättningen.")
 
 
 def without_reason(sub):

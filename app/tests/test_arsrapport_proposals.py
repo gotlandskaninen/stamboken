@@ -143,14 +143,13 @@ class ProposalsTest(ArsrapportTest):
             first_name="Test", last_name="Familj", membership=self.h.membership, role="familjemedlem", user=family
         )
         db.HerdAccessGrant.create(member=person, herd=self.h, granted_by=self.admin)
-        family_access = arsrapport.report_access(db.User.get_by_id(family.id), self.h)
-        self.assertEqual((family_access.role, family_access.can_sell), ("caretaker", True))
-        self.send(
-            self.sald(self.a, "G9002", 2025, 10, 3),
-            self.kvar(self.b, vikt=2.8),
-            self.kvar(self.c, vikt=2.8),
-            who="caretaker",
+        family, (access, _) = db.User.get_by_id(family.id), self.actor("caretaker")
+        family_access = arsrapport.report_access(family, self.h)
+        self.assertEqual((family_access, access.can_sell), (arsrapport.Access("caretaker"), True))
+        body = self.body(
+            self.sald(self.a, "G9002", 2025, 10, 3), self.kvar(self.b, vikt=2.8), self.kvar(self.c, vikt=2.8)
         )
+        arsrapport.submit(self.h, self.round_, family_access, family, arsrapport.parse_submission(body, paper=False))
         self.assertEqual([row.herd_id for row in rows(self.a, "TRANSFER")], [self.g9002.id])
         self.assertEqual(proposals(self.a), [])
         self.assertEqual(db.SaleProposal.select().count(), 0)
@@ -169,6 +168,11 @@ class ProposalsTest(ArsrapportTest):
         db.HerdAccessGrant.update(revoked_at=datetime.now()).execute()
         with self.assertRaises(ArsrapportError) as caught:
             arsrapport.withdraw(self.h, self.round_, access, user, revision=self.report().revision)
+        self.assertEqual(caught.exception.status, 403)
+        changed = self.body(self.kvar(self.a, vikt=2.8), self.kvar(self.b, vikt=2.8), self.kvar(self.c, vikt=2.8))
+        changed["revision"] = self.report().revision  # Ändra: sald→kvar would take the sale back
+        with self.assertRaises(ArsrapportError) as caught:
+            arsrapport.submit(self.h, self.round_, access, user, arsrapport.parse_submission(changed, paper=False))
         self.assertEqual(caught.exception.status, 403)
         self.assertEqual(self.report().status, "submitted")
         (sale,) = rows(self.a, "TRANSFER")
