@@ -95,11 +95,13 @@ def _existing_account(person, address):
     granted = {str(g.herd_id) for g in _grants(person)} - herd_ids
     owners = User.select(User._privileges).where(User._privileges.contains('"owner"'))
     unlinked = owners.where(User.id.not_in(linked_accounts))
-    # The main member's own herds: an account linked to an active person is that person's, but one linked to an ended
-    # row may be hers from before she rejoined (#316). Anyone else's, and a granted herd of another membership: the
-    # linked accounts there are other people's, so only an unlinked owner may be this person.
-    not_active = owners.where(User.id.not_in(linked_accounts.where(Member.end_date.is_null(True))))
-    return _owns(herd_ids, not_active if person.role == "huvudmedlem" else unlinked) or _owns(granted, unlinked)
+    # The main member's own herds: an account linked to another active person of her membership, a keeper or family
+    # member, is that person's (#316). Any other owner may be her: an account linked to an ended row from before she
+    # rejoined, or to her row in another membership (migration 29 kept one link per account). Anyone else's, and a
+    # granted herd of another membership: the linked accounts there are other people's, so only an unlinked owner.
+    household = linked_accounts.where(Member.membership == person.membership_id, Member.end_date.is_null(True))
+    maybe_hers = owners.where(User.id.not_in(household))
+    return _owns(herd_ids, maybe_hers if person.role == "huvudmedlem" else unlinked) or _owns(granted, unlinked)
 
 
 def _owns(herd_ids, accounts):
