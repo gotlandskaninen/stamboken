@@ -402,6 +402,8 @@ def queue():
         query = query.where(InboxItem.herd.in_(matching))
     if args.get("kind"):
         query = query.where(InboxItem.kind == args["kind"])
+    if args.get("paper_entry") == "1":
+        query = query.where(inbox.paper_entry_filter(current_user.id))
     counts = dict(query.select(InboxItem.state, fn.COUNT(InboxItem.id)).group_by(InboxItem.state).tuples())
     if mode:
         query = query.where(modes[mode])
@@ -476,7 +478,8 @@ def rabbit_sales(item_id, number):
 @json_login_required
 @_queue_worker
 def take(item_id):
-    return _locked(item_id, _then_assignment(lambda item: inbox.take(item, current_user, over=False)))
+    change = partial(inbox.take, user=current_user, over=False, paper_entry=_body().get("paper_entry") is True)
+    return _locked(item_id, _then_assignment(change))
 
 
 @inbox_bp.route("/inkorg/<int:item_id>/ta-over", methods=["POST", "PUT"])

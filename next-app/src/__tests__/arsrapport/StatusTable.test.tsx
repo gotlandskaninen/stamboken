@@ -57,7 +57,8 @@ const base: StatusRow = {
   herd_name: "Gård",
   state: "paborjad",
   needs_report: true,
-  inbjudan: null,
+  inbjudan: "oppnad",
+  report_link: "current",
   last_reminder: null,
   ingen_epost: false,
   source: null,
@@ -109,6 +110,10 @@ const show = (
   );
 
 describe("StatusTable", () => {
+  it("uses singular wording for one omission", () => {
+    show(true, [{ ...sent, flags: { ...sent.flags, ej_angivna: 1 } }]);
+    expect(screen.getByText("1 ej angiven (påverkar stödet)")).toBeTruthy();
+  });
   it("links to Ej svarat with its count and explains an empty list", () => {
     const { unmount } = show(true);
     const tab = screen.getByRole("link", { name: /Ej svarat/ });
@@ -227,6 +232,25 @@ describe("StatusTable", () => {
         within(screen.getByText(`G910${i}`).closest("tr")!).getByText(text),
       ).toBeTruthy(),
     );
+  });
+  it("uses the link state for mail actions when the invitation has no label", () => {
+    show(true, [
+      { ...base, inbjudan: null },
+      { ...base, herd: "G9002", inbjudan: null, report_link: null },
+    ]);
+    const invited = within(screen.getByText("G9001").closest("tr")!);
+    const waiting = within(screen.getByText("G9002").closest("tr")!);
+    for (const name of ["Ny länk", "Skicka påminnelse"]) {
+      expect(waiting.queryByRole("button", { name })).toBeNull();
+      expect(invited.getByRole("button", { name })).toBeTruthy();
+    }
+  });
+  it("offers only a replacement for a revoked link", () => {
+    show(true, [{ ...base, inbjudan: null, report_link: "revoked" }]);
+    expect(screen.getByRole("button", { name: "Ny länk" })).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: "Skicka påminnelse" }),
+    ).toBeNull();
   });
   it("flags a herd without e-mail beside a state that is not ingen_epost, and offers no Ny länk", () => {
     render(

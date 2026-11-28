@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { fetchApi } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
+import { getInboxCount } from "@/lib/inkorg-server";
 import { Masthead } from "@/components/shell/Masthead";
 import {
   currentRoundYear,
@@ -29,6 +30,12 @@ export default async function ArsrapportIndex() {
     ? (await fetchApi<{ rounds: Round[] }>("/v2/arsrapport/rundor")).rounds
     : [];
   const statusYear = currentRoundYear(rounds, todayStockholm());
+  const showInbox =
+    reports.length === 0 &&
+    !user.is_owner?.length &&
+    (await getInboxCount()
+      .then((c) => c.works_in_queue)
+      .catch(() => false));
 
   return (
     <>
@@ -42,7 +49,15 @@ export default async function ArsrapportIndex() {
             Status för genbanken, runda {statusYear}
           </Link>
         )}
-        {reports.length === 0 ? (
+        {showInbox ? (
+          <>
+            <p>
+              Du har inga egna besättningar. Årsrapporter som kommer in på
+              papper registrerar du i Inkorgen.
+            </p>
+            <Link href="/stamboken/inkorg">Till Inkorgen</Link>
+          </>
+        ) : reports.length === 0 ? (
           <p>Ingen årsrapport är öppen för dina besättningar ännu.</p>
         ) : (
           <ul className={styles.cardList}>

@@ -274,10 +274,12 @@ function RabbitRowImpl({
               role="group"
               aria-label="Varför vägdes den inte?"
             >
-              {EJ_VAGD_REASONS.map((reason) => (
+              {EJ_VAGD_REASONS.map((reason, i) => (
                 <button
                   key={reason}
                   type="button"
+                  id={i === 0 ? `ejvagd-reason-${r.id}` : undefined}
+                  data-paper-field="reason"
                   className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
                   aria-pressed={e.ej_vagd === reason}
                   onClick={() => {
@@ -290,6 +292,9 @@ function RabbitRowImpl({
               ))}
               <button
                 type="button"
+                data-paper-field={
+                  annat && e.ej_vagd?.trim() ? "reason_text" : "other_reason"
+                }
                 className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
                 aria-pressed={annat}
                 onClick={() => {
@@ -301,6 +306,8 @@ function RabbitRowImpl({
               </button>
               {annat && (
                 <input
+                  id={`ejvagd-text-${r.id}`}
+                  data-paper-field="reason_text"
                   className={styles.field}
                   aria-label="Annat skäl"
                   maxLength={200}

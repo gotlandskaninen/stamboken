@@ -154,7 +154,7 @@ class TestCompletion(CompletionTest):
         variables = mail.MAIL_KINDS[row.kind].build(row.params)
         variables.pop("attachments")
         body = mail.render(row.kind, variables)[1]
-        self.assertIn("ändrades den 2026-02-02", body)
+        self.assertIn("ändrades den 2 februari 2026", body)
         self.assertIn("Årsrapporten kom in 2026-01-10", body)
         self.assertNotIn("kom in 2026-02-02", body)
         submission = arsrapport._submissions(self.current())[-1]

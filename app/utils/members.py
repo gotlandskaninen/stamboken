@@ -28,7 +28,7 @@ from utils.database import (
     User,
     YearlyReportSubmission,
 )
-from utils.matrikel import ConfirmRequired, LinkError, link_member_user
+from utils.matrikel import AddressValidationError, ConfirmRequired, LinkError, link_member_user, write_matrikel_audit
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,7 @@ CONSENT_TEXT_VERSION = "2026-11-20"  # the profile asks the same question since 
 # new text that says more applies only after a new answer (5.11). A bump that says more drops the older versions here.
 CONSENT_TEXT_VERSIONS = ("2026-11", "2026-11-16", "2026-11-18", CONSENT_TEXT_VERSION)
 NEJ = dict.fromkeys(CONSENT_KEYS, False)
+CONSENT_CHANGED = "Svaret om Koharen har ändrats sedan sidan visades. Ladda om sidan och svara igen."
 STOCKHOLM = ZoneInfo("Europe/Stockholm")
 
 # Only Phase 9-provisioned Workspace addresses may auto-link. The
@@ -155,9 +156,44 @@ def consent_answered(row) -> bool:
     return any(key in raw for key in CONSENT_KEYS)
 
 
+def contact_text_fields(body):
+    """The profile's phone and street address, trimmed, with a blank clearing the column."""
+    fields = {}
+    for key in ("phone", "address"):
+        if key in body:
+            if body[key] is not None and not isinstance(body[key], str):
+                raise AddressValidationError("Ogiltigt fält", f"{key} måste vara en sträng eller null")
+            fields[key] = (body[key] or "").strip() or None
+    return fields
+
+
+def save_profile_contact(ms, m, actor, fields):
+    """Write the supplied contact columns and audit changed field names under the caller's membership lock."""
+    person_updates = {"phone": fields["phone"]} if "phone" in fields else {}
+    membership_updates = {k: fields[k] for k in ("address", "postal_code", "city") if k in fields}
+    changed = [f for f, v in membership_updates.items() if getattr(ms, f) != v]
+    changed += [f for f, v in person_updates.items() if getattr(m, f) != v]
+    if changed:  # D19: a paper form signed before this change must not overwrite it; the names only
+        payload = {"person_id": m.id, "fields": changed, "source": "profil"}
+        write_matrikel_audit(actor, "kontakt_andrad", ms, payload)
+    for field, value in person_updates.items():
+        setattr(m, field, value)
+    for field, value in membership_updates.items():
+        setattr(ms, field, value)
+    if membership_updates:
+        ms.save(only=[getattr(Membership, f) for f in membership_updates] + [Membership.updated_at])
+    m.save(only=[getattr(Member, f) for f in person_updates] + [Member.updated_at])
+
+
 def consent_from_answer(ja: bool, utom: list[str]) -> dict[str, bool]:
     """The form's answer as the four keys (5.11): Nej is all False, Ja is `name` and every key not in `utom`."""
     return {key: ja and key not in utom for key in CONSENT_KEYS}
+
+
+def consent_version(membership_id):
+    """The latest publication_consent_change id, None before the first answer."""
+    change = PublicationConsentChange
+    return change.select(fn.MAX(change.id)).where(change.membership == membership_id).scalar()
 
 
 def set_consent(

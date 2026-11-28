@@ -118,7 +118,45 @@ describe("ReportForm on paper", () => {
       ),
     ).toBeTruthy();
     typeNumber("1");
-    expect(screen.getByText("1 inmatade, 2 kvar")).toBeTruthy();
+    expect(screen.getByText("1 inmatad, 2 kvar")).toBeTruthy();
+  });
+
+  it("requires the sale on the paper form to be acknowledged", async () => {
+    const a = actions();
+    a.sellNow = vi.fn(() => ok({ operation_id: "op" }));
+    a.getGenebankHerds = vi.fn(async () => ({
+      success: true as const,
+      herds: [{ herd: "G9002", herd_name: null, is_active: true }],
+    }));
+    renderPaper(paperView(), a);
+    typeNumber("1");
+    fireEvent.click(within(row(1)).getByLabelText("Såld"));
+    fireEvent.keyDown(screen.getByLabelText("Köparens besättning"), {
+      key: "ArrowDown",
+    });
+    fireEvent.click(await screen.findByRole("option", { name: "G9002" }));
+    fireEvent.change(screen.getByLabelText("Månad"), {
+      target: { value: "6" },
+    });
+    const save = screen.getByRole("button", { name: "Spara försäljningen" });
+    fireEvent.click(save);
+    expect(a.sellNow).not.toHaveBeenCalled();
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: "Försäljningen står på blanketten.",
+        description: "Kryssa i rutan för att registrera försäljningen.",
+      }),
+    );
+    fireEvent.click(save);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(a.sellNow).toHaveBeenCalledWith(
+      "G9001",
+      2026,
+      1,
+      expect.objectContaining({ till: "G9002" }),
+      "demo",
+      5,
+    );
   });
   it("names the item and defaults the receipt date to the day it came in", () => {
     renderPaper();
@@ -135,7 +173,7 @@ describe("ReportForm on paper", () => {
     expect(screen.queryByRole("link", { name: "Gå till profilen" })).toBeNull();
   });
 
-  it("enters a rabbit by its number, and keys 1 then Enter walk the row", () => {
+  it("returns to the number after a filled weight or Hull", () => {
     renderPaper();
     typeNumber("2");
     expect(row(2)).toBeTruthy();
@@ -147,17 +185,77 @@ describe("ReportForm on paper", () => {
     expect(document.activeElement).toBe(vikt);
     fireEvent.keyDown(vikt, { key: "1" }); // a digit in the field, not a choice
     expect(document.activeElement).toBe(vikt);
+    fireEvent.change(vikt, { target: { value: "2,4" } });
     fireEvent.keyDown(vikt, { key: "Enter" });
-    expect(document.activeElement).toBe(
-      within(row(2)).getByRole("button", { name: "Ej vägd" }),
-    );
-    fireEvent.keyDown(document.activeElement!, { key: "Enter" });
-    expect(document.activeElement).toBe(within(row(2)).getByLabelText(/^Hull/));
-    fireEvent.keyDown(document.activeElement!, { key: "Enter" });
-    expect(document.activeElement).toBe(
-      screen.getByLabelText("Nummer efter G9001-"),
-    );
+    const number = screen.getByLabelText("Nummer efter G9001-");
+    expect(document.activeElement).toBe(number);
+    const hull = within(row(2)).getByLabelText(/^Hull/);
+    hull.focus();
+    expect(fireEvent.keyDown(hull, { key: "Enter" })).toBe(false);
+    expect(document.activeElement).toBe(number);
   });
+
+  it("marks or keeps Ej vägd without a reason for a young rabbit", () => {
+    renderPaper(paperView({ rabbits: [rabbit(2, { adult: false })] }));
+    typeNumber("2");
+    fireEvent.keyDown(within(row(2)).getByLabelText("Finns kvar"), {
+      key: "1",
+    });
+    const vikt = within(row(2)).getByLabelText("Vikt");
+    const unweighed = within(row(2)).getByRole("button", { name: "Ej vägd" });
+    for (const pressed of ["false", "true"]) {
+      expect(unweighed.getAttribute("aria-pressed")).toBe(pressed);
+      vikt.focus();
+      fireEvent.keyDown(vikt, { key: "Enter" });
+      expect(document.activeElement).toBe(unweighed);
+      fireEvent.keyDown(unweighed, { key: "Enter" });
+      expect(unweighed.getAttribute("aria-pressed")).toBe("true");
+      expect(document.activeElement).toBe(
+        screen.getByLabelText("Nummer efter G9001-"),
+      );
+    }
+  });
+
+  it.each(["Hann inte väga", "Annat skäl"])(
+    "focuses the reason and submits the adult row with %s",
+    async (reason) => {
+      const { a } = renderPaper(paperView({ rabbits: [rabbit(2)] }));
+      typeNumber("2");
+      const fields = within(row(2));
+      const enter = (target: HTMLElement) =>
+        fireEvent.keyDown(target, { key: "Enter" });
+      fireEvent.keyDown(fields.getByLabelText("Finns kvar"), { key: "1" });
+      enter(fields.getByLabelText("Vikt"));
+      const toggle = fields.getByRole("button", { name: "Ej vägd" });
+      expect(document.activeElement).toBe(toggle);
+      enter(toggle);
+      const first = fields.getByRole("button", { name: "Hann inte väga" });
+      expect(document.activeElement).toBe(first);
+      if (reason === "Annat skäl") {
+        const other = fields.getByRole("button", { name: "Annat …" });
+        other.focus();
+        enter(other);
+        const input = fields.getByLabelText("Annat skäl");
+        expect(document.activeElement).toBe(input);
+        enter(input);
+        expect(document.activeElement).toBe(input);
+        fireEvent.change(input, { target: { value: reason } });
+        enter(input);
+      } else {
+        enter(first);
+      }
+      expect(document.activeElement).toBe(
+        screen.getByLabelText("Nummer efter G9001-"),
+      );
+      fireEvent.click(sendButton());
+      await waitFor(() => expect(a.submitReport).toHaveBeenCalledTimes(1));
+      expect(a.submitReport.mock.calls[0][2].rabbits[2]).toMatchObject({
+        val: "kvar",
+        vikt: null,
+        ej_vagd: reason,
+      });
+    },
+  );
 
   it("takes a full number from another herd as written", () => {
     renderPaper(
@@ -169,7 +267,7 @@ describe("ReportForm on paper", () => {
     expect(screen.getByRole("group", { name: /G9002-77/ })).toBeTruthy();
   });
 
-  it("walks a dead rabbit's fields with Enter before the next row", () => {
+  it("returns to the number from Månad or Anteckning", () => {
     renderPaper();
     typeNumber("2");
     fireEvent.keyDown(within(row(2)).getByLabelText("Finns kvar"), {
@@ -177,22 +275,14 @@ describe("ReportForm on paper", () => {
     });
     const month = within(row(2)).getByLabelText("Månad");
     expect(document.activeElement).toBe(month);
-    const step = (label: RegExp | string, tag?: string) => {
-      fireEvent.keyDown(document.activeElement!, { key: "Enter" });
-      void tag;
-      expect(document.activeElement).toBe(
-        typeof label === "string"
-          ? document.getElementById(label)
-          : within(row(2)).getByLabelText(label),
-      );
-    };
-    step(/^Dag/);
-    step("slaktad-2-ja");
-    step("note-2");
-    fireEvent.keyDown(document.activeElement!, { key: "Enter" });
-    expect(document.activeElement).toBe(
-      screen.getByLabelText("Nummer efter G9001-"),
-    );
+    fireEvent.change(month, { target: { value: "10" } });
+    fireEvent.keyDown(month, { key: "Enter" });
+    const number = screen.getByLabelText("Nummer efter G9001-");
+    expect(document.activeElement).toBe(number);
+    const note = within(row(2)).getByLabelText("Anteckning");
+    note.focus();
+    expect(fireEvent.keyDown(note, { key: "Enter" })).toBe(false);
+    expect(document.activeElement).toBe(number);
   });
 
   it("does not adopt a local copy behind the member-draft gate, and Börja clears it", async () => {
@@ -345,7 +435,8 @@ describe("ReportForm on paper", () => {
     expect(a.dryRun.mock.calls[0][4]).toBe(5);
     await waitFor(() =>
       expect(p.leave).toHaveBeenCalledWith(
-        "G9001 inskickad: 1 finns kvar, 1 ej angivna.",
+        "G9001 inskickad: 1 finns kvar, 1 ej angiven.",
+        "next",
       ),
     );
     expect(refresh).not.toHaveBeenCalled();
@@ -565,9 +656,10 @@ describe("ReportForm on paper", () => {
         "Kontrollera blankettens uppgift om adress med medlemmen.",
       ),
     ).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Nästa blankett" })).toBeTruthy();
     expect(screen.queryByText(/070-1234567/)).toBeNull();
     expect(p.leave).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Nästa blankett" }));
+    expect(p.leave).toHaveBeenCalledWith(null, "next");
     expect(refresh).not.toHaveBeenCalled();
   });
 
@@ -794,7 +886,12 @@ describe("ReportForm on paper", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Arkivera blanketten" }),
     );
-    await waitFor(() => expect(p.leave).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(p.leave).toHaveBeenCalledWith(
+        "Blanketten för G9001 är arkiverad.",
+        "inbox",
+      ),
+    );
     expect(p.archive).toHaveBeenCalledTimes(2);
     expect(p.archive).toHaveBeenNthCalledWith(1, 11);
     expect(p.archive).toHaveBeenNthCalledWith(2, 12);

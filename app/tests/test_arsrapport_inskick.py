@@ -509,9 +509,9 @@ class InskickTest(ArsrapportTest):
         subject, text = mail.render("arsrapport.kvitto", arsrapport._kvitto(row.params))
         self.assertEqual(subject, "Årsrapporten för G9001 är inskickad")
         for line in (
-            "Årsrapporten för besättning G9001 kom in den 2026-01-15. Du rapporterade 1 kanin som finns kvar, "
+            "Årsrapporten för besättning G9001 kom in den 15 januari 2026. Du rapporterade 1 kanin som finns kvar, "
             "1 död och 1 såld.",
-            "Du kan ändra den så länge rundan är öppen, till och med 2026-03-30.",
+            "Du kan ändra den så länge rundan är öppen, till och med 30 mars 2026.",
             "Var det inte du? Kontakta genbanksansvarig genom att svara på det här mejlet.",
         ):
             self.assertIn(line, text)

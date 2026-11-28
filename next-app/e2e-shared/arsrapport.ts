@@ -7,12 +7,12 @@ export const inboxItemsForHerd = (page: Page, herd: string) =>
     .filter({ has: page.getByText(herd, { exact: true }) });
 
 export async function takePaperForm(page: Page, herd: string) {
-  await page.goto(`/stamboken/inkorg?mode=nya&herd=${herd}`);
+  await page.goto(`/stamboken/inkorg?mode=oppna&herd=${herd}`);
   // M9006 has two forms. Open the first one still waiting in the queue.
   await inboxItemsForHerd(page, herd).first().click();
   await page
     .getByRole("region", { name: "Valt ärende" })
-    .getByRole("button", { name: "Börja registrera" })
+    .getByText("Börja registrera", { exact: true })
     .click();
   await expect(page).toHaveURL(/\/stamboken\/inkorg\/\d+$/);
   const itemId = new URL(page.url()).pathname.split("/").pop();

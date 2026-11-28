@@ -7,6 +7,7 @@ from datetime import timedelta  # noqa: E402
 
 import utils.database as db  # noqa: E402
 import utils.inbox as inbox  # noqa: E402
+import utils.mail as mail  # noqa: E402
 
 from tests.inbox_fixtures import InboxTest  # noqa: E402
 
@@ -211,6 +212,64 @@ class TestVisibility(InboxTest):
         for selected, expected in [(a, [b.id]), (b, [c.id]), (c, [])]:
             response = self.client.get(f"/api/v2/inkorg?after={selected.id}&mode=mina&order=newest")
             self.assertEqual(response.get_json()["next_untaken"], expected)
+
+    def test_paper_entry_lists_only_available_open_forms_in_queue_order(self):
+        self.item()  # certificate only
+        theirs, closed, archived, related, mine, free = [self.item() for _ in range(6)]
+        db.InboxDocument.update(doc_type="arsblankett").where(
+            db.InboxDocument.item.in_([theirs, closed, archived, related, mine, free])
+        ).execute()
+        inbox.take(theirs, self.manager, over=False)
+        inbox.take(mine, self.helper, over=False)
+        db.InboxItem.update(state="klar").where(db.InboxItem.id == closed).execute()
+        db.InboxDocument.update(done_at=inbox.now()).where(db.InboxDocument.item == archived).execute()
+        db.InboxItem.update(ref_type="individual").where(db.InboxItem.id == related).execute()
+        db.InboxItem.update(received_at=mine.received_at - timedelta(days=1)).where(db.InboxItem.id == free).execute()
+        self.login("hjalp")
+        body = self.client.get("/api/v2/inkorg?paper_entry=1").get_json()
+        self.assertEqual([item["id"] for item in body["items"]], [free.id, mine.id])
+        self.assertEqual(body["total"], 2)
+
+    def test_paper_claim_skips_mixed_item_until_certificate_ready(self):
+        mixed, ready = self.item(documents=2), self.item()
+        form, certificate = mixed.documents.order_by(db.InboxDocument.id)
+        db.InboxDocument.update(doc_type="arsblankett").where(
+            db.InboxDocument.id.in_([form.id, ready.documents.get().id])
+        ).execute()
+        self.login("hjalp")
+        queue = "/api/v2/inkorg?paper_entry=1"
+        (selected,) = self.client.get(queue).get_json()["items"]
+        self.assertEqual(selected["id"], ready.id)
+        self.assertEqual(self.post(f"/{selected['id']}/ta", paper_entry=True).status_code, 200)
+        self.assertEqual(self.reload(ready).assigned_to_id, self.helper.id)
+        self.assertIsNone(self.reload(mixed).assigned_to_id)
+
+        certificate.done_at = inbox.now()
+        certificate.save()
+        self.assertEqual(self.client.get(queue).get_json()["items"][0]["id"], mixed.id)
+        certificate.waiting_for = ["G1-9999"]  # changed after listing, before the claim
+        certificate.save()
+        self.assertEqual(self.post(f"/{mixed.id}/ta", paper_entry=True).status_code, 409)
+        self.assertIsNone(self.reload(mixed).assigned_to_id)
+
+    def test_paper_claim_skips_waiting_and_escalated_forms_after_listing(self):
+        self.login("hjalp")
+        waiting, escalated = self.item(), self.item()
+        db.InboxDocument.update(doc_type="arsblankett").where(db.InboxDocument.item.in_([waiting, escalated])).execute()
+        queue = "/api/v2/inkorg?paper_entry=1"
+        self.assertEqual(self.client.get(queue).get_json()["total"], 2)
+        for item, state in ((waiting, "ofullstandig"), (escalated, "hos_genbanksansvarig")):
+            claim = f"/{item.id}/ta"
+            self.assertEqual(self.post(claim, paper_entry=True).status_code, 200)
+            self.assertIsNone(self.post(claim, paper_entry=True).get_json()["undo"])
+            self.assertEqual(self.post(f"/{item.id}/lage", state=state, note="Datum saknas").status_code, 200)
+            self.assertEqual(self.post(claim, paper_entry=True).status_code, 409)
+            self.assertEqual(self.reload(item).state, state)
+        self.assertEqual(self.client.get(queue).get_json()["items"], [])
+        self.assertIsNone(self.reload(escalated).assigned_to_id)
+        request = db.MailMessage.get(db.MailMessage.kind == "inlasning.ofullstandig")
+        self.assertEqual(request.status, "queued")
+        self.assertEqual(mail.MAIL_KINDS[request.kind].build(request.params)["note"], "Datum saknas")
 
     def test_opening_an_item_is_logged_and_reads_its_notices(self):
         item = self.item(0)

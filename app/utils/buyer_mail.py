@@ -116,9 +116,10 @@ def _rabbit_name(rabbit):
     return name
 
 
-def sv_date(day):
-    """A date as Swedish text: "30 mars 2027"."""
-    return f"{day.day} {_MONTHS[day.month - 1]} {day.year}"
+def sv_date(day, *, month_only=False):
+    """A date as Swedish text, with only the month and year when the day was not given."""
+    month = f"{_MONTHS[day.month - 1]} {day.year}"
+    return month if month_only else f"{day.day} {month}"
 
 
 def _last_kept_date(purge_at):

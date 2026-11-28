@@ -12,6 +12,7 @@ import {
   parseFilter,
   regularRoundYear,
   todayStockholm,
+  wordForm,
   type Round,
   type StatusView,
 } from "../../lib";
@@ -138,7 +139,11 @@ export default async function StatusPage({
       <Masthead
         eyebrow="Årsrapport"
         title={`Status ${year}`}
-        meta={`${genebank.name}${view && !closed ? ` · ${view.rows.length} besättningar` : ""}`}
+        meta={
+          view && !closed
+            ? `${genebank.name} · ${view.rows.length} ${wordForm(view.rows.length, "besättning", "besättningar")}`
+            : genebank.name
+        }
         actions={
           <div className={styles.mastActions}>
             <Suspense

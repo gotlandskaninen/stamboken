@@ -118,16 +118,20 @@ from utils.matrikel import (
     write_matrikel_audit,
 )
 from utils.members import (
+    CONSENT_CHANGED,
     CONSENT_TEXT_VERSION,
     CONSENT_TEXT_VERSIONS,
     STOCKHOLM,
     consent_from_answer,
+    consent_version,
+    contact_text_fields,
     counted_answers,
     effective_consent,
     holder_since,
     paper_from_holder,
     paper_signature,
     revoke_waiting_consent,
+    save_profile_contact,
     set_consent,
 )
 from utils.reference_population import _alive_by_note
@@ -1467,26 +1471,37 @@ def _invitations(herds, round_):
     """
     Each herd's invitation state from its active code: `oppnad` once the link has been opened, else the state of the
     mail that carries it (`skickad`, `studsade`, `misslyckades`); a herd with no active code or no such mail is None.
+    Only queued and sending invitation mail is still pending. An issued link may outlive its mail row.
     """
-    codes = {
-        code.herd_id: code
-        for code in ReportAccessCode.select().where(
+    codes = list(
+        ReportAccessCode.select().where(
             ReportAccessCode.round == round_.id,
             ReportAccessCode.herd.in_([herd.id for herd in herds]),
-            ReportAccessCode.revoked_at.is_null(),
         )
-    }
+    )
     mail = {
-        row.ref_id: _MAIL_INVITATION.get(row.status)
+        row.ref_id: row.status
         for row in MailMessage.select(MailMessage.ref_id, MailMessage.status)
         .where(
             MailMessage.ref_type == "access_code",
-            MailMessage.ref_id.in_([code.id for code in codes.values()]),
+            MailMessage.ref_id.in_([code.id for code in codes]),
             MailMessage.kind.in_(("arsrapport.inbjudan", "arsrapport.ny_lank")),
         )
         .order_by(MailMessage.id)  # the newest mail of a code decides
     }
-    return {herd_id: "oppnad" if code.last_opened_at else mail.get(code.id) for herd_id, code in codes.items()}
+    states, links = {}, {}
+    for code in codes:
+        status = mail.get(code.id)
+        state = "oppnad" if code.last_opened_at else _MAIL_INVITATION.get(status)
+        if code.revoked_at is None:
+            states[code.herd_id] = state
+        if status in ("queued", "sending"):
+            continue
+        if code.revoked_at is None:
+            links[code.herd_id] = "current"
+        else:
+            links.setdefault(code.herd_id, "revoked")
+    return states, links
 
 
 def _only_with(more, counted, villkor, stat, report, deadline):
@@ -1610,7 +1625,7 @@ def status_view(round_, genebank_id, with_phone=False):
         .order_by(Herd.herd)
     )
     items, drafts, emails = _row_states(herds, round_)
-    invitations = _invitations(herds, round_)
+    invitations, links = _invitations(herds, round_)
     reminded = {row.herd_id: row for row in filter(remind.counts, remind.reminders(round_, [h.id for h in herds]))}
     held, stats, pending = innehav(genebank_id, year), statistik(genebank_id, year), _pending_sales(last)
     data = {herd_id: json.loads(report.data) for herd_id, report in reports.items()}
@@ -1669,6 +1684,7 @@ def status_view(round_, genebank_id, with_phone=False):
                 "herd_name": herd.herd_name,
                 "state": state,
                 "inbjudan": invitations.get(herd.id),
+                "report_link": links.get(herd.id),
                 "ingen_epost": not emails.get(herd.id),
                 "needs_report": herd.is_active and report is None,  # Å5 and "Ej svarat" (P12)
                 "last_reminder": _reminder_json(reminded.get(herd.id)),
@@ -1924,12 +1940,16 @@ def _matrikel(body, *, digital=False):
             texts += _keys(value[name], parts, "matrikel").values()
     if any(text is not None and not isinstance(text, str) for text in texts):
         raise _bad("matrikel", "Fältet ska vara text.")
-    if (answer := value.get("publicering")) is not None:  # Ja or Nej, and at Ja what may not be listed
-        allowed = ("ja", "utom", "text_version", "version") if digital else ("ja", "utom")
-        utom = _keys(answer, allowed, "matrikel").get("utom")
-        if not isinstance(answer.get("ja"), bool) or not isinstance(utom, list) or not all(k in UTOM for k in utom):
-            raise _bad("matrikel", "Svara Ja eller Nej om Koharen, och vid Ja vad som inte får stå med.")
+    if (answer := value.get("publicering")) is not None:
+        _validate_publication(answer, digital=digital)
     return value
+
+
+def _validate_publication(answer, *, digital):
+    allowed = ("ja", "utom", "text_version", "version") if digital else ("ja", "utom")
+    utom = _keys(answer, allowed, "matrikel").get("utom")
+    if not isinstance(answer.get("ja"), bool) or not isinstance(utom, list) or not all(k in UTOM for k in utom):
+        raise _bad("matrikel", "Svara Ja eller Nej om Koharen, och vid Ja vad som inte får stå med.")
 
 
 def parse_submission(body: dict, *, paper: bool) -> Submission:
@@ -2202,7 +2222,7 @@ REFUSALS = {  # the copy the client shows (P44)
     "epost_ogiltig": "Kontrollera e-postadressen.",
     "epost_kan_inte_anvandas": "E-postadressen kan inte användas. Kontrollera den med medlemmen.",
     "koharen_ny_fraga": "Frågan om Koharen har ändrats. Ladda om sidan och svara igen.",
-    "koharen_andrad": "Svaret om Koharen har ändrats sedan sidan visades. Ladda om sidan och svara igen.",
+    "koharen_andrad": CONSENT_CHANGED,
     "epost_via_kod": "Den nya e-postadressen bekräftar du med en kod. Byt den under Dina uppgifter.",
     "konto_ogiltigt": (
         "Ett bankkonto har clearingnummer med 4–5 siffror och kontonummer med 5–12 siffror. "
@@ -2658,12 +2678,6 @@ def _contact_cleared(matrikel) -> tuple[dict, list[Refusal]]:
     return contact, refusals
 
 
-def consent_version(membership_id):
-    """The stored Koharen answer's version: its latest publication_consent_change row, None before any."""
-    change = PublicationConsentChange
-    return change.select(fn.MAX(change.id)).where(change.membership == membership_id).scalar()
-
-
 def _details_refusals(herd, access, matrikel):
     """
     check's refusals of a digital "Dina uppgifter": bad values, an e-mail outside the link (D1, 5.11), and logged in
@@ -2889,7 +2903,10 @@ def save_contact(membership, member, written, actor, payload):
             row.save(only=[getattr(model, column) for column in columns] + stamp)
     if written:
         fields = [column for columns in written.values() for column in columns]
-        write_matrikel_audit(actor, "kontakt_andrad", membership, {"person_id": member.id, "fields": fields, **payload})
+        return write_matrikel_audit(
+            actor, "kontakt_andrad", membership, {"person_id": member.id, "fields": fields, **payload}
+        )
+    return None
 
 
 def apply_login_matrikel(herd, membership, member, submission, user, matrikel):
@@ -2898,8 +2915,6 @@ def apply_login_matrikel(herd, membership, member, submission, user, matrikel):
     differs. The caller holds the membership's lock and checked D1 under it. A new account is told to the matrikel's
     e-mail (account_notice). The e-mail is not here: it goes through the profile's code flow.
     """
-    typed = bool((matrikel.get("konto") or {}).get("typ"))
-    changes = _changes(membership, member, _contact_cleared(matrikel)[0], typed=typed)
     answer = matrikel.get("publicering")
     if answer is not None:
         set_consent(
@@ -2912,9 +2927,79 @@ def apply_login_matrikel(herd, membership, member, submission, user, matrikel):
             submission=submission.id,
             at=submission.created_at,
         )
-    save_contact(membership, member, changes, user, {"source": "login", "submission_id": submission.id})
+    contact, _ = _contact_cleared(matrikel)
+    typed = bool((matrikel.get("konto") or {}).get("typ"))
+    _save_login_contact(herd, membership, member, user, contact, typed=typed, submission=submission)
+
+
+def _save_login_contact(herd, membership, member, user, contact, *, typed, submission=None):
+    changes = _changes(membership, member, contact, typed=typed)
+    payload = {"source": "login", "submission_id": submission.id} if submission else {"source": "profil"}
+    audit = save_contact(membership, member, changes, user, payload)
     if "konto" in changes:
-        account_notice(herd, member, f"submission:{submission.id}", created_by=user.id)
+        key = f"submission:{submission.id}" if submission else f"audit:{audit.id}"
+        account_notice(herd, member, key, created_by=user.id)
+
+
+def lock_login_details(herd, round_, access, user):
+    """Inside the save's transaction, authorize against the displayed herd's current main member."""
+    require_open(_lock_round(round_), herd, access, today())
+    membership, member = _lock_matrikel(herd)
+    if access.source != "login" or not _own_details(member, access, user):
+        raise ArsrapportError(403, NOT_MAIN)
+    return membership, member
+
+
+def save_report_contact(herd, round_, access, user, body):
+    with DB_PROXY.atomic():
+        membership, member = lock_login_details(herd, round_, access, user)
+        _keys(body, ("phone", *MATRIKEL_PARTS["adress"]), "kontakt")
+        if len(body) != 1:
+            raise ArsrapportError(400, "Ogiltigt fält")
+        try:
+            fields = contact_text_fields(body) | parse_postal_fields(body)
+        except AddressValidationError as err:
+            raise ArsrapportError(400, err.detail) from err
+        if len(fields.get("phone") or "") > 50:
+            raise ArsrapportError(422, REFUSALS["telefon_ogiltig"])
+        if len(fields.get("address") or "") > 200:
+            raise ArsrapportError(422, REFUSALS["adress_ogiltig"])
+        save_profile_contact(membership, member, user, fields)
+        return {"ok": True}
+
+
+def save_report_consent(herd, round_, access, user, answer):
+    with DB_PROXY.atomic():
+        membership, _ = lock_login_details(herd, round_, access, user)
+        _validate_publication(answer, digital=True)
+        if answer.get("text_version") != CONSENT_TEXT_VERSION:
+            raise ArsrapportError(409, REFUSALS["koharen_ny_fraga"])
+        version = answer.get("version")
+        if (
+            "version" not in answer
+            or (version is not None and not _is_int(version))
+            or version != consent_version(membership.id)
+        ):
+            raise ArsrapportError(409, CONSENT_CHANGED)
+        set_consent(
+            membership,
+            consent_from_answer(answer["ja"], answer["utom"]),
+            source="profil",
+            text_version=CONSENT_TEXT_VERSION,
+            user=user.id,
+        )
+        return {"publicering_version": consent_version(membership.id)}
+
+
+def save_report_account(herd, round_, access, user, konto):
+    with DB_PROXY.atomic():
+        membership, member = lock_login_details(herd, round_, access, user)
+        matrikel = _matrikel({"matrikel": {"konto": konto}})
+        contact, refusals = _contact(matrikel)
+        if refusals or "konto" not in contact:
+            raise ArsrapportError(422, REFUSALS["konto_ogiltigt"])
+        _save_login_contact(herd, membership, member, user, contact, typed=bool(konto.get("typ")))
+        return {"konto": shown_account(membership.bank_account_number)}
 
 
 ACCOUNT_NOTICE = "kontakt.konto_andrat"
@@ -3446,8 +3531,7 @@ def _lock_form(access, user, herd):
     inbox.require_handler(item, user)  # its 409 says who holds the item now
     if not _form_item(item, user, herd):
         raise ArsrapportError(409, "Posten kan inte matas in längre. Öppna den i kön.")
-    others = item.documents.where(InboxDocument.doc_type != "arsblankett")
-    if others.where(InboxDocument.done_at.is_null() | InboxDocument.waiting_for.is_null(False)).exists():
+    if inbox.blocking_paper_documents().where(InboxDocument.item == item.id).exists():
         raise ArsrapportError(409, "Registrera intygen i posten först.")
     return item, list(item.documents.where(InboxDocument.doc_type == "arsblankett").order_by(InboxDocument.id))
 
@@ -3639,8 +3723,11 @@ def submit(herd, round_, access, user, sub, *, now=None, completion=False) -> di
                 **_by(user, "user", "access_code"),
                 operation_ids=grant.operation_ids,
                 added_measurements=added,
-                data=_with_open_choices(submitted_body(sub), open_choices)
-                | {"litters_added": _litters_added(herd, round_), "salda_direkt": _sold_besides(herd, year, sub)},
+                data={
+                    **_with_open_choices(submitted_body(sub), open_choices),
+                    "litters_added": _litters_added(herd, round_),
+                    "salda_direkt": _sold_besides(herd, year, sub),
+                },
                 request_hash=digest,
             )
         except IntegrityError as exc:  # the key, taken meanwhile for another herd, which this lock does not cover
@@ -3830,7 +3917,7 @@ def sell_now(herd, round_, access, user, rabbit_id, sald, *, now=None):
     at = now or globals()["now"]()  # the parameter hides the module's clock, which the tests patch
     on, paper = at.astimezone(STOCKHOLM).date(), access.source == "paper"
     if paper:
-        form = {"inbox_item_id": access.item.id, "received_on": on, "signed_on": on, "matrikel": None}
+        form = {"inbox_item_id": access.item.id, "received_on": on, "signed_on": None, "matrikel": None}
         sub = replace(sub, paper=form)
     with DB_PROXY.atomic():
         round_ = _lock_round(round_)
@@ -3870,7 +3957,10 @@ def sell_now(herd, round_, access, user, rabbit_id, sald, *, now=None):
 
 
 def _pruned(data, choosing, defect_ids=None):
-    """Keep eligible rabbit entries in both draft copies. On withdrawal also prune defects by their own list."""
+    """
+    FB1: keep the rabbit entries Skicka accepts (`choosing`, ids as text) in the body and the form's copy.
+    On withdrawal also prune defects by their own list of listed or sold rabbits (okand_kanin, senare_handelse).
+    """
 
     def prune(body):
         if isinstance(body.get("rabbits"), dict):
@@ -4203,19 +4293,18 @@ def _kvitto(params):
         "attachments": [("kvittens.pdf", "application/pdf", render_pdf(shown))],
         "herd": report.herd.herd,
         "kvittens": render_text(shown),
-        "datum": received or f"{submission.created_at.astimezone(STOCKHOLM):%Y-%m-%d}",
+        "datum": sv_date(date.fromisoformat(received) if received else submission.created_at.astimezone(STOCKHOLM)),
         **receipt(submission)["summary"],
         "kullar": [
-            f"efter {item['mother']} född {item['birth_date']}, {item['litter_size']} födda"
+            f"efter {item['mother']} född {sv_date(date.fromisoformat(item['birth_date']))}, {item['litter_size']} "
+            f"{'född' if item['litter_size'] == 1 else 'födda'}"
             for item in submission.data.get("litters_added") or ()
         ],
-        "end_date": f"{report.round.end_date:%Y-%m-%d}",
+        "end_date": sv_date(report.round.end_date),
         "andringar": f"{settings.service.host.rstrip('/')}/rapport/andringar#{confirm_token(submission.id, address)}"
         if waiting and address
         else None,
-        "andringar_senast": f"{min(row.expires_at for row in waiting).astimezone(STOCKHOLM):%Y-%m-%d}"
-        if waiting
-        else None,
+        "andringar_senast": sv_date(min(row.expires_at for row in waiting).astimezone(STOCKHOLM)) if waiting else None,
         "andrat_konto": any(row.kind == "konto" for row in waiting),
     }
 
@@ -4274,7 +4363,7 @@ def _angrad(params):
     report = YearlyHerdReport.get_or_none(YearlyHerdReport.id == params["report_id"])
     if report is None or report.voided_at is None:
         return None
-    return {"herd": report.herd.herd, "datum": f"{report.voided_at.astimezone(STOCKHOLM):%Y-%m-%d}"}
+    return {"herd": report.herd.herd, "datum": sv_date(report.voided_at.astimezone(STOCKHOLM))}
 
 
 @mail_kind("arsrapport.forsaljning_avvisad", priority=1, category="T")
@@ -4300,7 +4389,8 @@ def _kop_godkant(params):
     proposal = SaleProposal.get_or_none(SaleProposal.id == params["proposal_id"])
     if proposal is None or proposal.state != "godkand":
         return None
-    return {"number": proposal.individual.number, "datum": f"{proposal.sale_date:%Y-%m-%d}"}
+    no_day = dayless(proposal.submission.data, proposal.individual_id, "sald")
+    return {"number": proposal.individual.number, "datum": sv_date(proposal.sale_date, month_only=no_day)}
 
 
 def stale_link_retry(key, herd, round_):
@@ -4516,7 +4606,7 @@ def _ny_kull(params):
         "namn": name,
         "herd": litter.breeding_herd_id.herd,
         "mother": litter.mother.number,
-        "birth_date": litter.birth_date.isoformat(),
+        "birth_date": sv_date(litter.birth_date),
     }
 
 

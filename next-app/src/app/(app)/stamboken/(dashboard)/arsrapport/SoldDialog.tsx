@@ -3,10 +3,12 @@
 import { useLeaveWarning } from "./useLeaveWarning";
 import React from "react";
 import {
+  Checkbox,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControlLabel,
   IconButton,
   TextField,
   Autocomplete,
@@ -55,6 +57,7 @@ interface Props {
     | "kept_buyer_date"
   >;
   addressRequired: boolean;
+  isPaper?: boolean;
   canSell: boolean; // a proposal takes no kept buyer (F1, K1)
   // Registered at once (Jonas 2026-11-26): ticked as in Sälj, then `onRegister`, whose error stays in the dialog.
   onRegister?: (s: SaldState) => Promise<React.ReactNode>;
@@ -179,6 +182,7 @@ function Body({
   rabbit,
   canSell,
   addressRequired,
+  isPaper,
   onRegister,
   undoable,
   guardTyping,
@@ -475,18 +479,39 @@ function Body({
         </div>
         {onRegister && (
           <>
-            <label className={styles.choice}>
-              <input
-                type="checkbox"
-                checked={acknowledged}
-                aria-invalid={!!shown(errors.acknowledge)}
-                aria-describedby={
-                  shown(errors.acknowledge) ? "sold-ack-error" : undefined
-                }
-                onChange={(e) => setAcknowledged(e.target.checked)}
-              />
-              <span>{t("individual.sell.acknowledge")}</span>
-            </label>
+            <FormControlLabel
+              sx={{ m: 0, minHeight: 44, alignItems: "flex-start" }}
+              control={
+                <Checkbox
+                  checked={acknowledged}
+                  onChange={(e) => setAcknowledged(e.target.checked)}
+                  sx={{ pt: 0.5 }}
+                  slotProps={{
+                    input: {
+                      "aria-invalid": !!shown(errors.acknowledge),
+                      "aria-describedby": shown(errors.acknowledge)
+                        ? "sold-ack-error"
+                        : undefined,
+                    },
+                  }}
+                />
+              }
+              slotProps={{
+                typography: {
+                  sx: {
+                    fontSize: 13.5,
+                    lineHeight: 1.45,
+                    color: "var(--sb-ink-2)",
+                    textAlign: "left",
+                  },
+                },
+              }}
+              label={
+                isPaper
+                  ? "Försäljningen står på blanketten."
+                  : t("individual.sell.acknowledge")
+              }
+            />
             {shown(errors.acknowledge) && (
               <p id="sold-ack-error" className={styles.errorText}>
                 {errors.acknowledge}

@@ -10,8 +10,6 @@ import {
 import { reportYears } from "@/app/(app)/stamboken/(dashboard)/inkorg/lib";
 import type { InboxDetail } from "@/app/(app)/stamboken/(dashboard)/inkorg/lib";
 
-const press = (s: PaperState, ...keys: string[]) =>
-  keys.reduce(paperKey, s as PaperState) as PaperState;
 const at = (field: PaperState["field"], val: PaperState["val"] = null) => ({
   field,
   val,
@@ -29,28 +27,25 @@ describe("paperKey", () => {
       expect(paperKey(at(field, "kvar"), "1")).toEqual(at(field, "kvar"));
   });
 
-  it("Enter in the number field picks, and the chain runs to the next row", () => {
+  it("Enter picks a number and finishes the weight entry", () => {
     expect(paperKey(at("number"), "Enter")).toEqual(at("val"));
-    expect(press(at("vikt", "kvar"), "Enter", "Enter", "Enter")).toEqual(
+    expect(paperKey(at("vikt", "kvar"), "Enter", "2,4")).toEqual(
       at("number", "kvar"),
     );
-    expect(press(at("val"), "1", "Tab", "Tab", "Enter").field).toBe("number");
+    expect(paperKey(at("vikt", "kvar"), "Enter", " ").field).toBe("ej_vagd");
+    expect(paperKey(at("ej_vagd", "kvar"), "Enter").field).toBe("number");
+    expect(paperKey(at("hull", "kvar"), "Enter").field).toBe("number");
   });
 
-  it("after Död, Enter walks month, day, Slaktad, Anteckning, then the next row", () => {
-    const keys = ["2", "Enter", "Enter", "Enter", "Enter"];
-    const fields = [];
-    let st = at("val");
-    for (const k of keys) {
-      st = paperKey(st, k);
-      fields.push(st.field);
-    }
-    expect(fields).toEqual(["month", "day", "slaktad", "note", "number"]);
+  it("Enter finishes the death or sale entry", () => {
+    for (const field of ["month", "day", "slaktad", "note"] as const)
+      expect(paperKey(at(field, "dod"), "Enter").field).toBe("number");
     expect(paperKey(at("sold", "sald"), "Enter").field).toBe("number");
   });
 
   it("Tab goes on from Vikt to Ej vägd, but leaves the last field alone", () => {
     expect(paperKey(at("vikt", "kvar"), "Tab")).toEqual(at("ej_vagd", "kvar"));
+    expect(paperKey(at("ej_vagd", "kvar"), "Tab")).toEqual(at("hull", "kvar"));
     expect(paperKey(at("hull", "kvar"), "Tab")).toEqual(at("hull", "kvar"));
   });
 

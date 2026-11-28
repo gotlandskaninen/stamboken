@@ -16,6 +16,7 @@ import utils.arsrapport as arsrapport
 import utils.database as db
 import utils.mail as mail
 from playhouse.shortcuts import model_to_dict
+from utils.buyer_mail import sv_date
 from utils.database import coerce_date
 from utils.herd_tracking import (
     DATE_BEFORE_LATEST,
@@ -650,7 +651,7 @@ class AndraTest(ArsrapportTest):
         kvitto = arsrapport._kvitto({"submission_id": first["submission_id"]})
         self.assertEqual(
             {key: kvitto[key] for key in ("datum", "kvar", "doda", "salda")},
-            {"datum": DAY0.isoformat(), "kvar": 2, "doda": 0, "salda": 0},
+            {"datum": sv_date(DAY0), "kvar": 2, "doda": 0, "salda": 0},
         )
 
     # Rulings and carry-overs
@@ -841,16 +842,16 @@ class AndraTest(ArsrapportTest):
         subject, text = mail.render("arsrapport.andrad", arsrapport._kvitto(andrad.params))
         self.assertEqual(subject, "Årsrapporten för G9001 är ändrad")
         for line in (
-            "Årsrapporten för besättning G9001 ändrades den 2026-01-12. Nu har du rapporterat 1 kanin som finns kvar, "
+            "Årsrapporten för besättning G9001 ändrades den 12 januari 2026. Nu har du rapporterat 1 kanin som finns kvar, "
             "1 död och 1 såld.",
-            "Du kan ändra den så länge rundan är öppen, till och med 2026-03-30.",
+            "Du kan ändra den så länge rundan är öppen, till och med 30 mars 2026.",
             "Var det inte du? Kontakta genbanksansvarig genom att svara på det här mejlet.",
         ):
             self.assertIn(line, text)
         subject, text = mail.render("arsrapport.angrad", arsrapport._angrad(angrad.params))
         self.assertEqual(subject, "Årsrapporten för G9001 är tillbakadragen")
         for line in (
-            "Årsrapporten för besättning G9001 drogs tillbaka den 2026-01-13.",
+            "Årsrapporten för besättning G9001 drogs tillbaka den 13 januari 2026.",
             "Kaninerna räknas inte som levande 31 december förrän rapporten skickas igen.",
             "Var det inte du? Kontakta genbanksansvarig genom att svara på det här mejlet.",
         ):

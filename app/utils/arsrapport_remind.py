@@ -26,6 +26,7 @@ import utils.report_code as report_code
 import utils.settings as settings
 from utils.arsrapport import STOCKHOLM, ArsrapportError
 from utils.arsrapport_invite import _common, _herds, _link_address
+from utils.buyer_mail import sv_date
 from utils.database import (
     DB_PROXY,
     Genebank,
@@ -368,7 +369,7 @@ def _ej_svarat(params):
     return {
         "year": round_.report_year,
         "genebank": genebank.name.lower(),  # the breed in running text (ORDLISTA)
-        "deadline": f"{round_.deadline:%Y-%m-%d}",
+        "deadline": sv_date(round_.deadline),
         "paper": [(row["herd"], PAPER_STATES[row["state"]]) for row in rows if row["state"] in PAPER_STATES],
         "other": [(row["herd"], OTHER_STATES[row["state"]]) for row in rows if row["state"] in OTHER_STATES],
         "link": f"{settings.service.host.rstrip('/')}/stamboken/arsrapport/status/{round_.report_year}"

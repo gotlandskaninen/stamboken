@@ -15,7 +15,7 @@ import {
   DISEASES,
   EMPTY_ENTRY,
   detailsBody,
-  detailsFields,
+  emptyPaperFields,
   emptyState,
   fmtDate,
   fmtDayOrMonth,
@@ -36,6 +36,7 @@ import {
   toBody,
   toDraft,
   withoutGoneBuyer,
+  wordForm,
   todayStockholm,
   autosaveAnswerKept,
   type Completion,
@@ -54,7 +55,7 @@ import {
   type Submission,
 } from "./lib";
 import { NumberRow } from "./NumberRow";
-import { MemberDetails } from "./MemberDetails";
+import { MemberDetails, type RemainingDetails } from "./MemberDetails";
 import { PaperChanges } from "./PaperChanges";
 import { PurchaseDialog } from "./PurchaseDialog";
 import { RabbitRow } from "./RabbitRow";
@@ -90,10 +91,10 @@ export type ReportActions = Pick<
       | "changeLitter"
       | "getFathers"
       | "getMothers"
-      | "sellNow"
-      | "undoSale"
       | "dryRunCompletion" // the focused page for the rabbits a paper form left out
       | "submitCompletion"
+      | "sellNow"
+      | "undoSale"
     >
   >; // "Kullar under Y", and a sale registered at once with its Ångra (the link has neither)
 
@@ -102,9 +103,30 @@ export interface PaperProps {
   documentIds: number[]; // formDocumentIds(item): the form pages still open
   intygPending: boolean; // the item's intyg come first (5.8)
   archive: (documentId: number) => Promise<ActionResult<unknown>>; // dismiss one page
-  leave: (message: string) => void; // back to the queue, with a message
+  leave: (message: string | null, destination: "next" | "inbox") => void;
 }
 const QUEUE = "/stamboken/inkorg";
+// Ångra's question (Jonas 2026-11-27): the sale in the member's words, not the history row's
+type Undoing = {
+  id: number;
+  number: string;
+  date: string;
+  dayKnown: boolean;
+  to: string;
+};
+const undoText = ({ number, date, dayKnown, to }: Undoing) => {
+  const when = !date
+    ? ""
+    : dayKnown
+      ? ` den ${fmtDate(date)}`
+      : ` i ${fmtDayOrMonth(date, false)}`;
+  return to === "GX1" || to === "MX1"
+    ? `Försäljningen av ${number}${when} ångras. Kaninen kommer tillbaka till din besättning, och köparens uppgifter tas bort.`
+    : `Försäljningen av ${number} till ${to}${when} ångras. Kaninen kommer tillbaka till din besättning.`; // no buyer details are kept
+};
+// The focused page's Skicka svar with no rabbit chosen; any choice clears it.
+const NO_CHOICE =
+  "Välj Finns kvar, Död eller Såld för minst en kanin innan du skickar.";
 const UNSTATED: Entry = { ...EMPTY_ENTRY, val: "ej_angiven" };
 type Gate = "draft" | "reported" | null;
 const enteredFrom = (rabbits: ReportView["rabbits"], s: FormState) =>
@@ -132,9 +154,11 @@ const summaryLine = (herd: string, r: ReceiptData) => {
   const { kvar, doda, salda, ej_angivna } = r.summary;
   return `${herd} inskickad: ${[
     `${kvar} finns kvar`,
-    doda ? `${doda} ${doda === 1 ? "död" : "döda"}` : "",
-    salda ? `${salda} ${salda === 1 ? "såld" : "sålda"}` : "",
-    ej_angivna ? `${ej_angivna} ej angivna` : "",
+    doda ? `${doda} ${wordForm(doda, "död", "döda")}` : "",
+    salda ? `${salda} ${wordForm(salda, "såld", "sålda")}` : "",
+    ej_angivna
+      ? `${ej_angivna} ej ${wordForm(ej_angivna, "angiven", "angivna")}`
+      : "",
   ]
     .filter(Boolean)
     .join(", ")}.`;
@@ -391,16 +415,18 @@ export function ReportForm({
     startFrom(view, isPaper),
   );
   const [gate, setGate] = React.useState<Gate>(() => gateOf(view, isPaper));
-  // "Dina uppgifter": the paper form's, or the report's (5.11), in memory only
-  const [fields, setFields] = React.useState<PaperFields>(() =>
-    detailsFields(view.member_details),
-  );
+  const remainingDetails = React.useRef<RemainingDetails>(null);
+  // Paper and link input lives outside the report draft. MainDetails owns its early saves.
+  const [fields, setFields] = React.useState<PaperFields>(emptyPaperFields);
   // Sent or changed elsewhere: the fields start again from what the server holds now (U15).
-  const detailsKey = JSON.stringify(view.member_details ?? null);
+  const detailsKey =
+    view.member_details?.mode === "link"
+      ? JSON.stringify(view.member_details)
+      : view.member_details?.mode;
   const [shownDetails, setShownDetails] = React.useState(detailsKey);
   if (shownDetails !== detailsKey) {
     setShownDetails(detailsKey);
-    setFields(detailsFields(view.member_details));
+    setFields(emptyPaperFields());
   }
   const [receivedOn, setReceivedOn] = React.useState(() =>
     item ? stockholmDay(item.received_at) : "",
@@ -924,10 +950,20 @@ export function ReportForm({
     if (!field || !row || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey)
       return;
     const id = Number(row.id.slice("rabbit-".length));
-    const before = { field, val: stateRef.current.rabbits[id]?.val ?? null };
-    const next = paperKey(before, e.key);
+    const entry = stateRef.current.rabbits[id];
+    const before = { field, val: entry?.val ?? null };
+    const next = paperKey(before, e.key, entry?.vikt, done.get(id) === false);
     if (next.field === before.field && next.val === before.val) return;
     e.preventDefault();
+    // Enter ticks Ej vägd only for a row with no weight: the toggle clears a typed weight
+    if (
+      e.key === "Enter" &&
+      field === "ej_vagd" &&
+      entry?.ej_vagd === null &&
+      !entry.vikt.trim()
+    )
+      t.click();
+    if (field === "reason" || field === "other_reason") t.click();
     if (next.val !== before.val)
       document.getElementById(`val-${id}-${next.val}`)?.click(); // the row's own choose()
     focusLater(
@@ -936,6 +972,9 @@ export function ReportForm({
         val: `val-${id}-kvar`,
         vikt: `vikt-${id}`,
         ej_vagd: `ejvagd-${id}`,
+        reason: `ejvagd-reason-${id}`,
+        other_reason: null,
+        reason_text: `ejvagd-text-${id}`,
         hull: `hull-${id}`,
         month: `month-${id}`,
         day: `dag-${id}`,
@@ -983,8 +1022,15 @@ export function ReportForm({
       setRefusals((rs) => {
         const left = rs?.filter(
           (r) =>
-            r.individual_id !== id ||
-            !editClears(r.code, before, patch, doneAfter, rabbit?.birth_date),
+            r.message !== NO_CHOICE &&
+            (r.individual_id !== id ||
+              !editClears(
+                r.code,
+                before,
+                patch,
+                doneAfter,
+                rabbit?.birth_date,
+              )),
         );
         if (!rs || left!.length === rs.length) return rs;
         return left!.length ? left! : null;
@@ -1032,16 +1078,12 @@ export function ReportForm({
     return null;
   };
   // Ångra asks first, in the rabbit page's dialog (Jonas 2026-11-26): the sale's row, its day and buyer herd.
-  const [undoing, setUndoing] = React.useState<{
-    id: number;
-    date: string;
-    to: string;
-  } | null>(null);
+  const [undoing, setUndoing] = React.useState<Undoing | null>(null);
   const [undoBusy, setUndoBusy] = React.useState(false);
   const [undoError, setUndoError] = React.useState<string | null>(null);
-  const askUndo = (id: number, date: string, to: string) => {
+  const askUndo = (u: Undoing) => {
     setUndoError(null);
-    setUndoing({ id, date, to });
+    setUndoing(u);
   };
   const undoSale = async (operationId: string) => {
     setUndoBusy(true);
@@ -1194,12 +1236,12 @@ export function ReportForm({
       // On paper the submit has closed the item: ReportView is not read again
       // (with ?post= it would be refused), and the Receipt is the answer.
       if (!isPaper) {
-        setFields(detailsFields(view.member_details)); // sent: the private fields leave memory (U15)
+        setFields(emptyPaperFields()); // sent: the private fields leave memory (U15)
         // a first Skicka replaced nothing: Receipt shows no actions until the view has the report
         setReplaced(body.revision ?? undefined);
         refreshView();
       } else if (!res.data.warnings.length && !res.data.matrikel.length)
-        paper!.leave(summaryLine(herd.herd, res.data));
+        paper!.leave(summaryLine(herd.herd, res.data), "next");
     } else if (
       res.problem.status === 408 ||
       res.problem.status === 502 ||
@@ -1231,7 +1273,7 @@ export function ReportForm({
         ...(signedOn ? { signed_on: signedOn, signed_on_confirmed: true } : {}),
         ...(matrikel ? { matrikel } : {}),
       };
-    } else {
+    } else if (view.member_details?.mode === "link") {
       const matrikel = detailsBody(view.member_details, fields);
       if (matrikel) body = { ...body, matrikel };
     }
@@ -1246,7 +1288,7 @@ export function ReportForm({
       const val = state.rabbits[id]?.val;
       return val === "kvar" || val === "dod" || val === "sald";
     });
-    if (!answered.length) return fail("Välj för minst en kanin.");
+    if (!answered.length) return fail(NO_CHOICE);
     const submissionKey = newKey(); // its own, never the draft's (keyRef)
     const { rabbits } = toBody(state, submissionKey, report.revision, answered);
     // toBody omits a half-filled death or sale. Show what its row still needs.
@@ -1290,16 +1332,20 @@ export function ReportForm({
     if (!link && readModeCookieClient() !== env) return fail(ENV_TEXT);
     const body = missing ? prepareCompletion() : prepareReport();
     if (!body) return;
-    const full = "ending_genbank" in body;
-    // Held only in memory: a retry may include a buyer or matrikel details.
-    if (full) frozen.current = body;
-    else frozenCompletion.current = body;
     clearTimeout(autosaveTimer.current); // a pending autosave must not reach the server after the submission
     // a save on its way may fail, and Skicka drops its answer: save again if Skicka is refused
     resumeAutosave.current = autosavePending.current || saving.current !== null;
     submitting.current = true;
     submissions.current += 1;
     setPhase("checking");
+    if ("ending_genbank" in body && remainingDetails.current) {
+      const matrikel = await remainingDetails.current();
+      if (matrikel) body.matrikel = matrikel;
+    }
+    // Held only in memory: a retry may include a buyer or matrikel details.
+    const full = "ending_genbank" in body;
+    if (full) frozen.current = body;
+    else frozenCompletion.current = body;
     const dry = await safe(
       full
         ? actionsRef.current.dryRun(herd.herd, year, body, env, post)
@@ -1544,9 +1590,13 @@ export function ReportForm({
           </div>
         )}
         <div className={styles.actions}>
-          <Link href={QUEUE} className={`sb-btn ${styles.btn}`}>
+          <button
+            type="button"
+            className={`sb-btn ${styles.btn}`}
+            onClick={() => paper!.leave(null, "next")}
+          >
             Nästa blankett
-          </Link>
+          </button>
         </div>
       </div>
     );
@@ -1588,7 +1638,7 @@ export function ReportForm({
     }
     setArchiving(false);
     if (error) setArchiveError(error);
-    else paper!.leave(`Blanketten för ${herd.herd} är arkiverad.`);
+    else paper!.leave(`Blanketten för ${herd.herd} är arkiverad.`, "inbox");
   };
   if (isPaper && (paper!.intygPending || gate)) {
     return (
@@ -1723,7 +1773,7 @@ export function ReportForm({
     >
       <h2>
         {rabbitErrors.length > 0
-          ? `${rabbitErrors.length} ${rabbitErrors.length === 1 ? "kanin är" : "kaniner är"} inte klara`
+          ? `${rabbitErrors.length} ${wordForm(rabbitErrors.length, "kanin är inte klar", "kaniner är inte klara")}`
           : "Rapporten kan inte skickas"}
       </h2>
       <ul>
@@ -1793,44 +1843,77 @@ export function ReportForm({
       onSell={onSell}
       onUndo={
         actions.undoSale && !missing // the focused page answers only what paper left out
-          ? (id) => askUndo(id, r.later?.date ?? "", r.undo_to ?? "")
+          ? (id) =>
+              askUndo({
+                id,
+                number: r.number,
+                date: r.later?.date ?? "",
+                dayKnown: r.later?.day_known ?? true,
+                to: r.undo_to ?? "",
+              })
           : undefined
       }
       onNextWeight={onNextWeight}
     />
   );
-  const soldDialog = (
-    <SoldDialog
-      open={soldFor !== null && !syncing}
-      number={soldRabbit?.number ?? ""}
-      year={year}
-      genebankId={herd.genebank_id}
-      ownHerd={herd.herd}
-      loadHerds={actions.getGenebankHerds}
-      existing={
-        soldFor !== null ? (state.rabbits[soldFor]?.sald ?? null) : null
-      }
-      submitted={
-        soldFor !== null
-          ? (view.report?.submitted?.rabbits?.[soldFor]?.sald ?? null)
-          : null
-      }
-      canSell={view.can_sell}
-      guardTyping={!!link}
-      rabbit={soldRabbit}
-      onRegister={direct ? register : undefined}
-      undoable={view.access === "owner" && !isPaper}
-      addressRequired={
-        !isPaper && view.access !== "manager" && view.access !== "admin"
-      }
-      onSave={(s: SaldState) => {
-        if (syncing) return;
-        onRow(soldFor!, { val: "sald", sald: s });
-        setSoldFor(null);
-        if (isPaper) focusLater("paper-number"); // the next row
-      }}
-      onClose={() => setSoldFor(null)}
-    />
+  const saleDialogs = (
+    <>
+      <SoldDialog
+        open={soldFor !== null && !syncing}
+        number={soldRabbit?.number ?? ""}
+        year={year}
+        genebankId={herd.genebank_id}
+        ownHerd={herd.herd}
+        loadHerds={actions.getGenebankHerds}
+        existing={
+          soldFor !== null ? (state.rabbits[soldFor]?.sald ?? null) : null
+        }
+        submitted={
+          soldFor !== null
+            ? (view.report?.submitted?.rabbits?.[soldFor]?.sald ?? null)
+            : null
+        }
+        canSell={view.can_sell}
+        guardTyping={!!link}
+        rabbit={soldRabbit}
+        isPaper={isPaper}
+        onRegister={direct ? register : undefined}
+        undoable={view.access === "owner" && !isPaper}
+        addressRequired={
+          !isPaper && view.access !== "manager" && view.access !== "admin"
+        }
+        onSave={(s: SaldState) => {
+          if (syncing) return;
+          onRow(soldFor!, { val: "sald", sald: s });
+          setSoldFor(null);
+          if (isPaper) focusLater("paper-number"); // the next row
+        }}
+        onClose={() => setSoldFor(null)}
+      />
+      <VoidHerdTrackingDialog
+        open={!!undoing}
+        mode="undoSale"
+        row={
+          undoing &&
+          ({
+            date: undoing.date,
+            kind: "TRANSFER",
+            herd: {
+              label:
+                undoing.to === "GX1" || undoing.to === "MX1"
+                  ? "Såld utanför genbanken"
+                  : undoing.to,
+            },
+            reason_replaced: true, // the report asks no reason: the system's, as for a seller with a buyer outside
+          } as unknown as HerdTrackingRow)
+        }
+        summary={undoing && undoText(undoing)}
+        busy={undoBusy}
+        error={undoError}
+        onClose={() => setUndoing(null)}
+        onConfirm={(_reason, operationId) => void undoSale(operationId)}
+      />
+    </>
   );
   const sendButton =
     phase === "timeout" ? (
@@ -1908,7 +1991,7 @@ export function ReportForm({
             Visa hela rapporten
           </button>
         </div>
-        {soldDialog}
+        {saleDialogs}
       </div>
     );
   }
@@ -2041,7 +2124,9 @@ export function ReportForm({
             {isPaper && (
               <div className={styles.sticky}>
                 <span className={styles.counter} aria-live="polite">
-                  {entered.length} inmatade, {allRest.length} kvar
+                  {entered.length}{" "}
+                  {wordForm(entered.length, "inmatad", "inmatade")},{" "}
+                  {allRest.length} kvar
                 </span>
                 {!ready && <span className={styles.stickyStatus}>Laddar…</span>}
               </div>
@@ -2293,8 +2378,9 @@ export function ReportForm({
                       aria-label="Markera resten"
                     >
                       <span>
-                        Markera {restCount} kaniner som finns kvar? Vuxna
-                        kaniner behöver ändå vikt eller Ej vägd.
+                        Markera {restCount}{" "}
+                        {wordForm(restCount, "kanin", "kaniner")} som finns
+                        kvar? Vuxna kaniner behöver ändå vikt eller Ej vägd.
                       </span>
                       <button
                         type="button"
@@ -2461,7 +2547,15 @@ export function ReportForm({
                           <button
                             type="button"
                             className="sb-btn sb-btn-secondary sb-btn-sm"
-                            onClick={() => askUndo(s.undo!, s.date, s.to_herd)}
+                            onClick={() =>
+                              askUndo({
+                                id: s.undo!,
+                                number: s.number,
+                                date: s.date,
+                                dayKnown: s.day_known,
+                                to: s.to_herd,
+                              })
+                            }
                           >
                             Ångra
                           </button>
@@ -2686,11 +2780,19 @@ export function ReportForm({
             {!isPaper &&
               (contactSlot ?? (
                 <MemberDetails
+                  key={
+                    view.member_details?.mode === "main" && syncing
+                      ? "syncing"
+                      : key
+                  }
                   details={view.member_details}
                   fields={fields}
                   onChange={setFields}
                   track={(call) => track(key, call)}
-                  returnTo={`/stamboken/arsrapport/${herd.herd}/${year}`}
+                  herd={herd.herd}
+                  year={year}
+                  env={env}
+                  remaining={remainingDetails}
                 />
               ))}
 
@@ -2786,34 +2888,7 @@ export function ReportForm({
         />
       )}
 
-      {soldDialog}
-      <VoidHerdTrackingDialog
-        open={!!undoing}
-        mode="undoSale"
-        row={
-          undoing &&
-          ({
-            date: undoing.date,
-            kind: "TRANSFER",
-            herd: {
-              label:
-                undoing.to === "GX1" || undoing.to === "MX1"
-                  ? "Såld utanför genbanken"
-                  : undoing.to,
-            },
-            reason_replaced: true, // the report asks no reason: the system's, as for a seller with a buyer outside
-          } as unknown as HerdTrackingRow)
-        }
-        note={
-          undoing?.to === "GX1" || undoing?.to === "MX1"
-            ? "Kaninen kommer tillbaka till din besättning, och köparens uppgifter tas bort."
-            : "Kaninen kommer tillbaka till din besättning." // a herd in the genebank: no buyer details are kept
-        }
-        busy={undoBusy}
-        error={undoError}
-        onClose={() => setUndoing(null)}
-        onConfirm={(_reason, operationId) => void undoSale(operationId)}
-      />
+      {saleDialogs}
       <PurchaseDialog
         open={buying}
         year={year}

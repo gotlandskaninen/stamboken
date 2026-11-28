@@ -58,8 +58,10 @@ from utils.members import (
     CONSENT_KEYS,
     CONSENT_TEXT_VERSION,
     consent_answered,
+    contact_text_fields,
     counted_answers,
     effective_consent,
+    save_profile_contact,
     set_consent,
     stored_consent,
 )
@@ -473,28 +475,17 @@ def patch_me_contact():
             "Endast huvudmedlemmen kan ändra medlemskapets uppgifter.",
         )
 
-    body = request.get_json(silent=True)
+    return update_member_contact(m, request.get_json(silent=True), include_profile=True)
+
+
+def update_member_contact(m, body, *, include_profile=False):
     if not isinstance(body, dict):
         return problem(400, "Ogiltigt anrop", "Uppdateringen måste vara ett JSON-objekt")
 
-    # Every string field must actually BE a string (or null) — a JSON
-    # list/number/object would 500 on .strip()/save below instead of 400
-    # (repo precedent: member_applications.py create_application).
-    for key in ("phone", "address"):
-        if key in body and body[key] is not None and not isinstance(body[key], str):
-            return problem(400, "Ogiltigt fält", f"{key} måste vara en sträng eller null")
-
-    # Track exactly which columns this body touches — a full-row save() would
-    # write member.user_id and membership_status back from the instance this
-    # request read: it would NULL a link
-    # committed in between, resurrect one an admin just removed, or undo a
-    # status flip and restore herd access. Values are collected here and applied
-    # to the rows re-read under the membership lock below.
-    person_updates: dict[str, str | None] = {}
-    membership_updates: dict[str, str | None] = {}
-
-    if "phone" in body:
-        person_updates["phone"] = (body["phone"] or "").strip() or None
+    try:
+        fields = contact_text_fields(body)
+    except AddressValidationError as err:
+        return problem(400, err.title, err.detail)
 
     # The e-mail is never written here: a new address gets a code (_ask_for_code), and the change waits for it.
     new_email = None
@@ -518,14 +509,9 @@ def patch_me_contact():
         # Split keys only — the postal_address alias is an admin/legacy input,
         # never a self-service one. Unknown keys
         # stay ignored, as they always were on this route.
-        postal = parse_postal_fields({k: body[k] for k in ("postal_code", "city") if k in body})
+        fields.update(parse_postal_fields({k: body[k] for k in ("postal_code", "city") if k in body}))
     except AddressValidationError as err:
         return problem(400, err.title, err.detail)
-    if "address" in body:
-        # The postal address lives on the membership — one address change
-        # per household.
-        membership_updates["address"] = (body["address"] or "").strip() or None
-    membership_updates.update(postal)
 
     person_id, membership_id = m.id, m.membership_id
     try:
@@ -541,18 +527,7 @@ def patch_me_contact():
             m, ms, err = _relock_me(membership_id, person_id)
             if err is not None:
                 return err
-            changed = [f for f, v in membership_updates.items() if getattr(ms, f) != v]
-            changed += [f for f, v in person_updates.items() if getattr(m, f) != v]
-            if changed:  # D19: a paper form signed before this change must not overwrite it; the names only
-                payload = {"person_id": m.id, "fields": changed, "source": "profil"}
-                write_matrikel_audit(current_user, "kontakt_andrad", ms, payload)
-            for field, value in person_updates.items():
-                setattr(m, field, value)
-            for field, value in membership_updates.items():
-                setattr(ms, field, value)
-            if membership_updates:
-                ms.save(only=[getattr(Membership, f) for f in membership_updates] + [Membership.updated_at])
-            m.save(only=[getattr(Member, f) for f in person_updates] + [Member.updated_at])
+            save_profile_contact(ms, m, current_user, fields)
             if new_email is not None:
                 if ms.membership_status == Status.FRIEXEMPLAR:
                     refused, new_email = "E-postadressen för ett friexemplar kan bara bytas i matrikeln.", None
@@ -576,7 +551,8 @@ def patch_me_contact():
             "En annan medlem använder redan e-postadressen.",
         )
     # The same answer whether a code went or not: the member cannot test which addresses are in the matrikel.
-    answer = {**_me_response(m), "email_code_sent": new_email is not None}
+    answer = _me_response(m) if include_profile else {}
+    answer["email_code_sent"] = new_email is not None
     if refused:
         answer["email_refused"] = refused
     return jsonify(answer)
@@ -618,6 +594,10 @@ def _wrong_code():
 @json_login_required
 def cancel_me_email():
     """Avbryt: this session's pending code for a new address stops working. A request in another session stays."""
+    return cancel_email_code()
+
+
+def cancel_email_code():
     cancel(session.pop("login_request", None))
     return "", 204
 
@@ -635,6 +615,10 @@ def verify_me_email():
         return problem(404, "Medlem saknas", "Ingen medlemspost är kopplad till ditt konto.")
     if m.role != "huvudmedlem":
         return problem(403, "Endast huvudmedlem", "Endast huvudmedlemmen kan ändra medlemskapets uppgifter.")
+    return verify_member_email(m)
+
+
+def verify_member_email(m, *, lock_report_member=None):
     body = request.get_json(silent=True)
     entered = body.get("code") if isinstance(body, dict) else None
     if not isinstance(entered, str):
@@ -648,8 +632,13 @@ def verify_me_email():
         return problem(503, "Koder tas inte emot just nu", "Försök igen om en timme.")
     if row is None:
         return _wrong_code()
-    person_id, membership_id = m.id, m.membership_id
     with DB_PROXY.atomic():
+        # check() commits the attempt independently. Reauthorize the report before using its result.
+        if lock_report_member is not None:
+            m = lock_report_member()
+            if m.id != row.member_id:
+                return _wrong_code()
+        person_id, membership_id = m.id, m.membership_id
         # membership → user → person, as set_member_email takes them
         Membership.select().where(Membership.id == membership_id).for_update().get()
         User.select().where(User.id == current_user.id).for_update().get()
@@ -670,7 +659,7 @@ def verify_me_email():
         except AddressTaken:
             return _wrong_code()  # taken since the code went; the code stays used (the return commits)
     session.pop("login_request", None)
-    return jsonify(_me_response(m))
+    return jsonify(_me_response(m)) if lock_report_member is None else ("", 204)
 
 
 @members_bp.route("/v2/members/me/consent", methods=["PATCH"])

@@ -1044,8 +1044,8 @@ def get_users():
     return jsonify(users=users)
 
 
-def _admin_gone(message):
-    """ADR-0020: a closed admin write of the old app. Nothing is written, whoever asks.
+def _gone(message):
+    """ADR-0020: a closed write of the old app. Nothing is written, whoever asks.
     The legacy forms show `message`."""
     return jsonify({"status": "error", "message": message}), 410
 
@@ -1067,7 +1067,7 @@ def manage_user(u_id):
     answers 410.
     """
     if request.method != "GET":
-        return _admin_gone(ACCOUNTS_GONE)
+        return _gone(ACCOUNTS_GONE)
     return jsonify(da.get_user(u_id or current_user.id, session.get("user_id", None)))
 
 
@@ -1075,14 +1075,14 @@ def manage_user(u_id):
 @APP.route("/api/manage/setpassword/<u_id>", methods=["POST"])
 def change_userpassword(u_id):
     """Gone (ADR-0020): an admin resets passwords in the new Stamboken (/api/v2/admin/users/<id>/password-reset)."""
-    return _admin_gone("Lösenord byts inte längre i gamla Stamboken. Admin återställer lösenord i nya Stamboken.")
+    return _gone("Lösenord byts inte längre i gamla Stamboken. Admin återställer lösenord i nya Stamboken.")
 
 
 @APP.route("/api/manage/role", methods=["POST", "PATCH", "UPDATE"])
 @login_required
 def manage_roles():
     """Gone (ADR-0020): roles are granted and removed in the new Stamboken (POST /api/v2/admin/role)."""
-    return _admin_gone(ACCOUNTS_GONE)
+    return _gone(ACCOUNTS_GONE)
 
 
 @APP.route("/api/manage/herd", methods=["POST", "PATCH"])
@@ -2888,7 +2888,9 @@ def verify_certificate(i_number):
 @APP.route("/api/herd/<h_id>/yearlyreport", methods=["GET", "POST"])
 @login_required
 def herd_yearly_report(h_id):
-    """Get or create yearly report for a herd."""
+    """Get the yearly report of a herd. Sending one is closed (ADR-0020): it is sent in the new Stamboken."""
+    if request.method == "POST":
+        return _gone("Årsrapporten skickas nu i nya Stamboken.")
     user_id = session.get("user_id", None)
     user = da.fetch_user_info(user_id)
 
@@ -2943,15 +2945,6 @@ def herd_yearly_report(h_id):
                 404,
             )
 
-    elif request.method == "POST":
-        # Create or update the yearly report
-        form = request.json
-        result = da.save_yearly_report(herd_id, form, user)
-        if result["status"] == "success":
-            return jsonify(result)
-        else:
-            return jsonify(result), 400
-
 
 @APP.route("/api/manage/yearly_report_rounds", methods=["GET"])
 @login_required
@@ -2971,19 +2964,19 @@ ROUNDS_GONE = "Årsrapportens rundor hanteras nu i nya Stamboken."
 @APP.route("/api/manage/yearly_report_round", methods=["POST"])
 @login_required
 def create_yearly_report_round():
-    return _admin_gone(ROUNDS_GONE)
+    return _gone(ROUNDS_GONE)
 
 
 @APP.route("/api/manage/yearly_report_round/<int:round_id>", methods=["PATCH"])
 @login_required
 def update_yearly_report_round(round_id):
-    return _admin_gone(ROUNDS_GONE)
+    return _gone(ROUNDS_GONE)
 
 
 @APP.route("/api/manage/yearly_report_round/<int:round_id>", methods=["DELETE"])
 @login_required
 def delete_yearly_report_round(round_id):
-    return _admin_gone(ROUNDS_GONE)
+    return _gone(ROUNDS_GONE)
 
 
 @APP.route("/", defaults={"path": ""})

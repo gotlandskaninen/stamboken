@@ -528,6 +528,8 @@ test("7. Typ E: pappersblankett som hjälparen matar in", async ({
   await submitted(page);
   await expect(page.getByText(/Sparat i matrikeln: .*telefon/)).toBeVisible();
   await shot(page, "typ-e-kvitto");
+  await page.getByRole("button", { name: "Nästa blankett" }).click();
+  await expect(page).toHaveURL(/\/arsrapport\/M9006\/2025\?post=\d+$/);
 });
 
 test("8. Typ F: rapporterad både digitalt och på papper", async ({
@@ -572,10 +574,13 @@ test("8. Typ F: rapporterad både digitalt och på papper", async ({
   await markDead(rabbit(page, "M9006-2415"), "10");
   await shot(page, "typ-f-andra-rapporten");
   await page.getByRole("button", { name: "Skicka och nästa blankett" }).click();
-  await page.waitForURL(/\/stamboken\/inkorg/);
+  await expect(page).toHaveURL(/\/arsrapport\/M9102\/2025\?post=\d+$/, {
+    timeout: SUBMIT_TIMEOUT_MS,
+  });
   await expect(
     page.getByText("M9006 inskickad: 5 finns kvar, 1 död."),
   ).toBeVisible();
+  await expect(page.getByLabel("Nummer efter M9102-")).toBeVisible();
 
   await loginInline(page, context, USERS.manager);
   const changed = await storedReport(page, "M9006");
@@ -696,21 +701,33 @@ test("10. Paritet: samma svar på papper och digitalt ger samma data", async ({
   await loginInline(page, context, USERS.helper);
   await takePaperForm(page, "M9102");
   const order = [2415, 2411, 2412, 2413, 2414, 2520];
+  const number = page.getByLabel("Nummer efter M9102-");
+  await number.focus();
   for (const [k, n] of order.entries()) {
-    const number = page.getByLabel("Nummer efter M9102-");
-    await number.fill(String(n));
-    await number.press("Enter");
+    await expect(number).toBeFocused();
+    await page.keyboard.type(String(n));
+    await page.keyboard.press("Enter");
     const r = rows(page).nth(k);
-    if (n === 2415) await markDead(r, "10");
-    else {
-      await kvar(r).check();
-      if (weights[n]) await weight(r).fill(weights[n]);
+    await expect(kvar(r)).toBeFocused();
+    if (n === 2415) {
+      await page.keyboard.press("2");
+      const month = r.getByLabel("Månad");
+      await month.selectOption("10");
+      await month.press("Enter");
+    } else {
+      await page.keyboard.press("1");
+      if (weights[n]) {
+        await weight(r).fill(weights[n]);
+        await weight(r).press("Enter");
+      }
     }
   }
   await page.getByRole("radio", { name: NO_DISEASE }).check();
   await shot(page, "paritet-papper");
   await page.getByRole("button", { name: "Skicka och nästa blankett" }).click();
-  await page.waitForURL(/\/stamboken\/inkorg/);
+  await expect(page).toHaveURL(/\/stamboken\/inkorg$/, {
+    timeout: SUBMIT_TIMEOUT_MS,
+  });
 
   await expect(
     page.getByText("M9102 inskickad: 5 finns kvar, 1 död."),
@@ -848,18 +865,21 @@ test("12. Dina uppgifter: huvudmedlemmen ändrar i rapporten, andra ser vem som 
   context,
 }) => {
   await loginInline(page, context, USERS.owner);
-  // M9001's main member is this account (5.11, D1): the details are filled in and saved with Skicka
+  // M9001's main member is this account (5.11, D1): the details are filled in and saved when a field is left
   await page.goto("/stamboken/arsrapport/M9001/2025");
   await page.getByRole("button", { name: /^(Ändra|Fortsätt ändra)$/ }).click();
   await expect(page.getByText(/^E-post: /)).toBeVisible();
   await page.getByLabel("Telefon").fill("0709-555 666");
+  await page.getByLabel("Telefon").blur();
+  await expect(page.getByText("Kontaktuppgifter sparade")).toBeVisible();
   // test 9 sold M9007-2412 to M9001 on 31 December, so the report now asks about her too
   const bought = rabbit(page, "M9007-2412");
   await kvar(bought).check();
   await weight(bought).fill("2,8");
   await page.getByRole("button", { name: SEND }).click();
   await submitted(page);
-  await expect(page.getByText("Sparat i matrikeln: telefon.")).toBeVisible();
+  // saved already: the receipt lists only what Skicka itself wrote
+  await expect(page.getByText("Sparat i matrikeln: telefon.")).toHaveCount(0);
   // M9002 is the account's herd, but its main member is someone else
   await page.goto("/stamboken/arsrapport/M9002/2025");
   await page.getByRole("button", { name: /^(Ändra|Fortsätt ändra)$/ }).click();
