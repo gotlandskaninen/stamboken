@@ -19,11 +19,13 @@ from unittest import mock
 import utils.arsrapport as arsrapport
 import utils.data_access as da
 import utils.database as db
+import utils.login_code as login_code
 import utils.mail as mail
 import utils.member_changes as member_changes
 import utils.report_code as report_code
 import utils.settings as settings
 from herdbook import APP
+from utils.buyer_mail import sv_date
 from utils.matrikel import set_member_email, swap_main_member
 from utils.members import CONSENT_TEXT_VERSION, set_consent
 
@@ -132,6 +134,187 @@ class DetailsTest(ArsrapportTest):
 
 
 class TestLoggedIn(DetailsTest):
+    def test_report_email_code_refuses_switched_session(self):
+        self.link_owner()
+        self.login("owner")
+        self.assertEqual(self.view()["member_details"]["mode"], "main")
+        db.Member.update(user=self.manager).where(db.Member.id == self.member2.id).execute()
+        self.login("man")  # May open either herd, but is the main member only of G9002.
+        old, own = (REPORT.format(herd=herd) + "/epost" for herd in ("G9001", "G9002"))
+        new = "changed@example.org"
+        self.assertEqual(self.api("POST", old + "/kod", email=new).status_code, 403)
+        self.assertFalse(db.LoginCode.select().exists())
+        self.assertEqual(self.mails("konto.kod"), [])
+
+        self.assertEqual(self.api("POST", own + "/kod", email=new).get_json(), {"email_code_sent": True})
+        row = db.LoginCode.get()
+        self.assertEqual(row.member_id, self.member2.id)
+        self.assertEqual(len(self.mails("konto.kod")), 1)
+        code = login_code.code(row)
+        self.assertEqual(self.api("POST", old + "/verifiera", code=code).status_code, 403)
+        self.assertEqual(self.api("DELETE", old + "/kod").status_code, 403)
+        self.assertIsNone(db.LoginCode.get_by_id(row.id).used_at)
+        for member in (self.member, self.member2):
+            self.assertEqual(db.Member.get_by_id(member.id).email, member.email)
+        self.assertEqual(self.api("DELETE", own + "/kod").status_code, 204)
+        self.assertEqual(self.api("POST", own + "/verifiera", code=code).status_code, 400)
+        self.assertTrue(self.api("POST", own + "/kod", email=new).get_json()["email_code_sent"])
+        code = login_code.code(db.LoginCode.get(db.LoginCode.used_at.is_null()))
+        self.assertEqual(self.api("POST", own + "/verifiera", code=code).status_code, 204)
+        self.assertEqual(db.Member.get_by_id(self.member2.id).email, new)
+        self.assertEqual(self.client.get("/api/v2/members/me").status_code, 401)
+
+    def test_report_email_rechecks_herd_after_code_check(self):
+        self.link_owner()
+        self.login("owner")
+        path = REPORT.format(herd="G9001") + "/epost"
+        self.assertTrue(self.api("POST", path + "/kod", email="changed@example.org").get_json()["email_code_sent"])
+        row = db.LoginCode.get()
+
+        def move_herd(*args):
+            checked = login_code.check(*args)
+            db.Herd.update(membership=self.member2.membership_id).where(db.Herd.id == self.h.id).execute()
+            return checked
+
+        with mock.patch("blueprints.members.check", side_effect=move_herd):
+            response = self.api("POST", path + "/verifiera", code=login_code.code(row))
+        self.assertEqual(response.status_code, 403)
+        self.assertIsNone(db.LoginCode.get_by_id(row.id).used_at)
+        self.assertEqual(db.Member.get_by_id(self.member.id).email, self.member.email)
+
+    def test_report_detail_saves_refuse_a_switched_session(self):
+        self.link_owner()
+        self.login("owner")
+        shown = self.view()["member_details"]
+        edits = (
+            ("PATCH", "/kontakt", {"phone": "010-000 00 02"}),
+            ("PUT", "/publicering", {**JA, "version": shown["publicering_version"]}),
+        )
+        # The new login can open this herd as its manager, but belongs to the other membership.
+        db.Member.update(user=self.manager).where(db.Member.id == self.member2.id).execute()
+        self.login("man")
+        for method, route, body in edits:
+            response = self.api(method, REPORT.format(herd="G9001") + route, **body)
+            self.assertEqual((response.status_code, response.get_json()["detail"]), (403, arsrapport.NOT_MAIN))
+        for member in (self.member, self.member2):
+            self.assertEqual(db.Member.get_by_id(member.id).phone, "0709-111 222")
+        self.assertFalse(db.PublicationConsentChange.select().exists())
+
+    def test_report_detail_saves_require_an_open_round_and_login_access(self):
+        self.link_owner()
+        self.login("owner")
+        self.open_link("G9002")  # this session also has a valid code for another main member
+        edits = (
+            ("PATCH", "/kontakt", {"phone": ""}),
+            ("PUT", "/publicering", {**NEJ, "version": None}),
+            ("POST", "/epost/kod", {"email": "changed@example.org"}),
+            ("DELETE", "/epost/kod", {}),
+            ("POST", "/epost/verifiera", {"code": "12345678"}),
+        )
+        for method, route, body in edits:
+            response = self.api(method, REPORT.format(herd="G9002") + route, **body)
+            self.assertEqual((response.status_code, response.get_json()["detail"]), (403, arsrapport.NOT_MAIN))
+        self.at(self.round_.end_date + timedelta(days=1))
+        for method, route, body in edits:
+            response = self.api(method, REPORT.format(herd="G9001") + route, **body)
+            self.assertEqual((response.status_code, response.get_json()["code"]), (409, "rundan_stangd"))
+
+    def test_report_contact_validates_clears_and_audits_one_field(self):
+        self.link_owner()
+        self.login("owner")
+        path = REPORT.format(herd="G9001") + "/kontakt"
+        for body in ({"postal_code": "12"}, {"phone": False}, {"email": "test@example.org"}, {"phone": "", "city": ""}):
+            self.assertEqual(self.api("PATCH", path, **body).status_code, 400)
+        for body in ({"postal_code": "12345"}, {"phone": ""}, {"phone": ""}):
+            self.assertEqual(self.api("PATCH", path, **body).status_code, 200)
+        self.assertEqual((self.membership().postal_code, self.membership().city), ("123 45", "Slite"))
+        self.assertIsNone(db.Member.get_by_id(self.member.id).phone)
+        audits = (
+            db.MatrikelAudit.select().where(db.MatrikelAudit.action == "kontakt_andrad").order_by(db.MatrikelAudit.id)
+        )
+        self.assertEqual(
+            [row.payload for row in audits],
+            [{"source": "profil", "person_id": self.member.id, "fields": [k]} for k in ("postal_code", "phone")],
+        )
+
+    def test_report_consent_checks_revision_and_preserves_answer_history(self):
+        self.link_owner()
+        self.login("owner")
+        path = REPORT.format(herd="G9001") + "/publicering"
+        initial = self.view()["member_details"]["publicering_version"]
+        response = self.api("PUT", path, **NEJ, version=initial)
+        self.assertEqual(response.status_code, 200)
+        details = self.view()["member_details"]
+        self.assertFalse(details["publicering"]["ja"])
+        version = response.get_json()["publicering_version"]
+        self.assertEqual(details["publicering_version"], version)
+        for body in (JA, {**JA, "version": initial}, {**JA, "version": True}):
+            stale = self.api("PUT", path, **body)
+            self.assertEqual((stale.status_code, stale.get_json()["detail"]), (409, arsrapport.CONSENT_CHANGED))
+        old_text = self.api("PUT", path, **{**JA, "text_version": "old", "version": version})
+        self.assertEqual(
+            (old_text.status_code, old_text.get_json()["detail"]), (409, arsrapport.REFUSALS["koharen_ny_fraga"])
+        )
+        no_again = self.api("PUT", path, **NEJ, version=version)
+        self.assertEqual(no_again.status_code, 200)
+        self.assertGreater(no_again.get_json()["publicering_version"], version)
+        yes = self.api("PUT", path, **JA, version=no_again.get_json()["publicering_version"])
+        self.assertEqual(yes.status_code, 200)
+        same = self.api("PUT", path, **JA, version=yes.get_json()["publicering_version"])
+        self.assertEqual(same.get_json(), yes.get_json())
+        self.assertEqual(self.view()["member_details"]["publicering"], {"ja": True, "utom": []})
+        self.assertEqual(self.ok()["matrikel"], [])
+        history = db.PublicationConsentChange.select().order_by(db.PublicationConsentChange.id)
+        self.assertEqual(
+            [(r.value, r.source, r.submission_id) for r in history],
+            [(answer, "profil", None) for answer in (NONE, NONE, ALL)],
+        )
+
+    def test_profile_detail_endpoints_keep_their_original_contract(self):
+        self.link_owner()
+        self.login("owner")
+        path = "/api/v2/members/me"
+        for key in ("version", "member_id"):
+            response = self.client.patch(
+                path + "/consent", json={**NONE, "text_version": CONSENT_TEXT_VERSION, key: None}
+            )
+            self.assertEqual(response.status_code, 400)
+        consent = self.client.patch(path + "/consent", json={**NONE, "text_version": CONSENT_TEXT_VERSION})
+        self.assertEqual(consent.status_code, 200)
+        self.assertEqual(consent.get_json(), self.client.get(path).get_json())
+        self.assertNotIn("publicering_version", consent.get_json())
+        # The profile has always ignored unknown contact keys.
+        contact = self.client.patch(path + "/contact", json={"phone": "010-000 00 02", "member_id": self.member2.id})
+        self.assertEqual(contact.status_code, 200)
+        self.assertEqual(contact.get_json(), {**self.client.get(path).get_json(), "email_code_sent": False})
+        self.assertEqual(db.Member.get_by_id(self.member.id).phone, "010-000 00 02")
+
+    def test_save_account_uses_the_submission_writer_and_notice_once(self):
+        self.login("owner")
+        path = REPORT.format(herd="G9001") + "/konto"
+        self.assertEqual(self.api("PUT", path, **NEW_KONTO).status_code, 403)
+        self.link_owner()
+        for invalid in ({"bank": "Testbank"}, {**NEW_KONTO, "konto": "1"}):
+            self.assertEqual(self.api("PUT", path, **invalid).status_code, 422)
+        for _ in range(2):  # an identical retry is already saved
+            response = self.api("PUT", path, **NEW_KONTO)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.get_json(), {"konto": "••••0377"})
+        self.assertEqual(self.membership().bank_account_number, "9420-46180377")
+        self.assertEqual(self.ok()["matrikel"], [])
+        (notice,) = self.mails(arsrapport.ACCOUNT_NOTICE)
+        self.assertEqual((notice.recipient_id, notice.created_by_id), (self.member.id, self.owner.id))
+        (audit,) = db.MatrikelAudit.select().where(db.MatrikelAudit.action == "kontakt_andrad")
+        self.assertEqual(audit.actor_id, self.owner.id)
+        self.assertEqual(
+            audit.payload,
+            {
+                "person_id": self.member.id,
+                "source": "profil",
+                "fields": ["bank_account_type", "bank_account_number", "bank_name"],
+            },
+        )
+
     def test_view_mode_follows_d1(self):
         self.link_owner()
         self.login("owner")
@@ -225,6 +408,18 @@ class TestLink(DetailsTest):
     def submit_changes(self, matrikel, herd="G9001"):
         self.open_link(herd)
         return self.ok(herd=herd, matrikel=matrikel)
+
+    def test_only_the_logged_in_holder_can_replace_a_waiting_account(self):
+        self.submit_changes({"konto": NEW_KONTO})
+        path = REPORT.format(herd="G9001") + "/konto"
+        account = {"typ": "bankgiro", "konto": "123-4567"}
+        self.assertIn(self.api("PUT", path, **account).status_code, (401, 403))
+        self.assertIsNone(self.requests()[0].revoked_at)
+        self.client.get("/api/logout")
+        self.link_owner()
+        self.login("owner")
+        self.assertEqual(self.api("PUT", path, **account).status_code, 200)
+        self.assertEqual(self.requests()[0].revoked_reason, "nyare")
 
     def test_link_changes_wait_and_write_nothing(self):
         before = (self.membership().address, self.membership().bank_account_number, db.Member.get_by_id(self.member.id))
@@ -591,7 +786,7 @@ class TestReviewRound1(DetailsTest):
         receipt = self.submit_changes({"telefon": "0709-777 888"})
         (kvitto,) = self.mails("arsrapport.kvitto")
         printed = mail.MAIL_KINDS[kvitto.kind].build(kvitto.params)["andringar_senast"]
-        self.assertEqual(printed, f"{DAY0 + timedelta(days=14):%Y-%m-%d}")
+        self.assertEqual(printed, sv_date(DAY0 + timedelta(days=14)))
         token = self.token(receipt["submission_id"])
         self.at(
             datetime.combine(DAY0 + timedelta(days=14), datetime.min.time(), arsrapport.STOCKHOLM)

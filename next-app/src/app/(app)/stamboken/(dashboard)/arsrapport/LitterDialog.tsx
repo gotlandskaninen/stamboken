@@ -15,7 +15,7 @@ import {
 import CloseIcon from "@mui/icons-material/Close";
 import type { ActionResult } from "../inkorg/actions";
 import type { Father, Litter, LitterBody } from "./lib";
-import { fmtDate } from "./lib";
+import { fmtDate, wordForm } from "./lib";
 import { reportError } from "./reportError";
 import styles from "./arsrapport.module.css";
 
@@ -433,8 +433,9 @@ function ConfirmBody({
       <DialogTitle id="confirm-title">Bekräfta antalet</DialogTitle>
       <DialogContent className={styles.detail}>
         <p className={styles.meta}>
-          Kullen född {fmtDate(litter.birth_date)}: {litter.litter_size} födda.
-          Vi räknar just nu alla som levande.
+          Kullen född {fmtDate(litter.birth_date)}: {litter.litter_size}{" "}
+          {wordForm(litter.litter_size, "född", "födda")}. Vi räknar just nu{" "}
+          {wordForm(litter.litter_size, "ungen", "alla")} som levande.
         </p>
         <label className={styles.label}>
           Levande vid 6 veckor

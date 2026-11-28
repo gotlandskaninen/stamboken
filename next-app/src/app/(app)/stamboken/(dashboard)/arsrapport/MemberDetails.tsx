@@ -1,15 +1,32 @@
 "use client";
 
 import React from "react";
-import { PublicationFields } from "@/components/member/PublicationFields";
+import { formatPostalCode, isValidPostalCode } from "@/lib/postal";
+import type { Mode } from "@/lib/mode";
 import {
-  cancelEmailCode,
-  updateContact,
-  verifyEmailCode,
-} from "../profil/actions";
+  PublicationFields,
+  type Publication,
+} from "@/components/member/PublicationFields";
 import { MbCard } from "../min-besattning/min-besattning-ui";
-import { AccountFields, textField } from "./PaperChanges";
-import { fmtDate, type MemberDetailsView, type PaperFields } from "./lib";
+import { AccountFields, TextField, textField } from "./PaperChanges";
+import {
+  cancelReportEmailCode,
+  requestReportEmailCode,
+  saveAccount,
+  saveReportContact,
+  saveReportConsent,
+  verifyReportEmailCode,
+} from "./actions";
+import {
+  CONSENT_TEXT_VERSION,
+  detailsBody,
+  detailsFields,
+  emptyPaperFields,
+  fmtDate,
+  type Matrikel,
+  type MemberDetailsView,
+  type PaperFields,
+} from "./lib";
 import styles from "./arsrapport.module.css";
 
 export const NOT_MAIN =
@@ -26,23 +43,29 @@ const LINK_PARTS: [Part, string][] = [
 ];
 const SECONDARY = `sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`;
 
-// "Dina uppgifter", last before Skicka (5.11). Logged in, the main member's own
-// details are filled in and Skicka writes what changed; through the link the
-// fields start empty and a change waits for the receipt mail. The state is the
-// caller's, outside FormState, so it never reaches a draft or localStorage.
+type Track = <T>(call: Promise<T>) => Promise<T>;
+type Main = Extract<MemberDetailsView, { mode: "main" }>;
+export type RemainingDetails = () => Promise<Matrikel | null>;
+
+// Private input is kept outside FormState, so it never reaches a draft or localStorage.
 export function MemberDetails({
   details,
   fields,
   onChange,
-  returnTo,
+  herd,
+  year,
+  env,
+  remaining,
   track = (call) => call,
 }: {
   details?: MemberDetailsView;
   fields: PaperFields;
   onChange: (f: PaperFields) => void;
-  returnTo: string; // where the sign-in after an e-mail change leads
-  // ReportForm's write tracking (#275): a view shown before the write is read again
-  track?: <T>(call: Promise<T>) => Promise<T>;
+  herd: string;
+  year: number;
+  env: Mode;
+  remaining?: React.Ref<RemainingDetails>;
+  track?: Track;
 }) {
   const [open, setOpen] = React.useState<Set<Part>>(new Set());
   // the last day to confirm a change made now (fråga 30)
@@ -68,32 +91,6 @@ export function MemberDetails({
     >
       {label}
     </button>
-  );
-  const adress = (
-    <>
-      {textField(
-        "Gatuadress",
-        fields.adress.address,
-        (v) => set({ adress: { ...fields.adress, address: v } }),
-        { maxLength: 200, autoComplete: "street-address" },
-      )}
-      {textField(
-        "Postnummer",
-        fields.adress.postal_code,
-        (v) => set({ adress: { ...fields.adress, postal_code: v } }),
-        { inputMode: "numeric", maxLength: 10, autoComplete: "postal-code" },
-      )}
-      {textField(
-        "Ort",
-        fields.adress.city,
-        (v) => set({ adress: { ...fields.adress, city: v } }),
-        { maxLength: 100 },
-      )}
-      {textField("Telefon", fields.telefon, (v) => set({ telefon: v }), {
-        type: "tel",
-        maxLength: 50,
-      })}
-    </>
   );
   const publication = (
     <PublicationFields
@@ -128,7 +125,17 @@ export function MemberDetails({
               ([part, label]) => opener(part, label),
             )}
           </div>
-          {open.has("adress") && adress}
+          {open.has("adress") &&
+            CONTACT_FIELDS.map(([key, label, attrs]) => (
+              <React.Fragment key={key}>
+                {textField(
+                  label,
+                  contactValue(fields, key),
+                  (v) => onChange(editContact(fields, key, v)),
+                  attrs,
+                )}
+              </React.Fragment>
+            ))}
           {open.has("epost") &&
             textField(
               "Ny e-postadress",
@@ -160,26 +167,278 @@ export function MemberDetails({
       </MbCard>
     );
   }
+  return (
+    <MainDetails
+      key={`${herd}/${year}`}
+      details={details}
+      herd={herd}
+      year={year}
+      env={env}
+      remaining={remaining}
+      track={track}
+    />
+  );
+}
 
+type ContactKey = "address" | "postal_code" | "city" | "phone";
+const CONTACT_FIELDS: [
+  ContactKey,
+  string,
+  React.InputHTMLAttributes<HTMLInputElement>,
+][] = [
+  ["address", "Gatuadress", { maxLength: 200, autoComplete: "street-address" }],
+  [
+    "postal_code",
+    "Postnummer",
+    { inputMode: "numeric", maxLength: 10, autoComplete: "postal-code" },
+  ],
+  ["city", "Ort", { maxLength: 100 }],
+  ["phone", "Telefon", { type: "tel", maxLength: 50 }],
+];
+const contactValue = (f: PaperFields, k: ContactKey) =>
+  k === "phone" ? f.telefon : f.adress[k];
+const editContact = (f: PaperFields, k: ContactKey, v: string) =>
+  k === "phone"
+    ? { ...f, telefon: v }
+    : { ...f, adress: { ...f.adress, [k]: v } };
+
+// As in the report's _contact: spaces, dots and hyphens are separators.
+function completeAccount(k: PaperFields["konto"]) {
+  const clearing = k.clearing.replace(/[\s.-]/g, "");
+  const number = k.konto.replace(/[\s.-]/g, "");
+  if (k.typ === "plusgiro") return !clearing && /^\d{2,8}$/.test(number);
+  if (k.typ === "bankgiro") return !clearing && /^\d{7,8}$/.test(number);
+  return /^\d{4,5}$/.test(clearing) && /^\d{5,12}$/.test(number);
+}
+
+function MainDetails({
+  details,
+  herd,
+  year,
+  env,
+  remaining,
+  track,
+}: {
+  details: Main;
+  herd: string;
+  year: number;
+  env: Mode;
+  remaining?: React.Ref<RemainingDetails>;
+  track: Track;
+}) {
+  const saved = React.useRef(details);
+  const [fields, setFields] = React.useState(() => detailsFields(details));
+  const current = React.useRef(fields);
+  const edit = (next: PaperFields) => {
+    current.current = next;
+    setFields(next);
+  };
+  const [account, setAccount] = React.useState(details.konto);
+  const [open, setOpen] = React.useState(false);
+  const writes = React.useRef(new Map<string, Promise<void>>());
+  type Feedback = { text: string; state: "saved" | "saving" | "error" };
+  const [messages, setMessages] = React.useState<Record<string, Feedback>>({});
+  const message = (
+    key: string,
+    text: string,
+    state: Feedback["state"] = "saved",
+  ) => setMessages((previous) => ({ ...previous, [key]: { text, state } }));
+  const feedback = (key: string) =>
+    messages[key]?.text && (
+      <span
+        id={`report-detail-${key}`}
+        className={
+          messages[key].state === "error" ? styles.errorText : styles.note
+        }
+        role={messages[key].state === "error" ? "alert" : "status"}
+      >
+        {messages[key].text}
+      </span>
+    );
+  const busy = (key: string) => messages[key]?.state === "saving";
+  const save = (
+    key: string,
+    work: (sent: PaperFields) => Promise<void>,
+    changed?: (sent: PaperFields, latest: PaperFields) => boolean,
+  ) => {
+    if (writes.current.has(key)) return;
+    const run = async () => {
+      let sent: PaperFields;
+      do {
+        sent = current.current;
+        message(key, "Sparar…", "saving");
+        try {
+          await work(sent);
+        } catch {
+          message(key, "Det gick inte att nå servern. Försök igen.", "error");
+        }
+      } while (changed?.(sent, current.current));
+    };
+    const call = run().finally(() => writes.current.delete(key));
+    writes.current.set(key, track(call));
+  };
+  // A click on Skicka can itself blur a field. Diff only after its write has answered.
+  React.useImperativeHandle(remaining, () => async () => {
+    await Promise.all(writes.current.values());
+    return detailsBody(saved.current, current.current);
+  });
+  const blur = (key: ContactKey) => {
+    const normalized = (f: PaperFields) => {
+      const raw = contactValue(f, key);
+      return key === "postal_code" ? formatPostalCode(raw) : raw.trim();
+    };
+    const raw = contactValue(current.current, key);
+    const value = normalized(current.current);
+    if (value !== raw) edit(editContact(current.current, key, value));
+    if (value === saved.current.contact[key].trim()) return;
+    save(
+      key,
+      async (sent) => {
+        const next = normalized(sent);
+        if (key === "postal_code" && !isValidPostalCode(next))
+          return message(key, "Postnummer ska vara fem siffror", "error");
+        const result = await saveReportContact(herd, year, key, next, env);
+        if (!result.ok) return message(key, result.problem.detail, "error");
+        saved.current = {
+          ...saved.current,
+          contact: { ...saved.current.contact, [key]: next },
+        };
+        message(key, "Kontaktuppgifter sparade");
+      },
+      (sent, latest) => normalized(sent) !== normalized(latest),
+    );
+  };
+  const publish = (answer: Publication | null) => {
+    if (!answer) return;
+    edit({
+      ...current.current,
+      consent: answer.ja ? "ja" : "nej",
+      utom: answer.utom,
+    });
+    save(
+      "publicering",
+      async (sent) => {
+        const publication = { ja: sent.consent === "ja", utom: sent.utom };
+        const result = await saveReportConsent(
+          herd,
+          year,
+          {
+            ...publication,
+            version: saved.current.publicering_version,
+            text_version: CONSENT_TEXT_VERSION,
+          },
+          env,
+        );
+        if (!result.ok)
+          return message("publicering", result.problem.detail, "error");
+        const version = result.data.publicering_version;
+        if (!Number.isSafeInteger(version))
+          return message(
+            "publicering",
+            "Ladda om sidan och kontrollera svaret.",
+            "error",
+          );
+        saved.current = {
+          ...saved.current,
+          publicering: publication,
+          publicering_version: version,
+        };
+        message("publicering", "Publiceringsval sparade");
+      },
+      (sent, latest) =>
+        sent.consent !== latest.consent ||
+        sent.utom.length !== latest.utom.length ||
+        sent.utom.some((field) => !latest.utom.includes(field)),
+    );
+  };
+  const storeAccount = () =>
+    save("konto", async () => {
+      const konto = detailsBody(saved.current, current.current)?.konto;
+      if (!konto) return;
+      const result = await saveAccount(herd, year, konto, env);
+      if (!result.ok) return message("konto", result.problem.detail, "error");
+      edit({ ...current.current, konto: emptyPaperFields().konto });
+      setAccount(result.data.konto);
+      setOpen(false);
+      message("konto", "Sparat i matrikeln: konto.");
+    });
   return (
     <MbCard title="Dina uppgifter">
       <div className={styles.detail}>
-        {adress}
+        <p className={styles.note} style={{ margin: 0 }}>
+          Ändringarna sparas direkt, även om du inte skickar årsrapporten.
+        </p>
+        {CONTACT_FIELDS.map(([key, label, attrs]) => (
+          <React.Fragment key={key}>
+            <TextField
+              label={label}
+              {...attrs}
+              value={contactValue(fields, key)}
+              onChange={(e) => {
+                edit(editContact(current.current, key, e.target.value));
+                message(key, "");
+              }}
+              onBlur={() => blur(key)}
+              aria-describedby={
+                messages[key]?.text ? `report-detail-${key}` : undefined
+              }
+              aria-invalid={messages[key]?.state === "error" || undefined}
+            />
+            {feedback(key)}
+          </React.Fragment>
+        ))}
         <EmailChange
           email={details.contact.email}
-          returnTo={returnTo}
+          herd={herd}
+          year={year}
           track={track}
+          env={env}
         />
         <p className={styles.label} style={{ margin: 0 }}>
-          {details.konto
-            ? `Konto för stödet: ${details.konto}`
+          {account
+            ? `Konto för stödet: ${account}`
             : "Inget konto för stödet i matrikeln"}
         </p>
-        {open.has("konto") ? account : opener("konto", "Nytt konto för stödet")}
-        {publication}
+        {open ? (
+          <fieldset disabled={busy("konto")} className={styles.detail}>
+            <AccountFields
+              konto={fields.konto}
+              onChange={(konto) => {
+                edit({ ...current.current, konto });
+                message("konto", "");
+              }}
+            />
+            <button
+              type="button"
+              className={SECONDARY}
+              disabled={!completeAccount(fields.konto)}
+              onClick={storeAccount}
+            >
+              Spara kontot
+            </button>
+          </fieldset>
+        ) : (
+          <button
+            type="button"
+            className={SECONDARY}
+            onClick={() => setOpen(true)}
+          >
+            Nytt konto för stödet
+          </button>
+        )}
+        {feedback("konto")}
         <p className={styles.note} style={{ margin: 0 }}>
-          Ändrar du kontot får du ett mejl om det. {PRIVATE}
+          Ändrar du kontot får du ett mejl om det.
         </p>
+        <PublicationFields
+          value={
+            fields.consent
+              ? { ja: fields.consent === "ja", utom: fields.utom }
+              : null
+          }
+          onChange={publish}
+        />
+        {feedback("publicering")}
       </div>
     </MbCard>
   );
@@ -189,11 +448,15 @@ export function MemberDetails({
 // the change. It ends every session, so the member is asked to send first.
 function EmailChange({
   email,
-  returnTo,
+  env,
+  herd,
+  year,
   track,
 }: {
   email: string;
-  returnTo: string;
+  env: Mode;
+  herd: string;
+  year: number;
   track: <T>(call: Promise<T>) => Promise<T>;
 }) {
   const [step, setStep] = React.useState<"none" | "form" | "code" | "done">(
@@ -204,11 +467,46 @@ function EmailChange({
   const [code, setCode] = React.useState("");
   const [error, setError] = React.useState("");
   const [pending, start] = React.useTransition();
+  const close = () => {
+    setAddress("");
+    setError("");
+    setStep("none");
+  };
   const run = (work: () => Promise<void>) => {
     setError("");
-    start(work);
+    start(async () => {
+      try {
+        await work();
+      } catch {
+        setError("Det gick inte att nå servern. Försök igen.");
+      }
+    });
   };
 
+  const requesting = React.useRef(false);
+  const requestCode = () => {
+    const next = address.trim();
+    if (!next || pending || requesting.current) return;
+    if (next.toLowerCase() === email.trim().toLowerCase()) return close();
+    requesting.current = true;
+    run(async () => {
+      try {
+        const result = await track(
+          requestReportEmailCode(herd, year, next, env),
+        );
+        if (!result.ok) return setError(result.problem.detail);
+        if (result.data.email_refused)
+          return setError(result.data.email_refused);
+        if (!result.data.email_code_sent) return close();
+        setSentTo(next);
+        setStep("code");
+      } finally {
+        requesting.current = false;
+      }
+    });
+  };
+
+  const returnTo = `/stamboken/arsrapport/${herd}/${year}`;
   if (step === "done")
     return (
       <p role="status" style={{ margin: 0 }}>
@@ -234,11 +532,15 @@ function EmailChange({
       )}
       {step === "form" && (
         <>
-          {textField("Ny e-postadress", address, setAddress, {
-            type: "email",
-            inputMode: "email",
-            maxLength: 255,
-          })}
+          <TextField
+            label="Ny e-postadress"
+            value={address}
+            onChange={(e) => setAddress(e.target.value)}
+            disabled={pending}
+            type="email"
+            inputMode="email"
+            maxLength={255}
+          />
           <p className={styles.note} style={{ margin: 0 }}>
             Vi skickar en kod till den nya adressen. När adressen är bytt loggas
             du ut. Skicka rapporten först, så sparas det du fyllt i.
@@ -248,18 +550,7 @@ function EmailChange({
               type="button"
               className={`sb-btn ${styles.btn}`}
               disabled={pending || !address.trim()}
-              onClick={() =>
-                run(async () => {
-                  const result = await track(
-                    updateContact({ email: address.trim() }),
-                  );
-                  if (!result.ok) return setError(result.error);
-                  if (result.emailRefused) return setError(result.emailRefused);
-                  if (!result.codeSent) return setStep("none"); // the same address
-                  setSentTo(address.trim());
-                  setStep("code");
-                })
-              }
+              onClick={requestCode}
             >
               Skicka kod
             </button>
@@ -267,7 +558,7 @@ function EmailChange({
               type="button"
               className={SECONDARY}
               disabled={pending}
-              onClick={() => setStep("none")}
+              onClick={close}
             >
               Avbryt
             </button>
@@ -276,7 +567,7 @@ function EmailChange({
       )}
       {step === "code" && (
         <>
-          <p className={styles.note} style={{ margin: 0 }}>
+          <p className={styles.note} style={{ margin: 0 }} role="status">
             Vi har skickat en kod till <strong>{sentTo}</strong>. Skriv in den
             här. Koden gäller i tio minuter.
           </p>
@@ -292,9 +583,11 @@ function EmailChange({
               disabled={pending || !code.trim()}
               onClick={() =>
                 run(async () => {
-                  const result = await track(verifyEmailCode(code));
+                  const result = await track(
+                    verifyReportEmailCode(herd, year, code, env),
+                  );
                   if (result.ok) setStep("done");
-                  else setError(result.error);
+                  else setError(result.problem.detail);
                 })
               }
             >
@@ -306,10 +599,12 @@ function EmailChange({
               disabled={pending}
               onClick={() =>
                 run(async () => {
-                  const result = await track(cancelEmailCode());
-                  if (!result.ok) return setError(result.error);
+                  const result = await track(
+                    cancelReportEmailCode(herd, year, env),
+                  );
+                  if (!result.ok) return setError(result.problem.detail);
                   setCode("");
-                  setStep("none");
+                  close();
                 })
               }
             >

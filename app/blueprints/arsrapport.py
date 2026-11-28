@@ -28,6 +28,7 @@ from limits import parse as parse_limit
 from utils.arsrapport import ArsrapportError
 from utils.database import (
     DATABASE,
+    DB_PROXY,
     OUTSIDE_GENEBANK_HERDS,
     Genebank,
     Herd,
@@ -42,6 +43,7 @@ from utils.report_code import CodeActor, actor_key
 from .common import check_genebank_access, json_login_required, manager_required, problem
 from .inbox import REGISTRATION_FIELDS, _each_image, _Refused, certificate_upload_refusal
 from .individual_v2_create import may_register_in, number_suggestion, paper_number_check, register_individual_as
+from .members import cancel_email_code, update_member_contact, verify_member_email
 from .rapport_link import _environment, session_codes, touch
 from .uploads import MAX_FILE_REQUEST
 
@@ -214,6 +216,54 @@ def my_reports():
 def report_view(herd, year):
     herd, round_, access = _report_target(herd, year)
     return jsonify(arsrapport.report_view(herd, round_, access, _actor(access)))
+
+
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/konto", methods=["PUT"])
+@json_login_required
+def save_report_account(herd, year):
+    herd, round_, access = _report_target(herd, year)
+    return jsonify(arsrapport.save_report_account(herd, round_, access, current_user, _submission_body()))
+
+
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/kontakt", methods=["PATCH"])
+@json_login_required
+def save_report_contact(herd, year):
+    herd, round_, access = _report_target(herd, year)
+    return jsonify(arsrapport.save_report_contact(herd, round_, access, current_user, _submission_body()))
+
+
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/epost/kod", methods=["POST", "DELETE"])
+@json_login_required
+def report_email_code(herd, year):
+    target = _report_target(herd, year)
+    with DB_PROXY.atomic():
+        _, member = arsrapport.lock_login_details(*target, current_user)
+        if request.method == "DELETE":
+            return cancel_email_code()
+        body = _submission_body()
+        email = body.get("email") if isinstance(body, dict) else None
+        return update_member_contact(member, {"email": email})
+
+
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/epost/verifiera", methods=["POST"])
+@json_login_required
+def verify_report_email(herd, year):
+    target = _report_target(herd, year)
+
+    def lock_member():
+        _, member = arsrapport.lock_login_details(*target, current_user)
+        return member
+
+    with DB_PROXY.atomic():
+        member = lock_member()
+    return verify_member_email(member, lock_report_member=lock_member)
+
+
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/publicering", methods=["PUT"])
+@json_login_required
+def save_report_consent(herd, year):
+    herd, round_, access = _report_target(herd, year)
+    return jsonify(arsrapport.save_report_consent(herd, round_, access, current_user, _submission_body()))
 
 
 # [Next.js] The sale dialog's buyer herds for the personal link, which has no genebank picker of its own (4a).

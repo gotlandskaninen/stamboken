@@ -478,9 +478,37 @@ def sale_ended_since(item_id, document_id, since):
     return False
 
 
-def take(item, user, *, over, expected=None):
+def blocking_paper_documents():
+    return InboxDocument.select(InboxDocument.item).where(
+        InboxDocument.doc_type != "arsblankett",
+        InboxDocument.done_at.is_null() | InboxDocument.waiting_for.is_null(False),
+    )
+
+
+def paper_entry_filter(user_id):
+    forms = InboxDocument.select(InboxDocument.item).where(
+        InboxDocument.doc_type == "arsblankett", InboxDocument.done_at.is_null()
+    )
+    available = ((InboxItem.state == "ny") & InboxItem.assigned_to.is_null()) | (
+        (InboxItem.state == "tagen") & (InboxItem.assigned_to == user_id)
+    )
+    return (
+        available
+        & InboxItem.id.in_(forms)
+        & InboxItem.id.not_in(blocking_paper_documents())
+        & InboxItem.herd.in_(Herd.select(Herd.id).where(Herd.herd.not_in(OUTSIDE_GENEBANK_HERDS)))
+        & InboxItem.ref_type.is_null()
+    )
+
+
+def take(item, user, *, over, expected=None, paper_entry=False):
     """ "Jag tar den", or with `over` "Ta över": the item becomes the user's, in "tagen"."""
     require_worker_of(item, user)
+    if (
+        paper_entry
+        and not InboxItem.select().where(InboxItem.id == item.id, not_held(), paper_entry_filter(user.id)).exists()
+    ):
+        raise InboxError(409, "Konflikt")
     if item.state in CLOSED_STATES:
         raise InboxError(409, "Posten är stängd.")
     previous = item.assigned_to_id

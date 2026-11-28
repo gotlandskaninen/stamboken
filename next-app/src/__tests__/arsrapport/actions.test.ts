@@ -18,10 +18,15 @@ vi.mock("@/lib/api", () => ({
 
 import {
   activateGenebank,
+  cancelReportEmailCode,
   dryRun,
   dryRunCompletion,
   newLink,
+  nextPaperForm,
+  requestReportEmailCode,
   saveDraft,
+  saveReportContact,
+  saveReportConsent,
   saveRound,
   sellNow,
   sendReminder,
@@ -30,6 +35,7 @@ import {
   submitCompletion,
   submitReport,
   undoSale,
+  verifyReportEmailCode,
   withdrawReport,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/actions";
 import {
@@ -62,16 +68,139 @@ beforeEach(() => {
 });
 
 describe("arsrapport actions", () => {
-  it("keeps a demo sale and its Ångra in the demo environment, never on production", async () => {
-    const sald = { till: "G9002", ar: 2026, manad: 6, dag: null, kopare: null };
-    await sellNow("G9001", 2026, 1, sald, "demo");
-    await undoSale("G9001", 2026, 55, "op", "demo");
-    expect(
-      fetchApi.mock.calls.map(([url, options]) => [url, options.isolateDemo]),
-    ).toEqual([
-      ["/v2/arsrapport/besattning/G9001/2026/forsaljning", true],
-      ["/v2/arsrapport/besattning/G9001/2026/forsaljning/55/angra", true],
+  const rounds = {
+    rounds: [
+      {
+        year: 2026,
+        start_date: "2026-12-31",
+        end_date: "2027-03-31",
+        genebanks: [{ genebank_id: 1 }],
+      },
+    ],
+  };
+  it("opens the first available paper entry across pages and competing claims", async () => {
+    const item = { id: 8, genebank_id: 1, herd: "G9002" };
+    const conflict = { status: 409, title: "Conflict", detail: "Taget." };
+    fetchApi
+      .mockResolvedValueOnce(rounds)
+      .mockResolvedValueOnce({
+        items: [
+          { id: 2, genebank_id: 2, herd: "M9001" },
+          { ...item, id: 3 },
+        ],
+        total: 3,
+      })
+      .mockRejectedValueOnce(Object.assign(new ApiError(conflict), conflict))
+      .mockResolvedValueOnce({ items: [item], total: 2 })
+      .mockResolvedValueOnce(item);
+    expect(await nextPaperForm("demo")).toBe(
+      "/stamboken/arsrapport/G9002/2026?post=8",
+    );
+    expect(fetchApi.mock.calls.map(([url]) => url)).toEqual([
+      "/v2/arsrapport/rundor",
+      "/v2/inkorg?paper_entry=1&offset=0",
+      "/v2/inkorg/3/ta",
+      "/v2/inkorg?paper_entry=1&offset=1",
+      "/v2/inkorg/8/ta",
     ]);
+    expect(fetchApi.mock.calls.at(-1)?.[1]).toMatchObject({
+      method: "POST",
+      body: JSON.stringify({ paper_entry: true }),
+      isolateDemo: true,
+    });
+  });
+
+  it("opens the claimed case to choose the year between rounds", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2027-06-01T12:00:00Z"));
+      const item = { id: 8, genebank_id: 1, herd: "G9002" };
+      fetchApi
+        .mockResolvedValueOnce({
+          rounds: [
+            ...rounds.rounds,
+            {
+              ...rounds.rounds[0],
+              year: 2027,
+              start_date: "2027-12-31",
+              end_date: "2028-03-31",
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ items: [item], total: 1 })
+        .mockResolvedValueOnce(item);
+      expect(await nextPaperForm("demo")).toBe("/stamboken/inkorg/8");
+      expect(fetchApi.mock.calls.at(-1)?.[0]).toBe("/v2/inkorg/8/ta");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("returns to the inbox when the paper queue is empty", async () => {
+    fetchApi
+      .mockResolvedValueOnce(rounds)
+      .mockResolvedValueOnce({ items: [], total: 0 });
+    expect(await nextPaperForm("demo")).toBe("/stamboken/inkorg");
+    expect(fetchApi).toHaveBeenCalledTimes(2);
+  });
+
+  it("binds email actions to the report and environment", async () => {
+    const url = "/v2/arsrapport/besattning/G9002/2025/epost";
+    const calls = () =>
+      Promise.all([
+        requestReportEmailCode("G9002", 2025, "new@example.org", "demo"),
+        verifyReportEmailCode("G9002", 2025, "12345678", "demo"),
+        cancelReportEmailCode("G9002", 2025, "demo"),
+      ]);
+    await calls();
+    expect(fetchApi.mock.calls).toEqual([
+      [
+        url + "/kod",
+        {
+          method: "POST",
+          body: '{"email":"new@example.org"}',
+          isolateDemo: true,
+        },
+      ],
+      [
+        url + "/verifiera",
+        { method: "POST", body: '{"code":"12345678"}', isolateDemo: true },
+      ],
+      [url + "/kod", { method: "DELETE", body: undefined, isolateDemo: true }],
+    ]);
+    modeCookie = "prod";
+    expect((await calls()).every((result) => !result.ok)).toBe(true);
+    expect(fetchApi).toHaveBeenCalledTimes(3);
+  });
+
+  it("saves details for the displayed herd and refuses a switched environment", async () => {
+    const answer = {
+      ja: false,
+      utom: [],
+      text_version: "2026-11-20",
+      version: null,
+    };
+    await saveReportContact("G9002", 2025, "phone", "", "demo");
+    await saveReportConsent("G9002", 2025, answer, "demo");
+    const path = "/v2/arsrapport/besattning/G9002/2025";
+    expect(fetchApi.mock.calls).toEqual([
+      [
+        `${path}/kontakt`,
+        { method: "PATCH", body: '{"phone":""}', isolateDemo: true },
+      ],
+      [
+        `${path}/publicering`,
+        { method: "PUT", body: JSON.stringify(answer), isolateDemo: true },
+      ],
+    ]);
+    modeCookie = "prod";
+    expect(
+      (await saveReportContact("G9002", 2025, "phone", "", "demo")).ok,
+    ).toBe(false);
+    expect((await saveReportConsent("G9002", 2025, answer, "demo")).ok).toBe(
+      false,
+    );
+    expect(fetchApi).toHaveBeenCalledTimes(2);
   });
 
   it.each([
@@ -102,6 +231,19 @@ describe("arsrapport actions", () => {
       expect(fetchApi).toHaveBeenCalledTimes(2);
     },
   );
+
+  it("keeps a demo sale and its Ångra in the demo environment, never on production", async () => {
+    const sald = { till: "G9002", ar: 2026, manad: 6, dag: null, kopare: null };
+    await sellNow("G9001", 2026, 1, sald, "demo");
+    await undoSale("G9001", 2026, 55, "op", "demo");
+    expect(
+      fetchApi.mock.calls.map(([url, options]) => [url, options.isolateDemo]),
+    ).toEqual([
+      ["/v2/arsrapport/besattning/G9001/2026/forsaljning", true],
+      ["/v2/arsrapport/besattning/G9001/2026/forsaljning/55/angra", true],
+    ]);
+  });
+
   it("gives dryRun, submitReport and withdrawReport the long timeout", async () => {
     await dryRun("G9001", 2026, body, "demo");
     await submitReport("G9001", 2026, body, "demo");

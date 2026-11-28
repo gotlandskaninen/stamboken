@@ -14,6 +14,7 @@ import utils.report_code as report_code
 import utils.settings as settings
 from utils.arsrapport import ArsrapportError
 from utils.arsrapport_pdf import extract_context, render_pdf, render_text
+from utils.buyer_mail import sv_date
 from utils.database import (
     DB_PROXY,
     OUTSIDE_GENEBANK_HERDS,
@@ -180,8 +181,9 @@ def _common(herd, round_):
         "herd": herd.herd,
         "herd_name": herd.herd_name,
         "year": round_.report_year,
-        "deadline": f"{round_.deadline:%Y-%m-%d}",
-        "end_date": f"{round_.end_date:%Y-%m-%d}",
+        # Dates in running text as words, as the buyer mail writes them (Jonas 2026-11-27)
+        "deadline": sv_date(round_.deadline),
+        "end_date": sv_date(round_.end_date),
     }
 
 

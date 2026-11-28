@@ -358,13 +358,13 @@ class StatusTest(ArsrapportTest):
                 self.form_item(herd, "ny")
         self.assertEqual(queries(), few)
 
-    def invite(self, herd, mail_status=None, opened=False):
+    def invite(self, herd, mail_status=None, opened=False, kind="arsrapport.inbjudan"):
         """An active code for `herd` and, when `mail_status` is given, an invitation mail row in that state."""
         member = db.Member.get(db.Member.membership == herd.membership)
         code = report_code.issue_code(herd, self.round_, member, now=NOW)
         if mail_status:
             db.MailMessage.create(
-                kind="arsrapport.inbjudan",
+                kind=kind,
                 recipient_kind="member",
                 recipient_id=member.id,
                 ref_type="access_code",
@@ -403,6 +403,34 @@ class StatusTest(ArsrapportTest):
                 "G9199": None,
             },
         )
+
+    def test_report_link_before_dispatch_and_after_revocation(self):
+        self.assertIsNone(self.rows()["G9001"]["report_link"])
+        code = self.invite(self.h, "queued")
+        self.assertIsNone(self.rows()["G9001"]["report_link"])
+        db.MailMessage.update(status="sent").where(db.MailMessage.ref_id == code.id).execute()
+        self.assertEqual(self.rows()["G9001"]["report_link"], "current")
+        report_code.revoke(code, now=NOW)
+        self.assertEqual(self.rows()["G9001"]["report_link"], "revoked")
+        replacement = self.invite(self.h, "queued", kind="arsrapport.ny_lank")
+        self.assertEqual(self.rows()["G9001"]["report_link"], "revoked")
+        db.MailMessage.update(status="sent").where(db.MailMessage.ref_id == replacement.id).execute()
+        self.assertEqual(self.rows()["G9001"]["report_link"], "current")
+        db.MailMessage.delete().where(db.MailMessage.ref_id == replacement.id).execute()
+        self.assertEqual(self.rows()["G9001"]["report_link"], "current")
+
+    def test_only_queued_and_sending_invitations_hide_link_actions(self):
+        code = self.invite(self.h, "queued")
+        for link in ("current", "revoked"):
+            if link == "revoked":
+                report_code.revoke(code, now=NOW)
+            for status in ("queued", "sending", "sent", "cancelled", "logged", "failed", "bounced", "blocked"):
+                with self.subTest(link=link, status=status):
+                    db.MailMessage.update(status=status).where(db.MailMessage.ref_id == code.id).execute()
+                    expected = None if status in ("queued", "sending") else link
+                    self.assertEqual(self.rows()["G9001"]["report_link"], expected)
+        db.MailMessage.delete().where(db.MailMessage.ref_id == code.id).execute()
+        self.assertEqual(self.rows()["G9001"]["report_link"], "revoked")
 
     def test_status_no_email_flag(self):
         self.herd("G9102", email=None)

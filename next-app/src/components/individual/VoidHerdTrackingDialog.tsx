@@ -46,7 +46,8 @@ interface VoidHerdTrackingDialogProps {
   mode: VoidMode;
   busy: boolean;
   error: string | null;
-  note?: React.ReactNode; // what the undo does, said before it is asked (the yearly report's Ångra)
+  // The yearly report's Ångra: what the undo does, in the member's words, instead of the history row
+  summary?: React.ReactNode;
   onClose: () => void;
   onConfirm: (reason: string, operationId: string) => void;
 }
@@ -79,7 +80,7 @@ function VoidDialogContent({
   mode,
   busy,
   error,
-  note,
+  summary,
   onClose,
   onConfirm,
 }: VoidHerdTrackingDialogProps) {
@@ -97,12 +98,15 @@ function VoidDialogContent({
     >
       <DialogTitle>{TITLES[mode]}</DialogTitle>
       <DialogContent>
-        {row && (
-          <p className="sb-meta">
-            {row.date} · {KIND_LABELS[row.kind]} · {row.herd.label}
-          </p>
+        {summary ? (
+          <p style={{ marginTop: 0 }}>{summary}</p>
+        ) : (
+          row && (
+            <p className="sb-meta">
+              {row.date} · {KIND_LABELS[row.kind]} · {row.herd.label}
+            </p>
+          )
         )}
-        {note && <p className="sb-meta">{note}</p>}
         {!replaced && (
           <>
             <label className="sb-label" htmlFor="ht-void-reason">
@@ -121,7 +125,7 @@ function VoidDialogContent({
             </p>
           </>
         )}
-        {row && isBeforeLatestSnapshot(row.date) && (
+        {!summary && row && isBeforeLatestSnapshot(row.date) && (
           <p className="sb-meta" role="note">
             {GENETICS_INFO}
           </p>

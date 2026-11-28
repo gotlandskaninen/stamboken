@@ -144,7 +144,7 @@ class TestUnanswered(ReminderTest):
             self.build(row)
         self.assertEqual(later.exception.until, datetime(2026, 2, 6, 7, 0, tzinfo=STOCKHOLM))
         self.now = datetime(2026, 2, 6, 7, 0, tzinfo=STOCKHOLM)
-        self.assertIn("Sista dag för stödet var 2026-02-05.", mail.render(row.kind, self.build(row))[1])
+        self.assertIn("Sista dag för stödet var 5 februari 2026.", mail.render(row.kind, self.build(row))[1])
         self.now = datetime(2026, 2, 6, 7, 0, tzinfo=STOCKHOLM) + timedelta(days=remind.UNANSWERED_DAYS)
         self.assertIsNone(self.build(row))  # too late: not sent at all
 

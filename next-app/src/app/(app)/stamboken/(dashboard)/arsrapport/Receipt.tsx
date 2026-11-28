@@ -14,6 +14,7 @@ import {
   fmtDate,
   fmtTime,
   refusalText,
+  wordForm,
   type Receipt as ReceiptData,
   type ReportView,
   type Summary,
@@ -74,6 +75,7 @@ export function Receipt({
     headRef.current?.focus();
   }, [focusOnMount]);
   const sum = receipt?.summary ?? summaryOf(view);
+  const unstatedLabel = wordForm(sum.ej_angivna, "Ej angiven", "Ej angivna");
   // A caretaker's or the link's withdrawal leaves the owner's sales standing (FB5), so it is always offered.
   const canWithdraw = !!report?.can_withdraw;
   // right after Skicka, until the view is fetched again, the receipt says what waits; then the view alone, since a
@@ -125,9 +127,9 @@ export function Receipt({
       <div className={styles.stats}>
         {[
           ["Finns kvar", sum.kvar],
-          ["Döda", sum.doda],
-          ["Sålda", sum.salda],
-          ...(sum.ej_angivna ? [["Ej angivna", sum.ej_angivna]] : []),
+          [wordForm(sum.doda, "Död", "Döda"), sum.doda],
+          [wordForm(sum.salda, "Såld", "Sålda"), sum.salda],
+          ...(sum.ej_angivna ? [[unstatedLabel, sum.ej_angivna]] : []),
         ].map(([label, n]) => (
           <div key={label}>
             <div className={styles.statNum}>{n}</div>
@@ -175,9 +177,7 @@ export function Receipt({
         </div>
       )}
       {hasDraft && (
-        <ReportStatus status={{ kind: "saved", at: null, changing: true }}>
-          <p>Du har ändringar som inte är inskickade.</p>
-        </ReportStatus>
+        <ReportStatus status={{ kind: "saved", at: null, changing: true }} />
       )}
       {!report ? null : report.can_change ? (
         <div className={styles.actions}>

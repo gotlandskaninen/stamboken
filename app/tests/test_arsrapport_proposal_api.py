@@ -336,7 +336,7 @@ class ProposalApiTest(ArsrapportTest):
     def test_approved_sale_flags_buyer_report(self):  # FB4
         self.owner.add_role("owner", self.g9002.id)
         self.reported(self.g9002)  # the buyer's report came in on day 0
-        proposal = self.first()
+        proposal = self.first(self.sald(self.a, "G9002", 2025, 10, 31))
         self.day(1)
         self.assertEqual(self.decide(proposal, "godkann").status_code, 200)
         self.assertEqual(self.flags("G9002")["kopt_efter_inskick"], 1)
@@ -347,8 +347,8 @@ class ProposalApiTest(ArsrapportTest):
         subject, text = mail.render(row.kind, mail.MAIL_KINDS[row.kind].build(row.params))
         self.assertEqual(subject, f"{self.a.number} är registrerad i din besättning")
         self.assertIn(
-            f"{self.a.number} är registrerad i din besättning från 2025-10-03. Ändra din årsrapport och välj Finns kvar"
-            " för kaninen, så räknas den den 31 december.",
+            f"{self.a.number} är registrerad i din besättning från 31 oktober 2025. Ändra din årsrapport och välj "
+            "Finns kvar för kaninen, så räknas den den 31 december.",
             text,
         )
         self.day(2)  # the buyer changes the report: a is on its list now, and the flag goes
@@ -358,6 +358,15 @@ class ProposalApiTest(ArsrapportTest):
         arsrapport.submit(self.g9002, self.round_, access, buyer, arsrapport.parse_submission(body, paper=False))
         self.assertEqual(self.flags("G9002")["kopt_efter_inskick"], 0)
         self.assertEqual(rows(self.a, "ATTESTATION")[0].herd_id, self.g9002.id)
+
+    def test_month_only_purchase_mail_omits_day(self):
+        self.reported(self.g9002)
+        proposal = self.first(self.sald(self.a, "G9002", 2025, 10))
+        self.day(1)
+        self.assertEqual(self.decide(proposal, "godkann").status_code, 200)
+        (row,) = mails("arsrapport.kop_godkant")
+        _, text = mail.render(row.kind, mail.MAIL_KINDS[row.kind].build(row.params))
+        self.assertIn(f"{self.a.number} är registrerad i din besättning från oktober 2025.", text)
 
     def test_approval_after_end_date_flags_the_buyer_without_a_mail(self):  # L1: the buyer cannot change it now
         self.reported(self.g9002)

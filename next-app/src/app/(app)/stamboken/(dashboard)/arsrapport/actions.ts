@@ -4,13 +4,16 @@ import { cookies } from "next/headers";
 import { fetchApi, ApiError } from "@/lib/api";
 import { MODE_COOKIE, parseMode, type Mode } from "@/lib/mode";
 import type { ActionResult } from "../inkorg/actions";
+import { reportYears, type QueueList, type RoundRow } from "../inkorg/lib";
 import {
   SUBMIT_TIMEOUT_MS,
+  todayStockholm,
   type Completion,
   type DraftData,
   type Father,
   type Litter,
   type LitterBody,
+  type Matrikel,
   type PurchaseBody,
   type PurchasePhotosBody,
   type PurchaseNotice,
@@ -101,6 +104,96 @@ export async function saveDraft(
   );
 }
 
+export async function saveAccount(
+  herd: string,
+  year: number,
+  konto: NonNullable<Matrikel["konto"]>,
+  env: Mode,
+) {
+  return call<{ konto: string }>(
+    env,
+    path(herd, year, "/konto"),
+    "PUT",
+    konto,
+    {
+      isolateDemo: true,
+    },
+  );
+}
+
+export async function saveReportContact(
+  herd: string,
+  year: number,
+  field: "phone" | keyof NonNullable<Matrikel["adress"]>,
+  value: string,
+  env: Mode,
+) {
+  return call<{ ok: true }>(
+    env,
+    path(herd, year, "/kontakt"),
+    "PATCH",
+    { [field]: value },
+    { isolateDemo: true },
+  );
+}
+
+export async function requestReportEmailCode(
+  herd: string,
+  year: number,
+  email: string,
+  env: Mode,
+) {
+  return call<{ email_code_sent: boolean; email_refused?: string }>(
+    env,
+    path(herd, year, "/epost/kod"),
+    "POST",
+    { email },
+    { isolateDemo: true },
+  );
+}
+
+export async function cancelReportEmailCode(
+  herd: string,
+  year: number,
+  env: Mode,
+) {
+  return call<void>(env, path(herd, year, "/epost/kod"), "DELETE", undefined, {
+    isolateDemo: true,
+  });
+}
+
+export async function verifyReportEmailCode(
+  herd: string,
+  year: number,
+  code: string,
+  env: Mode,
+) {
+  return call<void>(
+    env,
+    path(herd, year, "/epost/verifiera"),
+    "POST",
+    { code },
+    {
+      isolateDemo: true,
+    },
+  );
+}
+
+export async function saveReportConsent(
+  herd: string,
+  year: number,
+  answer: Required<NonNullable<Matrikel["publicering"]>>,
+  env: Mode,
+) {
+  return call<{ publicering_version: number }>(
+    env,
+    path(herd, year, "/publicering"),
+    "PUT",
+    answer,
+    { isolateDemo: true },
+  );
+}
+
 export async function dryRun(
   herd: string,
   year: number,
@@ -128,6 +221,51 @@ export async function submitReport(
     timeout: SUBMIT_TIMEOUT_MS,
     isolateDemo: true,
   });
+}
+
+export async function nextPaperForm(env: Mode): Promise<string> {
+  const inbox = "/stamboken/inkorg";
+  const rounds = await call<{ rounds: RoundRow[] }>(
+    env,
+    "/v2/arsrapport/rundor",
+    "GET",
+    undefined,
+    { isolateDemo: true },
+  );
+  if (!rounds.ok) return inbox;
+  const today = todayStockholm();
+  let offset = 0;
+  while (true) {
+    const page = await call<QueueList>(
+      env,
+      `/v2/inkorg?paper_entry=1&offset=${offset}`,
+      "GET",
+      undefined,
+      { isolateDemo: true },
+    );
+    if (!page.ok || !page.data.items.length) return inbox;
+    let lost = 0;
+    for (const item of page.data.items) {
+      const years = reportYears(rounds.data.rounds, item.genebank_id, today);
+      if (!item.herd || !years.length) continue;
+      const taken = await call(
+        env,
+        `/v2/inkorg/${item.id}/ta`,
+        "POST",
+        { paper_entry: true },
+        { isolateDemo: true },
+      );
+      if (!taken.ok) {
+        if (![404, 409].includes(taken.problem.status)) return inbox;
+        lost++;
+        continue;
+      }
+      if (years.length > 1) return `${inbox}/${item.id}`;
+      return `/stamboken/arsrapport/${item.herd}/${years[0]}?post=${item.id}`;
+    }
+    if (offset + page.data.items.length >= page.data.total) return inbox;
+    offset += page.data.items.length - lost; // refused items have left the filtered queue
+  }
 }
 
 export async function dryRunCompletion(

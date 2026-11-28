@@ -33,6 +33,7 @@ const row = (
   state,
   needs_report: state !== "inskickad" && state !== "avslutar",
   inbjudan: null,
+  report_link: null,
   last_reminder: null,
   ingen_epost: state === "ingen_epost",
   source: null,

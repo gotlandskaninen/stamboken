@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { fetchApi, ApiError } from "@/lib/api";
+import type { Mode } from "@/lib/mode";
 import type { Consent } from "./types";
 
 // Legacy /api/profile returns 200 {"status": "error"} on failures —
@@ -78,18 +79,22 @@ type ContactResult =
   | { ok: true; codeSent: boolean; emailRefused?: string }
   | { ok: false; error: string };
 
-export async function updateContact(patch: {
-  phone?: string;
-  email?: string;
-  address?: string;
-  postal_code?: string;
-  city?: string;
-}): Promise<ContactResult> {
+export async function updateContact(
+  patch: {
+    phone?: string;
+    email?: string;
+    address?: string;
+    postal_code?: string;
+    city?: string;
+  },
+  expectedMode?: Mode,
+): Promise<ContactResult> {
   try {
     const me = await fetchApi<{
       email_code_sent?: boolean;
       email_refused?: string;
     }>("/v2/members/me/contact", {
+      expectedMode,
       method: "PATCH",
       body: JSON.stringify(patch),
       headers: { "Content-Type": "application/json" },
@@ -104,9 +109,12 @@ export async function updateContact(patch: {
 }
 
 // Avbryt: the session's pending code stops working on the server too.
-export async function cancelEmailCode(): Promise<Result> {
+export async function cancelEmailCode(expectedMode?: Mode): Promise<Result> {
   try {
-    await fetchApi("/v2/members/me/contact/kod", { method: "DELETE" });
+    await fetchApi("/v2/members/me/contact/kod", {
+      method: "DELETE",
+      expectedMode,
+    });
     return { ok: true };
   } catch (err) {
     return { ok: false, error: describe(err) };
@@ -115,9 +123,13 @@ export async function cancelEmailCode(): Promise<Result> {
 
 // The change ends every session of the account, this one too: no revalidate,
 // the form asks the member to sign in again.
-export async function verifyEmailCode(code: string): Promise<Result> {
+export async function verifyEmailCode(
+  code: string,
+  expectedMode?: Mode,
+): Promise<Result> {
   try {
     await fetchApi("/v2/members/me/contact/verifiera", {
+      expectedMode,
       method: "POST",
       body: JSON.stringify({ code }),
       headers: { "Content-Type": "application/json" },
