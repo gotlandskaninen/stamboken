@@ -223,6 +223,10 @@ from cli.users import users_cli  # noqa: E402
 
 APP.cli.add_command(users_cli)
 
+from cli.certificates import certificates_cli  # noqa: E402
+
+APP.cli.add_command(certificates_cli)
+
 
 @genetics_cli.command("recompute-history")
 @click.argument("genebank_id", type=int)
