@@ -183,7 +183,7 @@ class ReissueV1Test(CertV2Mixin, FlaskTest):
         father = self.rabbit.breeding.father
         herd, aki = father.number.split("-")
         self.rabbit = self.v1_rabbit(self.rabbit, 4711, FarÅrKullIndivid="1999")
-        self.assert_stopped(reissue_cli.CHANGED, "--tillat-nytt-nummer")  # a littermate put in as father looks alike
+        self.assert_stopped(reissue_cli.UNPROVEN, "--tillat-nytt-nummer")  # a littermate put in as father looks alike
         db.AuditLog.create(
             table_name="individual",
             record_id=str(father.id),
@@ -206,7 +206,7 @@ class ReissueV1Test(CertV2Mixin, FlaskTest):
                 old_data={"number": f"{herd}-1999"},
                 new_data={"number": record.number},
             )
-        self.assert_stopped(reissue_cli.CHANGED, "--tillat-nytt-nummer")
+        self.assert_stopped(reissue_cli.UNPROVEN, "--tillat-nytt-nummer")
 
     def test_fields_the_v1_certificate_never_had_are_left_empty_unless_asked(self):
         update = db.Individual.update(foot_ring="FGK 218", microchip="752098100012345", rex=True)

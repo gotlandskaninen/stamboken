@@ -55,6 +55,7 @@ NO_RIGHT = "kontot med namnet får inte utfärda för uppfödarbesättningen"
 OTHER_HERD = "v1-intyget utfärdades i en annan besättning än uppfödarens"
 CHANGED = "uppgifterna har ändrats sedan v1-intyget"
 NUMBER_CHANGED = "bara numret har ändrats sedan v1-intyget (kaninens eller en förälders)"
+UNPROVEN = "en anfaders nummer har ändrats, utan belägg i audit-loggen för att det är samma kanin"
 FAILED = "fel vid utfärdandet"
 
 # Fields that are not facts about the rabbit: who, where and when it was attested, and the number checked on its own.
@@ -153,8 +154,10 @@ def check(rabbit, pdf, allow_number=False):
         for field, key in FORM_KEYS.items()
         if key not in NOT_COMPARED and normalised(fields.get(field)) != normalised(today.get(key))
     )
-    if changed and not (set(changed) <= NUMBER_FIELDS and all(renumbered(rabbit, fields, today, changed))):
+    if changed and not set(changed) <= NUMBER_FIELDS:
         raise Stop(CHANGED, changed)
+    if changed and not all(renumbered(rabbit, fields, today, changed)):
+        raise Stop(UNPROVEN, changed)
     if changed and not allow_number:
         raise Stop(NUMBER_CHANGED, changed)
     return user
