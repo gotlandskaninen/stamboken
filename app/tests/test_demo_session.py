@@ -115,13 +115,15 @@ class TestDemoSessions(DatabaseTest):
         prod = APP.test_client(use_cookies=True)
         self.login(prod)
         admin = APP.test_client(use_cookies=True)
+        # Other tests in a parallel worker incr and decr the shared key, which leaves "0" rather than no key.
+        epoch = self.session_redis.get("logout-epoch")
         with as_demo():
             self.login(admin, "admin")
             resp = admin.post("/api/v2/admin/sessions/mass-logout")
         self.assertEqual(resp.status_code, 403)
         self.assertEqual(resp.mimetype, "application/problem+json")
         self.assertEqual(resp.get_json()["type"], "demo-instance")
-        self.assertIsNone(self.session_redis.get("logout-epoch"))
+        self.assertEqual(self.session_redis.get("logout-epoch"), epoch)
         self.assertEqual(prod.get("/api/user").status_code, 200)
 
     def test_failed_demo_login_never_saves_an_unmarked_user(self):
