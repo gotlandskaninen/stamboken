@@ -18,6 +18,7 @@ import {
   renewMyGrant,
   revokeMyGrant,
 } from "./actions";
+import { MANUAL_PATH } from "@/lib/constants";
 import { useSnackbar } from "@/components/SnackbarProvider";
 import { useNotifications } from "@/contexts/NotificationContext";
 import { ROLE_LABELS } from "./types";
@@ -160,9 +161,7 @@ export function PersonerClient({
           <div className={styles.cellActions}>
             <a
               className="sb-btn sb-btn-ghost sb-btn-sm"
-              href="/stamboken-online/manual#lägg-till-en-familjemedlem-eller-skötare"
-              target="_blank"
-              rel="noopener"
+              href={`${MANUAL_PATH}#lägg-till-en-familjemedlem-eller-skötare`}
             >
               Hur gör jag?
             </a>

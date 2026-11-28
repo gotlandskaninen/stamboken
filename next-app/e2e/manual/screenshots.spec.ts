@@ -280,7 +280,9 @@ async function act(page: Page, action: string) {
         .click();
       break;
     case "fill": {
-      const [label, value] = arg.split("=");
+      const eq = arg.indexOf("=");
+      const label = arg.slice(0, eq);
+      const value = arg.slice(eq + 1);
       await page.getByRole("dialog").getByLabel(label).fill(value);
       break;
     }
