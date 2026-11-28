@@ -79,16 +79,14 @@ def published_rules():
 
 
 def _existing_account(person, address):
-    addresses = {a.strip().lower() for a in (person.email, address, person.workspace_email) if a}
+    addresses = {a.strip().lower() for a in (person.email, address) if a}
     linked_accounts = Member.select(Member.user).where(Member.user.is_null(False))
-    if (
-        User.select()
-        .where(
-            User.id.not_in(linked_accounts),
-            fn.LOWER(fn.BTRIM(User.email)).in_(addresses) | fn.LOWER(fn.BTRIM(User.google_email)).in_(addresses),
-        )
-        .exists()
-    ):
+    email, google = fn.LOWER(fn.BTRIM(User.email)), fn.LOWER(fn.BTRIM(User.google_email))
+    mine = User.id.not_in(linked_accounts) & (email.in_(addresses) | google.in_(addresses))
+    if workspace := (person.workspace_email or "").strip().lower():
+        # Her provisioned Workspace address is her own sign-in, also on an account linked to someone else.
+        mine |= (email == workspace) | (google == workspace)
+    if User.select().where(mine).exists():
         return True
 
     herd_ids = {str(h.id) for h in Herd.select(Herd.id).where(Herd.membership == person.membership_id)}

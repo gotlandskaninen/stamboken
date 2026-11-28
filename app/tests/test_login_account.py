@@ -258,8 +258,8 @@ class TestLoginAccount(MatrikelApiTest):
         self.assertTrue(login_account._existing_account(self.member, self.member.email))
 
     def test_a_keepers_owner_account_does_not_stop_the_main_members_account(self):
-        """#316: an account linked to another active person of the membership is hers. One linked to an ended row, or
-        to a row in another membership, may be the main member's own and still stops her."""
+        """#316: an account linked to another active person of the membership is that person's. One linked to an ended
+        row, or to a row in another membership, or holding her Workspace address, may be hers and still stops her."""
         keeper = _mk_person(self.member.membership, "Test", "Keeper", "keeper@example.org", role="skotare")
         account = data_access.register_user("keeper-account@example.org", "pass", username="keeper")
         matrikel.link_member_user(keeper.id, account.id, actor=self.admin, mode="admin")
@@ -272,6 +272,10 @@ class TestLoginAccount(MatrikelApiTest):
             db.Member.update(**change).where(db.Member.id == keeper.id).execute()
             self.assertTrue(login_account._existing_account(self.member, self.member.email), change)
             db.Member.update(**undo).where(db.Member.id == keeper.id).execute()
+        db.Member.update(workspace_email="main.ws@example.org").where(db.Member.id == self.member.id).execute()
+        db.User.update(google_email="Main.WS@example.org").where(db.User.id == account.id).execute()
+        self.assertTrue(login_account._existing_account(db.Member.get_by_id(self.member.id), self.member.email))
+        db.User.update(google_email=None).where(db.User.id == account.id).execute()
         self.pending()
         self.assertEqual(self.create().status_code, 200)
         self.assertIsNotNone(db.Member.get_by_id(self.member.id).user_id)
