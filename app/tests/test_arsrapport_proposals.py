@@ -158,6 +158,22 @@ class ProposalsTest(ArsrapportTest):
         self.assertIsNone(arsrapport.report_access(db.User.get_by_id(self.caretaker.id), self.h))
         self.assertIsNone(arsrapport.report_access(db.User.get_by_id(family.id), self.h))
 
+    def test_a_revoked_grant_writes_nothing_with_the_access_it_had(self):  # #326: read again under the report lock
+        self.send(
+            self.sald(self.a, "G9002", 2025, 10, 3),
+            self.kvar(self.b, vikt=2.8),
+            self.kvar(self.c, vikt=2.8),
+            who="caretaker",
+        )
+        access, user = self.actor("caretaker")  # as the route read it, before the revoke
+        db.HerdAccessGrant.update(revoked_at=datetime.now()).execute()
+        with self.assertRaises(ArsrapportError) as caught:
+            arsrapport.withdraw(self.h, self.round_, access, user, revision=self.report().revision)
+        self.assertEqual(caught.exception.status, 403)
+        self.assertEqual(self.report().status, "submitted")
+        (sale,) = rows(self.a, "TRANSFER")
+        self.assertIsNone(sale.voided_at)
+
     def test_link_sale_becomes_proposal(self):
         receipt = self.send(
             self.sald(self.a, "G9002", 2025, 10, 3),

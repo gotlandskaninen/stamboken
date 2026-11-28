@@ -101,7 +101,7 @@ def lock_herd_codes(herd: Herd) -> None:
     Lock order: this lock first, then code rows; the invitation job and new_link take the round row before it, as a
     moved end_date takes the row before the codes (arsrapport.follow_end_date). It is never taken under the report lock,
     and nothing holding it takes the report lock, so a submission (report lock, then FOR SHARE on its code row in
-    _recheck_code) can wait for a revoke to commit but never form a cycle with it.
+    _recheck_access) can wait for a revoke to commit but never form a cycle with it.
     """
     DB_PROXY.execute_sql("SELECT pg_advisory_xact_lock(%s, %s)", (_HERD_CODE_LOCK, herd.id))
 

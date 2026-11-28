@@ -492,10 +492,15 @@ def require_valid_code(code_id, herd, on=None, *, lock=False):
         raise ArsrapportError(403, LINK_INVALID, code="lank_ogiltig")
 
 
-def _recheck_code(access, herd, on=None):
-    """E4 again, under the report's lock: the manager may have revoked the code since the page."""
+def _recheck_access(access, user, herd, on=None):
+    """
+    E4 again, under the report's lock: the manager may have revoked the code since the page. An account's right is
+    read again too, so a grant revoked or expired since the route read it writes nothing (#326).
+    """
     if access.code is not None:
         require_valid_code(access.code.id, herd, on, lock=True)
+    elif access.source == "login" and report_access(user, herd) != access:
+        raise ArsrapportError(403, "Du har inte tillgång till årsrapporten för besättningen.")
 
 
 def without_reason(sub):
@@ -928,7 +933,7 @@ def save_draft(herd, round_, access, user, data, updated_at, submission_key, rev
         round_ = _lock_round(round_)  # first, as Skicka: a round closed meanwhile is read here
         require_open(round_, herd, access, day)
         lock_report(round_, herd)
-        _recheck_code(access, herd, day)
+        _recheck_access(access, user, herd, day)
         draft = _draft(herd, round_)
         report = current_report(herd, round_)
         listed = report_list(herd, round_.report_year, report)
@@ -3607,7 +3612,7 @@ def submit(herd, round_, access, user, sub, *, now=None, completion=False) -> di
     with DB_PROXY.atomic():
         round_ = _lock_round(round_)  # the dates check() reads under the locks: a round closed meanwhile is seen
         lock_report(round_, herd)
-        _recheck_code(access, herd, on)  # E4 before a retry's receipt too; the paper item's exception is below
+        _recheck_access(access, user, herd, on)  # E4 before a retry's receipt too; the paper item's exception is below
         saved = find_submission(sub.key, herd, round_, user, digest)
         if saved is not None:  # before any item gate: a retry after the item closed (Codex 5)
             return receipt(saved)
@@ -3917,7 +3922,7 @@ def sell_now(herd, round_, access, user, rabbit_id, sald, *, now=None):
     with DB_PROXY.atomic():
         round_ = _lock_round(round_)
         lock_report(round_, herd)
-        _recheck_code(access, herd, on)
+        _recheck_access(access, user, herd, on)
         if current_report(herd, round_) is not None:
             raise ArsrapportError(409, SOLD_WITH_SKICKA)
         draft = _draft(herd, round_)
@@ -3996,7 +4001,7 @@ def withdraw(herd, round_, access, user, *, revision, reason=None, now=None) -> 
     with DB_PROXY.atomic():
         round_ = _lock_round(round_)  # its end_date as kept_until reads it
         lock_report(round_, herd)
-        _recheck_code(access, herd, on)
+        _recheck_access(access, user, herd, on)
         # The membership before the report row and the link's change rows, as Skicka; the confirmation page takes it
         # before those rows too, so cancelling them below never deadlocks with a Bekräfta (review round 2).
         _lock_matrikel(herd)
@@ -4502,7 +4507,7 @@ def _litter_write(herd, round_, access, user, write):
         round_ = _lock_round(round_)  # first, as Skicka: a round closed meanwhile is read here
         on = require_round_open(herd, round_, access)
         lock_report(round_, herd)
-        _recheck_code(access, herd, on)
+        _recheck_access(access, user, herd, on)
         paper = access.item is not None
         item, pages = _lock_form(access, user, herd) if paper else (None, [])
         report = current_report(herd, round_)
