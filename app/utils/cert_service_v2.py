@@ -169,7 +169,7 @@ def write_durably(path, data):
     sync_directories(os.path.dirname(path))
 
 
-def generate_and_store(individual, user, ind_data, user_id, replaces_v1=False):
+def generate_and_store(individual, user, ind_data, user_id, replaces_v1=False, blank=()):
     """Generate, sign, and store a v2 certificate.
 
     Order of operations (failure-safe):
@@ -185,6 +185,8 @@ def generate_and_store(individual, user, ind_data, user_id, replaces_v1=False):
     digital_certificate assignment on the individual. On rollback an orphaned
     file may remain on disk — harmless, no DB row references it.
 
+    `blank` names template fields printed empty: the v1 reissue leaves out what the v1 certificate never attested.
+
     Returns (cert_row, signed_pdf).
     Raises SigningUnavailableError if signing credentials are missing.
     Raises OSError if the file cannot be written.
@@ -193,6 +195,7 @@ def generate_and_store(individual, user, ind_data, user_id, replaces_v1=False):
     qr_url = f"{service_settings.host}/stamboken/verifiera/{token}"
 
     cert_data = build_cert_data(individual, ind_data, user_id)
+    cert_data.update(dict.fromkeys(blank))  # None: rex then falls back to the hair notes, as v1 printed them
 
     # Re-issue: reference the certificate this one replaces (printed as
     # "Ersätter intyg utfärdat …"). Read before the atomic block flips it.
