@@ -170,6 +170,19 @@ class ReissueV1Test(CertV2Mixin, FlaskTest):
         result = self.assert_stopped(reissue_cli.CHANGED)
         self.assertIn("ändrat fält IdNamn: 1", result.output)
 
+    def test_a_number_changed_since_v1_is_reported_apart_and_can_be_allowed(self):
+        self.rabbit = self.v1_rabbit(self.rabbit, 4711, IdÅrKullIndivid="2111", FarÅrKullIndivid="1999")
+        result = self.assert_stopped(reissue_cli.NUMBER_CHANGED)
+        self.assertNotIn(reissue_cli.CHANGED + "\n", result.output)
+        self.assertIn("ändrat fält IdÅrKullIndivid: 1", result.output)
+        result = self.invoke("--run", "--tillat-nytt-nummer")
+        self.assertIn("Återutfärdade: 1", result.output, result.output)
+        self.assertEqual(self.pedigree.call_args.args[0]["genebank_aki"], self.rabbit.number.split("-")[1])  # today's
+
+    def test_a_number_and_another_field_changed_is_a_change(self):
+        self.rabbit = self.v1_rabbit(self.rabbit, 4711, IdÅrKullIndivid="2111", IdNamn="Ett annat namn")
+        self.assert_stopped(reissue_cli.CHANGED, "--tillat-nytt-nummer")
+
     def test_no_v1_pdf_stops_the_rabbit(self):
         rabbit = self.individuals[0]
         db.Individual.update(certificate=None, digital_certificate=4712).where(db.Individual.id == rabbit.id).execute()

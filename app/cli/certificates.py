@@ -54,10 +54,14 @@ INACTIVE = "kontot med namnet är inaktivt"
 NO_RIGHT = "kontot med namnet får inte utfärda för uppfödarbesättningen"
 OTHER_HERD = "v1-intyget utfärdades i en annan besättning än uppfödarens"
 CHANGED = "uppgifterna har ändrats sedan v1-intyget"
+NUMBER_CHANGED = "bara numret har ändrats sedan v1-intyget (kaninens eller en förälders)"
 FAILED = "fel vid utfärdandet"
 
 # Fields that are not facts about the rabbit: who, where and when it was attested, and the number checked on its own.
 NOT_COMPARED = {"", "fullname", "herd", "issue_date", "digital_certificate"}
+# A renumbering (a new number, litters renumbered, a corrected birth year or origin herd) is a correction the genebank
+# managers may make (Jonas 2026-11-28): reported apart, and with --tillat-nytt-nummer reissued under today's number.
+NUMBER_FIELDS = {field for field, key in FORM_KEYS.items() if key.endswith(("genebank_number", "genebank_aki"))}
 
 
 class Stop(Exception):
@@ -123,7 +127,7 @@ def attester(rabbit, fields):
     return user
 
 
-def check(rabbit, pdf):
+def check(rabbit, pdf, allow_number=False):
     """The account to attest `rabbit`'s v2 certificate, or Stop. Reads the database and the PDF, writes nothing."""
     if rabbit.cert_state() != CertState.DIGITAL_NUMBER:
         raise Stop(STATE)
@@ -137,8 +141,10 @@ def check(rabbit, pdf):
         for field, key in FORM_KEYS.items()
         if key not in NOT_COMPARED and normalised(fields.get(field)) != normalised(today.get(key))
     )
-    if changed:
+    if changed and not set(changed) <= NUMBER_FIELDS:
         raise Stop(CHANGED, changed)
+    if changed and not allow_number:
+        raise Stop(NUMBER_CHANGED, changed)
     return user
 
 
@@ -170,7 +176,7 @@ def archive(rabbit, pdf):
     sync_directories(ARCHIVE)  # the link and any directory made for it outlast a crash after the v2 row commits
 
 
-def reissue(rabbit):
+def reissue(rabbit, allow_number=False):
     """Check, archive and reissue one rabbit in its own transaction under its row and number locks, or Stop."""
     with db.DATABASE.atomic():
         if not da.lock_individual_for_edit(rabbit.id):
@@ -178,7 +184,7 @@ def reissue(rabbit):
         rabbit = db.Individual.get_by_id(rabbit.id)
         number_assets.lock_number(rabbit.number, xact=True)  # a renumber moves the v1 file in S3 under this lock
         pdf = v1_pdf(rabbit)
-        user = check(rabbit, pdf)
+        user = check(rabbit, pdf, allow_number)
         archive(rabbit, pdf)
         generate_and_store(rabbit, user, rabbit.as_dict(), user.uuid, replaces_v1=True)
     invalidate_caches(rabbit)
@@ -189,7 +195,10 @@ def reissue(rabbit):
 @click.option("--limit", type=click.IntRange(min=1), default=None, help="Återutfärda högst så många kaniner.")
 @click.option("--number", default=None, help="Bara den här kaninen, t.ex. G1157-2432.")
 @click.option("--visa-namn", is_flag=True, help="Visa intygarna i besättningar med flera intygare.")
-def reissue_v1(run, limit, number, visa_namn):
+@click.option(
+    "--tillat-nytt-nummer", is_flag=True, help="Återutfärda också när bara numret har ändrats sedan v1-intyget."
+)
+def reissue_v1(run, limit, number, visa_namn, tillat_nytt_nummer):
     """Give the v1 certificates a v2 certificate attested by the original issuer (stamboken #142)."""
     current = db.DigitalCertificateV2.select().where(
         (db.DigitalCertificateV2.individual == db.Individual.id) & db.DigitalCertificateV2.is_current
@@ -209,7 +218,7 @@ def reissue_v1(run, limit, number, visa_namn):
         try:
             if run:
                 try:
-                    reissue(rabbit)
+                    reissue(rabbit, tillat_nytt_nummer)
                 except (Stop, SigningUnavailableError, ClientError, BotoCoreError):
                     raise
                 except Exception as exc:  # pylint: disable=broad-except  # one rabbit's failure must not stop the rest
@@ -220,11 +229,11 @@ def reissue_v1(run, limit, number, visa_namn):
                     attesters[herd].add(normalised(v1_fields(pdf).get("IntygasAv")))
                 except Stop:
                     pass
-                check(rabbit, pdf)
+                check(rabbit, pdf, tillat_nytt_nummer)
             done += 1
         except Stop as stop:
             stopped.append((rabbit.number, herd, stop.reason))
-            fields_changed.update(stop.fields)
+            fields_changed.update((stop.reason, field) for field in stop.fields)
         except SigningUnavailableError as exc:
             raise click.ClickException(f"Signeringen är inte tillgänglig. {done} återutfärdade innan.") from exc
         except (ClientError, BotoCoreError) as exc:
@@ -234,8 +243,9 @@ def reissue_v1(run, limit, number, visa_namn):
     click.echo(f"Stoppade, behåller v1-intyget: {len(stopped)}")
     for reason, count in Counter(reason for _, _, reason in stopped).most_common():
         click.echo(f"  {count} {reason}")
-    for field, count in fields_changed.most_common():
-        click.echo(f"    ändrat fält {field}: {count}")
+        for (stopped_for, field), times in fields_changed.most_common():
+            if stopped_for == reason:
+                click.echo(f"    ändrat fält {field}: {times}")
     for rabbit_number, herd, reason in stopped:
         click.echo(f"  {rabbit_number} (besättning {herd}): {reason}")
     several = {herd: names_read - {""} for herd, names_read in attesters.items() if len(names_read - {""}) > 1}
