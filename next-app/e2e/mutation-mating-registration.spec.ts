@@ -35,21 +35,15 @@ test.describe("Mating Registration", () => {
     // click + pressSequentially + Tab commits the value reliably.
     // MUI X v9: pickers render a sectioned field (role=group), not a labeled input
     const dateInput = page.getByRole("group", { name: /parningsdatum/i });
-    // The doe may not mate inside the gestation window of another mating, and
-    // mutation-manual-flows registers matings for the same pair from 2024-12-01
-    // on (birth 2025-odd-month-01 minus 31 days). A random 2025 date landed in
-    // such a window about half the time ("Honan är redan dräktig under detta
-    // datum"), so stay in Jan-Sep 2024: even a Sep 28 mating ends its window (38 days) before 2024-12-01.
-    // Derived from whole seconds, not a bit shift: `Date.now() >> n` casts to
-    // int32, which is negative for weeks at a time and made the month "00".
-    const seconds = Math.floor(Date.now() / 1000);
-    const uniqueDay = String((seconds % 28) + 1).padStart(2, "0");
-    const uniqueMonth = String((Math.floor(seconds / 28) % 9) + 1).padStart(
-      2,
-      "0",
-    );
+    // The doe may not mate inside the 38-day gestation window of another mating (inclusive), and
+    // mutation-manual-flows registers matings for the same pair from 2024-12-01 on. So: the 1st of
+    // an odd month Jan-Sep 2024 (slots >= 59 days apart, the last window ends 2024-11-08), chosen per
+    // minute and moved one slot on each retry, so a retry after an insert that went through still
+    // gets a free date. Five runs in a row fit one seed; then a fresh stack (as in the manual spec).
+    const slot = (Math.floor(Date.now() / 60000) + test.info().retry) % 5;
+    const matingDate = `2024${String(slot * 2 + 1).padStart(2, "0")}01`;
     await dateInput.locator('[data-sectionindex="0"]').click();
-    await dateInput.pressSequentially(`2024${uniqueMonth}${uniqueDay}`);
+    await dateInput.pressSequentially(matingDate);
     await dateInput.press("Tab");
 
     // Submit form
