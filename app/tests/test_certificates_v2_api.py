@@ -1283,8 +1283,9 @@ class TestCertificateV2Authorization(CertV2Mixin, FlaskTest):
             refreshed = db.Individual.get(db.Individual.id == individual.id)
             self.assertIsNotNone(refreshed.digital_certificate)
 
-    def test_caretaker_cannot_sell_via_certificate_issue(self):
-        """A herd-access grant may edit and issue, but a herd change in the issue body is a transfer."""
+    def test_caretaker_genebank_change_via_certificate_issue_is_refused(self):
+        """A herd change in the issue body is a transfer under the sale's rules. A herd-access grant sells as the
+        owner (#326), and a move into another genebank is an admin correction, so this caretaker is refused."""
         self._start_mock_aws()
         import utils.data_access as da
         import utils.database as db
@@ -1298,12 +1299,9 @@ class TestCertificateV2Authorization(CertV2Mixin, FlaskTest):
         )
         db.HerdAccessGrant.create(member=caretaker, herd=self.herds[0], granted_by=self.admin)
         number = self.individuals[3].number  # G1-2112: born in G1, uncertified
-        body = {"herd": "G2", "selling_date": "2021-06-01", "litter_size": 2, "litter_size6w": 2}
+        body = {"herd": "M3", "selling_date": "2021-06-01", "litter_size": 2, "litter_size6w": 2, "reason": "Fel"}
         with self.app as context:
             context.post("/api/login", json={"username": "sune", "password": "pass"})
-            # sanity: the individual route refuses this caretaker the same move
-            denied = context.patch(f"/api/individual/{number}", json=dict(body))
-            self.assertEqual(denied.status_code, 403, denied.get_data(as_text=True))
             response = context.post(f"/api/v2/certificates/issue/{number}", json=dict(body))
             # the update route (paper→digital conversion of G1-2111) merges the body the same way
             updated = context.patch(f"/api/v2/certificates/update/{self.individuals[0].number}", json=dict(body))

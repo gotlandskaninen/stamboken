@@ -257,7 +257,8 @@ class TestTransferPermissionsV2(DatabaseTest):
             self.assertEqual(db.Individual.get(db.Individual.number == number).current_herd.herd, herd)
 
     def test_expired_or_revoked_grant_cannot_sell(self):
-        """Without an active grant the rabbit is not hers to read, so the sale is a 404."""
+        """Without an active grant the sale is refused: a 404 when the rabbit is not hers to read, a 403 from the
+        sale's own gate when she still reads it as a viewer of the genebank."""
         grant = db.HerdAccessGrant.get(db.HerdAccessGrant.member == self.caretaker)
         self._login("sune")
         for change in (
@@ -269,7 +270,19 @@ class TestTransferPermissionsV2(DatabaseTest):
             response = self._patch({"herd": "G2", "selling_date": VALID_DATE})
             self.assertEqual(response.status_code, 404, (change, response.get_data(as_text=True)))
             self.assertEqual(self._tracking_count(), before)
-            self.assertEqual(db.Individual.get(db.Individual.number == REGISTERED).current_herd.herd, "G1")
+        self.caretaker_user.add_role("viewer", self.genebanks[0].id)
+        response = self._patch({"herd": "G2", "selling_date": VALID_DATE})
+        self.assertEqual(response.status_code, 403, response.get_data(as_text=True))
+        self.assertEqual(self._tracking_count(), before)
+        self.assertEqual(db.Individual.get(db.Individual.number == REGISTERED).current_herd.herd, "G1")
+
+    def test_caretaker_cannot_move_via_yearly_report_date(self):
+        """The alternate payload follows the sale rules for a grant holder too: no selling_date, no move."""
+        self._login("sune")
+        before = self._tracking_count()
+        response = self._patch({"herd": "G2", "yearly_report_date": VALID_DATE})
+        self.assertEqual(response.status_code, 400, response.get_data(as_text=True))
+        self.assertEqual(self._tracking_count(), before)
 
     def test_caretaker_can_still_edit_with_current_herd(self):
         """The grant conveys edit rights in the current herd too."""

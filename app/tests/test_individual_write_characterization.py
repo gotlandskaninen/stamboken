@@ -78,7 +78,7 @@ class TestLegacyIndividualWriteCharacterization(FlaskTest):
         return list(db.HerdTracking.select().where(db.HerdTracking.individual == individual.id, db.ht_not_voided()))
 
     def _caretaker(self):
-        """A caretaker of G1: may edit its rabbits but never sell or move them."""
+        """A caretaker of G1: may edit, sell and move its rabbits as the owner does (#326)."""
         membership = db.Membership.create(member_number=6, membership_status="active")
         self.herds[0].membership = membership
         self.herds[0].save()
@@ -373,16 +373,9 @@ class TestLegacyIndividualWriteCharacterization(FlaskTest):
         self._assert_patch(self.owner, self._cross_genebank_sale_body(), GENEBANK_FORBIDDEN)
         self._assert_no_transfer(ind)
 
-    def test_error_order_can_transfer_before_genebank(self):
+    def test_caretaker_cross_genebank_sale_as_the_owner(self):  # #326: a caretaker sells as the owner
         ind = self.individuals[3]
-        expected = {
-            "status": "error",
-            "message": "Du får inte sälja eller flytta individen till den besättningen.",
-            "problem_status": 403,
-            "title": "Åtkomst nekad",
-            "rows": [],
-        }
-        self._assert_patch(self._caretaker(), self._cross_genebank_sale_body(), expected)
+        self._assert_patch(self._caretaker(), self._cross_genebank_sale_body(), GENEBANK_FORBIDDEN)
         self._assert_no_transfer(ind)
 
     def test_admin_cross_genebank_sale_fixed_note(self):

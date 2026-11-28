@@ -102,14 +102,13 @@ class TestNoticeOnlyReportFlows(ArsrapportTest):
         self.assertEqual(db.BuyerContact.select().count(), 1)
 
     def test_not_recorded_proposals_can_be_listed_approved_and_rejected(self):
-        caretaker = self.user("skotare")
-        member = db.Member.create(
-            first_name="Test", last_name="Skötare", membership=self.herd.membership, role="skotare", user=caretaker
+        self.link_submit(
+            self.herd,
+            self.body(
+                self.sald(self.first, "utanfor", 2025, 10, 3, kopare=NOT_RECORDED),
+                self.sald(self.second, "utanfor", 2025, 10, 3, kopare=NOT_RECORDED),
+            ),
         )
-        db.HerdAccessGrant.create(member=member, herd=self.herd, granted_by=self.admin)
-        self.login("skotare")
-        sent = self.submit_sales(NOT_RECORDED, NOT_RECORDED)
-        self.assertEqual(sent.status_code, 200, sent.get_data(as_text=True))
 
         self.login("man")
         listed = self.api("GET", f"{self.report_path}/forslag")

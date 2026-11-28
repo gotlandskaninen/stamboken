@@ -57,13 +57,7 @@ class TestReportReview(ArsrapportTest):
         )
 
     def propose(self, buyer):
-        caretaker = self.user("skotare")
-        member = db.Member.create(
-            first_name="Test", last_name="Skötare", membership=self.herd.membership, role="skotare", user=caretaker
-        )
-        db.HerdAccessGrant.create(member=member, herd=self.herd, granted_by=self.admin)
-        self.login("skotare")
-        self.ok(self.submit(self.sale_body(buyer)))
+        self.link_submit(self.herd, self.sale_body(buyer))
         self.login("man")
         (listed,) = self.ok(self.api("GET", f"{self.report_path}/forslag"))["forslag"]
         return db.SaleProposal.get_by_id(listed["id"])

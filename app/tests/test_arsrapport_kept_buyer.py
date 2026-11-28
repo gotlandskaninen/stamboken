@@ -643,12 +643,8 @@ class KeptBuyerTest(ArsrapportTest):
             with self.subTest(who):
                 named, other = answers("/besattning/G9001/2025/torrkorning")
                 self.assertEqual(named, other)
-        self.login("skotare")  # a proposal takes no kept buyer: refused alike, whatever the reason says
-        named, other = answers("/besattning/G9001/2025/skicka")
-        self.assertEqual((named[0], named), (422, other))
-        self.login("owner")
+        self.login("skotare")  # #326: sells as the owner, and the reason is the system's
         self.ok({**self.resent(), "reason": "Zelda hämtar den i mars"})
-        self.login("skotare")
         self.withdrawn(2, reason="Zelda ångrade sig")
         stored = [row.voided_reason for row in db.HerdTracking.select()]
         stored += [row.void_reason for row in db.YearlyHerdReport.select()]
