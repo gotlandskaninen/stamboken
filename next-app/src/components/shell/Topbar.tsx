@@ -32,6 +32,7 @@ export function Topbar({ inbox = NO_INBOX }: { inbox?: InboxCount }) {
             type="button"
             className={styles.menuBtn}
             aria-label="Meny"
+            data-tour="menu"
             aria-expanded={mobileOpen}
             onClick={() => setMobileOpen((v) => !v)}
           >

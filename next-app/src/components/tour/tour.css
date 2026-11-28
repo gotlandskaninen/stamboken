@@ -1,0 +1,72 @@
+/* The tour's popover in the house style (ADR-0009, light only); driver.js
+   sets the layout. Tap targets 44 px on touch screens (ADR-0010). */
+.driver-popover.sb-tour {
+  font-family: var(--sb-body);
+  color: var(--sb-ink);
+  background: #fff;
+  border: 1px solid var(--sb-line);
+  border-radius: var(--sb-r-3);
+  max-width: min(340px, calc(100vw - 32px));
+  padding: 16px;
+}
+.driver-popover.sb-tour .driver-popover-title {
+  font-family: var(--sb-display);
+  font-size: 19px;
+  padding-right: 40px;
+}
+.driver-popover.sb-tour .driver-popover-description {
+  font-size: 15px;
+  color: var(--sb-ink-2);
+}
+.driver-popover.sb-tour .driver-popover-description p {
+  margin: 0 0 8px;
+}
+.driver-popover.sb-tour .driver-popover-description a {
+  color: var(--sb-skog);
+  text-decoration: underline;
+}
+.driver-popover.sb-tour .driver-popover-progress-text {
+  color: var(--sb-ink-3);
+}
+.driver-popover.sb-tour .driver-popover-footer-btn {
+  font-family: var(--sb-body);
+  font-size: 14px;
+  font-weight: 500;
+  min-height: 36px;
+  padding: 8px 14px;
+  border: 1px solid var(--sb-line-strong);
+  border-radius: var(--sb-r-3);
+  color: var(--sb-ink);
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+}
+.driver-popover.sb-tour .driver-popover-next-btn {
+  background: var(--sb-skog);
+  border-color: var(--sb-skog);
+  color: #fff;
+}
+.driver-popover.sb-tour .driver-popover-navigation-btns button + button {
+  margin-left: 8px;
+}
+.driver-popover.sb-tour .driver-popover-close-btn {
+  width: 44px;
+  height: 44px;
+  font-size: 24px;
+  color: var(--sb-ink-3);
+}
+.driver-popover.sb-tour :is(button, a):focus-visible {
+  outline: 2px solid var(--sb-lera);
+  outline-offset: 2px;
+}
+@media (pointer: coarse) {
+  .driver-popover.sb-tour .driver-popover-footer-btn {
+    min-height: 44px;
+  }
+}
+
+.sb-tour-offer-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}

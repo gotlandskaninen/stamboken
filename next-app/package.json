@@ -44,6 +44,7 @@
     "@svgr/webpack": "8.1.0",
     "apexcharts": "4.7.0",
     "date-fns": "4.4.0",
+    "driver.js": "1.11.0",
     "embla-carousel-react": "^8.6.0",
     "formik": "2.4.6",
     "html-to-image": "1.11.11",

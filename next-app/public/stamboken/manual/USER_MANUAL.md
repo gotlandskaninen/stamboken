@@ -13,7 +13,7 @@ på skärmen) och slutar med **Skärmarna** (vad varje sida innehåller).
 
 - [Del 0 – Komma igång](#del-0--komma-igång)
   - [Logga in](#logga-in)
-  - [Hitta i Stamboken](#hitta-i-stamboken), [Tyck till](#tyck-till)
+  - [Hitta i Stamboken](#hitta-i-stamboken), [Visa runt](#visa-runt), [Tyck till](#tyck-till)
   - [Testmiljön och riktiga stamboken](#testmiljön-och-riktiga-stamboken)
   - [Ordlista](#ordlista)
 - [Del 1 – Uppfödare](#del-1--uppfödare)
@@ -177,7 +177,8 @@ Till höger finns:
 - Klockan **Notiser** – meddelanden från systemet medan du arbetar, till exempel
   bekräftelser och fel.
 - Din avatar (initialer eller bild) – menyn med **Profil**, **Notiser** (sidan med dina
-  notiser, se [Notiser](#notiser)), **Manual** (den här manualen), **Tyck till**,
+  notiser, se [Notiser](#notiser)), **Manual** (den här manualen), **Visa runt**
+  (en [rundtur](#visa-runt)), **Tyck till**,
   **Adminpanel** (om du har rollen), **Medlemsansökningar**, **Matrikel** och **Statistik**
   (om du hanterar medlemsregistret), **Byt till testmiljön** / **Byt till riktiga
   stamboken** och **Logga ut**.
@@ -187,6 +188,22 @@ Har du olästa notiser står antalet vid **Notiser** i avatarmenyn och vid **Min
 
 Den blå rutan "Detta är nya Stamboken (beta)" stänger du med **Stäng**. Valet sparas
 i webbläsaren.
+
+#### Visa runt
+
+Rundturen pekar ut de viktigaste delarna av sidan du är på, en i taget. Varje steg har
+en kort text. De flesta steg har också en länk **Läs mer** hit till manualen, eller till
+guiden för matrikeln. Du startar rundturen med **Visa runt** i avatarmenyn, eller i rutan
+"Kom igång med din besättning" på Min besättning.
+
+- **Nästa** och **Tillbaka** flyttar mellan stegen.
+- **Klar** på sista steget, krysset **Stäng rundturen** eller Esc avslutar.
+- Rundturen visar bara det som finns på sidan. Starta den på Min besättning för att se
+  flikarna, och på en kanins sida för att se foto och intyg.
+
+Första gången du kommer till Min besättning frågar Stamboken om du vill se rundturen.
+Svarar du **Nej tack**, eller har du redan sett rundturen, frågar den inte igen. Valet
+sparas i webbläsaren.
 
 #### Tyck till
 

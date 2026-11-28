@@ -671,5 +671,70 @@
     "copied": "Kopiert",
     "paperNumber": "Individualnummer auf dem Papier",
     "paperNumberHelp": "Schreiben Sie die Nummer so, wie sie auf dem Papierzertifikat steht."
+  },
+  "tour": {
+    "start": "Rundgang",
+    "offerLabel": "Rundgang durch Stamboken",
+    "offer": "Neu in Stamboken? Wir zeigen Ihnen gern alles. Es dauert eine Minute.",
+    "noThanks": "Nein danke",
+    "checklistLead": "Möchten Sie sehen, wo alles ist?",
+    "next": "Weiter",
+    "prev": "Zurück",
+    "done": "Fertig",
+    "close": "Rundgang schließen",
+    "progress": "{{current}} von {{total}}",
+    "more": "Mehr lesen",
+    "steps": {
+      "tabs": {
+        "title": "Mein Bestand",
+        "text": "Hier sehen Sie Ihren Bestand. Die Reiter zeigen verschiedene Teile davon."
+      },
+      "kaniner": {
+        "title": "Kaninchen",
+        "text": "Hier sind Ihre Kaninchen. Öffnen Sie ein Kaninchen, um Foto und Zertifikat zu sehen. Dort können Sie auch ein Foto hochladen."
+      },
+      "kullar": {
+        "title": "Würfe und Paarungen",
+        "text": "Hier tragen Sie Paarungen und Würfe ein. Stamboken berechnet, wann die Jungen erwartet werden."
+      },
+      "kanin": {
+        "title": "Das Kaninchen",
+        "text": "Hier sehen Sie Foto und Zertifikat des Kaninchens. Ist es Ihres, können Sie ein Foto hochladen."
+      },
+      "adminPage": {
+        "title": "Adminbereich",
+        "text": "Hier ist, was Sie in Ihrer Rolle betreuen. Jede Karte führt zu einer eigenen Seite."
+      },
+      "matrikelPage": {
+        "title": "Mitgliederverzeichnis",
+        "text": "Suchen Sie hier eine Mitgliedschaft. Klicken Sie darauf, um die Angaben zu sehen und zu ändern.",
+        "textRead": "Hier suchen Sie eine Mitgliedschaft und sehen die Angaben."
+      },
+      "arsrapport": {
+        "title": "Jahresbericht",
+        "text": "Einmal im Jahr berichten Sie, wie es Ihren Kaninchen ergangen ist. Das tun Sie unter Jahresbericht."
+      },
+      "inkorg": {
+        "title": "Posteingang",
+        "text": "Im Posteingang bearbeiten Sie, was Mitglieder eingesandt haben."
+      },
+      "profil": {
+        "title": "Profil",
+        "text": "Unter Profil ändern Sie Ihre Angaben. Dort wählen Sie auch, was Koharen über Sie drucken darf."
+      },
+      "mode": {
+        "title": "Echtes Stammbuch und Testumgebung",
+        "text": "In Ihrem Menü wechseln Sie zwischen dem echten Stammbuch und der Testumgebung. In der Testumgebung können Sie frei üben. Alles dort wird jede Nacht zurückgesetzt."
+      },
+      "roles": {
+        "title": "Ihre Rolle",
+        "text": "Sie haben eine Rolle im Verein. Deshalb erreichen Sie den Adminbereich und das Mitgliederverzeichnis über Ihr Menü."
+      },
+      "tyckTill": {
+        "title": "Tyck till",
+        "text": "Fehlt etwas, oder stimmt etwas nicht? Drücken Sie auf Tyck till und schreiben Sie uns. Den Rundgang sehen Sie wieder über Rundgang in Ihrem Menü."
+      }
+    },
+    "failed": "Der Rundgang konnte nicht starten. Versuchen Sie es später noch einmal."
   }
 }

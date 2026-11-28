@@ -28,6 +28,7 @@ export function TopbarNav({
             href={item.href}
             className={`${styles.navItem} ${active ? styles.navItemActive : ""}`}
             aria-current={active ? "page" : undefined}
+            data-tour={`nav-${item.key}`}
           >
             {t(item.i18nKey)}
             {badge && (

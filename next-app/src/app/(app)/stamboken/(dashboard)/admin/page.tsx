@@ -168,7 +168,7 @@ export default async function AdminLandingPage() {
   // getByRole("heading", { name: "Adminpanel" }) och blir strict-mode-
   // tvetydig om båda finns).
   return (
-    <div className={styles["ad-landing-grid"]}>
+    <div className={styles["ad-landing-grid"]} data-tour="admin-cards">
       {cards.map((c) => (
         <AdminLandingCard key={c.href} {...c} />
       ))}

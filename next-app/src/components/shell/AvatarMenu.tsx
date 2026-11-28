@@ -2,6 +2,7 @@
 
 import React from "react";
 import { useRouter } from "next/navigation";
+import { useTranslation } from "react-i18next";
 import {
   Avatar,
   Button,
@@ -29,11 +30,17 @@ import { logout, setMode } from "@/app/(app)/(auth)/actions";
 import { apiSlice } from "@/redux/api/apiSlice";
 import { usePendingMemberApplicationCountQuery } from "@/redux/api/memberApplicationsEndpoints";
 import { useAppDispatch } from "@/hooks/useAppDispatch";
+import { useStartTour } from "@/components/tour/Tour.client";
 
 export function AvatarMenu({ unread = 0 }: { unread?: number }) {
   const [anchor, setAnchor] = React.useState<null | HTMLElement>(null);
   const [modeDialogOpen, setModeDialogOpen] = React.useState(false);
   const [tyckTillOpen, setTyckTillOpen] = React.useState(false);
+  // The tour starts once the menu has closed, so the menu's focus return
+  // does not pull focus out of the tour.
+  const tourAfterClose = React.useRef(false);
+  const startTour = useStartTour();
+  const { t } = useTranslation();
   const router = useRouter();
   const dispatch = useAppDispatch();
   const user = useUser();
@@ -102,6 +109,7 @@ export function AvatarMenu({ unread = 0 }: { unread?: number }) {
         <IconButton
           aria-label="Account"
           aria-haspopup="true"
+          data-tour="user-menu"
           onClick={(e) => setAnchor(e.currentTarget)}
           size="small"
         >
@@ -136,6 +144,14 @@ export function AvatarMenu({ unread = 0 }: { unread?: number }) {
         anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
         transformOrigin={{ vertical: "top", horizontal: "right" }}
         keepMounted
+        slotProps={{
+          transition: {
+            onExited: () => {
+              if (tourAfterClose.current) startTour?.();
+              tourAfterClose.current = false;
+            },
+          },
+        }}
       >
         <MenuItem disabled>{displayName}</MenuItem>
         {user?.google_email && user.google_email !== user.email && (
@@ -168,6 +184,16 @@ export function AvatarMenu({ unread = 0 }: { unread?: number }) {
         >
           Manual
         </MenuItem>
+        {startTour && (
+          <MenuItem
+            onClick={() => {
+              tourAfterClose.current = true;
+              closeMenu();
+            }}
+          >
+            {t("tour.start")}
+          </MenuItem>
+        )}
         <MenuItem
           onClick={() => {
             closeMenu();

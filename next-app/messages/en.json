@@ -683,5 +683,70 @@
     "copied": "Copied",
     "paperNumber": "Individual number on the paper",
     "paperNumberHelp": "Write the number as it is on the paper certificate."
+  },
+  "tour": {
+    "start": "Show me around",
+    "offerLabel": "Tour of Stamboken",
+    "offer": "New to Stamboken? We can show you around. It takes a minute.",
+    "noThanks": "No thanks",
+    "checklistLead": "Want to see where everything is?",
+    "next": "Next",
+    "prev": "Back",
+    "done": "Done",
+    "close": "Close the tour",
+    "progress": "{{current}} of {{total}}",
+    "more": "Read more",
+    "steps": {
+      "tabs": {
+        "title": "My herd",
+        "text": "This is your herd. The tabs show different parts of it."
+      },
+      "kaniner": {
+        "title": "Rabbits",
+        "text": "Your rabbits are here. Open a rabbit to see its photo and certificate. You can also upload a photo there."
+      },
+      "kullar": {
+        "title": "Litters and matings",
+        "text": "Here you enter matings and litters. Stamboken works out when the young are due."
+      },
+      "kanin": {
+        "title": "The rabbit",
+        "text": "Here you see the rabbit's photo and certificate. If the rabbit is yours, you can upload a photo."
+      },
+      "adminPage": {
+        "title": "Admin panel",
+        "text": "Here is what you look after in your role. Each card leads to its own page."
+      },
+      "matrikelPage": {
+        "title": "Member register",
+        "text": "Search for a membership here. Click it to see and change the details.",
+        "textRead": "Search for a membership here and see its details."
+      },
+      "arsrapport": {
+        "title": "Annual report",
+        "text": "Once a year you tell us how your rabbits have done. You do that under Annual report."
+      },
+      "inkorg": {
+        "title": "Inbox",
+        "text": "Under Inbox you handle what members have sent in."
+      },
+      "profil": {
+        "title": "Profile",
+        "text": "Under Profile you change your details. There you also choose what Koharen may print about you."
+      },
+      "mode": {
+        "title": "Real stamboken and test environment",
+        "text": "In your menu you switch between the real stamboken and the test environment. In the test environment you can practise freely. Everything there is reset every night."
+      },
+      "roles": {
+        "title": "Your role",
+        "text": "You have a role in the association, so you reach the admin panel and the member register from your menu."
+      },
+      "tyckTill": {
+        "title": "Tyck till",
+        "text": "Missing something, or is something wrong? Press Tyck till and tell us. You can see the tour again with Show me around in your menu."
+      }
+    },
+    "failed": "The tour could not start. Try again in a while."
   }
 }

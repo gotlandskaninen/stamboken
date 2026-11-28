@@ -76,7 +76,7 @@ export default async function MembershipsListPage({
         }
       />
       <div className={styles.container}>
-        <section className={`sb-card ${ds["ad-grid"]}`}>
+        <section className={`sb-card ${ds["ad-grid"]}`} data-tour="matrikel">
           {/* Plain GET form → URL params → server-rendered result. */}
           <form
             method="get"

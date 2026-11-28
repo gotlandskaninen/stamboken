@@ -99,6 +99,9 @@ importers:
       date-fns:
         specifier: 4.4.0
         version: 4.4.0
+      driver.js:
+        specifier: 1.11.0
+        version: 1.11.0
       embla-carousel-react:
         specifier: ^8.6.0
         version: 8.6.0(react@19.2.8)
@@ -3340,6 +3343,9 @@ packages:
 
   dot-case@3.0.4:
     resolution: {integrity: sha512-Kv5nKlh6yRrdrGvxeJ2e5y2eRUpkUosIW4A2AS38zwSz27zu7ufDwQPi5Jhs3XAlGNetl3bmnGhQsMtkKJnj3w==}
+
+  driver.js@1.11.0:
+    resolution: {integrity: sha512-Xp/tYNYQ4Wth6AN3HqVVYdrCF4ahe4FVBDphWKylVDBBbeDEsFqnogxko6Gv30Yf9T/B92g0RZOCp4xfl1gqqw==}
 
   drizzle-kit@0.31.7:
     resolution: {integrity: sha512-hOzRGSdyKIU4FcTSFYGKdXEjFsncVwHZ43gY3WU5Bz9j5Iadp6Rh6hxLSQ1IWXpKLBKt/d5y1cpSPcV+FcoQ1A==}
@@ -9006,6 +9012,8 @@ snapshots:
     dependencies:
       no-case: 3.0.4
       tslib: 2.9.1
+
+  driver.js@1.11.0: {}
 
   drizzle-kit@0.31.7:
     dependencies:

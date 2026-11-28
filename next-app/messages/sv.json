@@ -683,5 +683,70 @@
     "copied": "Kopierat",
     "paperNumber": "Individnummer på pappret",
     "paperNumberHelp": "Skriv numret som det står på pappersintyget."
+  },
+  "tour": {
+    "start": "Visa runt",
+    "offerLabel": "Rundtur i Stamboken",
+    "offer": "Ny i Stamboken? Vi kan visa dig runt. Det tar en minut.",
+    "noThanks": "Nej tack",
+    "checklistLead": "Vill du se var allt finns?",
+    "next": "Nästa",
+    "prev": "Tillbaka",
+    "done": "Klar",
+    "close": "Stäng rundturen",
+    "progress": "{{current}} av {{total}}",
+    "more": "Läs mer",
+    "steps": {
+      "tabs": {
+        "title": "Min besättning",
+        "text": "Här ser du din besättning. Flikarna visar olika delar av den."
+      },
+      "kaniner": {
+        "title": "Kaniner",
+        "text": "Här finns dina kaniner. Öppna en kanin för att se foto och intyg. Där kan du också ladda upp ett foto."
+      },
+      "kullar": {
+        "title": "Kullar och parningar",
+        "text": "Här skriver du in parningar och kullar. Stamboken räknar ut när ungarna väntas."
+      },
+      "kanin": {
+        "title": "Kaninen",
+        "text": "Här ser du kaninens foto och intyg. Är kaninen din kan du ladda upp ett foto."
+      },
+      "adminPage": {
+        "title": "Adminpanelen",
+        "text": "Här finns det du sköter i din roll. Varje kort leder till en egen sida."
+      },
+      "matrikelPage": {
+        "title": "Matrikeln",
+        "text": "Här söker du fram ett medlemskap. Klicka på det för att se och ändra uppgifterna.",
+        "textRead": "Här söker du fram ett medlemskap och ser uppgifterna."
+      },
+      "arsrapport": {
+        "title": "Årsrapport",
+        "text": "En gång om året berättar du hur det har gått för dina kaniner. Det gör du under Årsrapport."
+      },
+      "inkorg": {
+        "title": "Inkorg",
+        "text": "Under Inkorg tar du hand om det som medlemmar har skickat in."
+      },
+      "profil": {
+        "title": "Profil",
+        "text": "Under Profil ändrar du dina uppgifter. Där väljer du också vad som ska stå om dig i Koharen."
+      },
+      "mode": {
+        "title": "Riktiga stamboken och testmiljön",
+        "text": "I din meny byter du mellan riktiga stamboken och testmiljön. I testmiljön kan du öva fritt. Allt där återställs varje natt."
+      },
+      "roles": {
+        "title": "Din roll",
+        "text": "Du har en roll i föreningen. Därför når du Adminpanelen och Matrikel från din meny."
+      },
+      "tyckTill": {
+        "title": "Tyck till",
+        "text": "Saknar du något, eller är något fel? Tryck på Tyck till och berätta. Rundturen kan du se igen med Visa runt i din meny."
+      }
+    },
+    "failed": "Rundturen gick inte att starta. Försök igen om en stund."
   }
 }

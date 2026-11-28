@@ -1,0 +1,186 @@
+import { test, expect, type Page } from "@playwright/test";
+import {
+  expectTourAxeClean,
+  startTourFromMenu,
+  tourPopover,
+  walkTour,
+} from "../e2e-shared/tour";
+
+// The tour (stamboken #229) for an ordinary member (gk-owner storageState).
+// Each test starts with empty localStorage, so the offer is always there.
+
+async function openMinBesattning(page: Page) {
+  await page.goto("/stamboken/min-besattning");
+  // The tabs are server-rendered; the content under them only after hydration.
+  await expect(page.locator("#herd-tab-overview")).toBeVisible({
+    timeout: 15000,
+  });
+  await expect(page.getByText("Laddar…")).toBeHidden({ timeout: 20000 });
+}
+
+test.describe("Rundtur för en vanlig medlem", () => {
+  test("the offer starts the tour, which walks to the end", async ({
+    page,
+  }) => {
+    await openMinBesattning(page);
+    const offer = page.getByRole("region", { name: "Rundtur i Stamboken" });
+    await offer.getByRole("button", { name: "Visa runt" }).click();
+
+    await expect(page.getByRole("dialog")).toContainText("Min besättning");
+    await expect(page.locator(".driver-popover-progress-text")).toHaveText(
+      /^1 av \d+$/,
+    );
+    await expectTourAxeClean(page);
+
+    const titles = await walkTour(page);
+    expect(titles).toEqual(
+      expect.arrayContaining([
+        "Min besättning",
+        "Kaniner",
+        "Kullar och parningar",
+        "Årsrapport",
+        "Profil",
+        "Tyck till",
+      ]),
+    );
+    // An ordinary member has no role step.
+    expect(titles).not.toContain("Din roll");
+    // The offer's button is gone, so focus goes to the menu.
+    await expect(page.getByRole("button", { name: "Account" })).toBeFocused();
+
+    // Answered: the offer does not come back by itself.
+    await page.reload();
+    await openMinBesattning(page);
+    await expect(offer).toHaveCount(0);
+  });
+
+  test("Nej tack hides the offer for good, and the menu still starts the tour", async ({
+    page,
+  }) => {
+    await openMinBesattning(page);
+    await page.getByRole("button", { name: "Nej tack" }).click();
+    await page.reload();
+    await openMinBesattning(page);
+    await expect(
+      page.getByRole("region", { name: "Rundtur i Stamboken" }),
+    ).toHaveCount(0);
+    await expect(tourPopover(page)).toHaveCount(0);
+
+    // prefers-reduced-motion: no fade.
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await startTourFromMenu(page);
+    await expect(page.locator("body")).not.toHaveClass(/driver-fade/);
+    await expectTourAxeClean(page);
+  });
+
+  test("Esc ends the tour and gives focus back; it can start again", async ({
+    page,
+  }) => {
+    await openMinBesattning(page);
+    await startTourFromMenu(page);
+    const inTour = () =>
+      page.evaluate(() => !!document.activeElement?.closest(".driver-popover"));
+    await expect.poll(inTour).toBe(true);
+    // Tab goes round inside the tour (focus trap).
+    for (let i = 0; i < 8; i++) {
+      await page.keyboard.press("Tab");
+      expect(await inTour()).toBe(true);
+    }
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "Nästa" })
+      .click();
+    await page.keyboard.press("Escape");
+    await expect(tourPopover(page)).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Account" })).toBeFocused();
+
+    // Started again it begins from the first step.
+    await startTourFromMenu(page);
+    await expect(page.locator(".driver-popover-progress-text")).toHaveText(
+      /^1 av /,
+    );
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "Stäng rundturen" })
+      .click();
+    await expect(tourPopover(page)).toHaveCount(0);
+  });
+
+  test("on a rabbit's page the tour shows its photo and certificate", async ({
+    page,
+  }) => {
+    await page.goto("/stamboken/individ/G1274-2112");
+    await expect(page.locator('[data-tour="rabbit-card"]')).toBeVisible({
+      timeout: 15000,
+    });
+    await startTourFromMenu(page);
+    await expect(page.locator(".driver-popover-title")).toHaveText("Kaninen");
+    await expect(
+      page.getByRole("dialog").getByRole("link", { name: "Läs mer" }),
+    ).toHaveAttribute("href", "/stamboken-online/manual#ladda-upp-ett-foto");
+    const titles = await walkTour(page);
+    // Min besättning's tabs are not on this page.
+    expect(titles).not.toContain("Kullar och parningar");
+  });
+
+  test("starting from the menu answers the offer too", async ({ page }) => {
+    await openMinBesattning(page);
+    const offer = page.getByRole("region", { name: "Rundtur i Stamboken" });
+    await expect(offer).toBeVisible();
+    await startTourFromMenu(page);
+    // Gone at once, not only after the tour.
+    await expect(offer).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await page.reload();
+    await openMinBesattning(page);
+    await expect(offer).toHaveCount(0);
+  });
+
+  test("a narrower window mid-tour moves the step to the menu button", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await openMinBesattning(page);
+    await startTourFromMenu(page);
+    const progress = page.locator(".driver-popover-progress-text");
+    const title = page.locator(".driver-popover-title");
+    while ((await title.innerText()).trim() !== "Årsrapport") {
+      const before = await progress.innerText();
+      await page
+        .getByRole("dialog")
+        .getByRole("button", { name: "Nästa" })
+        .click();
+      await expect(progress).not.toHaveText(before);
+    }
+    const active = page.locator(".driver-active-element");
+    await expect(active).toHaveAttribute("data-tour", "nav-arsrapport");
+    await page.setViewportSize({ width: 375, height: 812 });
+    await expect(active).toHaveAttribute("data-tour", "menu");
+    await expect(title).toHaveText("Årsrapport");
+  });
+
+  test.describe("on a 375 px phone", () => {
+    test.use({ viewport: { width: 375, height: 812 }, hasTouch: true });
+
+    test("the menu button stands in for the hidden top links", async ({
+      page,
+    }) => {
+      await openMinBesattning(page);
+      await startTourFromMenu(page);
+      const titles = await walkTour(page, async (title) => {
+        // The popover fits the screen.
+        const box = (await tourPopover(page).boundingBox())!;
+        expect(box.x).toBeGreaterThanOrEqual(0);
+        expect(box.x + box.width).toBeLessThanOrEqual(375);
+        if (title === "Årsrapport" || title === "Profil")
+          await expect(page.locator(".driver-active-element")).toHaveAttribute(
+            "data-tour",
+            "menu",
+          );
+      });
+      expect(titles).toEqual(
+        expect.arrayContaining(["Kaniner", "Årsrapport", "Profil"]),
+      );
+    });
+  });
+});
