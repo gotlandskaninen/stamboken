@@ -301,8 +301,8 @@ fritextfält och används inte för valet.
 **Uppfödare** (besättningsägare), **genbanksansvarig** och **administratör** – rollerna
 som manualens tre delar handlar om. Dessutom kan ett konto ha **läsrätt** till en genbank
 och se allt i den utan att ändra. Det finns också **skötare**, som får sköta en annan
-medlems besättning och då gör samma sak som ägaren i del 1, och **matrikeladministratör**,
-som hanterar medlemsregistret.
+medlems besättning och då gör samma sak som ägaren i del 1, utom att ändra medlemskapets
+uppgifter, och **matrikeladministratör**, som hanterar medlemsregistret.
 Matrikeladministratören har en egen guide inne i medlemsregistret (**Guide** överst på
 sidorna), som bara syns för den rollen.
 

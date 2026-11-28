@@ -64,7 +64,8 @@ aktiv åtkomstgrant säljer alltså som huvudmedlemmen, som i gamla Stamboken
 admin och ansvarig för genbanken. Medlemskapets egna uppgifter (kontakt,
 konto för stödet, personer och åtkomst) ändrar bara kontot som är kopplat
 till medlemskapets aktiva huvudmedlem. `owned_herd_ids()` (äldre
-`owner`-roll eller huvudmedlem) är besättningens ägare och styr bara vad
+`owner`-roll eller huvudmedlem) är besättningens ägare: rollen ägare i
+policytabellen och årsrapporten, som har samma rätt som skötaren, och det
 ägaren ser av besättningen, till exempel slutet på kontot för stödet.
 
 ### Var kontrollen görs
