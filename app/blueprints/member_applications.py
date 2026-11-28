@@ -119,6 +119,14 @@ def create_application():
                 field=key,
             )
 
+    if len(email) > _MAX_FIELD_LENGTHS["email"]:  # lowercased above, which can lengthen it (İ)
+        return problem(
+            400,
+            "Fält för långt",
+            f"Fältet 'email' överskrider maxlängden {_MAX_FIELD_LENGTHS['email']} tecken",
+            field="email",
+        )
+
     missing = []
     if not first_name:
         missing.append("first_name")

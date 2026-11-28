@@ -488,7 +488,7 @@ def update_member_contact(m, body, *, include_profile=False):
         fields = contact_text_fields(body)
     except AddressValidationError as err:
         return problem(400, err.title, err.detail)
-    if (refused := field_too_long(body, {k: PERSON_FIELD_LIMITS[k] for k in ("phone", "email")})) is not None:
+    if (refused := field_too_long(body, {"phone": PERSON_FIELD_LIMITS["phone"]})) is not None:
         return refused
 
     # The e-mail is never written here: a new address gets a code (_ask_for_code), and the change waits for it.
@@ -498,6 +498,9 @@ def update_member_contact(m, body, *, include_profile=False):
         if not isinstance(raw_email, str):
             return problem(400, "Ogiltigt fält", "email måste vara en sträng")
         new_email = raw_email.strip().lower()
+        # Measured as stored: lowercasing can lengthen a string (İ), and the code carries it to Member.email
+        if (refused := field_too_long({"email": new_email}, {"email": PERSON_FIELD_LIMITS["email"]})) is not None:
+            return refused
         if not EMAIL_RE.match(new_email):
             return problem(400, "Ogiltig e-postadress", f"'{new_email}' är inte en giltig e-postadress")
         if new_email == (m.email or "").strip().lower():

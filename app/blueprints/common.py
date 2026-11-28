@@ -149,10 +149,11 @@ PERSON_FIELD_LIMITS = {"first_name": 100, "last_name": 100, "email": 255, "phone
 
 
 def field_too_long(body, limits=PERSON_FIELD_LIMITS):
-    """The 400 for the first text field in `body` longer than its column once trimmed, otherwise None."""
+    """The 400 for the first text field in `body` longer than its column, otherwise None. Untrimmed: some routes
+    store the value as sent (PATCH /v2/persons keeps the phone's spaces)."""
     for key, limit in limits.items():
         value = body.get(key)
-        if isinstance(value, str) and len(value.strip()) > limit:
+        if isinstance(value, str) and len(value) > limit:
             return problem(400, "Fält för långt", f"Fältet '{key}' överskrider maxlängden {limit} tecken", field=key)
     return None
 

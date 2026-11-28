@@ -78,7 +78,28 @@ class TestMatrikelFieldLengths(MyMembershipTestBase):
         self.assert_refused(resp, "email")
         self.assertEqual(db.Member.select().count(), before)
 
-    def test_trimmed_length_counts(self):
-        url = f"/api/v2/memberships/{self.membership.id}/persons"
-        resp = self.send("admin", "post", url, {"first_name": " " + "x" * 100 + " ", "last_name": "B"})
-        self.assertEqual(resp.status_code, 201, resp.get_data(as_text=True))
+    def test_admin_patches_person_with_padded_phone_too_long(self):
+        # PATCH /v2/persons stores the phone as sent, spaces included
+        resp = self.send("admin", "patch", f"/api/v2/persons/{self.family.id}", {"phone": " " + "0" * 50})
+        self.assert_refused(resp, "phone")
+        resp = self.send("admin", "patch", f"/api/v2/persons/{self.family.id}", {"phone": "0" * 50})
+        self.assertEqual(resp.status_code, 200, resp.get_data(as_text=True))
+        self.assertEqual(db.Member.get_by_id(self.family.id).phone, "0" * 50)
+
+    def test_profile_email_measured_after_lowercasing(self):
+        # "İ" lowercases to two characters: 255 as typed, 256 as stored
+        address = "\u0130" + "a" * 242 + "@example.com"
+        self.assertEqual((len(address), len(address.lower())), (255, 256))
+        before = db.LoginCode.select().count()
+        resp = self.send("maja", "patch", "/api/v2/members/me/contact", {"phone": "070", "email": address})
+        self.assert_refused(resp, "email")
+        self.assertEqual(db.LoginCode.select().count(), before)
+        self.assertNotEqual(db.Member.get_by_id(self.main.id).phone, "070")
+
+    def test_application_email_measured_after_lowercasing(self):
+        address = "\u0130" + "a" * 242 + "@example.com"
+        before = db.MemberApplication.select().count()
+        body = {"first_name": "A", "last_name": "B", "email": address, "city": "Visby", "postal_code": "62150"}
+        resp = self.client.post("/api/v2/member-applications", data=json.dumps(body), content_type="application/json")
+        self.assert_refused(resp, "email")
+        self.assertEqual(db.MemberApplication.select().count(), before)
