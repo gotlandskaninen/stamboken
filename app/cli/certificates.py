@@ -1,0 +1,237 @@
+"""
+Flask CLI for certificates.
+
+Usage:
+    flask certificates reissue-v1 [--run] [--limit N] [--number G1157-2432] [--visa-namn]
+
+`reissue-v1` gives every v1 certificate (a digital number and no current v2 row) a v2 certificate in the current
+design (stamboken #142). The new certificate is attested by whoever issued the original, not by whoever runs the
+command (Jonas 2026-11-23). The v1 PDF at <number>/certificate.pdf is read field by field (utils/certificates.py
+FORM_KEYS), and a rabbit is reissued only when all of these hold; otherwise it keeps its v1 certificate and the
+summary says why:
+- the PDF's Nummer is the rabbit's digital certificate number (the file belongs to this certificate);
+- exactly one account, active or not, has the IntygasAv name, and it is active and may issue for the origin herd (the
+  old app let a buyer press "Uppdatera", so the name can be the buyer's);
+- IntygasNummer, the herd the rabbit was in when the v1 certificate was made, is filled in and is the origin herd;
+- every other field equals what the certificate would say today, so nothing corrected since is put under the
+  original attester's name.
+
+Without --run nothing is signed or stored (the S3 client still sends its usual CreateBucket). With --run each rabbit
+is its own transaction under the rabbit and number locks; the v1 PDF stays at <number>/certificate.pdf until the v2
+row has been committed, and only then is that key overwritten, so a failed attempt can be run again. A rabbit that has
+a current v2 row is not selected. The summary names rabbits, herds and fields, never people, unless --visa-namn asks
+for the attesters of the herds where more than one person issued.
+"""
+
+from collections import Counter, defaultdict
+
+import click
+import pdfrw
+import utils.data_access as da
+import utils.database as db
+import utils.number_assets as number_assets
+from botocore.exceptions import BotoCoreError, ClientError
+from flask.cli import AppGroup
+from peewee import fn
+from utils.cert_acess import download_certificate_s3, get_certificate_data, upload_certificate
+from utils.cert_service_v2 import generate_and_store, invalidate_caches
+from utils.certificate_lifecycle import CertState
+from utils.certificates import FORM_KEYS
+from utils.certificates_v2 import SigningUnavailableError
+
+certificates_cli = AppGroup("certificates", help="Certificates.")
+
+STATE = "intygsläget tillåter inte återutfärdande (t.ex. både pappers- och digitalt nummer)"
+NO_PDF = "ingen v1-PDF"
+UNREADABLE = "v1-PDF:en går inte att läsa"
+OTHER_CERTIFICATE = "v1-PDF:en har ett annat intygsnummer"
+NO_NAME = "inget namn under Intygas av"
+SEVERAL = "flera konton har namnet"
+NO_ACCOUNT = "inget konto har namnet"
+INACTIVE = "kontot med namnet är inaktivt"
+NO_RIGHT = "kontot med namnet får inte utfärda för uppfödarbesättningen"
+OTHER_HERD = "v1-intyget utfärdades i en annan besättning än uppfödarens"
+CHANGED = "uppgifterna har ändrats sedan v1-intyget"
+FAILED = "fel vid utfärdandet"
+
+# Fields that are not facts about the rabbit: who, where and when it was attested, and the number checked on its own.
+NOT_COMPARED = {"", "fullname", "herd", "issue_date", "digital_certificate"}
+
+
+class Stop(Exception):
+    """The rabbit keeps its v1 certificate, for `reason` (and `fields`, when its data changed)."""
+
+    def __init__(self, reason, fields=()):
+        super().__init__(reason)
+        self.reason, self.fields = reason, tuple(fields)
+
+
+def normalised(value):
+    """As the v1 form held it (CertificateGenerator._encode_pdf_string writes "" for any falsy value), compared
+    without case and runs of whitespace."""
+    return " ".join(str(value or "").split()).casefold()
+
+
+def v1_fields(pdf_bytes):
+    """The v1 form's fields as {name: value}; raises Stop when the file cannot be read."""
+    try:
+        fields = {}
+        for page in pdfrw.PdfReader(fdata=pdf_bytes).pages:
+            for annotation in page.Annots or []:
+                value = annotation.V
+                if annotation.T is not None and (value is None or isinstance(value, pdfrw.objects.PdfString)):
+                    # Text fields only: the signature field endesive adds holds a dictionary.
+                    fields[annotation.T.decode()] = value.decode() if value is not None else ""
+        return fields
+    except Exception as exc:  # pylint: disable=broad-except  # pdfrw's own errors, and bad UTF-16 when decoding
+        raise Stop(UNREADABLE) from exc
+
+
+def v1_pdf(rabbit):
+    try:
+        return download_certificate_s3(rabbit.number)
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") in ("NoSuchKey", "404"):
+            raise Stop(NO_PDF) from exc
+        raise  # access or connection: the whole run stops rather than report every rabbit as missing
+
+
+def accounts_named(name):
+    """Every account, active or not, whose name normalises to `name`: read anew for each rabbit."""
+    return [user for user in db.User.select() if normalised(user.fullname) == name]
+
+
+def attester(rabbit, fields):
+    """The one account that may attest the new certificate, or Stop."""
+    name = normalised(fields.get("IntygasAv"))
+    if not name:
+        raise Stop(NO_NAME)
+    accounts = accounts_named(name)
+    if len(accounts) > 1:
+        raise Stop(SEVERAL)
+    if not accounts:
+        raise Stop(NO_ACCOUNT)
+    (user,) = accounts
+    if not user.is_active:
+        raise Stop(INACTIVE)
+    if not user.can_issue_certificate(rabbit):
+        raise Stop(NO_RIGHT)
+    if normalised(fields.get("IntygasNummer")) != normalised(rabbit.origin_herd.herd):  # empty proves nothing either
+        raise Stop(OTHER_HERD)
+    return user
+
+
+def check(rabbit, pdf):
+    """The account to attest `rabbit`'s v2 certificate, or Stop. Reads the database and the PDF, writes nothing."""
+    if rabbit.cert_state() != CertState.DIGITAL_NUMBER:
+        raise Stop(STATE)
+    fields = v1_fields(pdf)
+    if normalised(fields.get("Nummer")) != normalised(rabbit.digital_certificate):
+        raise Stop(OTHER_CERTIFICATE)
+    user = attester(rabbit, fields)
+    today = get_certificate_data(rabbit.as_dict(), user.uuid)
+    changed = sorted(
+        field
+        for field, key in FORM_KEYS.items()
+        if key not in NOT_COMPARED and normalised(fields.get(field)) != normalised(today.get(key))
+    )
+    if changed:
+        raise Stop(CHANGED, changed)
+    return user
+
+
+def reissue(rabbit):
+    """
+    Check and reissue one rabbit in its own transaction, under its row lock and then its number lock, or Stop. The
+    number lock is a session lock held past the commit, so no renumber moves the key before the v1 file there gives
+    way to the v2 one. Returns False when the v2 row is committed but that key could not be written.
+    """
+    locked = None
+    try:
+        with db.DATABASE.atomic():
+            if not da.lock_individual_for_edit(rabbit.id):
+                raise Stop(STATE)
+            rabbit = db.Individual.get_by_id(rabbit.id)
+            number_assets.lock_number(rabbit.number)
+            locked = rabbit.number
+            user = check(rabbit, v1_pdf(rabbit))
+            _, signed = generate_and_store(
+                rabbit, user, rabbit.as_dict(), user.uuid, replaces_v1=True, upload_legacy=False
+            )
+        try:
+            upload_certificate(pdf_bytes=signed, ind_number=rabbit.number)
+            written = True
+        except Exception:  # pylint: disable=broad-except  # reported per rabbit: it has its v2 row and is not selected again
+            written = False
+    finally:
+        if locked:
+            number_assets.unlock_number(locked)
+    invalidate_caches(rabbit)
+    return written
+
+
+@certificates_cli.command("reissue-v1")
+@click.option("--run", is_flag=True, help="Utfärda och skriv. Utan flaggan skrivs ingenting.")
+@click.option("--limit", type=click.IntRange(min=1), default=None, help="Återutfärda högst så många kaniner.")
+@click.option("--number", default=None, help="Bara den här kaninen, t.ex. G1157-2432.")
+@click.option("--visa-namn", is_flag=True, help="Visa intygarna i besättningar med flera intygare.")
+def reissue_v1(run, limit, number, visa_namn):
+    """Give the v1 certificates a v2 certificate attested by the original issuer (stamboken #142)."""
+    current = db.DigitalCertificateV2.select().where(
+        (db.DigitalCertificateV2.individual == db.Individual.id) & db.DigitalCertificateV2.is_current
+    )
+    query = db.Individual.select().where(
+        db.Individual.digital_certificate.is_null(False), ~fn.EXISTS(current), db.not_voided()
+    )
+    if number:
+        query = query.where(db.Individual.number == number)
+
+    done, stopped, fields_changed, legacy_left = 0, [], Counter(), []
+    attesters = defaultdict(set)  # origin herd -> names read, to list the herds with more than one
+    for rabbit in query.order_by(db.Individual.id):
+        if limit is not None and done >= limit:
+            break
+        herd = rabbit.origin_herd.herd if rabbit.origin_herd else "-"
+        try:
+            if run:
+                try:
+                    if not reissue(rabbit):
+                        legacy_left.append(rabbit.number)  # committed; only the number's key still holds v1
+                except (Stop, SigningUnavailableError, ClientError, BotoCoreError):
+                    raise
+                except Exception as exc:  # pylint: disable=broad-except  # one rabbit's failure must not stop the rest
+                    raise Stop(f"{FAILED}: {exc.__class__.__name__}") from exc
+            else:
+                pdf = v1_pdf(rabbit)
+                try:
+                    attesters[herd].add(normalised(v1_fields(pdf).get("IntygasAv")))
+                except Stop:
+                    pass
+                check(rabbit, pdf)
+            done += 1
+        except Stop as stop:
+            stopped.append((rabbit.number, herd, stop.reason))
+            fields_changed.update(stop.fields)
+        except SigningUnavailableError as exc:
+            raise click.ClickException(f"Signeringen är inte tillgänglig. {done} återutfärdade innan.") from exc
+        except (ClientError, BotoCoreError) as exc:
+            raise click.ClickException(f"S3 svarar inte som väntat: {exc}. {done} klara innan.") from exc
+
+    click.echo(f"{'Återutfärdade' if run else 'Skulle återutfärdas'}: {done}")
+    if legacy_left:
+        click.echo(f"Varav v2-raden finns men <nummer>/certificate.pdf är kvar som v1: {len(legacy_left)}")
+        for rabbit_number in legacy_left:
+            click.echo(f"  {rabbit_number}")
+    click.echo(f"Stoppade, behåller v1-intyget: {len(stopped)}")
+    for reason, count in Counter(reason for _, _, reason in stopped).most_common():
+        click.echo(f"  {count} {reason}")
+    for field, count in fields_changed.most_common():
+        click.echo(f"    ändrat fält {field}: {count}")
+    for rabbit_number, herd, reason in stopped:
+        click.echo(f"  {rabbit_number} (besättning {herd}): {reason}")
+    several = {herd: names_read - {""} for herd, names_read in attesters.items() if len(names_read - {""}) > 1}
+    if several:
+        click.echo(f"Besättningar med flera intygare, kontrollera för hand: {len(several)}")
+        for herd, names_read in sorted(several.items()):
+            shown = f" ({', '.join(sorted(names_read))})" if visa_namn else ""
+            click.echo(f"  {herd}: {len(names_read)} intygare{shown}")

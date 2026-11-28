@@ -144,7 +144,7 @@ def issuer_role(user, individual):
     return "breeder"
 
 
-def generate_and_store(individual, user, ind_data, user_id, replaces_v1=False):
+def generate_and_store(individual, user, ind_data, user_id, replaces_v1=False, upload_legacy=True):
     """Generate, sign, and store a v2 certificate.
 
     Order of operations (Fix 2 — failure-safe ordering):
@@ -161,6 +161,10 @@ def generate_and_store(individual, user, ind_data, user_id, replaces_v1=False):
     update_individual, so a signing/S3 failure also rolls back the
     digital_certificate assignment on the individual. On rollback an orphaned
     PDF may remain on disk/S3 — harmless, no DB row references it.
+
+    `upload_legacy=False` leaves step 3's legacy key to the caller, after its commit: the bulk v1 reissue
+    (cli/certificates.py) keeps the v1 file there until the v2 row exists, since the download route serves that key
+    when a rabbit has no v2 row.
 
     Returns (cert_row, signed_pdf).
     Raises SigningUnavailableError if signing credentials are missing.
@@ -206,10 +210,11 @@ def generate_and_store(individual, user, ind_data, user_id, replaces_v1=False):
     # An orphaned token object (legacy upload failing after) is harmless —
     # no DB row references it.
     upload_certificate_v2(pdf_bytes=signed_pdf, token=token)
-    # The legacy key is the number: wait for a renumber still moving its assets after its commit
-    # (number_assets.finish), or that move would put the older PDF over this one. As a photo upload does.
-    number_assets.lock_number(individual.number, xact=True)
-    upload_certificate(pdf_bytes=signed_pdf, ind_number=individual.number)
+    if upload_legacy:
+        # The legacy key is the number: wait for a renumber still moving its assets after its commit
+        # (number_assets.finish), or that move would put the older PDF over this one. As a photo upload does.
+        number_assets.lock_number(individual.number, xact=True)
+        upload_certificate(pdf_bytes=signed_pdf, ind_number=individual.number)
 
     # Step 4: DB transaction — create row + flip old rows
     with db.DATABASE.atomic():

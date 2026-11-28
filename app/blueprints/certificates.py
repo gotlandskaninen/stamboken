@@ -257,7 +257,8 @@ def update_certificate(i_number):
                 assign_certificate_number(individual)
             individual = db.Individual.get_by_id(individual.id)
             ind_dict = da.get_individual(individual.number, user_id)
-            cert_row, _ = generate_and_store(individual, user, ind_dict, user_id)
+            # A digital number without a current row is a v1 certificate: the new one says it replaces it (#142).
+            cert_row, _ = generate_and_store(individual, user, ind_dict, user_id, replaces_v1=not issue_digital)
     except _IndividualUpdateError as exc:
         return problem(exc.status, exc.title, str(exc), rows=exc.rows, **exc.extra)
     except da.HerdTrackingError as exc:  # e.g. 409: the litter changed before the lock
