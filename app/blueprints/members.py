@@ -70,6 +70,8 @@ from utils.membership_lifecycle import Status, TransitionRefused
 from blueprints.common import (
     DEMO_EXPORT_REFUSED,
     EMAIL_RE,
+    PERSON_FIELD_LIMITS,
+    field_too_long,
     json_login_required,
     log_export,
     matrikel_admin_required,
@@ -486,6 +488,8 @@ def update_member_contact(m, body, *, include_profile=False):
         fields = contact_text_fields(body)
     except AddressValidationError as err:
         return problem(400, err.title, err.detail)
+    if (refused := field_too_long(body, {k: PERSON_FIELD_LIMITS[k] for k in ("phone", "email")})) is not None:
+        return refused
 
     # The e-mail is never written here: a new address gets a code (_ask_for_code), and the change waits for it.
     new_email = None

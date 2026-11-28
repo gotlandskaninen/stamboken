@@ -144,6 +144,19 @@ def problem(status, title, detail, **extra):
     return jsonify(body), status, {"Content-Type": "application/problem+json"}
 
 
+# Member's column widths: a longer value is a 400 here, never a DataError (500) at the write (R029, #294).
+PERSON_FIELD_LIMITS = {"first_name": 100, "last_name": 100, "email": 255, "phone": 50}
+
+
+def field_too_long(body, limits=PERSON_FIELD_LIMITS):
+    """The 400 for the first text field in `body` longer than its column once trimmed, otherwise None."""
+    for key, limit in limits.items():
+        value = body.get(key)
+        if isinstance(value, str) and len(value.strip()) > limit:
+            return problem(400, "Fält för långt", f"Fältet '{key}' överskrider maxlängden {limit} tecken", field=key)
+    return None
+
+
 def contact_problem(err):
     """A refused contact patch (#117, utils.herd_contact): 409 contact-changed or 403 contact-forbidden."""
     from utils.herd_contact import ContactConflict  # pylint: disable=import-outside-toplevel

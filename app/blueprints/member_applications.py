@@ -347,6 +347,8 @@ def reject_application(app_id: int):
     body = request.get_json(silent=True)
     if not isinstance(body, dict):
         return problem(400, "Ogiltigt anrop", "Förfrågans innehåll måste vara ett JSON-objekt")
+    if not isinstance(body.get("rejection_reason") or "", str):
+        return problem(400, "Ogiltigt fält", "rejection_reason måste vara en sträng")
     reason = (body.get("rejection_reason") or "").strip()
     if len(reason) < 3:
         return problem(

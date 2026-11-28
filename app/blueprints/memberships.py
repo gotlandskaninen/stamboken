@@ -51,6 +51,7 @@ from utils.organization import OrganizationValidationError, parse_organization_f
 
 from blueprints.common import (
     EMAIL_RE,
+    field_too_long,
     json_login_required,
     matrikel_admin_required,
     membership_organization_fields,
@@ -193,6 +194,8 @@ def create_membership_endpoint():
     ):
         if key in body and body[key] is not None and not isinstance(body[key], str):
             return problem(400, "Ogiltigt fält", f"{key} måste vara en sträng eller null")
+    if (refused := field_too_long(body)) is not None:
+        return refused
 
     email = (body.get("email") or "").strip() or None
     if email and not EMAIL_RE.match(email):
@@ -449,6 +452,8 @@ def add_membership_person(membership_id: int):
     for key in ("first_name", "last_name", "email", "phone", "role"):
         if key in body and body[key] is not None and not isinstance(body[key], str):
             return problem(400, "Ogiltigt fält", f"{key} måste vara en sträng eller null")
+    if (refused := field_too_long(body)) is not None:
+        return refused
 
     email = (body.get("email") or "").strip() or None
     if email and not EMAIL_RE.match(email):
@@ -518,6 +523,8 @@ def patch_person(person_id: int):
             if val is not None and not isinstance(val, str):
                 return problem(400, "Ogiltigt fält", f"{field} måste vara en sträng eller null")
             proposed[field] = val
+    if (refused := field_too_long(body)) is not None:
+        return refused
 
     if "role" in body:
         role = body["role"]
@@ -972,6 +979,8 @@ def my_membership_add_person():
         for key in ("first_name", "last_name", "email", "phone", "role"):
             if key in body and body[key] is not None and not isinstance(body[key], str):
                 return problem(400, "Ogiltigt fält", f"{key} måste vara en sträng eller null")
+        if (refused := field_too_long(body)) is not None:
+            return refused
 
         first_name = (body.get("first_name") or "").strip()
         last_name = (body.get("last_name") or "").strip()
