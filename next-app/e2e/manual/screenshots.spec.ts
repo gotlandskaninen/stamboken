@@ -128,6 +128,17 @@ const SHOTS: Shot[] = [
   },
   { name: "profil", role: "owner", path: "/stamboken/profil" },
   {
+    name: "lagg-till-person",
+    role: "owner",
+    path: "/stamboken/profil",
+    actions: [
+      "click:Lägg till person",
+      "fill:Förnamn=Anna",
+      "fill:Efternamn=Exempel",
+      "fill:E-post=anna@example.com",
+    ],
+  },
+  {
     name: "genetik-oversikt",
     role: "manager",
     path: "/stamboken/genetik?genebank=1",
@@ -267,6 +278,11 @@ async function act(page: Page, action: string) {
         .first()
         .click();
       break;
+    case "fill": {
+      const [label, value] = arg.split("=");
+      await page.getByRole("dialog").getByLabel(label).fill(value);
+      break;
+    }
     case "menuitem":
       await page.getByRole("menuitem", { name: arg }).click();
       break;

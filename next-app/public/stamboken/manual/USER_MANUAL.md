@@ -1,7 +1,7 @@
 # Användarmanual – Stamboken Online
 
 > **Gäller:** nya Stamboken på föreningens webbplats.
-> **Senast kontrollerad mot gränssnittet:** 2026-11-25.
+> **Senast kontrollerad mot gränssnittet:** 2026-11-28.
 > Skärmbilderna är tagna i en lokal testmiljö med påhittade kaniner och besättningar.
 
 Är du ny i Stamboken, börja med sidan [Kom igång](https://gotlandskaninen.se/stamboken-online/kom-igang).
@@ -23,7 +23,8 @@ på skärmen) och slutar med **Skärmarna** (vad varje sida innehåller).
     [kullnummer](#när-kullnumren-inte-stämmer), [foto](#ladda-upp-ett-foto), [ladda upp intyg](#ladda-upp-intyg),
     [redigera](#redigera-en-kanin), [död](#rapportera-en-kanin-som-död),
     [sälja](#sälja-eller-flytta-en-kanin), [provpara](#provpara),
-    [besättningsuppgifter](#uppdatera-besättningsuppgifter), [profil](#uppdatera-din-profil)
+    [besättningsuppgifter](#uppdatera-besättningsuppgifter), [profil](#uppdatera-din-profil),
+    [familjemedlem eller skötare](#lägg-till-en-familjemedlem-eller-skötare)
   - Skärmarna: [Min besättning](#min-besättning), [Kaninens sida](#kaninens-sida),
     [Alla kaniner](#alla-kaniner), [Provparning](#provparning), [Färgatlas](#färgatlas), [Min profil](#min-profil),
     [Mina inskick](#mina-inskick), [Ladda upp intyg](#ladda-upp-intyg-skärmen),
@@ -93,7 +94,9 @@ mejla då <admin@gotlandskaninen.se>.
 
 Saknar matrikeln din adress, eller är du familjemedlem eller skötare och har
 någon annan i matrikeln samma adress, kommer inget mejl. Mejla då
-<admin@gotlandskaninen.se>.
+<admin@gotlandskaninen.se>. Huvudmedlemmen lägger till familjemedlemmar och skötare
+med deras egna adresser, se
+[Lägg till en familjemedlem eller skötare](#lägg-till-en-familjemedlem-eller-skötare).
 
 ![Fältet för engångskoden](logga-in-kod-desktop.png)
 
@@ -717,14 +720,50 @@ medlemskapets uppgifter.
   Konton som fanns före valet visar namnet tills du ändrar det. På själva intyget står
   ditt namn alltid.
 - **Personer i medlemskapet**: huvudmedlemmen lägger till familjemedlemmar och skötare
-  med **Lägg till person** (**Förnamn**, **Efternamn**, **Roll**), ger dem rätt att
-  sköta en besättning med **Ge åtkomst**, förnyar en skötares tidsbegränsade åtkomst
-  med **Förnya** och drar tillbaka den med **Återkalla**.
+  med **Lägg till person**, ger dem rätt att sköta en besättning med **Ge åtkomst**,
+  förnyar en skötares tidsbegränsade åtkomst med **Förnya** och drar tillbaka den med
+  **Återkalla**. Stegen finns under
+  [Lägg till en familjemedlem eller skötare](#lägg-till-en-familjemedlem-eller-skötare).
 
 Bara huvudmedlemmen kan ändra medlemskapets uppgifter; familjemedlemmar och skötare
 ser dem och får texten "Endast huvudmedlemmen kan ändra medlemskapets uppgifter."
 
 ![Min profil](profil-mobil.png)
+
+### Lägg till en familjemedlem eller skötare
+
+Bara huvudmedlemmen kan lägga till personer i medlemskapet. En familjemedlem
+eller skötare loggar sedan in med sin egen e-postadress och en kod, och kan
+sköta besättningen när du har gett personen åtkomst.
+
+1. Öppna avatarmenyn och klicka **Min profil**. Gå till rutan **Personer i medlemskapet**.
+2. Klicka **Lägg till person**.
+3. Fyll i **Förnamn**, **Efternamn** och personens **egen e-post**. Utan e-post kan
+   personen inte logga in med kod. **Telefon** är valfritt.
+4. Välj **Roll**: **Familjemedlem** (åtkomst utan tidsgräns) eller **Skötare**
+   (åtkomst i ett år, som du kan förnya).
+5. Klicka **Lägg till**. Personen syns nu i rutan.
+6. Ska personen sköta kaniner klickar du **Ge åtkomst** på personens rad, väljer
+   **Besättning** och klickar **Ge åtkomst**. Utan åtkomst syns ingen besättning
+   för personen.
+7. Be personen gå till inloggningen och logga in med sin e-postadress och koden i
+   mejlet, se [Logga in med kod](#logga-in-med-kod). Kontot skapas första gången
+   personen loggar in, se [Skapa ditt konto första gången](#skapa-ditt-konto-första-gången).
+
+![Dialogen Lägg till person](lagg-till-person-desktop.png)
+
+Adressen måste vara personens egen. Används den redan av en annan aktiv person i
+matrikeln står det "Personen är tillagd, men e-postadressen används redan av en
+annan aktiv person." Personen är då tillagd, men inget mejl med kod kommer till
+henne eller honom. Ta bort personen med **Ta bort** och lägg till den igen med en
+egen adress, eller mejla <admin@gotlandskaninen.se>.
+
+Förnya en skötares åtkomst med **Förnya** och dra tillbaka den med **Återkalla**.
+**Ta bort** tar personen ur medlemskapet och återkallar all åtkomst. Är du inte
+huvudmedlem saknas knappen **Lägg till person**: be huvudmedlemmen lägga till dig.
+Fungerar något inte, mejla <admin@gotlandskaninen.se>.
+
+![Lägg till person på mobilen](lagg-till-person-mobil.png)
 
 ### Skärmarna – uppfödare
 

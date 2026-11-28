@@ -99,6 +99,11 @@ describe("PersonerClient", () => {
     expect(
       screen.getByRole("button", { name: "Lägg till person" }),
     ).toBeDefined();
+    expect(
+      screen.getByRole("link", { name: "Hur gör jag?" }).getAttribute("href"),
+    ).toBe(
+      "/stamboken-online/manual#lägg-till-en-familjemedlem-eller-skötare",
+    );
     expect(screen.getAllByRole("button", { name: "Ge åtkomst" })).toHaveLength(
       2,
     );
