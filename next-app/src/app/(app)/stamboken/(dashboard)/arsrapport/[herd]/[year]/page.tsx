@@ -6,6 +6,7 @@ import {
   addLitter,
   changeLitter,
   dryRun,
+  dryRunCompletion,
   getFathers,
   getMothers,
   reportPurchase,
@@ -14,6 +15,7 @@ import {
   sendPurchasePhotos,
   submitReport,
   undoSale,
+  submitCompletion,
   withdrawReport,
 } from "../../actions";
 import { getGenebankHerds } from "../../../individ/[number]/actions";
@@ -85,7 +87,9 @@ export default async function ReportPage({
       actions={{
         saveDraft,
         dryRun,
+        dryRunCompletion,
         submitReport,
+        submitCompletion,
         withdrawReport,
         reportPurchase,
         sendPurchasePhotos,

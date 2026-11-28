@@ -1057,6 +1057,10 @@ def _report_json(report, round_, access, is_open):
         "can_change": is_open or access.editor,
         "can_withdraw": can_withdraw,
         "withdraw_until": _iso(until),
+        "not_stated": json.loads(report.data).get("not_stated") or [],
+        "from_paper": from_paper(report),  # the receipt shows the day the form came, without a time
+        # P9: the focused page for the rabbits a paper form left out (Å22), also after an answer by link
+        "can_complete_missing": is_open and access.item is None and completable(report),
     }
 
 
@@ -1566,6 +1570,13 @@ def _answers_purchase(purchase, history):
     return entry.val == "kvar" or partial_date(when["ar"], when["manad"], when["dag"], today()) >= purchase.sale_date
 
 
+def _reminder_json(row):
+    """The herd's latest reminder that went or may still go; one the queue cancelled as obsolete is left out."""
+    if row is None:
+        return None
+    return {"queued_at": _iso(row.created_at), "sent_at": _iso(row.sent_at), "status": row.status}
+
+
 def status_view(round_, genebank_id, with_phone=False):
     """
     StatusView (5.14): a row per active herd of the genebank, and per herd with any report in the round (a withdrawn
@@ -1573,8 +1584,9 @@ def status_view(round_, genebank_id, with_phone=False):
     A fixed number of queries however many herds there are. `with_phone` adds the main member's phone to each row
     (`telefon`, null without one); without it the key is absent.
     """
+    import utils.arsrapport_remind as remind  # pylint: disable=import-outside-toplevel  # they import this module
     import utils.member_changes as member_changes  # pylint: disable=import-outside-toplevel  # it imports this module
-    import utils.purchase_notice as purchase_notice  # pylint: disable=import-outside-toplevel  # it imports this module
+    import utils.purchase_notice as purchase_notice  # pylint: disable=import-outside-toplevel
 
     year, last = round_.report_year, date(round_.report_year, 12, 31)
     in_round = list(
@@ -1599,6 +1611,7 @@ def status_view(round_, genebank_id, with_phone=False):
     )
     items, drafts, emails = _row_states(herds, round_)
     invitations = _invitations(herds, round_)
+    reminded = {row.herd_id: row for row in filter(remind.counts, remind.reminders(round_, [h.id for h in herds]))}
     held, stats, pending = innehav(genebank_id, year), statistik(genebank_id, year), _pending_sales(last)
     data = {herd_id: json.loads(report.data) for herd_id, report in reports.items()}
     unstated = sorted({int(i) for body in data.values() for i in body.get("not_stated") or ()})
@@ -1657,6 +1670,8 @@ def status_view(round_, genebank_id, with_phone=False):
                 "state": state,
                 "inbjudan": invitations.get(herd.id),
                 "ingen_epost": not emails.get(herd.id),
+                "needs_report": herd.is_active and report is None,  # Å5 and "Ej svarat" (P12)
+                "last_reminder": _reminder_json(reminded.get(herd.id)),
                 "source": report.source if report else None,
                 "membership_after_end": body.get("membership_after_end"),
                 "received_at": _iso(report.received_at) if report else None,
@@ -2425,11 +2440,13 @@ def _waiting_buyers(proposals):
 
 
 def check(
-    herd, round_, access, report, sub, *, on: date, check_email=True, transfers=None
+    herd, round_, access, report, sub, *, on: date, check_email=True, transfers=None, completion=False
 ) -> tuple[list[Refusal], list[Refusal]]:
     """
     The dry run (5.4 point 1): (refusals, warnings) for the submission `sub` on the herd's current `report`, as of
     `on`. Skicka reruns it under the locks and collects the checked transfer commands before any sale is voided.
+    A `completion` (merge_completion) keeps what the paper form left as it was: the other unstated rabbits, an
+    unanswered health question, and a rabbit added since that the form never listed.
     """
     if not access.reads_buyers:
         sub = without_reason(sub)
@@ -2453,7 +2470,7 @@ def check(
     ):
         refusals.append(_refusal(None, "orsak_kravs"))
     # A null in the latest submission came from paper, or an editor kept it there (case 8 by phone).
-    kept_null = access.editor and latest is not None and latest.get("health") is None
+    kept_null = (access.editor or completion) and latest is not None and latest.get("health") is None
     ending = sub.report["ending_genbank"]  # 5.7, fråga 18: an ending needs neither choices nor a health answer
     if access.source != "paper" and sub.report["health"] is None and not kept_null and not ending:
         refusals.append(_refusal(None, "halsa_saknas"))
@@ -2474,11 +2491,11 @@ def check(
         entry, before = sub.rabbits.get(rabbit), before_entries.get(rabbit)
         if entry is None:
             if (
-                row["state"] == "att_valja" and not sub.report["ending_genbank"]
+                row["state"] == "att_valja" and not sub.report["ending_genbank"] and not completion
             ):  # 5.7: an ending genebank needs no choices
                 refusals.append(_refusal(rabbit, "inte_klar"))
             continue
-        kept = access.editor and before is not None and before.val == "ej_angiven"
+        kept = (access.editor or completion) and before is not None and before.val == "ej_angiven"
         if entry.val == "ej_angiven" and access.source != "paper" and not kept:
             refusals.append(_refusal(rabbit, "ej_angiven_digitalt"))
             continue
@@ -3042,12 +3059,15 @@ class ReportGrant:
             self.inbox_grant.record(ctx)
 
 
-def request_hash(sub: Submission) -> str:
+def request_hash(sub: Submission, *, completion=False) -> str:
     """
     D21: HMAC-SHA256 with the app's SECRET_KEY over the parsed submission without its key and revision, with the
-    matrikel and every buyer. Nothing in it depends on today, so a retry from an old tab matches.
+    matrikel and every buyer. Nothing in it depends on today, so a retry from an old tab matches. A completion's is
+    over the partial answer as sent, marked, so its key never matches an ordinary Skicka.
     """
     fields = {name: value for name, value in asdict(sub).items() if name not in ("key", "revision")}
+    if completion:
+        fields["komplettering"] = True
     if sub.matrikel is None:  # a body without it hashes as before step 5, so an older retry still matches
         del fields["matrikel"]
     if paper := fields["paper"]:
@@ -3484,7 +3504,7 @@ def _propose(report, submission, proposed):
         submission.save(only=[YearlyReportSubmission.data])
 
 
-def submit(herd, round_, access, user, sub, *, now=None) -> dict:
+def submit(herd, round_, access, user, sub, *, now=None, completion=False) -> dict:
     """
     Skicka (5.4 points 2–5) in one transaction, under the locks in their order: the same request again gets its
     first receipt; otherwise the revision and check() once more, the report row, each rabbit's writes, the
@@ -3492,7 +3512,8 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
     on and each changed rabbit gets apply_diff, with Å8 for the mail. Every refusal raises, so nothing stays written.
     On paper (5.5) the item is locked and checked after the retry, the writes go through its InboxGrant, and the
     form's pages are done, their photo purged once the report can no longer be withdrawn, before close_if_done.
-    Returns the Receipt.
+    A `completion` (parse_completion) is merged with the report under its lock and leaves the draft's other edits
+    (keep_draft_after_completion). Returns the Receipt.
     """
     if sub.key is None:
         raise _bad("submission_key", "Ange submission_key som ett UUID.")
@@ -3500,7 +3521,7 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
     on, year = at.astimezone(STOCKHOLM).date(), round_.report_year
     if access.code is not None:
         sub = without_reason(sub)
-    last, digest, paper = date(year, 12, 31), request_hash(sub), access.source == "paper"
+    last, digest, paper = date(year, 12, 31), request_hash(sub, completion=completion), access.source == "paper"
     if not access.reads_buyers:  # after the hash, which the route's retry makes before it knows the role
         sub = without_reason(sub)
     same = (YearlyHerdReport.herd == herd.id) & (YearlyHerdReport.round == round_.id)
@@ -3520,6 +3541,12 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
             raise ArsrapportError(403, NOT_MAIN)
         old_email = member.email if member is not None else None
         report = YearlyHerdReport.select().where(same & (YearlyHerdReport.status == "submitted")).for_update().first()
+        answered, open_choices = sub.rabbits, {}
+        if completion:
+            sub = merge_completion(report, sub)
+            # a rabbit left to choose again ("välj igen", val null) is no entry, but the next submission keeps it
+            latest = _submissions(report)[-1].data.get("rabbits") or {}
+            open_choices = {k: e for k, e in latest.items() if isinstance(e, dict) and e.get("val") is None}
         draft = _draft(herd, round_)  # K1: its kept buyers are linked again or deleted, under the rabbits' locks
         kept = {int(key): claim["kopare_id"] for key, claim in (_kept_claims(draft.data) if draft else {}).items()}
         # Ångra can put a sold rabbit back on the list. Hold it from the completeness check through the receipt.
@@ -3532,7 +3559,9 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
             raise ArsrapportError(409, "Rapporten har ändrats.")
         # set_member_email reserves the address under lock when the paper change is actually written.
         transfers = {}
-        refusals, _ = check(herd, round_, access, report, sub, on=on, check_email=False, transfers=transfers)
+        refusals, _ = check(
+            herd, round_, access, report, sub, on=on, check_email=False, transfers=transfers, completion=completion
+        )
         if refusals:
             raise _cannot(refusals)
         buyers = {rabbit: t.buyer for rabbit, t in transfers.items() if t.buyer}
@@ -3610,11 +3639,8 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
                 **_by(user, "user", "access_code"),
                 operation_ids=grant.operation_ids,
                 added_measurements=added,
-                data={
-                    **submitted_body(sub),
-                    "litters_added": _litters_added(herd, round_),
-                    "salda_direkt": _sold_besides(herd, year, sub),
-                },
+                data=_with_open_choices(submitted_body(sub), open_choices)
+                | {"litters_added": _litters_added(herd, round_), "salda_direkt": _sold_besides(herd, year, sub)},
                 request_hash=digest,
             )
         except IntegrityError as exc:  # the key, taken meanwhile for another herd, which this lock does not cover
@@ -3634,14 +3660,126 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
             page.save()
         if paper:  # after the writes: InboxGrant needs the item "tagen"
             inbox.close_if_done(item, user)
-        drop_kept_buyers(set(kept.values()), user)  # FB6: the draft goes, and a kept buyer not linked again with it
-        YearlyReportDraft.delete().where(
-            (YearlyReportDraft.herd == herd.id) & (YearlyReportDraft.round == round_.id)
-        ).execute()
+        if completion:
+            keep_draft_after_completion(herd, round_, answered, sub.key)
+        else:
+            drop_kept_buyers(set(kept.values()), user)  # FB6: the draft goes, and a kept buyer not linked again with it
+            YearlyReportDraft.delete().where(
+                (YearlyReportDraft.herd == herd.id) & (YearlyReportDraft.round == round_.id)
+            ).execute()
         kind = "arsrapport.andrad" if change else "arsrapport.kvitto"
         ref = ("yearly_report_submission", submission.id)
         _mail(kind, herd, user, {"submission_id": submission.id}, ref, with_member=True)
         return receipt(submission)
+
+
+# The partial answer (step 6, D9): the rabbits a paper form left out, answered on their own through Å22's link
+
+NOTHING_MISSING = "Rapporten saknar inga kaniner att svara för. Ladda om sidan."
+COMPLETION_KEYS = ("submission_key", "revision", "rabbits")
+
+
+def parse_completion(body: dict) -> Submission:
+    """
+    P6: the partial answer as sent, a 400 that names the field otherwise. Only rabbits, each answered Finns kvar, Död
+    or Såld; the report's other fields come from the report itself (merge_completion), never from the client.
+    """
+    _keys(body, COMPLETION_KEYS, "body")
+    try:
+        key = uuid.UUID(body["submission_key"])
+    except (KeyError, AttributeError, TypeError, ValueError) as exc:
+        raise _bad("submission_key", "Ange submission_key som ett UUID.") from exc
+    if not _is_int(body.get("revision")):
+        raise _bad("revision", "Ange revisionen som ett heltal.")
+    raw = body.get("rabbits")
+    if not isinstance(raw, dict) or not raw:
+        raise _bad("rabbits", "Svara för minst en kanin.")
+    rabbits = {}
+    for name, value in raw.items():
+        entry = _entry(name, value)
+        if entry is None or entry.val == "ej_angiven":
+            raise _bad("val", "Välj Finns kvar, Död eller Såld.")
+        if entry.sald is not None and entry.sald["kopare_id"] is not None:  # the server's own reference (K1)
+            raise _bad("kopare_id", "Ange köparen igen.")
+        if entry.individual_id in rabbits:
+            raise _bad("rabbits", "Samma kanin finns två gånger.")
+        rabbits[entry.individual_id] = entry
+    return Submission(key, body["revision"], None, rabbits, {}, None)
+
+
+def _with_open_choices(body, open_choices):
+    return {**body, "rabbits": {**open_choices, **body["rabbits"]}} if open_choices else body
+
+
+def from_paper(report) -> bool:
+    """P9: one of the report's submissions came from paper; the latest source is the link's after an answer."""
+    paper = YearlyReportSubmission.select().where(
+        YearlyReportSubmission.report == report.id, YearlyReportSubmission.source == "paper"
+    )
+    return paper.exists()
+
+
+def completable(report) -> bool:
+    """A submitted report from paper, not an ending, with rabbits still unstated."""
+    if report is None:
+        return False
+    data = json.loads(report.data)
+    return not data.get("ending_genbank") and bool(data.get("not_stated")) and from_paper(report)
+
+
+def merge_completion(report, patch: Submission) -> Submission:
+    """
+    D9, P6: the answers laid over the report's latest submission, so the rest of the report, the other unstated
+    rabbits, the health answer and every other rabbit stay as they were sent, and only the answered rabbits differ.
+    The answered rabbits must all still be unstated. Skicka calls it under the report's lock.
+    """
+    if not completable(report):
+        raise ArsrapportError(409, NOTHING_MISSING)
+    data = json.loads(report.data)
+    if not set(patch.rabbits) <= set(data["not_stated"]):
+        raise ArsrapportError(409, "Kaninen är redan besvarad. Ladda om sidan.")
+    rabbits = {**_entries(_submissions(report)[-1].data.get("rabbits") or {}), **patch.rabbits}
+    data["not_stated"] = sorted(rabbit for rabbit, entry in rabbits.items() if entry.val == "ej_angiven")
+    data["not_weighed"] = {str(rabbit): entry.ej_vagd for rabbit, entry in rabbits.items() if entry.ej_vagd}
+    return replace(patch, rabbits=rabbits, report=data)
+
+
+def _draft_entry(entry, form):
+    """An answer as the draft holds it: the body's shape, or the form's (vikt as text), never with a buyer."""
+    stored = {key: value for key, value in asdict(entry).items() if key != "individual_id"}
+    if entry.sald is not None:
+        stored["sald"] = {key: value for key, value in entry.sald.items() if key not in ("kopare", "kopare_id")}
+    if form:
+        stored["vikt"] = "" if entry.vikt is None else f"{entry.vikt:g}".replace(".", ",")
+    return stored
+
+
+def keep_draft_after_completion(herd, round_, answered, key):
+    """
+    Question 1, alternative A (Jonas 2026-11-26): a partial answer is sent on its own and the member's other unsent
+    edits stay in the draft, with its kept buyers (no drop_kept_buyers). An answered rabbit the draft still has as
+    "Ej angiven" (or not at all) takes the answer, in the body and in the form copy alike; one the member had
+    changed stays as they left it. The version moves on, so an autosave from before gets the 409, and the draft never
+    keeps the completion's key. Its author stays (review 4): a helper's paper draft is still the helper's own to go on
+    with; the answer's actor is on its submission.
+    """
+    draft = _draft(herd, round_)
+    if draft is None:
+        return
+    data = json.loads(json.dumps(draft.data))  # a copy, so the save sees the change
+    changed = draft.submission_key == key
+    for body, form in ((data, False), (data.get("form"), True)):
+        rabbits = body.get("rabbits") if isinstance(body, dict) else None
+        for rabbit, entry in answered.items() if isinstance(rabbits, dict) else ():
+            held = rabbits.get(str(rabbit))
+            if held is None or (isinstance(held, dict) and held.get("val") == "ej_angiven"):
+                rabbits[str(rabbit)] = _draft_entry(entry, form)
+                changed = True
+    if not changed:
+        return
+    draft.data, draft.submission_key = data, None if draft.submission_key == key else draft.submission_key
+    draft.updated_at = max(now(), draft.updated_at + timedelta(microseconds=1)).astimezone(timezone.utc)
+    draft.save()
 
 
 SOLD_WITH_SKICKA = "Rapporten är redan inskickad. Försäljningen registreras när du skickar ändringarna."

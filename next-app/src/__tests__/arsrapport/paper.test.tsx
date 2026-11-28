@@ -776,6 +776,8 @@ describe("ReportForm on paper", () => {
         report_date: "2027-01-02",
         on_time: true,
         submitted: { rabbits: { "1": { val: "kvar", vikt: 2.8 } } as never },
+        not_stated: [],
+        can_complete_missing: false,
         can_change: true,
         can_withdraw: false,
         withdraw_until: null,

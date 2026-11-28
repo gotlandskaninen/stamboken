@@ -1,0 +1,16 @@
+{% block subject %}Årsrapporter {{ year }} som saknas för {{ genebank }}{% endblock %}
+
+{% block body %}
+Hej!
+
+Sista dag för stödet var {{ deadline }}. De här besättningarna har inte skickat in årsrapporten för {{ year }}.
+{% if paper %}
+Blanketten har kommit men är inte inmatad:
+{% for herd, state in paper %}{{ herd }}, {{ state }}
+{% endfor %}{% endif %}{% if other %}
+Inget inskick:
+{% for herd, state in other %}{{ herd }}, {{ state }}
+{% endfor %}{% endif %}
+Öppna listan i Stamboken:
+{{ link }}
+{% endblock %}
