@@ -18,6 +18,7 @@ import {
   renewMyGrant,
   revokeMyGrant,
 } from "./actions";
+import { MANUAL_PATH } from "@/lib/constants";
 import { useSnackbar } from "@/components/SnackbarProvider";
 import { useNotifications } from "@/contexts/NotificationContext";
 import { ROLE_LABELS } from "./types";
@@ -157,14 +158,22 @@ export function PersonerClient({
       <div className={styles.cardHead}>
         <h3 className={`sb-h6 ${styles.cardTitle}`}>Personer i medlemskapet</h3>
         {isMainMember && (
-          <button
-            type="button"
-            className="sb-btn sb-btn-secondary sb-btn-sm"
-            disabled={pending}
-            onClick={() => setAddOpen(true)}
-          >
-            Lägg till person
-          </button>
+          <div className={styles.cellActions}>
+            <a
+              className="sb-btn sb-btn-ghost sb-btn-sm"
+              href={`${MANUAL_PATH}#lägg-till-en-familjemedlem-eller-skötare`}
+            >
+              Hur gör jag?
+            </a>
+            <button
+              type="button"
+              className="sb-btn sb-btn-secondary sb-btn-sm"
+              disabled={pending}
+              onClick={() => setAddOpen(true)}
+            >
+              Lägg till person
+            </button>
+          </div>
         )}
       </div>
       <table className={styles.tbl}>

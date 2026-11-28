@@ -8,6 +8,7 @@ import { hideTyckTillWhileClicking } from "./hide-tyck-till";
 // och att MANUAL_CERT_UUID pekar på ett utfärdat intyg (annars hoppas den bilden).
 
 const USERS = {
+  member: { username: "test-member", password: "test-member-pass" },
   owner: { username: "test-gk-owner", password: "test-gk-owner-pass" },
   manager: { username: "test-gk-manager", password: "test-gk-pass" },
   admin: { username: "test-admin", password: "test-admin-pass" },
@@ -127,6 +128,17 @@ const SHOTS: Shot[] = [
     fullPage: true,
   },
   { name: "profil", role: "owner", path: "/stamboken/profil" },
+  {
+    name: "lagg-till-person",
+    role: "member",
+    path: "/stamboken/profil",
+    actions: [
+      "click:Lägg till person",
+      "fill:Förnamn=Anna",
+      "fill:Efternamn=Exempel",
+      "fill:E-post=anna@example.com",
+    ],
+  },
   {
     name: "genetik-oversikt",
     role: "manager",
@@ -267,6 +279,13 @@ async function act(page: Page, action: string) {
         .first()
         .click();
       break;
+    case "fill": {
+      const eq = arg.indexOf("=");
+      const label = arg.slice(0, eq);
+      const value = arg.slice(eq + 1);
+      await page.getByRole("dialog").getByLabel(label).fill(value);
+      break;
+    }
     case "menuitem":
       await page.getByRole("menuitem", { name: arg }).click();
       break;

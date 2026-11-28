@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import React from "react";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
@@ -10,6 +11,8 @@ import {
 } from "@testing-library/react";
 import { ThemeProvider } from "@mui/material/styles";
 import { stambokenTheme } from "@/theme/stamboken";
+import { headingSlugger } from "@/lib/headingSlug";
+import { MANUAL_PATH } from "@/lib/constants";
 
 // Mutation feedback goes through the app-wide snackbar + notification hooks
 const { showSnackbar, addNotification } = vi.hoisted(() => ({
@@ -92,13 +95,22 @@ describe("PersonerClient", () => {
     expect(screen.getByText("Skötare")).toBeDefined();
   });
 
-  it("shows all self-service actions for the main member", () => {
+  it("shows all self-service actions for the main member", async () => {
     renderWithTheme(
       <PersonerClient isMainMember persons={persons} herds={herds} />,
     );
     expect(
       screen.getByRole("button", { name: "Lägg till person" }),
     ).toBeDefined();
+    const href = screen
+      .getByRole("link", { name: "Hur gör jag?" })
+      .getAttribute("href");
+    // The anchor must be a heading in the manual, as tour.test.tsx checks for its links.
+    const md = await readFile("public/stamboken/manual/USER_MANUAL.md", "utf8");
+    const slug = headingSlugger();
+    const anchors = [...md.matchAll(/^#{1,6} (.+)$/gm)].map((m) => slug(m[1]));
+    expect(href?.startsWith(`${MANUAL_PATH}#`)).toBe(true);
+    expect(anchors).toContain(href?.split("#")[1]);
     expect(screen.getAllByRole("button", { name: "Ge åtkomst" })).toHaveLength(
       2,
     );
