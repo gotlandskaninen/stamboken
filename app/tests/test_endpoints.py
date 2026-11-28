@@ -1435,9 +1435,6 @@ class TestUpdateHerdAllowList(FlaskTest):
         sune_person = db.Member.create(membership=own_ms, first_name="S", last_name="S", role="huvudmedlem", user=sune)
         db.HerdAccessGrant.create(member=sune_person, herd=g1, granted_by=self.admin)
 
-        rabbit = self.individuals[0]  # G1-2111, current herd G1
-        self.assertFalse(db.User.get_by_id(sune.id).can_transfer(rabbit.id))
-
         client = self._client_for("sune@ex.se")
         resp = client.patch("/api/manage/herd", json={"id": g1.id, "membership": own_ms.id})
         now_ms = db.Herd.get_by_id(g1.id).membership_id
@@ -1445,7 +1442,6 @@ class TestUpdateHerdAllowList(FlaskTest):
             now_ms,
             owner_ms.id,
             f"caretaker PATCH {resp.get_json()} re-pointed G1.membership {owner_ms.id} -> {now_ms}; "
-            f"caretaker can_transfer={db.User.get_by_id(sune.id).can_transfer(rabbit.id)}, "
             f"huvudmedlem still owns G1={g1.id in db.User.get_by_id(main_user.id).effective_herd_ids()}",
         )
 

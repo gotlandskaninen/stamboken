@@ -314,7 +314,8 @@ Kod: `sb_mode` (`prod`, `demo`), `v2_prod_access` · Legacy-manual: "den skarpa 
 
 **Skötare**\
 En person som får sköta en annan medlems besättning. Åtkomsten gäller ett år och kan förnyas. En
-skötare kan inte sälja kaniner.\
+skötare kan göra allt som huvudmedlemmen gör med besättningen, också sälja kaniner, men ändrar inte
+medlemskapets uppgifter.\
 Kod: `caretaker` (`HerdAccessGrant`) · Legacy-manual: – · Legacy: – · Nytt UI: samma
 
 **Slaktad / avlivad / försvunnen**\

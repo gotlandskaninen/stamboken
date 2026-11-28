@@ -1888,7 +1888,7 @@ def _herd_link_preview(
     )
     new_access, new_readers, contact_rows, contact_changes = None, [], None, {}
     try:
-        if main is not None and main.is_active and (not active or herd.id not in main.transfer_herd_ids()):
+        if main is not None and main.is_active and (not active or herd.id not in main.owned_herd_ids()):
             new_access = {
                 **_account_summary(main),
                 # integer ids, as the write policies compare; no SQL on stored role values

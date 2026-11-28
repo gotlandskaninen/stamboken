@@ -268,7 +268,7 @@ class RundorTest(ArsrapportTest):
             self.assertEqual(role(user), expected, user.username)
         self.assertEqual(arsrapport.report_access(owner, herd).source, "login")
         self.assertTrue(arsrapport.report_access(owner, herd).can_sell)
-        self.assertFalse(arsrapport.report_access(caretaker, herd).can_sell)
+        self.assertTrue(arsrapport.report_access(caretaker, herd).can_sell)  # #326
         self.assertTrue(arsrapport.report_access(self.manager, herd).editor)
         self.assertFalse(arsrapport.report_access(owner, herd).editor)
 

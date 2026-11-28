@@ -127,7 +127,7 @@ describe("RabbitRow", () => {
     expect(onNextWeight).toHaveBeenCalledWith(1);
   });
 
-  it("opens the sale dialog for a caretaker, whose sale shows as a proposal", () => {
+  it("opens the sale dialog for a link, whose sale shows as a proposal", () => {
     const onSell = vi.fn();
     render(<RabbitRow {...props({ canSell: false, onSell })} />);
     fireEvent.click(screen.getByLabelText("Såld"));
@@ -147,7 +147,7 @@ describe("RabbitRow", () => {
     fireEvent.click(screen.getByRole("button", { name: "Ändra" }));
     expect(onSell).toHaveBeenCalledTimes(2);
     cleanup();
-    // FB5: a sale the owner registered is not the caretaker's to change
+    // FB5: a sale the owner registered is not the link's to change
     render(<RabbitRow {...props({ canSell: false, entry: sold })} />);
     expect(screen.getByText("Såld till G9002, 3 oktober 2026")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Ändra" })).toBeNull();

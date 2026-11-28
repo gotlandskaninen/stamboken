@@ -54,9 +54,9 @@ Regler:
    annat nekas. Rollerna är relationer mellan användaren och individen, och de
    härleds ur rollerna och metoderna i ADR-0014: admin, ansvarig för den
    nuvarande besättningens genbank, ansvarig för ursprungsbesättningens genbank
-   (`manager` i den genbanken), ägare (`transfer_herd_ids()`) och skötare
+   (`manager` i den genbanken), ägare (`owned_herd_ids()`) och skötare
    (besättningen finns i `effective_herd_ids()` men inte i
-   `transfer_herd_ids()`, till exempel genom en åtkomstgrant). Inga nya roller
+   `owned_herd_ids()`, till exempel genom en åtkomstgrant). Inga nya roller
    lagras. `viewer` och `matrikel_admin` finns inte i tabellen och får därför
    ingen skrivrätt. Valideringar som inte gäller vem som frågar ligger i
    kommandot, inte i tabellen: datum, anledning vid genbanksbyte, unikt

@@ -272,7 +272,8 @@ def _check_transfer(individual, form, user_uuid, buyer=None):
         return problem(
             403,
             "Forbidden",
-            "Endast huvudmedlem, genbanksansvarig eller administratör kan sälja eller flytta individen.",
+            "Bara den som har åtkomst till besättningen, genbanksansvarig eller administratör kan sälja eller flytta"
+            " individen.",
         )
     if not selling:
         return problem(400, "Bad Request", "Ange försäljningsdatum för att flytta individen.")

@@ -512,7 +512,7 @@ class Herd(BaseModel):
             or user.is_matrikel_admin
             or (
                 access_level == "private"
-                and (self.genebank_id in (user.is_manager or ()) or self.id in user.transfer_herd_ids())
+                and (self.genebank_id in (user.is_manager or ()) or self.id in user.owned_herd_ids())
             )
         ):
             membership = self.membership if self.membership_id else None
@@ -1504,7 +1504,7 @@ class User(BaseModel, UserMixin):
         `effective_herd_ids()` (legacy owner privilege entries and herds of
         memberships where the user is the active huvudmedlem), plus the user's
         active person rows (needed for grants). Shared by `effective_herd_ids`
-        and `transfer_herd_ids` so the two cannot drift apart.
+        and `owned_herd_ids` so the two cannot drift apart.
         """
         herd_ids = set()
         for role in self.privileges:
@@ -1544,13 +1544,9 @@ class User(BaseModel, UserMixin):
         ending person rows — flipping back restores it.
 
         All permission/visibility consumers must route through this —
-        never read the owner entries of the privileges JSON directly.
-
-        EXCEPTION: herd/rabbit ownership TRANSFER (sell/move, the Phase 10
-        flow) must NOT be gated on this union — transfer requires the
-        membership's main member or a manager/admin. A caretaker holding a
-        grant can edit the herd but must never be able to transfer or give
-        it away. Use `can_transfer` / `transfer_herd_ids` for that.
+        never read the owner entries of the privileges JSON directly. Selling
+        and moving rabbits go by it too (`can_transfer`, #326); only the
+        membership's own details are the owner's (`owned_herd_ids`).
         """
         herd_ids, persons = self._owned_herd_ids_and_persons()
 
@@ -1567,10 +1563,11 @@ class User(BaseModel, UserMixin):
 
         return herd_ids
 
-    def transfer_herd_ids(self):
+    def owned_herd_ids(self):
         """
-        Herd ids this user may transfer rabbits out of as an owner: rights (a)
-        and (b) of `effective_herd_ids()` only — never herd-access grants (c).
+        Herd ids this user owns: rights (a) and (b) of `effective_herd_ids()`
+        only, never herd-access grants (c). For what only the owner sees or
+        changes, such as the membership's support account.
         """
         return self._owned_herd_ids_and_persons()[0]
 
@@ -1578,9 +1575,9 @@ class User(BaseModel, UserMixin):
         """
         Returns `True` if the user may sell/move the individual with id
         `individual_id` to another herd: an admin, a manager of the
-        individual's genebank, or the owner (legacy owner privilege or active
-        huvudmedlem) of its CURRENT herd. Caretakers with a herd-access grant
-        may edit but never transfer.
+        individual's genebank, or anyone with rights to its CURRENT herd
+        (`effective_herd_ids`): the owner, and a family member or caretaker
+        with an active grant, as in the old Stamboken (#326).
         """
         if self.is_admin:
             return True
@@ -1592,7 +1589,7 @@ class User(BaseModel, UserMixin):
             return True
         if herd.herd in OUTSIDE_GENEBANK_HERDS:
             return False  # only managers/admin move a rabbit back into the genebank
-        return herd.id in self.transfer_herd_ids()
+        return herd.id in self.effective_herd_ids()
 
     @property
     def accessible_genebanks(self):
@@ -2743,7 +2740,7 @@ class YearlyReportSubmission(BaseModel):
 
 
 class SaleProposal(BaseModel):
-    """A sale proposed by a caretaker or the report link (step 4), which a manager approves or rejects."""
+    """A sale proposed by the report link (step 4; before #326 a caretaker too), which a manager approves or rejects."""
 
     id = AutoField()
     report = ForeignKeyField(YearlyHerdReport, backref="+")

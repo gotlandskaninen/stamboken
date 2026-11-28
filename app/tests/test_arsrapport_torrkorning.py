@@ -315,12 +315,12 @@ class TorrkorningTest(ArsrapportTest):
         )
         self.assertTrue(self.dry(kept, role="manager")["ok"])
 
-    def test_caretaker_sale_is_checked_as_a_sale(self):  # step 4a: a proposal, with the sale's own checks
+    def test_link_sale_is_checked_as_a_sale(self):  # step 4a: a proposal, with the sale's own checks
         (a,) = self.rabbits(self.h, 1)
         body = self.body(self.sald(a, "G9002", 2025, 12, 10))
-        self.assertTrue(self.dry(body, role="caretaker")["ok"])
+        self.assertTrue(self.dry(body, role="code")["ok"])
         self.assertTrue(self.dry(body, role="owner")["ok"])
-        (refusal,) = self.dry(self.body(self.sald(a, "G9999", 2025, 12, 10)), role="caretaker")["refusals"]
+        (refusal,) = self.dry(self.body(self.sald(a, "G9999", 2025, 12, 10)), role="code")["refusals"]
         self.assertEqual((refusal["code"], refusal["message"]), ("forsaljning", "Okänd besättning: G9999."))
 
     def test_sale_messages_come_from_validate_sale(self):

@@ -89,7 +89,7 @@ class TestMembershipHerdLink(LinkApiBase):
             },
         )
         self.assertEqual(preview["new_readers"], [{"id": self.account.id, "username": self.account.username}])
-        self.assertNotIn(self.herd.id, self.account.transfer_herd_ids())
+        self.assertNotIn(self.herd.id, self.account.owned_herd_ids())
         self.assertFalse(is_matrikel_reader(self.account, self.herd))
         self.assertIn(
             f"{self.main.first_name} {self.main.last_name} blir kontaktperson", preview["contact_rows"][0]["effect"]
@@ -118,7 +118,7 @@ class TestMembershipHerdLink(LinkApiBase):
         self.assertEqual(linked.mobile_phone, self.herd.mobile_phone)
         self.assertEqual(linked.contact_pending, ["mobile_phone"])
         self.assertIn(linked.id, self.account.effective_herd_ids())
-        self.assertIn(linked.id, self.account.transfer_herd_ids())
+        self.assertIn(linked.id, self.account.owned_herd_ids())
         self.assertTrue(is_matrikel_reader(self.account, linked))
         self.assertIn(linked.id, self.owner.effective_herd_ids())
         audit = db.MatrikelAudit.get(db.MatrikelAudit.action == "herd_membership_linked")
@@ -260,7 +260,7 @@ class TestMembershipHerdLink(LinkApiBase):
         db.HerdAccessGrant.create(member=self.main, herd=self.herd, granted_by=self.admin)
         body = self.preview(confirm_token=first["confirm_token"])
         self.assertIn(self.herd.id, self.account.effective_herd_ids())
-        self.assertNotIn(self.herd.id, self.account.transfer_herd_ids())
+        self.assertNotIn(self.herd.id, self.account.owned_herd_ids())
         self.assertTrue(body["preview"]["new_access"]["already_edits"])
         self.assertEqual([u["id"] for u in body["preview"]["grant_holders"]], [self.account.id])
         self.account.is_active = False
@@ -276,7 +276,7 @@ class TestMembershipHerdLink(LinkApiBase):
         self.main.user = self.account
         self.main.save()
         preview = self.preview()["preview"]
-        self.assertNotIn(self.herd.id, self.account.transfer_herd_ids())
+        self.assertNotIn(self.herd.id, self.account.owned_herd_ids())
         self.assertIn(self.herd.herd, self.account.is_owner)
         # the rabbit write policies compare integer ids: the link adds that right
         self.assertFalse(preview["new_access"]["already_edits"])

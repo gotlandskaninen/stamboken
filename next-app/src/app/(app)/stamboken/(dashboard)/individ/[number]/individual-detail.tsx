@@ -426,7 +426,7 @@ export function IndividualDetail({
   const displayName = individual.name || individual.number || "";
   const herdName =
     typeof individual.herd === "object" ? individual.herd.herd_name : null;
-  // Sell/move needs the server's transfer permission (not caretakers). Outside the
+  // Sell/move needs the server's transfer permission. Outside the
   // genebank (GX1/MX1) only a genebank manager/admin can move a rabbit back.
   const canSell =
     individual.alive &&

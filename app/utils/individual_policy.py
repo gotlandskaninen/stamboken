@@ -18,8 +18,8 @@ class Role(StrEnum):
     ADMIN = "admin"
     MANAGER_CURRENT = "manager_current"  # manager of the current herd's genebank
     MANAGER_ORIGIN = "manager_origin"  # manager of the origin herd's genebank
-    OWNER = "owner"  # current herd in user.transfer_herd_ids()
-    CARETAKER = "caretaker"  # current herd in effective_herd_ids() - transfer_herd_ids()
+    OWNER = "owner"  # current herd in user.owned_herd_ids()
+    CARETAKER = "caretaker"  # current herd in effective_herd_ids() - owned_herd_ids()
     ACTOR = "actor"  # ran the logged command; derived only by Undo (actor_role), never by roles_for
     HANDLAGGARE = "handlaggare"  # a genebank helper through an inbox item they hold; only a grant gives it
     # the yearly report's right holder for the report's own writes, and a link's only role; only ReportGrant gives it
@@ -66,7 +66,7 @@ POLICY: tuple[Allow, ...] = (
     *[Allow("Entry", r, outside_genebank=False) for r in HOLDERS],
     *[Allow(c, r) for c in EDIT_LIKE for r in (*EDITORS, *HOLDERS)],
     *[Allow("TransferIndividual", r) for r in EDITORS],
-    Allow("TransferIndividual", Role.OWNER, outside_genebank=False),  # never a caretaker
+    *[Allow("TransferIndividual", r, outside_genebank=False) for r in HOLDERS],  # #326: a caretaker sells too
     *[Allow(c, r) for c in CERT_GUARDED for r in EDITORS],
     *[Allow(c, r, certified=False) for c in CERT_GUARDED for r in HOLDERS],
     Allow("ChangeOriginHerd", Role.ADMIN),

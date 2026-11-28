@@ -56,10 +56,14 @@ huvudmedlem, och aktiva åtkomstgrants (`HerdAccessGrant`, med valfritt
 slutdatum). Ny kod frågar `effective_herd_ids()` eller metoderna som bygger
 på den, och läser inte `privileges` direkt.
 
-**Att sälja eller flytta en kanin** är en snävare rätt än att redigera den:
-den avgörs av `User.can_transfer()` (admin, ansvarig för genbanken, eller
-ägaren via `transfer_herd_ids()`). En åtkomstgrant ger redigeringsrätt men
-aldrig rätt att flytta djur ur besättningen.
+**Att sälja eller flytta en kanin** avgörs av `User.can_transfer()`: admin,
+ansvarig för genbanken, eller den som har rätt till kaninens nuvarande
+besättning enligt `effective_herd_ids()`. En familjemedlem eller skötare med
+aktiv åtkomstgrant säljer alltså som huvudmedlemmen, som i gamla Stamboken
+(#326), och rätten upphör när granten går ut. Ur GX1 och MX1 flyttar bara
+admin och ansvarig för genbanken. Bara ägaren (`owned_herd_ids()`: äldre
+`owner`-roll eller huvudmedlem) ändrar medlemskapets egna uppgifter:
+kontakt, konto för stödet, personer och åtkomst.
 
 ### Var kontrollen görs
 

@@ -1110,7 +1110,7 @@ export function ReportForm({
       }}
     />
   );
-  // 5.9: a sale is a proposal while one is pending, or when a caretaker or the link makes it. A sale the report
+  // 5.9: a sale is a proposal while one is pending, or when the link makes it. A sale the report
   // already holds without one was registered, and only the genebank manager changes it (FB5).
   const proposalFor = (id: number) =>
     view.forslag.some(
@@ -2869,7 +2869,7 @@ export function ReportForm({
             wrote(key); // registered in the dialog, already answered
             refreshView(); // the list, with the new rabbits
             // "var är kaninen nu" as the row's choice, for those on the list; a sale opens its dialog, as the row's
-            // Såld does for every role (a link's or a caretaker's sale is a proposal there)
+            // Såld does for every role (a link's sale is a proposal there)
             for (const [rabbit, where] of registered) {
               if (!rabbit.listed || !where) continue;
               if (where === "sald") onSell(rabbit.id);

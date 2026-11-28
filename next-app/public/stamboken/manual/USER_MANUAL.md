@@ -301,7 +301,8 @@ fritextfält och används inte för valet.
 **Uppfödare** (besättningsägare), **genbanksansvarig** och **administratör** – rollerna
 som manualens tre delar handlar om. Dessutom kan ett konto ha **läsrätt** till en genbank
 och se allt i den utan att ändra. Det finns också **skötare**, som får sköta en annan
-medlems besättning, och **matrikeladministratör**, som hanterar medlemsregistret.
+medlems besättning och då gör samma sak som ägaren i del 1, och **matrikeladministratör**,
+som hanterar medlemsregistret.
 Matrikeladministratören har en egen guide inne i medlemsregistret (**Guide** överst på
 sidorna), som bara syns för den rollen.
 
@@ -630,8 +631,9 @@ och klicka **Ångra försäljning**. Har kaninen sålts till en köpare utanför
 frågar dialogen inte efter någon anledning. Bekräftelsen "Försäljningen är ångrad." visas.
 Efter sju dagar hjälper genbanksansvarig dig.
 
-Menyvalet **Sälj individ** är grått när du inte får sälja: kaninen är död, du är
-skötare och inte ägare, eller kaninen står redan i GX1/MX1.
+Menyvalet **Sälj individ** är grått när du inte får sälja: kaninen är död, du har inte
+åtkomst till besättningen den står i, eller kaninen står redan i GX1/MX1. En familjemedlem
+eller skötare med åtkomst säljer på samma sätt som huvudmedlemmen.
 
 ![Sälj individ](salj-individ-mobil.png)
 
@@ -1028,8 +1030,9 @@ Under listan:
   antalet**. Minst en kull krävs för stödet.
 - **Sålda under** året – försäljningarna som finns i Stamboken.
 
-Säljer en skötare en kanin, eller den som rapporterar via länken i inbjudan, väntar
-försäljningen på genbanksansvarig. Raden visar "Försäljningen väntar på genbanksansvarig.
+Rapporterar du via länken i inbjudan och säljer en kanin, väntar försäljningen på
+genbanksansvarig. Är du inloggad som familjemedlem eller skötare säljer du direkt, som
+huvudmedlemmen. Raden visar "Försäljningen väntar på genbanksansvarig.
 Kaninen står kvar hos dig tills den är godkänd."
 
 **Dina uppgifter** står sist före Skicka. Är ditt konto kopplat till huvudmedlemmen i
@@ -1126,7 +1129,7 @@ inbjudans läge: **Inbjudan skickad**, **Inbjudan studsade**, **Inbjudan misslyc
 **Länken öppnad**. Studsade och misslyckade inbjudningar kommer också under **Att ringa** tills
 besättningen har rapporterat. **Mata in blankett** öppnar inkorgen
 för besättningen, och genbanksansvarig kan välja **I tid** (**Räknas**, **Ja** eller **Nej**)
-på en rad med rapport. Väntar en försäljning från en skötare eller från länken finns
+på en rad med rapport. Väntar en försäljning från länken finns
 **Försäljningar**. Det öppnar **Försäljningar från** besättningen, där genbanksansvarig
 klickar **Godkänn** eller **Avvisa …**. Avvisar du skriver du en **Orsak** (medlemmen får
 den i ett mejl; skriv inte köparens namn) och väljer om kaninen **Finns kvar 31
@@ -1598,7 +1601,7 @@ bredvid rapportformuläret, se [Årsrapport för en besättning](#årsrapport-f�
   årsrapporten. Jämför fotot och tolkningen med det som registrerades och klicka
   **Stämmer**, eller **Rättat** när du har ändrat kaninen så att den stämmer med intyget.
   Båda stänger ärendet.
-- En försäljning från en skötare eller från länken i inbjudan – ärendet säger "Avgörs i
+- En försäljning från länken i inbjudan – ärendet säger "Avgörs i
   årsrapportens statusvy." med länken **Öppna statusvyn**, där du godkänner eller
   avvisar den, se [Status för årsrapporten](#status-för-årsrapporten).
 

@@ -453,8 +453,6 @@ export const REFUSAL_TEXT: Record<string, string> = {
     "Stamboken tog inte emot ändringen för kaninen. Genbanksansvarig kan rätta.",
   senare_handelse:
     "Kaninen har en senare händelse i Stamboken. Genbanksansvarig kan rätta.",
-  forsaljning_skotare:
-    "Försäljningen registreras av ägaren eller genbanksansvarig.",
   kopare_saknas: "Fyll i köparen, eller välj såld utanför genbanken.",
   halsa_saknas: "Välj Inga sjukdomsfall eller defekter, eller Ja.",
   ej_angiven_digitalt: "Ej angiven finns bara när en blankett matas in.",
@@ -462,7 +460,7 @@ export const REFUSAL_TEXT: Record<string, string> = {
   orsak_kopare: "Skriv inte köparens namn i orsaken.",
 };
 export const CONFLICT_TEXT = "Rapporten har ändrats på en annan enhet";
-// A sale by a caretaker or through the link is a proposal (5.9).
+// A sale through the link is a proposal (5.9).
 export const PENDING_SALE_TEXT =
   "Försäljningen väntar på genbanksansvarig. Kaninen står kvar hos dig tills den är godkänd.";
 export const PURCHASE_SENT_TEXT =
