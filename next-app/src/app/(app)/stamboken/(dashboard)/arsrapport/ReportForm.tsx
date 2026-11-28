@@ -1878,7 +1878,9 @@ export function ReportForm({
         rabbit={soldRabbit}
         isPaper={isPaper}
         onRegister={direct ? register : undefined}
-        undoable={view.access === "owner" && !isPaper}
+        undoable={
+          (view.access === "owner" || view.access === "caretaker") && !isPaper
+        }
         addressRequired={
           !isPaper && view.access !== "manager" && view.access !== "admin"
         }

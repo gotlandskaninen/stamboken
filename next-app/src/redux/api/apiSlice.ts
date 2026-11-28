@@ -125,7 +125,7 @@ export interface Individual extends LimitedIndividual {
   herd_active: boolean;
   is_active: boolean;
   is_registered: boolean;
-  /** Sell/move permission (huvudmedlem, legacy owner, manager, admin — not caretakers). */
+  /** Sell/move permission (huvudmedlem, legacy owner, family member or caretaker with access, manager, admin). */
   can_transfer?: boolean;
   /** May open the certificate PDF (ADR-0016: owner, breeder, genebank manager, admin). */
   can_view_certificate?: boolean;

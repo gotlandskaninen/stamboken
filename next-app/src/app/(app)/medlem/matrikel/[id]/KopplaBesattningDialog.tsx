@@ -31,7 +31,7 @@ function ownerEffect(access: NonNullable<HerdLinkPreview["new_access"]>) {
       "Kontot får redan ändra, sälja och flytta kaniner genom sin roll.";
   } else if (access.already_edits) {
     rabbitRights =
-      "Kontot får redan ändra kaniner och får nu också sälja och flytta dem.";
+      "Kontot får redan ändra, sälja och flytta kaniner genom sin åtkomst.";
   }
   return `${rabbitRights} Som innehavare får kontot ge hushållet tillgång och utfärda intyg för kaniner med besättningen som ursprung. Kontot får också se och ändra besättningens utbetalningskonto.`;
 }

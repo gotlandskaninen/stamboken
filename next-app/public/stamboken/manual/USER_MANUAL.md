@@ -1031,9 +1031,9 @@ Under listan:
 - **Sålda under** året – försäljningarna som finns i Stamboken.
 
 Rapporterar du via länken i inbjudan och säljer en kanin, väntar försäljningen på
-genbanksansvarig. Är du inloggad som familjemedlem eller skötare säljer du direkt, som
-huvudmedlemmen. Raden visar "Försäljningen väntar på genbanksansvarig.
-Kaninen står kvar hos dig tills den är godkänd."
+genbanksansvarig. Raden visar "Försäljningen väntar på genbanksansvarig. Kaninen står
+kvar hos dig tills den är godkänd." Är du inloggad som familjemedlem eller skötare säljer
+du direkt, som huvudmedlemmen.
 
 **Dina uppgifter** står sist före Skicka. Är ditt konto kopplat till huvudmedlemmen i
 besättningens medlemskap ser du adress, telefon, kontot för stödet (bara de fyra sista
