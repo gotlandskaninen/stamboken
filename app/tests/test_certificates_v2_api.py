@@ -5,6 +5,7 @@ Note: All tests that issue certificates use mock_aws() from moto for S3,
 and require app/certs/key.pem + app/certs/ca.pem in the test container.
 """
 
+import os
 import unittest
 import uuid
 from contextlib import contextmanager
@@ -215,66 +216,27 @@ class TestCertificateV2Issue(CertV2Mixin, FlaskTest):
             self.assertEqual(response.status_code, 201)
             self.assertFalse(spy.call_args.args[0]["demo_watermark"])
 
-    def test_issue_uploads_token_named_s3_object(self):
-        """Issue uploads the signed PDF to S3 under certifikat/v2/<token>.pdf."""
-        self._start_mock_aws()
-        individual = self.individuals[3]
-
-        with self.app as context:
-            context.post(
-                "/api/login",
-                json={"username": self.owner.email, "password": "pass"},
-            )
-            response = context.post(
-                f"/api/v2/certificates/issue/{individual.number}",
-                json={"color_id": 1, "litter_size": 5, "litter_size6w": 4},
-            )
-            self.assertEqual(response.status_code, 201)
-            token = response.get_json()["verification_token"]
-
-            from utils.cert_acess import download_certificate_v2
-
-            pdf_bytes = download_certificate_v2(token)
-            self.assertTrue(pdf_bytes.startswith(b"%PDF"))
-
-    def test_failed_v2_upload_leaves_no_downloadable_certificate(self):
-        """A failed token-named S3 upload must not leave a downloadable cert.
-
-        The v2 upload runs before the legacy v1-key upload — if it fails, the
-        transaction rolls back and the legacy key must be untouched, so the
-        no-v2-row download fallback cannot serve an uncommitted PDF.
-        """
+    def test_a_failed_disk_write_leaves_no_certificate(self):
+        """Issuing writes the PDF to the data volume only (stamboken-drift #69, step A): if that fails, the
+        transaction rolls back and nothing can be downloaded."""
         self._start_mock_aws()
         import utils.database as db
 
-        class _S3Down(Exception):
-            pass
-
         individual = self.individuals[3]
-
         with self.app as context:
-            context.post(
-                "/api/login",
-                json={"username": self.owner.email, "password": "pass"},
-            )
-            with patch("utils.cert_service_v2.upload_certificate_v2", side_effect=_S3Down("S3 down")):
+            context.post("/api/login", json={"username": self.owner.email, "password": "pass"})
+            with patch("utils.cert_service_v2.open", side_effect=OSError("disk full"), create=True):
                 try:
                     response = context.post(
                         f"/api/v2/certificates/issue/{individual.number}",
                         json={"color_id": 1, "litter_size": 5, "litter_size6w": 4},
                     )
                     self.assertGreaterEqual(response.status_code, 500)
-                except _S3Down:
-                    # TESTING=True propagates unhandled exceptions to the client
-                    pass
-
-            # Transaction rolled back — no cert row, individual not certified
+                except OSError:
+                    pass  # TESTING=True propagates unhandled exceptions to the client
             count = db.DigitalCertificateV2.select().where(db.DigitalCertificateV2.individual == individual).count()
             self.assertEqual(count, 0)
-            refreshed = db.Individual.get(db.Individual.id == individual.id)
-            self.assertIsNone(refreshed.digital_certificate)
-
-            # Legacy S3 key was never written — nothing to download
+            self.assertIsNone(db.Individual.get(db.Individual.id == individual.id).digital_certificate)
             response = context.get(f"/api/v2/certificates/{individual.number}")
             self.assertEqual(response.status_code, 404)
 
@@ -711,7 +673,8 @@ class TestCertificateV2Download(CertV2Mixin, FlaskTest):
             self.assertEqual(response.content_type, "application/pdf")
 
     def test_download_falls_back_to_s3_when_disk_file_missing(self):
-        """Download serves the token-named S3 copy when the disk file is gone."""
+        """Download serves the token-named S3 copy when the disk file is gone: a certificate issued before step A of
+        stamboken-drift #69, when v2 still uploaded one. The S3 reads go in step C."""
         self._start_mock_aws()
         import os
 
@@ -735,6 +698,10 @@ class TestCertificateV2Download(CertV2Mixin, FlaskTest):
                 )
                 .get()
             )
+            from utils.cert_acess import upload_certificate_v2
+
+            with open(os.path.join("uppladdningar", cert.file_path), "rb") as stored:
+                upload_certificate_v2(pdf_bytes=stored.read(), token=cert.verification_token)
             os.remove(os.path.join("uppladdningar", cert.file_path))
 
             response = context.get(f"/api/v2/certificates/{individual.number}")
@@ -1786,29 +1753,78 @@ class TestCertificateIssueOnTheLockedRow(CertV2Mixin, FlaskTest):
         )
         self.assertIsNone(db.Individual.get_by_id(rabbit.id).digital_certificate)
 
-    def test_legacy_key_upload_holds_the_number_lock(self):
-        """Final review (24a65b0): a renumber copies its staged assets to the new number after its commit, under
-        the number lock (number_assets.finish). The certificate upload to that key did not take the lock, so
-        the older PDF could land over the new one. It uploads under the lock now, as a photo upload does."""
-        import utils.cert_service_v2 as cert_service_v2
-        from utils import number_assets
+    def test_issuing_writes_nothing_to_s3(self):
+        """Step A of stamboken-drift #69: the v2 PDF lives on the data volume only, and the legacy routes read it
+        from there."""
+        import utils.s3 as s3
 
-        events = []
-        real_lock, real_upload = number_assets.lock_number, cert_service_v2.upload_certificate
-
-        def lock(number, xact=False):
-            events.append(("lock", number, xact))
-            return real_lock(number, xact=xact)
-
-        def upload(pdf_bytes, ind_number):
-            events.append(("upload", ind_number))
-            return real_upload(pdf_bytes=pdf_bytes, ind_number=ind_number)
-
+        self._start_mock_aws()
+        client = s3.get_s3_client()
         individual = self.individuals[3]
-        with (
-            patch.object(number_assets, "lock_number", side_effect=lock),
-            patch.object(cert_service_v2, "upload_certificate", side_effect=upload),
-        ):
-            response = self._request(self.owner, "post", f"/api/v2/certificates/issue/{individual.number}")
+        response = self._request(self.owner, "post", f"/api/v2/certificates/issue/{individual.number}")
         self.assertEqual(response.status_code, 201, response.get_json())
-        self.assertEqual(events[-2:], [("lock", individual.number, True), ("upload", individual.number)])
+        self.assertNotIn("Contents", client.s3_client.list_objects_v2(Bucket=client.bucket))
+        row = db.DigitalCertificateV2.get(db.DigitalCertificateV2.individual == individual.id)
+        with open(os.path.join("uppladdningar", row.file_path), "rb") as stored:
+            pdf = stored.read()
+        legacy = self._request(self.owner, "get", f"/api/certificates/issue/{individual.number}")
+        self.assertEqual((legacy.status_code, legacy.get_data()), (200, pdf))
+        with self.app as context:
+            context.post("/api/login", json={"username": self.owner.email, "password": "pass"})
+            verified = context.post(f"/api/certificates/verify/{individual.number}", data=pdf)
+        self.assertEqual(verified.status_code, 200, verified.get_json())
+
+    def test_the_demo_never_hands_out_a_stored_certificate(self):
+        """stamboken-drift #117 p3: the demo renders an unsigned, watermarked certificate without an attester."""
+        import utils.cert_service_v2 as cert_service_v2
+
+        self._start_mock_aws()
+        individual = self.individuals[3]
+        self.assertEqual(
+            self._request(self.owner, "post", f"/api/v2/certificates/issue/{individual.number}").status_code, 201
+        )
+        with (
+            patch.object(settings.service, "demo_instance", True),
+            patch.object(cert_service_v2._generator, "generate_pedigree", return_value=b"%PDF-demo") as render,
+        ):
+            v2 = self._request(self.owner, "get", f"/api/v2/certificates/{individual.number}")
+            legacy = self._request(self.owner, "get", f"/api/certificates/issue/{individual.number}")
+        self.assertEqual((v2.get_data(), legacy.get_data()), (b"%PDF-demo", b"%PDF-demo"))
+        data = render.call_args.args[0]
+        self.assertEqual((data["fullname"], data["demo_watermark"]), ("", True))
+
+    def test_the_demo_renders_also_the_preview_the_mail_and_a_row_without_its_number(self):
+        import utils.buyer_mail as buyer_mail
+        import utils.cert_service_v2 as cert_service_v2
+
+        self._start_mock_aws()
+        individual = self.individuals[3]
+        self.assertEqual(
+            self._request(self.owner, "post", f"/api/v2/certificates/issue/{individual.number}").status_code, 201
+        )
+        # migrate_37_to_38 keeps a current row whose digital number was lost: production still serves it.
+        db.Individual.update(digital_certificate=None).where(db.Individual.id == individual.id).execute()
+        with (
+            patch.object(settings.service, "demo_instance", True),
+            patch.object(cert_service_v2._generator, "generate_pedigree", return_value=b"%PDF-demo"),
+        ):
+            v2 = self._request(self.owner, "get", f"/api/v2/certificates/{individual.number}")
+            preview = self._request(self.owner, "get", f"/api/certificates/preview/{individual.number}")
+            mailed = buyer_mail._certificate_pdf(db.Individual.get_by_id(individual.id))
+        self.assertEqual((v2.get_data(), preview.get_data(), mailed), (b"%PDF-demo", b"%PDF-demo", None))
+
+    def test_a_v1_file_verifies_only_while_it_is_the_certificate(self):
+        import hashlib
+
+        from utils.cert_acess import upload_certificate, verify_certificate_checksum
+
+        self._start_mock_aws()
+        individual = self.individuals[3]
+        upload_certificate(pdf_bytes=b"%PDF-v1", ind_number=individual.number)
+        checksum = hashlib.sha256(b"%PDF-v1").hexdigest()
+        db.Individual.update(digital_certificate=4711).where(db.Individual.id == individual.id).execute()
+        self.assertTrue(verify_certificate_checksum(individual.number, checksum))
+        # A paper certificate replaced it (or a reissue): the file stays in S3 but is no longer the certificate.
+        db.Individual.update(digital_certificate=None).where(db.Individual.id == individual.id).execute()
+        with self.assertRaises(LookupError):  # no certificate: the legacy route answers 400, as before
+            verify_certificate_checksum(individual.number, checksum)

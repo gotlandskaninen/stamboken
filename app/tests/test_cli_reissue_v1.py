@@ -1,13 +1,17 @@
 """flask certificates reissue-v1: v1 certificates get a v2 certificate attested by the original issuer (#142)."""
 
 import io
+import os
+import shutil
+import tempfile
 import unittest
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import MagicMock, patch
 
 import cli.certificates as reissue_cli
 import utils.cert_service_v2 as cert_service
 import utils.database as db
-from botocore.exceptions import ClientError, EndpointConnectionError
+import utils.s3 as s3
+from botocore.exceptions import EndpointConnectionError
 from herdbook import APP
 from pdfrw import PdfArray, PdfDict, PdfName, PdfString, PdfWriter
 from utils.cert_acess import download_certificate_s3, get_certificate_data, upload_certificate
@@ -62,11 +66,26 @@ class ReissueV1Test(CertV2Mixin, FlaskTest):
         stubs = (
             patch.object(cert_service._generator, "generate_pedigree", self.pedigree),
             patch.object(cert_service, "sign_pdf", side_effect=lambda pdf, **kw: pdf),
-            patch.object(cert_service, "open", mock_open(), create=True),
+            patch.object(cert_service, "write_durably"),
         )
         for stub in stubs:
             stub.start()
             self.addCleanup(stub.stop)
+        self.archive = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.archive)
+        archive = patch.object(reissue_cli, "ARCHIVE", self.archive)
+        archive.start()
+        self.addCleanup(archive.stop)
+        self.keys = self.s3_keys()
+
+    def s3_keys(self):
+        client = s3.get_s3_client()
+        return {o["Key"] for o in client.s3_client.list_objects_v2(Bucket=client.bucket).get("Contents", [])}
+
+    def archived(self, rabbit=None):
+        path = os.path.join(self.archive, f"{(rabbit or self.rabbit).digital_certificate}.pdf")
+        with open(path, "rb") as kept:
+            return kept.read()
 
     def v1_rabbit(self, rabbit, number, **fields):
         """Give `rabbit` digital number `number` and a v1 PDF as the old app made it, with `fields` changed."""
@@ -111,7 +130,9 @@ class ReissueV1Test(CertV2Mixin, FlaskTest):
         data = self.pedigree.call_args.args[0]
         self.assertTrue(data["replaces_v1"])
         self.assertEqual(" ".join(data["fullname"].split()), "Åsa Öberg")
-        self.assertEqual(download_certificate_s3(self.rabbit.number), V2)
+        original = download_certificate_s3(self.rabbit.number)
+        self.assertEqual(self.archived(), original)  # kept on the data volume
+        self.assertEqual(self.s3_keys(), self.keys)  # nothing written to S3: the v1 file stays where it was
         self.assertIn("Återutfärdade: 0", self.invoke("--run").output)  # it has a current v2 row now
 
     def test_a_namesake_buyer_stops_the_rabbit(self):
@@ -149,6 +170,19 @@ class ReissueV1Test(CertV2Mixin, FlaskTest):
         result = self.assert_stopped(reissue_cli.CHANGED)
         self.assertIn("ändrat fält IdNamn: 1", result.output)
 
+    def test_a_number_changed_since_v1_is_reported_apart_and_can_be_allowed(self):
+        self.rabbit = self.v1_rabbit(self.rabbit, 4711, IdÅrKullIndivid="2111", FarÅrKullIndivid="1999")
+        result = self.assert_stopped(reissue_cli.NUMBER_CHANGED)
+        self.assertNotIn(reissue_cli.CHANGED + "\n", result.output)
+        self.assertIn("ändrat fält IdÅrKullIndivid: 1", result.output)
+        result = self.invoke("--run", "--tillat-nytt-nummer")
+        self.assertIn("Återutfärdade: 1", result.output, result.output)
+        self.assertEqual(self.pedigree.call_args.args[0]["genebank_aki"], self.rabbit.number.split("-")[1])  # today's
+
+    def test_a_number_and_another_field_changed_is_a_change(self):
+        self.rabbit = self.v1_rabbit(self.rabbit, 4711, IdÅrKullIndivid="2111", IdNamn="Ett annat namn")
+        self.assert_stopped(reissue_cli.CHANGED, "--tillat-nytt-nummer")
+
     def test_no_v1_pdf_stops_the_rabbit(self):
         rabbit = self.individuals[0]
         db.Individual.update(certificate=None, digital_certificate=4712).where(db.Individual.id == rabbit.id).execute()
@@ -175,17 +209,21 @@ class ReissueV1Test(CertV2Mixin, FlaskTest):
         self.assertIsNone(self.current_row())
         self.assertEqual(download_certificate_s3(self.rabbit.number), original)
         self.assertIn("Återutfärdade: 1", self.invoke("--run").output)
-        self.assertEqual(download_certificate_s3(self.rabbit.number), V2)
+        self.assertEqual(self.archived(), original)
 
-    def test_a_failed_upload_after_the_commit_is_reported(self):
-        failed = ClientError({"Error": {"Code": "SlowDown"}}, "PutObject")
-        with patch.object(reissue_cli, "upload_certificate", side_effect=failed):
+    def test_a_failed_archive_write_leaves_nothing_and_can_be_run_again(self):
+        with patch.object(reissue_cli.os, "fsync", side_effect=OSError("disk full")):
             result = self.invoke("--run")
-        self.assertIn(
-            "Varav v2-raden finns men <nummer>/certificate.pdf är kvar som v1: 1", result.output, result.output
-        )
-        self.assertIn(f"  {self.rabbit.number}", result.output)
-        self.assertIsNotNone(self.current_row())
+        self.assertIn(f"{reissue_cli.FAILED}: OSError", result.output, result.output)
+        self.assertEqual(os.listdir(self.archive), [])  # no half-written file under the final name
+        self.assertIn("Återutfärdade: 1", self.invoke("--run").output)
+        self.assertEqual(self.archived(), download_certificate_s3(self.rabbit.number))
+
+    def test_another_archived_v1_file_stops_the_rabbit(self):
+        with open(os.path.join(self.archive, "4711.pdf"), "wb") as other:
+            other.write(b"%PDF-1.4 annan")
+        self.assert_stopped(reissue_cli.ARCHIVED_OTHER)
+        self.assertEqual(self.archived(), b"%PDF-1.4 annan")
 
     def test_an_unreachable_s3_stops_the_run(self):
         unreachable = EndpointConnectionError(endpoint_url="https://s3.example.invalid")
@@ -213,9 +251,7 @@ class UpdateReplacesV1Test(CertV2Mixin, FlaskTest):
         stubs = (
             patch.object(cert_service._generator, "generate_pedigree", self.pedigree),
             patch.object(cert_service, "sign_pdf", side_effect=lambda pdf, **kw: pdf),
-            patch.object(cert_service, "upload_certificate_v2"),
-            patch.object(cert_service, "upload_certificate"),
-            patch.object(cert_service, "open", mock_open(), create=True),
+            patch.object(cert_service, "write_durably"),
         )
         for stub in stubs:
             stub.start()

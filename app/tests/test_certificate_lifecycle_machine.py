@@ -16,7 +16,7 @@ import itertools
 import os
 import unittest
 from collections import Counter
-from unittest.mock import mock_open, patch
+from unittest.mock import patch
 
 import utils.cert_service_v2 as cert_service
 import utils.database as db
@@ -152,9 +152,7 @@ class TestCertificateStateMachine(CertV2Mixin, FlaskTest):
         stubs = (
             patch.object(cert_service._generator, "generate_pedigree", return_value=b"%PDF-1.4 stub"),
             patch.object(cert_service, "sign_pdf", side_effect=lambda pdf, **kw: pdf),
-            patch.object(cert_service, "upload_certificate_v2"),
-            patch.object(cert_service, "upload_certificate"),
-            patch.object(cert_service, "open", mock_open(), create=True),
+            patch.object(cert_service, "write_durably"),
         )
         for stub in stubs:
             stub.start()

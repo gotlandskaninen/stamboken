@@ -13,8 +13,7 @@ from datetime import date
 
 import utils.data_access as da
 import utils.database as db
-from utils import number_assets
-from utils.cert_acess import get_certificate_data, upload_certificate, upload_certificate_v2
+from utils.cert_acess import get_certificate_data
 from utils.certificate_lifecycle import Event, check
 from utils.certificates_v2 import (
     CertificateGeneratorV2,
@@ -144,31 +143,51 @@ def issuer_role(user, individual):
     return "breeder"
 
 
-def generate_and_store(individual, user, ind_data, user_id, replaces_v1=False, upload_legacy=True):
+def sync_directories(path):
+    """fsync `path` and each parent up to uploads/, so new entries in them outlast a crash."""
+    while True:
+        directory = os.open(path, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+        if os.path.basename(path) == "uppladdningar" or path in ("", os.sep):
+            return
+        path = os.path.dirname(path)
+
+
+def write_durably(path, data):
+    """
+    Write `data` to `path` and sync the file and every directory up to uploads/: the only copy must outlast a crash
+    before its row commits, also when this first file created certifikat/ or v2/.
+    """
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+    sync_directories(os.path.dirname(path))
+
+
+def generate_and_store(individual, user, ind_data, user_id, replaces_v1=False):
     """Generate, sign, and store a v2 certificate.
 
-    Order of operations (Fix 2 — failure-safe ordering):
+    Order of operations (failure-safe):
     1. Generate + sign PDF (before any DB changes)
-    2. Write to filesystem
-    3. Upload to S3 (fail the request if S3 fails) — first the token-named
-       v2 key (certifikat/v2/{token}.pdf) so downloads survive disk loss,
-       then the legacy v1 key ({ind_number}/certificate.pdf, overwritten
-       per re-issue)
-    4. In a DATABASE.atomic() transaction: create DigitalCertificateV2 row
+    2. Write it to the data volume, uppladdningar/certifikat/v2/{token}.pdf, which restic backs up. Nothing goes
+       to S3 any more (stamboken-drift #69, step A): the bucket is only read, for the v1 certificates, until they
+       are reissued.
+    3. In a DATABASE.atomic() transaction: create DigitalCertificateV2 row
        + retire the old current row
 
     The blueprint wraps this call in an outer DATABASE.atomic() together with
-    update_individual, so a signing/S3 failure also rolls back the
+    update_individual, so a signing or disk failure also rolls back the
     digital_certificate assignment on the individual. On rollback an orphaned
-    PDF may remain on disk/S3 — harmless, no DB row references it.
-
-    `upload_legacy=False` leaves step 3's legacy key to the caller, after its commit: the bulk v1 reissue
-    (cli/certificates.py) keeps the v1 file there until the v2 row exists, since the download route serves that key
-    when a rabbit has no v2 row.
+    file may remain on disk — harmless, no DB row references it.
 
     Returns (cert_row, signed_pdf).
     Raises SigningUnavailableError if signing credentials are missing.
-    Raises Exception if S3 upload fails.
+    Raises OSError if the file cannot be written.
     """
     token = uuid.uuid4()
     qr_url = f"{service_settings.host}/stamboken/verifiera/{token}"
@@ -189,7 +208,7 @@ def generate_and_store(individual, user, ind_data, user_id, replaces_v1=False, u
     cert_data["replaces_v1"] = bool(replaces_v1 and not prev)
     cert_data["doc_hash_stub"] = compute_doc_hash_stub(cert_data)
 
-    # Step 1: Generate + sign PDF (no DB/S3 side effects yet)
+    # Step 1: Generate + sign PDF (no side effects yet)
     pdf_bytes = _generator.generate_pedigree(cert_data, qr_url=qr_url)
     reason, contact_info = _signature_metadata_for(individual)
     signed_pdf = sign_pdf(pdf_bytes, reason=reason, contact_info=contact_info)
@@ -200,23 +219,9 @@ def generate_and_store(individual, user, ind_data, user_id, replaces_v1=False, u
 
     # Step 2: Write to filesystem. The directory is created here, not at import: the demo API
     # mounts uppladdningar read-only and must still start.
-    os.makedirs(os.path.dirname(full_path), exist_ok=True)
-    with open(full_path, "wb") as f:
-        f.write(signed_pdf)
+    write_durably(full_path, signed_pdf)
 
-    # Step 3: Upload to S3 — fail the request if this fails.
-    # Token-named v2 key first: if it fails, the discoverable legacy v1 key
-    # is untouched, so the rolled-back request leaves nothing downloadable.
-    # An orphaned token object (legacy upload failing after) is harmless —
-    # no DB row references it.
-    upload_certificate_v2(pdf_bytes=signed_pdf, token=token)
-    if upload_legacy:
-        # The legacy key is the number: wait for a renumber still moving its assets after its commit
-        # (number_assets.finish), or that move would put the older PDF over this one. As a photo upload does.
-        number_assets.lock_number(individual.number, xact=True)
-        upload_certificate(pdf_bytes=signed_pdf, ind_number=individual.number)
-
-    # Step 4: DB transaction — create row + flip old rows
+    # Step 3: DB transaction — create row + flip old rows
     with db.DATABASE.atomic():
         before = individual.cert_state()
         cert_row = db.DigitalCertificateV2.issue_current(
@@ -339,3 +344,14 @@ def invalidate_caches(individual):
             trigger_invalidation(gid)
     except Exception as e:
         logger.warning(f"Cache invalidation failed after certificate update: {e}")
+
+
+def demo_certificate_pdf(individual, ind_data, user_id):
+    """
+    The demo API never hands out a stored, signed certificate (stamboken-drift #117 p3): its copy of the database
+    can grant an access production has withdrawn. It renders an unsigned one with the demo watermark and no attester.
+    """
+    cert_data = build_cert_data(individual, dict(ind_data), user_id)
+    cert_data.update(fullname="", demo_watermark=True, replaces_date="", replaces_v1=False)
+    cert_data["doc_hash_stub"] = compute_doc_hash_stub(cert_data)
+    return _generator.generate_pedigree(cert_data, qr_url=f"{service_settings.host}/stamboken")

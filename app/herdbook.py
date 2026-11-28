@@ -51,9 +51,9 @@ from flask_talisman import Talisman
 from limits import parse as parse_limit
 from peewee import fn
 from utils.cert_acess import (
-    check_certificate_s3,
     create_pdf_response,
-    download_certificate_s3,
+    current_certificate_pdf,
+    current_row,
     get_certificate,
     get_certificate_data,
     verify_certificate_checksum,
@@ -2780,14 +2780,13 @@ def update_certificate(i_number):
     return _certificate_gone()
 
 
-def _certificate_refused(i_number, user_id):
+def _certificate_refused(individual, user_id):
     """403 unless the user may download or preview the certificate (ADR-0016, User.can_view_certificate).
 
-    The same check as GET /api/v2/certificates/<number>: seeing the rabbit is not enough. Call it after
-    da.get_individual has found the rabbit, so an unknown number still answers 404.
+    The same check as GET /api/v2/certificates/<number>: seeing the rabbit is not enough. The caller passes the rabbit
+    da.get_individual found, by id, so the check and the PDF concern one rabbit even if a renumber moves the number.
     """
     user = da.fetch_user_info(user_id)
-    individual = db.Individual.get_or_none(db.Individual.number == i_number)
     if user and individual and user.can_view_certificate(individual):
         return None
     return jsonify({"response": "Bara ägaren, uppfödaren och genbanksansvarig kan hämta intyget"}), 403
@@ -2807,21 +2806,25 @@ def issue_certificate(i_number):
     # get_individual currently returns a dict, not an individual
     if ind_data is None:
         return jsonify({"response": "Individual not found"}), 404
-    refused = _certificate_refused(i_number, user_id)
+    individual = db.Individual.get_by_id(ind_data["id"])  # the rabbit just read, not a number that may have moved
+    refused = _certificate_refused(individual, user_id)
     if refused:
         return refused
 
-    certificate_exists = ind_data.get("digital_certificate", None)
+    try:
+        if settings.service.demo_instance:  # never a stored certificate (stamboken-drift #117 p3)
+            from utils.cert_service_v2 import demo_certificate_pdf  # pylint: disable=import-outside-toplevel
 
-    if request.method == "GET":
-        try:
-            present = check_certificate_s3(ind_number=ind_data["number"])
-            if certificate_exists and present:
-                cert = download_certificate_s3(i_number)
-                return create_pdf_response(pdf_bytes=cert, obj_name=f"{i_number}_certificate.pdf")
-        except Exception as ex:  # pylint: disable=broad-except
-            print(ex)
-            return jsonify({"response": "Error processing your request"}), 400
+            has_one = individual.digital_certificate is not None or current_row(individual) is not None
+            cert = demo_certificate_pdf(individual, ind_data, user_id) if has_one else None
+        else:  # the current v2 certificate from the data volume, or a v1 one from S3
+            cert = current_certificate_pdf(individual)
+    except Exception as ex:  # pylint: disable=broad-except
+        APP.logger.warning("Could not fetch the certificate of %s: %s", i_number, ex)
+        return jsonify({"response": "Error processing your request"}), 400
+    if cert is None:
+        return jsonify({"response": "Inget intyg finns"}), 404
+    return create_pdf_response(pdf_bytes=cert, obj_name=f"{i_number}_certificate.pdf")
 
 
 @APP.route("/api/certificates/preview/<i_number>", methods=["POST", "GET"])
@@ -2834,9 +2837,15 @@ def preview_certificate(i_number):
     ind = da.get_individual(i_number, user_id)
     if ind is None:
         return jsonify({"response": "Individual not found"}), 404
-    refused = _certificate_refused(i_number, user_id)
+    individual = db.Individual.get_by_id(ind["id"])
+    refused = _certificate_refused(individual, user_id)
     if refused:
         return refused
+
+    if settings.service.demo_instance:  # watermarked and without an attester, as the demo's downloads
+        from utils.cert_service_v2 import demo_certificate_pdf  # pylint: disable=import-outside-toplevel
+
+        return create_pdf_response(pdf_bytes=demo_certificate_pdf(individual, ind, user_id), obj_name="preview.pdf")
 
     if request.method == "POST":
         form = request.json
