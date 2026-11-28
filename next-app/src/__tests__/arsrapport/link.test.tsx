@@ -145,6 +145,8 @@ describe("ReportForm in link mode", () => {
             submitted: {
               rabbits: { "1": { val: "kvar", vikt: 2.8 } } as never,
             },
+            not_stated: [],
+            can_complete_missing: false,
             can_change: true,
             can_withdraw: true,
             withdraw_until: "2027-01-10T13:32:00+00:00",

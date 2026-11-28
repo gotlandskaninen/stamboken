@@ -6,6 +6,7 @@ import { MODE_COOKIE, parseMode, type Mode } from "@/lib/mode";
 import type { ActionResult } from "../inkorg/actions";
 import {
   SUBMIT_TIMEOUT_MS,
+  type Completion,
   type DraftData,
   type Father,
   type Litter,
@@ -123,6 +124,32 @@ export async function submitReport(
   post?: number,
 ) {
   return call<Receipt>(env, path(herd, year, "/skicka", post), "POST", body, {
+    timeout: SUBMIT_TIMEOUT_MS,
+  });
+}
+
+export async function dryRunCompletion(
+  herd: string,
+  year: number,
+  body: Completion,
+  env: Mode,
+) {
+  return call<{ ok: boolean; refusals: Refusal[]; warnings: Refusal[] }>(
+    env,
+    path(herd, year, "/komplettera/torrkorning"),
+    "POST",
+    body,
+    { timeout: SUBMIT_TIMEOUT_MS },
+  );
+}
+
+export async function submitCompletion(
+  herd: string,
+  year: number,
+  body: Completion,
+  env: Mode,
+) {
+  return call<Receipt>(env, path(herd, year, "/komplettera"), "POST", body, {
     timeout: SUBMIT_TIMEOUT_MS,
   });
 }
@@ -290,6 +317,16 @@ export async function setOnTime(
 // "Ny länk": the herd's old link stops working and a new one is mailed to the main member.
 export async function newLink(herd: string, year: number, env: Mode) {
   return call<{ sent: boolean }>(env, path(herd, year, "/ny-lank"), "POST", {});
+}
+
+// "Skicka påminnelse" queues a reminder for the herd.
+export async function sendReminder(herd: string, year: number, env: Mode) {
+  return call<{ queued: boolean }>(
+    env,
+    path(herd, year, "/paminnelse"),
+    "POST",
+    {},
+  );
 }
 
 // "Koppla bort" (5.1): undo the account link a main member made with a code to the matrikel's e-mail.

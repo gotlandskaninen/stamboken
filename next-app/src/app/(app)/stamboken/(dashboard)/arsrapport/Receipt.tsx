@@ -83,7 +83,7 @@ export function Receipt({
   const at = report?.received_at ?? receipt?.created_at ?? "";
   const source = receipt && !refreshed ? receipt.source : report?.source;
   const when =
-    source === "paper"
+    source === "paper" || report?.from_paper
       ? fmtDate(receivedOn ?? report?.submitted?.received_on ?? at)
       : `${fmtDate(at)} kl. ${fmtTime(at)}`;
   const changed =

@@ -15,6 +15,8 @@ som PDF. Reglerna finns i `app/utils/arsrapport.py` och endpointsen i
 | `GET /api/v2/arsrapport/besattning/<besättning>/<år>/forslag` | admin och genbanksansvarig i besättningens genbank. Hjälpare får 403. |
 | `POST /api/v2/arsrapport/forslag/<id>/godkann` och `…/avvisa` | admin och genbanksansvarig i besättningens genbank. Hjälpare, ägare och genbanksansvarig i den andra genbanken får 403. |
 | `POST /api/v2/arsrapport/besattning/<besättning>/<år>/kop` och `…/kop/inskick` | den som får rapportera för besättningen, inloggad eller via länken (`report_actor_required`). Länken når bara sin egen besättning och sitt år. |
+| `POST /api/v2/arsrapport/besattning/<besättning>/<år>/paminnelse` | admin och genbanksansvarig i besättningens genbank. Hjälpare, ägare, kassör och länken får 401 eller 403. |
+| `POST /api/v2/arsrapport/besattning/<besättning>/<år>/komplettera` och `…/komplettera/torrkorning` | den som får rapportera för besättningen, inloggad eller via länken, men aldrig från blankett (`?post=` ger 400). |
 | `GET /api/v2/arsrapport/blankett.pdf` | alla som är inloggade |
 
 ## Statusvyn
@@ -24,7 +26,8 @@ som PDF. Reglerna finns i `app/utils/arsrapport.py` och endpointsen i
 ```text
 {round, genebank_id, activated, counts: {läge: antal},
  rows: [{herd, herd_name, state, source, membership_after_end, received_at, on_time_override,
-         inbox_item_id, telefon (bara för genbanksansvariga och administratör),
+         inbox_item_id, needs_report, last_reminder: {queued_at, sent_at, status} | null,
+         telefon (bara för genbanksansvariga och administratör),
          flags: {ej_angivna, ej_angivna_paverkar, forsaljning_vantar, forsaljning_avvisad,
                  forsaljning_avvisad_paverkar, kopt_efter_inskick, kop_anmalt},
          villkor: {hane, hona, kull, i_tid},
@@ -37,6 +40,10 @@ som PDF. Reglerna finns i `app/utils/arsrapport.py` och endpointsen i
   `inskickad`, `blankett_vantar` (en öppen post med en arsblankett i läget `vantar_uppfodare`),
   `blankett_inkommen` (en sådan post i något annat öppet läge), `paborjad` (ett utkast finns),
   `ingen_epost` (huvudmedlemmen saknar e-post), `ej_rapporterad`. `counts` har alla lägena.
+- **Ej svarat (`needs_report`):** en aktiv besättning utan inskickad rapport, också med utkast, med
+  en blankett i kön eller utan e-post. Filtret "Ej svarat" och listan Å5 nedan är samma besättningar.
+- **Senaste påminnelsen (`last_reminder`):** den senaste påminnelsen som har gått eller kan gå, med
+  mejlköns status. En som kön avbröt för att den inte längre behövdes visas inte.
 - **Stödvillkoren (`villkor`)** prövas per besättning mot kaninerna den höll 31 december
   (`innehav` i `arsrapport_statistik.py`):
   - `hane` och `hona`: minst en okastrerad kanin av könet. Kastrerade kaniner räknas inte, och inte
@@ -191,6 +198,62 @@ meddelanden och köparuppgifter är inte med. Köp och försäljningar från ett
   (någon har posten, eller avsändaren har fått en fråga), `registrerad` (skickade foton vars
   `TRANSFER` är registrerad, medan posten är öppen) eller `klart` (stängd, också som dubblett eller
   skräp).
+
+## Påminnelser
+
+Jobbet `arsrapport_followups` körs i schemaläggarens ledare varje hel timme i svensk tid och en gång
+vid start (`app/utils/arsrapport_remind.py`). Det lägger påminnelsen `arsrapport.paminnelse` i mejlkön till
+varje aktiv besättning utan inskickad rapport, i genbanker vars inbjudningar har gått
+(`sent_at`). Tillfällena följer rundans `deadline`:
+
+- påminnelse 1 från deadline−11 kl. 07.00 tills påminnelse 2 börjar, och påminnelse 2 från
+  deadline−2 kl. 07.00 till och med sista dagen, allt i svensk tid;
+- jobbet mejlar medlemmar bara mellan kl. 07.00 och 20.59, och efter ett längre avbrott bara den
+  senaste påminnelsen. En påminnelse eller Å22 som kön når på natten väntar till kl. 07.00;
+- en inbjudan eller en ny länk som har gått eller väntar sedan tillfället började räknas som dess
+  påminnelse, så en sen inbjudan följs inte av en påminnelse samma timme;
+- en påminnelse som har gått för ett tillfälle går aldrig igen, också om `deadline` flyttas. En
+  köad påminnelse prövas när den skickas: är rapporten inskickad, länken ogiltig, rundan stängd
+  eller tillfället passerat avbryts den (`cancelled`), och jobbet köar en ny om den fortfarande
+  behövs. En påminnelse som någon har stoppat i statusvyn, eller som misslyckades eller studsade,
+  ersätts inte; den skickas igen med "Försök igen".
+
+Knappen "Skicka påminnelse" (`POST …/paminnelse`, svar `{"queued": true | false}`) köar en
+påminnelse med prioritet 1. `false` betyder att en redan väntar i kön eller har gått i dag. En
+påminnelse från knappen räknas för det tillfälle den köades i och det den skickades i.
+
+Påminnelserna och Å22 skapar aldrig någon länk. Bara inbjudan och "Ny länk" gör det, så en länk
+betyder fortfarande att medlemmen har bjudits in. Har besättningen ingen giltig länk, eller en adress
+som mejlkön inte kan skicka till, köas inget och knappen svarar 409.
+
+Dagen efter `deadline` kl. 07.00 går listan `arsrapport.ej_svarat` (Å5) till varje aktiv
+genbanksansvarig i genbanken, en gång per runda, också om rundan har stängt, och i högst 14 dagar.
+Den har besättningsnummer och läge, uppdelat på blankett som inte är inmatad och inget inskick, och
+en länk till statusvyn med filtret "Ej svarat". Inga namn eller kontaktuppgifter. Listan läses när
+mejlet skickas; har alla svarat eller är mottagaren inte längre genbanksansvarig går inget. Har
+`deadline` flyttats framåt väntar listan i kön till den nya dagen.
+
+Lämnar en rapport från blankett kaniner som "Ej angiven på blanketten" frågar Stamboken
+huvudmedlemmen om just dem (`arsrapport.fraga_saknade`, Å22), en gång per rapport medan rundan är
+öppen, dagtid och inom en vecka efter att blanketten matades in. Mejlet listar de kaniner som fortfarande saknas när det skickas och har rapportlänken. Har
+alla besvarats, dragits tillbaka eller blivit ett avslut går inget. Ett svar på mejlet blir en
+vanlig post i kön; inget i det skrivs i rapporten.
+
+Svaret går till `POST …/komplettera` med `{submission_key, revision, rabbits}`, bara kaniner som
+fortfarande är ej angivna och var och en Finns kvar, Död eller Såld. Servern lägger svaren över
+rapportens senaste inskick under rapportens lås och skickar in resten oförändrat: de andra ej
+angivna kaninerna, hälsosvaret, meddelandet och väntande försäljningar står kvar, och datumet då
+rapporten kom in ändras inte. Försäljning via länken blir ett förslag som vanligt. Kvittot och
+mejlet Å8 är som för Ändra. Utkastet tas inte bort (Jonas 2026-11-26): en kanin som utkastet
+fortfarande har som ej angiven får svaret, och medlemmens andra ändringar står kvar till ett
+vanligt Skicka. `ReportView.report` har `not_stated` och `can_complete_missing`, som är sann så
+länge rundan är öppen och en rapport från blankett, som inte är ett avslut, har ej angivna kaniner.
+Då öppnar rapportsidan, via länken och inloggad, med bara de kaninerna och knappen "Skicka svar";
+"Visa hela rapporten" går till den vanliga sidan.
+
+Mejlet har bara id:n och flaggor (`round_id`, `code_id`, `slot`, `scheduled`); länken byggs när
+det skickas. Påminnelsen läggs i kön under rapportens lås. I demon köar jobbet inget, och knappen
+svarar 409.
 
 ## Den tomma blanketten
 

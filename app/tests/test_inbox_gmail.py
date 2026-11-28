@@ -339,6 +339,24 @@ class TestSorting(GmailTest):
         (new,) = [i for i in self.items() if i.id != item.id]
         self.assertNotIn(mac, new.message)
 
+    def test_a_reply_to_the_missing_rabbits_question_is_an_ordinary_item(self):  # Å22 (step 6, D7)
+        link, mac = self.quoted_link()
+        asked = mail.enqueue_mail(
+            "arsrapport.fraga_saknade", "member", 1, {"report_id": 7, "code_id": 12}, ref=("yearlyherdreport", 7)
+        )
+        self.holder(self.herds[0])
+        for subtype, body in (("plain", f"Den är död.\n\n> {link}\n"), ("html", f"<p>Den är död.</p><p>{link}</p>")):
+            reply = message(subject="Re: Kaniner saknas på årsblanketten för G1", In_Reply_To=mail.message_id(asked))
+            reply.set_content(body, subtype=subtype)
+            self.fake.deliver(reply)
+        self.read()
+        items = self.items()
+        self.assertEqual([(i.kind, i.herd_id) for i in items], [("meddelande", self.herds[0].id)] * 2)
+        for item in items:
+            self.assertIn("Den är död.", item.message)
+            self.assertNotIn(mac, item.message)
+        self.assertFalse(db.InboxEvent.select().where(db.InboxEvent.kind == "svar").exists())
+
     def test_a_link_rebuilt_by_normalizing_is_masked_on_both_paths(self):  # FA3
         link, mac = self.quoted_link()
         row, secret = link.rpartition("#")[2].split(".")
