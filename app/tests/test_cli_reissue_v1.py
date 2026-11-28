@@ -5,7 +5,7 @@ import os
 import shutil
 import tempfile
 import unittest
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import MagicMock, patch
 
 import cli.certificates as reissue_cli
 import utils.cert_service_v2 as cert_service
@@ -66,7 +66,7 @@ class ReissueV1Test(CertV2Mixin, FlaskTest):
         stubs = (
             patch.object(cert_service._generator, "generate_pedigree", self.pedigree),
             patch.object(cert_service, "sign_pdf", side_effect=lambda pdf, **kw: pdf),
-            patch.object(cert_service, "open", mock_open(), create=True),
+            patch.object(cert_service, "write_durably"),
         )
         for stub in stubs:
             stub.start()
@@ -198,6 +198,14 @@ class ReissueV1Test(CertV2Mixin, FlaskTest):
         self.assertIn("Återutfärdade: 1", self.invoke("--run").output)
         self.assertEqual(self.archived(), original)
 
+    def test_a_failed_archive_write_leaves_nothing_and_can_be_run_again(self):
+        with patch.object(reissue_cli.os, "fsync", side_effect=OSError("disk full")):
+            result = self.invoke("--run")
+        self.assertIn(f"{reissue_cli.FAILED}: OSError", result.output, result.output)
+        self.assertEqual(os.listdir(self.archive), [])  # no half-written file under the final name
+        self.assertIn("Återutfärdade: 1", self.invoke("--run").output)
+        self.assertEqual(self.archived(), download_certificate_s3(self.rabbit.number))
+
     def test_another_archived_v1_file_stops_the_rabbit(self):
         with open(os.path.join(self.archive, "4711.pdf"), "wb") as other:
             other.write(b"%PDF-1.4 annan")
@@ -230,7 +238,7 @@ class UpdateReplacesV1Test(CertV2Mixin, FlaskTest):
         stubs = (
             patch.object(cert_service._generator, "generate_pedigree", self.pedigree),
             patch.object(cert_service, "sign_pdf", side_effect=lambda pdf, **kw: pdf),
-            patch.object(cert_service, "open", mock_open(), create=True),
+            patch.object(cert_service, "write_durably"),
         )
         for stub in stubs:
             stub.start()

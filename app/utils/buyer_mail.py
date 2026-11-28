@@ -134,6 +134,8 @@ def _certificate_pdf(rabbit):
     The rabbit's digital certificate as GET /api/v2/certificates/<number> serves it, or None when it has none. A
     file that cannot be fetched raises: the queue tries again rather than send the mail without it.
     """
+    if settings.service.demo_instance:  # never a stored certificate (stamboken-drift #117 p3): the mail goes without
+        return None
     # Imported here: cert_acess imports data_access, which imports utils.herd_tracking.
     from utils.cert_acess import current_certificate_pdf  # pylint: disable=import-outside-toplevel
 

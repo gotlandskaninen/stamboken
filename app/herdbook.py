@@ -53,6 +53,7 @@ from peewee import fn
 from utils.cert_acess import (
     create_pdf_response,
     current_certificate_pdf,
+    current_row,
     get_certificate,
     get_certificate_data,
     verify_certificate_checksum,
@@ -2810,12 +2811,12 @@ def issue_certificate(i_number):
     if refused:
         return refused
 
-    individual = db.Individual.get(db.Individual.number == i_number)
+    individual = db.Individual.get_by_id(ind_data["id"])  # the rabbit just read, not a number that may have moved
     try:
         if settings.service.demo_instance:  # never a stored certificate (stamboken-drift #117 p3)
             from utils.cert_service_v2 import demo_certificate_pdf  # pylint: disable=import-outside-toplevel
 
-            has_one = individual.digital_certificate is not None
+            has_one = individual.digital_certificate is not None or current_row(individual) is not None
             cert = demo_certificate_pdf(individual, ind_data, user_id) if has_one else None
         else:  # the current v2 certificate from the data volume, or a v1 one from S3
             cert = current_certificate_pdf(individual)
@@ -2840,6 +2841,12 @@ def preview_certificate(i_number):
     refused = _certificate_refused(i_number, user_id)
     if refused:
         return refused
+
+    if settings.service.demo_instance:  # watermarked and without an attester, as the demo's downloads
+        from utils.cert_service_v2 import demo_certificate_pdf  # pylint: disable=import-outside-toplevel
+
+        individual = db.Individual.get_by_id(ind["id"])
+        return create_pdf_response(pdf_bytes=demo_certificate_pdf(individual, ind, user_id), obj_name="preview.pdf")
 
     if request.method == "POST":
         form = request.json

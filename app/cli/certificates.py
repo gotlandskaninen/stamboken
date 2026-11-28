@@ -155,8 +155,17 @@ def archive(rabbit, pdf):
                 raise Stop(ARCHIVED_OTHER)
         return
     os.makedirs(ARCHIVE, exist_ok=True)
-    with open(path, "xb") as copy:
-        copy.write(pdf)
+    # Complete or not at all: a half-written file under the final name would stop every later run.
+    temporary = f"{path}.{os.getpid()}.tmp"
+    try:
+        with open(temporary, "wb") as copy:
+            copy.write(pdf)
+            copy.flush()
+            os.fsync(copy.fileno())
+        os.link(temporary, path)  # never over an original already archived
+    finally:
+        if os.path.exists(temporary):
+            os.remove(temporary)
 
 
 def reissue(rabbit):

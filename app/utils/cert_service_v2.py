@@ -143,6 +143,20 @@ def issuer_role(user, individual):
     return "breeder"
 
 
+def write_durably(path, data):
+    """Write `data` to `path` and sync file and directory: the only copy must outlast a crash before its row commits."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+    directory = os.open(os.path.dirname(path), os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+
+
 def generate_and_store(individual, user, ind_data, user_id, replaces_v1=False):
     """Generate, sign, and store a v2 certificate.
 
@@ -193,9 +207,7 @@ def generate_and_store(individual, user, ind_data, user_id, replaces_v1=False):
 
     # Step 2: Write to filesystem. The directory is created here, not at import: the demo API
     # mounts uppladdningar read-only and must still start.
-    os.makedirs(os.path.dirname(full_path), exist_ok=True)
-    with open(full_path, "wb") as f:
-        f.write(signed_pdf)
+    write_durably(full_path, signed_pdf)
 
     # Step 3: DB transaction — create row + flip old rows
     with db.DATABASE.atomic():

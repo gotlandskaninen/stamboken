@@ -289,10 +289,11 @@ def download_certificate(i_number):
         return problem(403, "Forbidden", "Bara ägaren, uppfödaren och genbanksansvarig kan hämta intyget")
 
     if settings.service.demo_instance:  # never a stored certificate (stamboken-drift #117 p3)
-        if individual.digital_certificate is None:
-            return problem(404, "Not Found", "Inget certifikat finns")
-        from utils.cert_acess import create_pdf_response
+        from utils.cert_acess import create_pdf_response, current_row
         from utils.cert_service_v2 import demo_certificate_pdf
+
+        if individual.digital_certificate is None and current_row(individual) is None:
+            return problem(404, "Not Found", "Inget certifikat finns")
 
         pdf_bytes = demo_certificate_pdf(individual, ind_dict, user_id)
         return create_pdf_response(pdf_bytes, f"{i_number}_certificate.pdf")
@@ -306,10 +307,10 @@ def download_certificate(i_number):
             .get()
         )
     except DoesNotExist:
-        # Legacy fallback only for v1-certified individuals. The v2 pipeline
-        # uploads to S3 before the DB commit, so a rolled-back issuance can
-        # leave an orphaned legacy-key PDF — without this guard that orphan
-        # would be served here despite the individual never being certified.
+        # Legacy fallback only for v1-certified individuals. Before step A of
+        # stamboken-drift #69 the v2 pipeline uploaded to S3 before the DB commit,
+        # so a rolled-back issuance may have left an orphaned legacy-key PDF —
+        # without this guard that orphan would be served here.
         if individual.digital_certificate is None:
             return problem(404, "Not Found", "Inget certifikat finns")
 

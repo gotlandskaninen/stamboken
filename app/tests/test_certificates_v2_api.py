@@ -1792,3 +1792,38 @@ class TestCertificateIssueOnTheLockedRow(CertV2Mixin, FlaskTest):
         self.assertEqual((v2.get_data(), legacy.get_data()), (b"%PDF-demo", b"%PDF-demo"))
         data = render.call_args.args[0]
         self.assertEqual((data["fullname"], data["demo_watermark"]), ("", True))
+
+    def test_the_demo_renders_also_the_preview_the_mail_and_a_row_without_its_number(self):
+        import utils.buyer_mail as buyer_mail
+        import utils.cert_service_v2 as cert_service_v2
+
+        self._start_mock_aws()
+        individual = self.individuals[3]
+        self.assertEqual(
+            self._request(self.owner, "post", f"/api/v2/certificates/issue/{individual.number}").status_code, 201
+        )
+        # migrate_37_to_38 keeps a current row whose digital number was lost: production still serves it.
+        db.Individual.update(digital_certificate=None).where(db.Individual.id == individual.id).execute()
+        with (
+            patch.object(settings.service, "demo_instance", True),
+            patch.object(cert_service_v2._generator, "generate_pedigree", return_value=b"%PDF-demo"),
+        ):
+            v2 = self._request(self.owner, "get", f"/api/v2/certificates/{individual.number}")
+            preview = self._request(self.owner, "get", f"/api/certificates/preview/{individual.number}")
+            mailed = buyer_mail._certificate_pdf(db.Individual.get_by_id(individual.id))
+        self.assertEqual((v2.get_data(), preview.get_data(), mailed), (b"%PDF-demo", b"%PDF-demo", None))
+
+    def test_a_v1_file_verifies_only_while_it_is_the_certificate(self):
+        import hashlib
+
+        from utils.cert_acess import upload_certificate, verify_certificate_checksum
+
+        self._start_mock_aws()
+        individual = self.individuals[3]
+        upload_certificate(pdf_bytes=b"%PDF-v1", ind_number=individual.number)
+        checksum = hashlib.sha256(b"%PDF-v1").hexdigest()
+        db.Individual.update(digital_certificate=4711).where(db.Individual.id == individual.id).execute()
+        self.assertTrue(verify_certificate_checksum(individual.number, checksum))
+        # A paper certificate replaced it (or a reissue): the file stays in S3 but is no longer the certificate.
+        db.Individual.update(digital_certificate=None).where(db.Individual.id == individual.id).execute()
+        self.assertFalse(verify_certificate_checksum(individual.number, checksum))
