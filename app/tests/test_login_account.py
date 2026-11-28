@@ -257,6 +257,20 @@ class TestLoginAccount(MatrikelApiTest):
         db.User.update(_privileges=owner_role).where(db.User.id == unlinked.id).execute()
         self.assertTrue(login_account._existing_account(self.member, self.member.email))
 
+    def test_a_keepers_owner_account_does_not_stop_the_main_members_account(self):
+        """#316: an account linked to an active person is hers; one linked to an ended row may be the main member's."""
+        keeper = _mk_person(self.member.membership, "Test", "Keeper", "keeper@example.org", role="skotare")
+        account = data_access.register_user("keeper-account@example.org", "pass", username="keeper")
+        matrikel.link_member_user(keeper.id, account.id, actor=self.admin, mode="admin")
+        owner_role = f'[{{"level": "owner", "herd": "{self.herds[1].id}"}}]'
+        db.User.update(_privileges=owner_role).where(db.User.id == account.id).execute()
+        db.Member.update(end_date=date.today()).where(db.Member.id == keeper.id).execute()
+        self.assertTrue(login_account._existing_account(self.member, self.member.email))
+        db.Member.update(end_date=None).where(db.Member.id == keeper.id).execute()
+        self.pending()
+        self.assertEqual(self.create().status_code, 200)
+        self.assertIsNotNone(db.Member.get_by_id(self.member.id).user_id)
+
     def test_a_holder_taking_the_address_after_the_code_refuses_the_family_members_account(self):
         family = _mk_person(self.member.membership, "Test", "Family", "family@example.org", role="familjemedlem")
         self.pending(person=family)
