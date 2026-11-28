@@ -61,9 +61,11 @@ ansvarig för genbanken, eller den som har rätt till kaninens nuvarande
 besättning enligt `effective_herd_ids()`. En familjemedlem eller skötare med
 aktiv åtkomstgrant säljer alltså som huvudmedlemmen, som i gamla Stamboken
 (#326), och rätten upphör när granten går ut. Ur GX1 och MX1 flyttar bara
-admin och ansvarig för genbanken. Bara ägaren (`owned_herd_ids()`: äldre
-`owner`-roll eller huvudmedlem) ändrar medlemskapets egna uppgifter:
-kontakt, konto för stödet, personer och åtkomst.
+admin och ansvarig för genbanken. Medlemskapets egna uppgifter (kontakt,
+konto för stödet, personer och åtkomst) ändrar bara kontot som är kopplat
+till medlemskapets aktiva huvudmedlem. `owned_herd_ids()` (äldre
+`owner`-roll eller huvudmedlem) är besättningens ägare och styr bara vad
+ägaren ser av besättningen, till exempel slutet på kontot för stödet.
 
 ### Var kontrollen görs
 
