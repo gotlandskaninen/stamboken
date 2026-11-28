@@ -35,16 +35,21 @@ test.describe("Mating Registration", () => {
     // click + pressSequentially + Tab commits the value reliably.
     // MUI X v9: pickers render a sectioned field (role=group), not a labeled input
     const dateInput = page.getByRole("group", { name: /parningsdatum/i });
+    // The doe may not mate inside the gestation window of another mating, and
+    // mutation-manual-flows registers matings for the same pair from 2024-12-01
+    // on (birth 2025-odd-month-01 minus 31 days). A random 2025 date landed in
+    // such a window about half the time ("Honan är redan dräktig under detta
+    // datum"), so stay in Jan-Sep 2024: even a Sep 28 mating ends its window (38 days) before 2024-12-01.
     // Derived from whole seconds, not a bit shift: `Date.now() >> n` casts to
     // int32, which is negative for weeks at a time and made the month "00".
     const seconds = Math.floor(Date.now() / 1000);
     const uniqueDay = String((seconds % 28) + 1).padStart(2, "0");
-    const uniqueMonth = String((Math.floor(seconds / 28) % 12) + 1).padStart(
+    const uniqueMonth = String((Math.floor(seconds / 28) % 9) + 1).padStart(
       2,
       "0",
     );
     await dateInput.locator('[data-sectionindex="0"]').click();
-    await dateInput.pressSequentially(`2025${uniqueMonth}${uniqueDay}`);
+    await dateInput.pressSequentially(`2024${uniqueMonth}${uniqueDay}`);
     await dateInput.press("Tab");
 
     // Submit form
