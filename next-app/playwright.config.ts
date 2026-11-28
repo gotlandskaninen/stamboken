@@ -61,8 +61,10 @@ export default defineConfig({
       testMatch: /[\\/]mutation-[^\\/]*\.spec\.ts$/,
       use: { storageState: "e2e/.auth/gk-owner.json" },
       fullyParallel: false,
-      // Each mutation file uses distinct parent pairs (no shared data),
-      // so parallel file execution is safe. fullyParallel:false ensures
+      // Each mutation file uses distinct parent pairs, except Visby Saga x
+      // Visby Storm, shared by mutation-mating-registration and
+      // mutation-manual-flows; they stay apart by date range (see both).
+      // So parallel file execution is safe. fullyParallel:false ensures
       // tests within each file run serially.
       dependencies: ["setup"],
     },
