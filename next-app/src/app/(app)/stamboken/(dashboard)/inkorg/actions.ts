@@ -5,10 +5,12 @@ import { cookies } from "next/headers";
 import { MODE_COOKIE, parseMode, type Mode } from "@/lib/mode";
 import type { SaleBuyer } from "@/components/individual/BuyerFields";
 import { fetchApi, ApiError } from "@/lib/api";
+import { crops, toApiFrame } from "./image";
 import type {
   InboxDocument,
   InboxItem,
   Problem,
+  Reconciliation,
   Rect,
   shownAssignment,
 } from "./lib";
@@ -36,7 +38,13 @@ const STATES = [
   "dubblett",
   "skrap",
 ];
-const DOCUMENT_FIELDS = ["doc_type", "cert_format", "rotation", "dismissed"];
+const DOCUMENT_FIELDS = [
+  "doc_type",
+  "cert_format",
+  "rotation",
+  "straighten",
+  "dismissed",
+];
 
 const refused = (detail: string): ActionResult<never> => ({
   ok: false,
@@ -206,6 +214,40 @@ export async function waitForParent(
   });
 }
 
+/**
+ * "Hitta pappret": the straighten that lines up the photo's writing, and the
+ * paper (with a margin, and tight) in fractions of the photo turned by
+ * `rotation`, the turn the view shows, plus that angle: the API refuses a
+ * rotation that is not the saved one (409). With `straighten` (the masking
+ * step) the angle is that one and is not looked for. Nothing is changed: the
+ * view applies it.
+ */
+export async function findPaper(
+  id: number,
+  doc: number,
+  rotation: number,
+  straighten?: number,
+) {
+  if (!isId(id) || !isId(doc)) return refused("Ogiltigt dokument.");
+  if (![0, 90, 180, 270].includes(rotation))
+    return refused("Ogiltig vridning.");
+  if (
+    straighten !== undefined &&
+    (!Number.isFinite(straighten) || Math.abs(straighten) > 15)
+  )
+    return refused("Ogiltig vinkel.");
+  return call<{
+    angle: number;
+    paper: Rect | null;
+    paper_tight: Rect | null;
+  }>(
+    id,
+    `/${id}/dokument/${doc}/hitta-pappret`,
+    "POST",
+    straighten === undefined ? { rotation } : { rotation, straighten },
+  );
+}
+
 /** "Tolka igen": the certificate waits for the image reading again, after a turn. */
 export async function reinterpretDocument(id: number, doc: number) {
   if (!isId(id) || !isId(doc)) return refused("Ogiltigt dokument.");
@@ -219,6 +261,31 @@ export async function saveCertificate(
 ) {
   if (!isId(id) || !isId(doc)) return refused("Ogiltigt dokument.");
   return call<DocResult>(id, `/${id}/dokument/${doc}/spara`, "POST", payload);
+}
+
+/**
+ * The reconciliation table (…/avstamning): what the handler typed beside the
+ * registry. A read, recomputed as she types, so nothing is revalidated (not
+ * through call()); null when it could not be had.
+ */
+export async function reconcileDocument(
+  id: number,
+  doc: number,
+  typed: Record<string, string>,
+): Promise<Reconciliation | null> {
+  if (!isId(id) || !isId(doc) || typeof typed !== "object" || !typed)
+    return null;
+  const body = Object.fromEntries(
+    Object.entries(typed).filter(([, v]) => typeof v === "string"),
+  );
+  try {
+    return await fetchApi<Reconciliation>(
+      `/v2/inkorg/${id}/dokument/${doc}/avstamning`,
+      { method: "POST", body: JSON.stringify(body) },
+    );
+  } catch {
+    return null;
+  }
 }
 
 /** A report photo compared with its rabbit: "Stämmer", or "Rättat" when the rabbit was corrected; it closes. */
@@ -243,6 +310,8 @@ export async function registerSale(
     herd: string;
     date: string;
     buyer?: SaleBuyer;
+    /** Filled from the photo's reading (rule 5 b): refused once the document no longer has it. */
+    from_photo?: true;
   },
 ) {
   if (!isId(id) || !isId(doc)) return refused("Ogiltigt dokument.");
@@ -250,16 +319,21 @@ export async function registerSale(
 }
 
 /**
- * The rectangles come with the rotation they were drawn in (fractions of the
- * image as turned by it): the API stores both and makes the copy from the pair.
- * An empty list needs `noPersonalData`, the handler's explicit "nothing to hide".
+ * The rectangles and the frame come with the rotation and the straighten they
+ * were drawn in (fractions of the image as turned by both): the API stores
+ * them together and makes the copy from them, cropped to the frame (null: the
+ * whole photo).
+ * Neither boxes nor a frame needs `noPersonalData`, the handler's explicit
+ * "nothing to hide".
  * `matchesRegistry`: the handler found the certificate and the registry in agreement.
  */
 export async function confirmMask(
   id: number,
   doc: number,
   rotation: number,
+  straighten: number,
   rects: Rect[],
+  frame: Rect | null,
   noPersonalData = false,
   matchesRegistry = false,
 ) {
@@ -267,12 +341,16 @@ export async function confirmMask(
     return refused("Ogiltig maskning.");
   if (![0, 90, 180, 270].includes(rotation))
     return refused("Ogiltig vridning.");
-  if (rects.length === 0 && noPersonalData !== true)
+  if (!Number.isFinite(straighten) || Math.abs(straighten) > 15)
+    return refused("Ogiltig vinkel.");
+  if (rects.length === 0 && !crops(frame) && noPersonalData !== true)
     return refused("Bekräfta att fotot inte visar några uppgifter.");
   return call<DocResult>(id, `/${id}/dokument/${doc}/maskning`, "POST", {
     rotation,
+    straighten,
     mask_rects: rects,
-    ...(rects.length === 0 ? { no_personal_data: true } : {}),
+    copy_frame: frame && toApiFrame(frame),
+    ...(rects.length === 0 && !crops(frame) ? { no_personal_data: true } : {}),
     matches_registry: matchesRegistry === true,
   });
 }
@@ -301,24 +379,4 @@ export async function rabbitSales(id: number, number: string) {
     `/${id}/kanin/${encodeURIComponent(number.trim().toUpperCase())}/forsaljningar`,
     "GET",
   );
-}
-
-/** The registry's record of a parent, to compare with the photo; null when not found. */
-export async function lookupRabbit(
-  number: string,
-): Promise<RegistryRabbit | null> {
-  if (
-    typeof number !== "string" ||
-    !/^[A-Za-z]+\d+-\d{4,}$/.test(number.trim())
-  )
-    return null;
-  try {
-    const r = await fetchApi<RegistryRabbit>(
-      `/v2/individual/${encodeURIComponent(number.trim().toUpperCase())}`,
-    );
-    return { name: r.name, color: r.color, mother: r.mother, father: r.father };
-  } catch (e) {
-    if (e instanceof ApiError) return null;
-    throw e;
-  }
 }

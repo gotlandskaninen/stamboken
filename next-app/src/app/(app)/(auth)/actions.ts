@@ -6,6 +6,8 @@ import { fetchApi } from "@/lib/api";
 import { forwardedFor } from "@/lib/forwardedFor";
 import {
   MODE_COOKIE,
+  PROD_ORIGIN,
+  isTestHost,
   initialMode,
   modeCookieOptions,
   parseMode,
@@ -99,7 +101,7 @@ export async function loginWithGoogle(credential: string, returnTo?: string) {
   cookieStore.set("session", sessionValue, cookieOptions);
   cookieStore.set(
     MODE_COOKIE,
-    initialMode(!!body.v2_prod_access),
+    initialMode(!!body.v2_prod_access, await headers()),
     modeCookieOptions,
   );
 
@@ -146,7 +148,7 @@ export async function loginWithPassword(
   cookieStoreForPw.set("session", sessionValue, cookieOptions);
   cookieStoreForPw.set(
     MODE_COOKIE,
-    initialMode(!!body.v2_prod_access),
+    initialMode(!!body.v2_prod_access, await headers()),
     modeCookieOptions,
   );
 
@@ -161,6 +163,10 @@ export async function loginWithPassword(
  */
 export async function setMode(target: Mode) {
   const normalized = parseMode(target);
+
+  // The test host is demo only; production lives on its own origin.
+  if (normalized === "prod" && isTestHost(await headers()))
+    redirect(`${PROD_ORIGIN}/stamboken/byt-till-prod`);
 
   // The re-check MUST read the PROD backend (forceProd): hbuser in prod is the
   // source of truth for promotion. The default mode-aware path would consult
@@ -259,15 +265,20 @@ function responseCookie(response: Response, name: string) {
   return cookie?.split(";", 1)[0].slice(name.length + 1);
 }
 
-export async function requestLoginCode(email: string) {
+export async function requestLoginCode(email: string, returnTo?: string) {
   const result = await postCodeLogin("kod", { email });
   if (!result?.response.ok) return false;
   const value = responseCookie(result.response, "login_request");
   if (!value) return false;
-  (await cookies()).set("login_request", value, {
-    ...cookieOptions,
-    maxAge: 600,
-  });
+  const store = await cookies();
+  const options = { ...cookieOptions, maxAge: 600 };
+  store.set("login_request", value, options);
+  // The mail link opens a new tab in the browser that requested this code.
+  // fetchApi forwards cookie values as they are, so only plain path characters.
+  const path = returnTo && safeReturnTo(returnTo);
+  if (path && /^[\w\-./?=&]+$/.test(path))
+    store.set("login_return_to", path, options);
+  else store.delete("login_return_to");
   return true;
 }
 
@@ -310,10 +321,14 @@ async function finishCodeLogin(
   )
     return { error: "unavailable" };
   const store = await cookies();
+  if (path === "lank") returnTo = store.get("login_return_to")?.value;
   store.set("session", session, cookieOptions);
   store.delete("login_request");
+  store.delete("login_return_to");
   const mode =
-    data.pending === true ? "prod" : initialMode(data.v2_prod_access);
+    data.pending === true
+      ? initialMode(true, await headers())
+      : initialMode(data.v2_prod_access, await headers());
   store.set(MODE_COOKIE, mode, modeCookieOptions);
   const destination = safeReturnTo(returnTo);
   if (data.pending === true) {

@@ -616,6 +616,7 @@ class ProposalsTest(ArsrapportTest):
         draft = db.YearlyReportDraft.get()
         kept = sorted([str(self.b.id), str(self.c.id)])
         self.assertEqual((sorted(draft.data["rabbits"]), sorted(draft.data["form"]["rabbits"])), (kept, kept))
-        self.assertEqual([d["individual_id"] for d in draft.data["defects"]], [self.b.id])
-        self.assertEqual([d["individual_id"] for d in draft.data["form"]["defects"]], [self.b.id])
+        # a left the list with its approved sale, but its defect stays: Skicka takes a sold rabbit's defect too
+        self.assertEqual([d["individual_id"] for d in draft.data["defects"]], [self.a.id, self.b.id])
+        self.assertEqual([d["individual_id"] for d in draft.data["form"]["defects"]], [self.a.id, self.b.id])
         self.assertIsNone(db.HerdTracking.get_by_id(sale.id).voided_at)

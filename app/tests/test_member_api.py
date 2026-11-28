@@ -17,9 +17,10 @@ from blueprints import members as members_routes  # noqa: E402
 # The export is consumed by the importer — reuse its pure parsing helpers.
 from cli.members import _group_rows, _read_rows  # noqa: E402
 from herdbook import APP, limiter  # noqa: E402
-from utils.members import consent_answered, effective_consent  # noqa: E402
+from utils.members import CONSENT_TEXT_VERSION, consent_answered, effective_consent  # noqa: E402
 
 from tests.database_test import DatabaseTest  # noqa: E402
+from tests.ht_helpers import count_queries  # noqa: E402
 
 limiter.enabled = False
 
@@ -30,6 +31,17 @@ def _mk_membership(number=None, status="active", **kwargs):
 
 def _mk_person(membership, first, last, email=None, role="huvudmedlem", **kwargs):
     return db.Member.create(membership=membership, first_name=first, last_name=last, email=email, role=role, **kwargs)
+
+
+def _answer(membership, value, text_version=CONSENT_TEXT_VERSION):
+    """The membership's Koharen answer with its history row, as every writer leaves it (set_consent)."""
+    db.Membership.update(publication_consent=value).where(db.Membership.id == membership.id).execute()
+    db.PublicationConsentChange.create(membership=membership, value=value, text_version=text_version, source="profil")
+
+
+def _consent(body):
+    """A profile PATCH body: the answer and the version of the text the page showed."""
+    return {"text_version": CONSENT_TEXT_VERSION, **body}
 
 
 class MatrikelApiTest(DatabaseTest):
@@ -303,7 +315,7 @@ class TestSelfService(MatrikelApiTest):
         self.login("linked")
         resp = self.client.patch(
             "/api/v2/members/me/consent",
-            data=json.dumps({"email": True}),
+            data=json.dumps(_consent({"email": True})),
             content_type="application/json",
         )
         self.assertEqual(resp.status_code, 200, resp.data)
@@ -317,7 +329,7 @@ class TestSelfService(MatrikelApiTest):
         self.login("linked")
         resp = self.client.patch(
             "/api/v2/members/me/consent",
-            data=json.dumps({"email": "false"}),
+            data=json.dumps(_consent({"email": "false"})),
             content_type="application/json",
         )
         self.assertEqual(resp.status_code, 400, resp.data)
@@ -326,12 +338,11 @@ class TestSelfService(MatrikelApiTest):
     def test_patch_consent_merges_onto_the_stored_answer(self):
         """The body is a PARTIAL update: keys the member did not
         submit keep their stored value, and no key is invented for them."""
-        self.ms.publication_consent = {"email": True}
-        self.ms.save()
+        _answer(self.ms, {"email": True})
         self.login("linked")
         resp = self.client.patch(
             "/api/v2/members/me/consent",
-            data=json.dumps({"phone": True}),
+            data=json.dumps(_consent({"phone": True})),
             content_type="application/json",
         )
         self.assertEqual(resp.status_code, 200, resp.data)
@@ -344,29 +355,30 @@ class TestSelfService(MatrikelApiTest):
     def test_withdrawn_consent_stays_withdrawn_in_the_koharen_export(self):
         """GDPR: a withdrawal must survive the next partial save of another
         switch — the export's e-post cell stays blank."""
-        self.ms.publication_consent = {"email": True}
-        self.ms.save()
+        _answer(self.ms, {"name": True, "email": True})
+        db.Herd.create(herd="G9008", genebank=self.genebanks[0], membership=self.ms, is_active=True)
         self.person.phone = "070-9"
         self.person.save()
         self.login("linked")
         for body in ({"phone": True}, {"email": False}):
             resp = self.client.patch(
                 "/api/v2/members/me/consent",
-                data=json.dumps(body),
+                data=json.dumps(_consent(body)),
                 content_type="application/json",
             )
             self.assertEqual(resp.status_code, 200, resp.data)
-        self.assertEqual(db.Membership.get_by_id(self.ms.id).publication_consent, {"email": False, "phone": True})
+        self.assertEqual(
+            db.Membership.get_by_id(self.ms.id).publication_consent, {"name": True, "email": False, "phone": True}
+        )
 
         self.client.get("/api/logout")
         self.login("matrikel")
         resp = self.client.get("/api/v2/members/koharen-export")
         self.assertEqual(resp.status_code, 200, resp.data)
         rows = list(_csv_lib.reader(_io.StringIO(resp.get_data(as_text=True).lstrip("\ufeff"))))
-        row = next(r for r in rows[1:] if r[0] == "8")
+        row = next(r for r in rows[1:] if r[0] == "G9008")
         self.assertEqual(row[2], "070-9")  # Telefon — the key that was granted
         self.assertEqual(row[3], "")  # E-post — the withdrawal held
-        self.assertEqual(row[7], "angivet")
 
     def test_malformed_stored_consent_is_not_consent(self):
         """Fail-closed: only a literal JSON true publishes. A stored
@@ -374,8 +386,8 @@ class TestSelfService(MatrikelApiTest):
         refused — must not print in the Koharen export (bool("false") is True),
         GET /me must report it as off, and the next partial save must persist
         it as false instead of carrying the coercion forward."""
-        self.ms.publication_consent = {"name": True, "email": "false", "phone": 1}
-        self.ms.save()
+        _answer(self.ms, {"name": True, "email": "false", "phone": 1})
+        db.Herd.create(herd="G9008", genebank=self.genebanks[0], membership=self.ms, is_active=True)
         self.person.phone = "070-9"
         self.person.save()
 
@@ -383,11 +395,10 @@ class TestSelfService(MatrikelApiTest):
         resp = self.client.get("/api/v2/members/koharen-export")
         self.assertEqual(resp.status_code, 200, resp.data)
         rows = list(_csv_lib.reader(_io.StringIO(resp.get_data(as_text=True).lstrip("\ufeff"))))
-        row = next(r for r in rows[1:] if r[0] == "8")
+        row = next(r for r in rows[1:] if r[0] == "G9008")
         self.assertEqual(row[1], "Linked User")  # Namn — the one literal true
         self.assertEqual(row[2], "")  # Telefon — 1 is not consent
         self.assertEqual(row[3], "")  # E-post — "false" is not consent
-        self.assertEqual(row[7], "angivet")
 
         self.client.get("/api/logout")
         self.login("linked")
@@ -395,13 +406,46 @@ class TestSelfService(MatrikelApiTest):
         self.assertEqual(me["publication_consent"], {"name": True, "phone": False, "email": False, "address": False})
         self.assertTrue(me["consent_answered"])
         resp = self.client.patch(
-            "/api/v2/members/me/consent", data=json.dumps({"address": True}), content_type="application/json"
+            "/api/v2/members/me/consent", data=json.dumps(_consent({"address": True})), content_type="application/json"
         )
         self.assertEqual(resp.status_code, 200, resp.data)
         self.assertEqual(
             db.Membership.get_by_id(self.ms.id).publication_consent,
             {"name": True, "email": False, "phone": False, "address": True},
         )
+
+    def test_an_answer_to_an_older_text_is_asked_again(self):
+        """5.11: a new text that says more applies only after a new answer. The old profile asked about the member
+        directory ("profil-2025"): nothing is chosen, and the same answer to this question is recorded."""
+        _answer(self.ms, EVERYTHING, "profil-2025")
+        self.login("linked")
+        me = self.client.get("/api/v2/members/me").get_json()
+        self.assertEqual((me["consent_answered"], me["publication_consent"]), (False, dict.fromkeys(EVERYTHING, False)))
+        resp = self.client.patch("/api/v2/members/me/consent", json=_consent(EVERYTHING))
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertTrue(resp.get_json()["consent_answered"])
+        last = db.PublicationConsentChange.select().order_by(db.PublicationConsentChange.id.desc()).first()
+        self.assertEqual((last.value, last.text_version, last.source), (EVERYTHING, CONSENT_TEXT_VERSION, "profil"))
+
+    def test_an_answer_to_another_text_version_is_refused(self):
+        """An old tab (the previous profile, or a page opened before the question changed) sends no or another
+        version: refused with a reload message, and nothing is written."""
+        self.login("linked")
+        for version in (None, "profil-2025", "2026-11-18"):
+            body = {"name": True} if version is None else {"name": True, "text_version": version}
+            with self.subTest(version=version):
+                resp = self.client.patch("/api/v2/members/me/consent", json=body)
+                self.assertEqual((resp.status_code, resp.get_json()["title"]), (409, "Ladda om sidan"), resp.data)
+        self.assertFalse(db.PublicationConsentChange.select().exists())
+        self.assertEqual(db.Membership.get_by_id(self.ms.id).publication_consent, {})
+
+    def test_me_says_whether_the_koharen_question_applies(self):
+        """The question is about a herd: only an active herd in a genebank makes the profile ask it."""
+        self.login("linked")
+        for herd, active, asked in (("G9008", False, False), ("GX1", True, False), ("M9208", True, True)):
+            db.Herd.create(herd=herd, genebank=self.genebanks[0], membership=self.ms, is_active=active)
+            with self.subTest(herd=herd):
+                self.assertIs(self.client.get("/api/v2/members/me").get_json()["has_active_herd"], asked)
 
     def test_non_object_stored_consent_is_never_answered(self):
         """A JSONB array or scalar in publication_consent is neither consent nor
@@ -416,7 +460,7 @@ class TestSelfService(MatrikelApiTest):
         self.login("linked")
         resp = self.client.patch(
             "/api/v2/members/me/consent",
-            data=json.dumps({}),
+            data=json.dumps(_consent({})),
             content_type="application/json",
         )
         self.assertEqual(resp.status_code, 400, resp.data)
@@ -427,7 +471,7 @@ class TestSelfService(MatrikelApiTest):
         self.login("linked")
         resp = self.client.patch(
             "/api/v2/members/me/consent",
-            data=json.dumps({"herd": True}),
+            data=json.dumps(_consent({"herd": True})),
             content_type="application/json",
         )
         self.assertEqual(resp.status_code, 400, resp.data)
@@ -441,7 +485,7 @@ class TestSelfService(MatrikelApiTest):
         self.assertFalse(self.client.get("/api/v2/members/me").get_json()["consent_answered"])
         resp = self.client.patch(
             "/api/v2/members/me/consent",
-            data=json.dumps({"name": False}),
+            data=json.dumps(_consent({"name": False})),
             content_type="application/json",
         )
         self.assertEqual(resp.status_code, 200, resp.data)
@@ -493,7 +537,7 @@ class TestSelfService(MatrikelApiTest):
         self.assertEqual(resp.status_code, 403, resp.data)
         resp = self.client.patch(
             "/api/v2/members/me/consent",
-            data=json.dumps({"email": True}),
+            data=json.dumps(_consent({"email": True})),
             content_type="application/json",
         )
         self.assertEqual(resp.status_code, 403, resp.data)
@@ -623,7 +667,7 @@ class TestSelfService(MatrikelApiTest):
         with patch.object(db.Membership, "save", autospec=True, side_effect=db.Membership.save) as ms_spy:
             resp = self.client.patch(
                 "/api/v2/members/me/consent",
-                data=json.dumps({"email": True}),
+                data=json.dumps(_consent({"email": True})),
                 content_type="application/json",
             )
         self.assertEqual(resp.status_code, 200, resp.data)
@@ -651,7 +695,7 @@ class TestSelfService(MatrikelApiTest):
 
     SELF_SERVICE_WRITES = (
         ("/api/v2/members/me/contact", {"phone": "+46701234567", "address": "Box 1"}),
-        ("/api/v2/members/me/consent", {"email": True}),
+        ("/api/v2/members/me/consent", _consent({"email": True})),
     )
 
     def _assert_both_writes_refuse(self, stale, status, title, address="Gata 2"):
@@ -963,94 +1007,141 @@ class TestStatsAndExport(MatrikelApiTest):
                     )
 
 
-KOHAREN_HEADER = ["Nr", "Namn", "Telefon", "E-post", "Gatuadress", "Postnummer", "Postort", "Samtycke"]
+KOHAREN_HEADER = ["Nr", "Namn", "Telefon", "E-post", "Postnummer", "Postort"]
+EVERYTHING = {"name": True, "phone": True, "email": True, "address": True}
 
 
 class TestKoharenExport(MatrikelApiTest):
+    """
+    The list of active herds in Koharen (fråga 33, spec 5.11): one row per active herd whose holder said yes, with
+    the herd number as Nr and only what the holder allowed. No street address, no family member, no Nej, no {}.
+    """
+
     def setUp(self):
         super().setUp()
-        self.full = _mk_membership(
-            number=6,
-            address="Gatan 1",
-            postal_code="623 55",
-            city="Visby",
-            publication_consent={"name": True, "phone": True, "email": True, "address": True},
-        )
+        gotland, mellerud = self.genebanks
+        self.full = _mk_membership(number=6, address="Gatan 1", postal_code="623 55", city="Visby")
+        _answer(self.full, EVERYTHING)
         _mk_person(self.full, "Anna", "Andersson", "anna@example.com", phone="070-1")
         _mk_person(self.full, "Frida", "Andersson", "frida@example.com", role="familjemedlem", phone="070-2")
-        self.partial = _mk_membership(
-            number=7,
-            address="Gatan 2",
-            postal_code="621 45",
-            city="Visby",
-            publication_consent={"name": True, "phone": False, "email": True, "address": False},
-        )
+        self.partial = _mk_membership(number=7, address="Gatan 2", postal_code="621 45", city="Visby")
+        _answer(self.partial, {"name": True, "phone": False, "email": True, "address": False})
         _mk_person(self.partial, "Bo", "Bengtsson", "bo@example.com", phone="070-3")
-        self.opted_out = _mk_membership(
-            number=8, publication_consent={"name": False, "phone": False, "email": False, "address": False}
-        )
-        _mk_person(self.opted_out, "Cy", "Cyklop", "cy@example.com")
-        self.unset = _mk_membership(number=9, address="Gatan 9", publication_consent={})
-        _mk_person(self.unset, "Ulla", "Unset", "ulla@example.com")
-        self.fri = _mk_membership(status="friexemplar", publication_consent={"name": True})
-        _mk_person(self.fri, "Biblioteket", "Visby")
-        self.inactive = _mk_membership(number=10, status="inactive", publication_consent={"name": True})
-        _mk_person(self.inactive, "In", "Aktiv")
+        nej = _mk_membership(number=8)
+        _answer(nej, dict.fromkeys(EVERYTHING, False))
+        _mk_person(nej, "Cy", "Cyklop", "cy@example.com")
+        unset = _mk_membership(number=9, address="Gatan 9", postal_code="621 99", city="Visby")
+        _mk_person(unset, "Ulla", "Unset", "ulla@example.com")
+        inactive = _mk_membership(number=10, status="inactive")
+        _answer(inactive, EVERYTHING)
+        _mk_person(inactive, "In", "Aktiv")
+        for herd, genebank, membership, active in (
+            ("M9201", mellerud, self.full, True),
+            ("G9001", gotland, self.full, True),
+            ("G9005", gotland, self.full, False),  # an inactive herd of a holder who said yes
+            ("GX1", gotland, self.full, True),  # "sold outside the genebank" is no herd in the list
+            ("G9002", gotland, self.partial, True),
+            ("G9003", gotland, nej, True),
+            ("G9004", gotland, unset, True),
+            ("M9202", mellerud, inactive, True),
+        ):
+            db.Herd.create(herd=herd, genebank=genebank, membership=membership, is_active=active)
 
-    def _rows(self):
+    def _response(self):
         self.login("matrikel")
         resp = self.client.get("/api/v2/members/koharen-export")
         self.assertEqual(resp.status_code, 200, resp.data)
-        self.assertIn('filename="koharen-matrikel.csv"', resp.headers["Content-Disposition"])
-        text = resp.get_data(as_text=True)
+        return resp
+
+    def _rows(self):
+        text = self._response().get_data(as_text=True)
         self.assertTrue(text.startswith("\ufeff"))
         return list(_csv_lib.reader(_io.StringIO(text.lstrip("\ufeff"))))
 
-    def test_header_order_membership_scope_and_person_order(self):
-        rows = self._rows()
-        self.assertEqual(rows[0], KOHAREN_HEADER)
-        self.assertEqual([r[0] for r in rows[1:]], ["6", "6", "7", "8", "9"])  # friexemplar + inactive excluded
-        self.assertEqual(rows[1][1], "Anna Andersson")  # huvudmedlem first
-
-    def test_full_consent_prints_everything(self):
+    def test_one_row_per_active_herd_whose_holder_said_yes(self):
         self.assertEqual(
-            self._rows()[2],
-            ["6", "Frida Andersson", "070-2", "frida@example.com", "Gatan 1", "623 55", "Visby", "angivet"],
-        )
-
-    def test_per_key_blanking(self):
-        self.assertEqual(self._rows()[3], ["7", "Bo Bengtsson", "", "bo@example.com", "", "", "", "angivet"])
-
-    def test_organization_lists_only_main_contact_fields_with_consent(self):
-        for membership in (self.full, self.partial, self.opted_out, self.unset):
-            membership.organization_name = f"Testförening {membership.member_number}"
-            membership.organization_number = "552222-0002"
-            membership.save()
-        _mk_person(self.full, "Gammal", "Kontakt", end_date=date.today())
-        # A family member cannot replace a missing active main contact.
-        no_main = _mk_membership(
-            number=11,
-            organization_name="Utan huvudmedlem",
-            address="Box 11",
-            publication_consent=self.full.publication_consent,
-        )
-        _mk_person(no_main, "Familje", "Medlem", role="familjemedlem", phone="070-11", email="familj@example.invalid")
-        self.assertEqual(
-            self._rows()[1:],
+            self._rows(),
             [
-                ["6", "Testförening 6", "070-1", "anna@example.com", "Gatan 1", "623 55", "Visby", "angivet"],
-                ["7", "Testförening 7", "", "bo@example.com", "", "", "", "angivet"],
-                ["8", "", "", "", "", "", "", "angivet"],
-                ["9", "", "", "", "", "", "", "ej angivet"],
-                ["11", "Utan huvudmedlem", "", "", "Box 11", "", "", "angivet"],
+                KOHAREN_HEADER,
+                ["G9001", "Anna Andersson", "070-1", "anna@example.com", "623 55", "Visby"],
+                ["G9002", "Bo Bengtsson", "", "bo@example.com", "", ""],
+                ["M9201", "Anna Andersson", "070-1", "anna@example.com", "623 55", "Visby"],
             ],
         )
 
-    def test_explicit_opt_out_keeps_nr_and_samtycke(self):
-        self.assertEqual(self._rows()[4], ["8", "", "", "", "", "", "", "angivet"])
+    def test_never_the_street_address_or_a_family_member(self):
+        text = self._response().get_data(as_text=True)
+        for value in ("Gatan 1", "Frida", "070-2", "frida@example.com"):
+            with self.subTest(value=value):
+                self.assertNotIn(value, text)
 
-    def test_unset_consent_is_ej_angivet_and_blank(self):
-        self.assertEqual(self._rows()[5], ["9", "", "", "", "", "", "", "ej angivet"])
+    def test_only_an_answer_to_this_question_is_listed(self):
+        """5.11: a new text that says more applies only after a new answer. The old profile's yes ("profil-2025")
+        and a yes without history are left out; every text that named the list and the herd number counts."""
+        for number, version in ((11, "profil-2025"), (12, None), (13, "2026-11"), (14, "2026-11-18")):
+            ms = _mk_membership(number=number, postal_code="621 00", city="Visby")
+            _mk_person(ms, "Ny", str(number))
+            db.Herd.create(herd=f"G90{number}", genebank=self.genebanks[0], membership=ms, is_active=True)
+            if version is None:
+                db.Membership.update(publication_consent=EVERYTHING).where(db.Membership.id == ms.id).execute()
+            else:
+                _answer(ms, EVERYTHING, version)
+        self.assertEqual([r[0] for r in self._rows()[1:]], ["G9001", "G9002", "G9013", "G9014", "M9201"])
+
+    def test_a_new_holder_must_answer_again(self):
+        """The answer is the holder's: a swap of huvudmedlem clears it, with history, before the next export."""
+        self.login("matrikel")
+        frida = db.Member.get(db.Member.email == "frida@example.com")
+        resp = self.client.post(f"/api/v2/memberships/{self.full.id}/main-member", json={"person_id": frida.id})
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual([r[0] for r in self._rows()[1:]], ["G9002"])
+        change = db.PublicationConsentChange.select().order_by(db.PublicationConsentChange.id.desc()).first()
+        self.assertEqual(
+            (change.membership_id, change.value, change.source, change.user_id),
+            (self.full.id, {}, "admin", self.matrikel_user.id),
+        )
+
+    def test_a_reactivated_or_added_holder_must_answer_again(self):
+        """Also a huvudmedlem reactivated or added to a membership without one (an organization's new contact)."""
+        db.Member.update(end_date=date.today()).where(
+            db.Member.email.in_(("anna@example.com", "bo@example.com"))
+        ).execute()
+        matrikel.reactivate_person(db.Member.get(db.Member.email == "bo@example.com"), self.matrikel_user)
+        new = {"first_name": "Ny", "last_name": "Kontakt", "role": "huvudmedlem"}
+        matrikel.add_person(self.full, new, self.matrikel_user)
+        for membership in (self.full, self.partial):
+            with self.subTest(membership=membership.member_number):
+                self.assertEqual(db.Membership.get_by_id(membership.id).publication_consent, {})
+        self.assertEqual(self._rows()[1:], [])
+
+    def test_an_answer_from_before_the_holder_never_counts(self):
+        """An answer belongs to the holder who gave it. A main member changed after the answer, also before this
+        check existed (no reset row), or added to a membership without one: no row until the new holder answers."""
+        for membership, action, payload in (
+            (self.full, "main_member_changed", {"previous_person_id": None, "new_person_id": 1}),
+            (self.partial, "person_added", {"person_id": 1, "role": "huvudmedlem"}),
+        ):
+            db.MatrikelAudit.create(membership=membership, action=action, payload=payload)
+        self.assertEqual(self._rows()[1:], [])
+        _answer(self.full, EVERYTHING)  # the new holder's own answer
+        self.assertEqual([r[0] for r in self._rows()[1:]], ["G9001", "M9201"])
+
+    def test_family_member_never_stands_in_for_the_holder(self):
+        db.Member.update(end_date=date.today()).where(db.Member.email == "anna@example.com").execute()
+        self.assertEqual([r[0] for r in self._rows()[1:]], ["G9002"])
+
+    def test_organization_is_listed_by_its_name_with_its_contact(self):
+        db.Membership.update(organization_name="Testföreningen", organization_number="552222-0002").where(
+            db.Membership.id == self.partial.id
+        ).execute()
+        self.assertIn(["G9002", "Testföreningen", "", "bo@example.com", "", ""], self._rows())
+
+    def test_file_name_and_audit_row(self):
+        resp = self._response()
+        name = f"koharen-besattningar-{date.today().isoformat()}.csv"
+        self.assertIn(f'filename="{name}"', resp.headers["Content-Disposition"])
+        logged = db.AuditLog.get(db.AuditLog.table_name == "membership", db.AuditLog.operation == "READ")
+        self.assertEqual((logged.new_data, logged.changed_by), ({"action": "koharen", "rows": 3}, "matrikel"))
 
     def test_requires_matrikel_admin(self):
         self.login("man")
@@ -1058,7 +1149,28 @@ class TestKoharenExport(MatrikelApiTest):
 
     def test_formula_injection_guarded(self):
         db.Member.update(first_name="=HYPERLINK()").where(db.Member.email == "anna@example.com").execute()
-        self.assertTrue(self._rows()[1][1].startswith(" ="))
+        db.Herd.update(herd="=G9001").where(db.Herd.herd == "G9001").execute()  # the herd code is free text
+        self.assertEqual(self._rows()[1][:2], [" =G9001", " =HYPERLINK() Andersson"])
+
+    def test_queries_do_not_grow_with_the_answers(self):
+        """The text version of every answer is read in one query, for the export and the matrikel list."""
+
+        def queries(url):
+            with count_queries() as counter:
+                self.assertEqual(self.client.get(url).status_code, 200)
+            return counter["n"]
+
+        self.login("matrikel")
+        before = {url: queries(url) for url in ("/api/v2/members/koharen-export", "/api/v2/members?per_page=100")}
+        for number in range(20, 26):
+            ms = _mk_membership(number=number)
+            _mk_person(ms, "Ny", str(number))
+            db.Herd.create(herd=f"G90{number}", genebank=self.genebanks[0], membership=ms, is_active=True)
+            _answer(ms, EVERYTHING)
+        self.assertEqual({url: queries(url) for url in before}, before)
+
+
+EXPORTS = ("/api/v2/members/address-list", "/api/v2/members/export", "/api/v2/members/koharen-export")
 
 
 class TestAddressListExport(MatrikelApiTest):
@@ -1177,14 +1289,14 @@ class TestAddressListExport(MatrikelApiTest):
 
     def test_not_cached(self):
         self.login("matrikel")
-        for url in ("/api/v2/members/address-list", "/api/v2/members/export"):
+        for url in EXPORTS:
             with self.subTest(url=url):
                 self.assertEqual(self.client.get(url).headers["Cache-Control"], "no-store")
 
     def test_refused_on_the_demo_without_an_audit_row(self):
         self.login("matrikel")
         with patch.object(members_routes.settings.service, "demo_instance", True):
-            for url in ("/api/v2/members/address-list", "/api/v2/members/export"):
+            for url in EXPORTS:
                 with self.subTest(url=url):
                     self.assertEqual(self.client.get(url).status_code, 403)
         self.assertFalse(db.AuditLog.select().where(db.AuditLog.operation == "READ").exists())

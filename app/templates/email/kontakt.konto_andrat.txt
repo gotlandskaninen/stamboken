@@ -1,0 +1,9 @@
+{% block subject %}Kontot för stödet har ändrats{% endblock %}
+
+{% block body %}
+Hej!
+
+Kontot för genbanksstödet har ändrats.{% if account_end %} Nu slutar kontot på ••{{ account_end }}.{% endif %}
+
+Var det inte du? Kontakta genbanksansvarig genom att svara på det här mejlet.
+{% endblock %}

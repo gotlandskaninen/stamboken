@@ -31,8 +31,10 @@ const row = (
   herd,
   herd_name: null,
   state,
+  needs_report: state !== "inskickad" && state !== "avslutar",
   inbjudan: null,
-  ingen_epost: false,
+  last_reminder: null,
+  ingen_epost: state === "ingen_epost",
   source: null,
   membership_after_end: null,
   received_at: null,
@@ -84,6 +86,22 @@ describe("status view filters", () => {
       8,
     );
   });
+  it("unanswered filter includes drafts and paper waiting for entry", () => {
+    const list = [
+      ...rows,
+      row("G9009", "blankett_vantar"),
+      row("G9010", "avslutar"),
+      row("G9011", "ej_rapporterad", { needs_report: false }), // inactive herd
+    ];
+    expect(herds(filterRows(list, "ej_svarat", null))).toEqual([
+      "G9001",
+      "G9002",
+      "G9003",
+      "G9004",
+      "G9006",
+      "G9009",
+    ]);
+  });
   it.each([
     "avslutar",
     "inskickad",
@@ -100,6 +118,7 @@ describe("status view filters", () => {
   });
   it("reads the filter from the URL and falls back to Alla", () => {
     expect(parseFilter("att_ringa")).toBe("att_ringa");
+    expect(parseFilter("ej_svarat")).toBe("ej_svarat");
     expect(parseFilter("paborjad")).toBe("paborjad");
     expect(parseFilter("x")).toBe("alla");
     expect(parseFilter(undefined)).toBe("alla");

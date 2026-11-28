@@ -26,10 +26,12 @@ test.describe("/stamboken/profil", () => {
     }
     const stamp = String(Date.now()).slice(-5);
     await page.getByLabel("Gatuadress").fill(`Testgatan ${stamp}`);
-    await page.getByLabel("Postnummer").fill("62355");
+    await page.getByLabel("Postnummer", { exact: true }).fill("62355");
     await page.getByLabel("Postort").fill("Visby");
     await page.getByLabel("Postort").click();
-    await expect(page.getByLabel("Postnummer")).toHaveValue("623 55");
+    await expect(page.getByLabel("Postnummer", { exact: true })).toHaveValue(
+      "623 55",
+    );
     // Scoped to the Kontakt card — every card has its own "Spara".
     await page
       .locator("section", {
@@ -45,7 +47,9 @@ test.describe("/stamboken/profil", () => {
     await expect(page.getByLabel("Gatuadress")).toHaveValue(
       `Testgatan ${stamp}`,
     );
-    await expect(page.getByLabel("Postnummer")).toHaveValue("623 55");
+    await expect(page.getByLabel("Postnummer", { exact: true })).toHaveValue(
+      "623 55",
+    );
   });
 
   test("has no horizontal scroll at 375px", async ({ page, context }) => {

@@ -2,10 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const fetchApi = vi.fn();
 let modeCookie: string | undefined = "demo";
+const getCookie = vi.fn(() => (modeCookie ? { value: modeCookie } : undefined));
 vi.mock("next/headers", () => ({
-  cookies: async () => ({
-    get: () => (modeCookie ? { value: modeCookie } : undefined),
-  }),
+  cookies: async () => ({ get: getCookie }),
 }));
 vi.mock("@/lib/api", () => ({
   fetchApi: (...a: unknown[]) => fetchApi(...a),
@@ -20,17 +19,24 @@ vi.mock("@/lib/api", () => ({
 import {
   activateGenebank,
   dryRun,
+  dryRunCompletion,
   newLink,
   saveDraft,
   saveRound,
+  sellNow,
+  sendReminder,
   sendTestMail,
   setOnTime,
+  submitCompletion,
   submitReport,
+  undoSale,
   withdrawReport,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/actions";
 import {
   getGenebankHerds as linkHerds,
   dryRun as linkDryRun,
+  dryRunCompletion as linkDryRunCompletion,
+  submitCompletion as linkSubmitCompletion,
 } from "@/app/(app)/rapport/actions";
 import { uploadPhoto } from "@/app/(app)/stamboken/(dashboard)/arsrapport/rabbitActions";
 import { ApiError } from "@/lib/api";
@@ -38,17 +44,64 @@ import {
   SUBMIT_TIMEOUT_MS,
   emptyState,
   toBody,
+  type Completion,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/lib";
 
 const body = toBody(emptyState(), "k", null);
+const answer: Completion = {
+  submission_key: "22222222-2222-4222-8222-222222222222",
+  revision: 2,
+  rabbits: { "1": { val: "kvar", vikt: 2.8 } },
+};
 
 beforeEach(() => {
   modeCookie = "demo";
+  getCookie.mockClear();
   fetchApi.mockReset();
   fetchApi.mockResolvedValue({});
 });
 
 describe("arsrapport actions", () => {
+  it("keeps a demo sale and its Ångra in the demo environment, never on production", async () => {
+    const sald = { till: "G9002", ar: 2026, manad: 6, dag: null, kopare: null };
+    await sellNow("G9001", 2026, 1, sald, "demo");
+    await undoSale("G9001", 2026, 55, "op", "demo");
+    expect(
+      fetchApi.mock.calls.map(([url, options]) => [url, options.isolateDemo]),
+    ).toEqual([
+      ["/v2/arsrapport/besattning/G9001/2026/forsaljning", true],
+      ["/v2/arsrapport/besattning/G9001/2026/forsaljning/55/angra", true],
+    ]);
+  });
+
+  it.each([
+    ["/komplettera/torrkorning", dryRunCompletion, linkDryRunCompletion],
+    ["/komplettera", submitCompletion, linkSubmitCompletion],
+  ] as const)(
+    "sends %s in the report's environment",
+    async (tail, login, link) => {
+      const url = `/v2/arsrapport/besattning/G9001/2026${tail}`;
+      const options = {
+        method: "POST",
+        body: JSON.stringify(answer),
+        timeout: SUBMIT_TIMEOUT_MS,
+      };
+      await link("G9001", 2026, answer);
+      expect(getCookie).not.toHaveBeenCalled();
+      expect(fetchApi).toHaveBeenCalledWith(`${url}?via=lank`, {
+        ...options,
+        forceProd: true,
+      });
+      await login("G9001", 2026, answer, "demo");
+      expect(fetchApi).toHaveBeenCalledWith(url, options);
+      modeCookie = "prod";
+      expect(await login("G9001", 2026, answer, "demo")).toMatchObject({
+        ok: false,
+        problem: { status: 400 },
+      });
+      expect(fetchApi).toHaveBeenCalledTimes(2);
+    },
+  );
   it("gives dryRun, submitReport and withdrawReport the long timeout", async () => {
     await dryRun("G9001", 2026, body, "demo");
     await submitReport("G9001", 2026, body, "demo");
@@ -181,6 +234,23 @@ describe("arsrapport actions", () => {
       await sendTestMail(2026, 0, "demo"),
     ])
       expect(r).toMatchObject({ ok: false, problem: { status: 400 } });
+    expect(fetchApi).not.toHaveBeenCalled();
+  });
+  it("posts an empty reminder request and refuses a bad herd", async () => {
+    fetchApi.mockResolvedValue({ queued: true });
+    expect(await sendReminder("G9001", 2026, "demo")).toEqual({
+      ok: true,
+      data: { queued: true },
+    });
+    expect(fetchApi).toHaveBeenCalledWith(
+      "/v2/arsrapport/besattning/G9001/2026/paminnelse",
+      expect.objectContaining({ method: "POST", body: "{}" }),
+    );
+    fetchApi.mockClear();
+    expect(await sendReminder("../x", 2026, "demo")).toMatchObject({
+      ok: false,
+      problem: { status: 400 },
+    });
     expect(fetchApi).not.toHaveBeenCalled();
   });
 });

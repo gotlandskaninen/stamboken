@@ -58,10 +58,12 @@ test.describe("medlem pages on the design system", () => {
     const download = page.waitForEvent("download");
     await page.getByRole("button", { name: "Exportera Koharen" }).click();
     const file = await download;
-    expect(file.suggestedFilename()).toBe("koharen-matrikel.csv");
+    expect(file.suggestedFilename()).toMatch(
+      /^koharen-besattningar-\d{4}-\d{2}-\d{2}\.csv$/,
+    );
     const text = fs.readFileSync((await file.path()) as string, "utf8");
     expect(text.replace(/^\uFEFF/, "").split(/\r?\n/)[0]).toBe(
-      "Nr,Namn,Telefon,E-post,Gatuadress,Postnummer,Postort,Samtycke",
+      '"Nr","Namn","Telefon","E-post","Postnummer","Postort"',
     );
   });
 

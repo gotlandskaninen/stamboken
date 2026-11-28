@@ -88,11 +88,14 @@ export default async function ProfilPage() {
                     city: me.membership.city ?? "",
                   }}
                 />
-                <PubliceringClient
-                  readOnly={readOnly}
-                  initial={me.publication_consent}
-                  answered={me.consent_answered}
-                />
+                {/* Also without a herd while a Ja stands: it can be withdrawn. */}
+                {(me.has_active_herd || me.publication_consent.name) && (
+                  <PubliceringClient
+                    readOnly={readOnly}
+                    initial={me.publication_consent}
+                    answered={me.consent_answered}
+                  />
+                )}
                 <PersonerClient
                   isMainMember={myMembership.is_main_member}
                   persons={myMembership.membership.persons}

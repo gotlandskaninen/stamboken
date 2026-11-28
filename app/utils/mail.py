@@ -74,6 +74,7 @@ MAIL_NO_LONGER_RELEVANT = "mejlet är inte längre aktuellt"
 NO_ADDRESS = "mottagaren saknar e-post"
 LEFT_MEMBERSHIP = "personen har lämnat medlemskapet"  # cancel_member_added; queue_member_added revives it
 SALE_WITHDRAWN = "försäljningen är ångrad"
+STOPPED = "stoppat i statusvyn"  # "Stoppa" in the status view: a person stopped it, so nothing sends it again
 
 MailKind = namedtuple("MailKind", "priority category build login_address", defaults=[None])
 Recipient = namedtuple("Recipient", "address label recheck_before_send", defaults=[False])
@@ -1015,8 +1016,8 @@ def queue_member_added(person):
     membership's row lock): only someone put in by another (never a main member, who applied or was written in
     from the register) and only with an e-mail. The person's one row (its dedupe_key) is the record that the
     notice went: a row that never reached the person (refused, stopped for want of an address, or
-    being sent to the address just replaced) is queued again; one that went, or that someone stopped, is not. A notice stopped because she left
-    the membership (LEFT_MEMBERSHIP) is queued again when she returns.
+    being sent to the address just replaced) is queued again; one that went, or that someone stopped, is not. A
+    notice stopped because she left the membership (LEFT_MEMBERSHIP) is queued again when she returns.
 
     A main member chooses the addresses, so the association's mail must not become a way to flood them: a
     membership's notices are spread over days, at most ADDED_A_DAY a day, and an address gets at most
@@ -1050,7 +1051,7 @@ def queue_member_added(person):
     if queued is None:
         # A row being sent loses its claim, so before _renew it does not go to the address replaced or removed; a
         # queued one is locked until the change commits, so the sender cannot read the old address meanwhile. Not
-        # a bounced one: a delay report counts as a bounce too (status view, "Försök igen").
+        # a bounced one: that goes again from the status view ("Försök igen").
         MailMessage.update(
             status="queued",
             next_attempt_at=not_before,

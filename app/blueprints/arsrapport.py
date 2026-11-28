@@ -16,7 +16,9 @@ from functools import wraps
 import utils.arsrapport as arsrapport
 import utils.arsrapport_invite as invite
 import utils.arsrapport_pdf as arsrapport_pdf
+import utils.arsrapport_remind as remind
 import utils.inbox as inbox
+import utils.member_changes as member_changes
 import utils.purchase_notice as purchase_notice
 import utils.sale_proposal as sale_proposal
 from extensions import limiter
@@ -34,7 +36,7 @@ from utils.database import (
     YearlyReportRound,
 )
 from utils.legacy_compat import report_link_only
-from utils.matrikel import resolve_own_membership
+from utils.matrikel import LinkError, resolve_own_membership
 from utils.report_code import CodeActor, actor_key
 
 from .common import check_genebank_access, json_login_required, manager_required, problem
@@ -96,7 +98,7 @@ def activate(year, genebank_id):
     if round_ is None or Genebank.get_or_none(Genebank.id == genebank_id) is None:
         return problem(404, "Hittades inte", f"Rundan för {year} eller genbanken finns inte.")
     arsrapport.activate(round_, genebank_id, current_user, **_dates("send_at"))
-    return jsonify(arsrapport.round_json(round_))
+    return jsonify(arsrapport.round_json(arsrapport.get_round(year)))
 
 
 def _codes_in_session(herd, round_):
@@ -296,6 +298,32 @@ def register_extract(herd, year):
     return response
 
 
+# [Next.js] The sale dialog's Spara: one rabbit's sale registered at once (Jonas 2026-11-26); 422 with refusals.
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/forsaljning", methods=["POST"])
+@report_actor_required
+def sell_now(herd, year):
+    herd, round_, access = _report_target(herd, year)
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or type(body.get("individual_id")) is not int:  # True is an int too
+        raise ArsrapportError(400, "Ange kaninen och försäljningen.")
+    operation_id = arsrapport.sell_now(herd, round_, access, _actor(access), body["individual_id"], body.get("sald"))
+    return jsonify({"operation_id": operation_id})
+
+
+# [Next.js] Ångra of a sale out of the herd, as its seller may on the rabbit page; checked again now.
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/forsaljning/<int:row_id>/angra", methods=["POST"])
+@report_actor_required
+def undo_sale(herd, year, row_id):
+    herd, _, access = _report_target(herd, year)
+    body = request.get_json(silent=True) or {}
+    try:
+        operation_id = uuid.UUID(body.get("operation_id"))
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise ArsrapportError(400, "Ange operation_id som ett UUID.") from exc
+    arsrapport.undo_sale(herd, access, _actor(access), row_id, operation_id)
+    return jsonify({"ok": True})
+
+
 # [Next.js] Autosave of the server draft; a stale version is a 409 with the current draft.
 @arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/utkast", methods=["PUT"])
 @report_actor_required
@@ -332,30 +360,77 @@ def dry_run(herd, year):
     )
 
 
+def _saved_receipt(herd, year, key, digest):
+    """
+    A retry's receipt, looked up before report_access: a retry after the item closed (Fable 5). `digest(by_link)`
+    hashes the request as the original submission's actor was treated. None for a new request.
+    """
+    target, round_ = Herd.get_or_none(Herd.herd == herd), arsrapport.get_round(year)
+    if target is None or round_ is None:
+        return None
+    actors = _retry_actors(target, round_)
+    try:
+        saved = arsrapport.find_submission(key, target, round_, actors, digest) if actors else None
+    except ArsrapportError as exc:
+        if exc.status == 409 and any(isinstance(actor, CodeActor) for actor in actors):
+            arsrapport.stale_link_retry(key, target, round_)  # a reissued link: 403 lank_ogiltig
+        raise
+    if saved is not None and saved.access_code_id is not None:  # E4 on every use, also for a receipt
+        arsrapport.require_valid_code(saved.access_code_id, target)
+    return arsrapport.receipt(saved) if saved is not None else None
+
+
 # [Next.js] Skicka: the submission in one transaction and its Receipt; the same request again gets the same one.
 @arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/skicka", methods=["POST"])
 @report_actor_required
 def submit(herd, year):
     sub = arsrapport.parse_submission(_submission_body(), paper=request.args.get("post") is not None)  # before lookups
-    target, round_ = Herd.get_or_none(Herd.herd == herd), arsrapport.get_round(year)
-    if target is not None and round_ is not None:  # before report_access: a retry after the item closed (Fable 5)
-        actors = _retry_actors(target, round_)
 
-        def digest(by_link):  # as the original submission's actor was treated
-            return arsrapport.request_hash(arsrapport.without_reason(sub) if by_link else sub)
+    def digest(by_link):
+        return arsrapport.request_hash(arsrapport.without_reason(sub) if by_link else sub)
 
-        try:
-            saved = arsrapport.find_submission(sub.key, target, round_, actors, digest) if actors else None
-        except ArsrapportError as exc:
-            if exc.status == 409 and any(isinstance(actor, CodeActor) for actor in actors):
-                arsrapport.stale_link_retry(sub.key, target, round_)  # a reissued link: 403 lank_ogiltig
-            raise
-        if saved is not None:
-            if saved.access_code_id is not None:  # E4 on every use, also for a receipt
-                arsrapport.require_valid_code(saved.access_code_id, target)
-            return jsonify(arsrapport.receipt(saved))
+    if (saved := _saved_receipt(herd, year, sub.key, digest)) is not None:
+        return jsonify(saved)
     target, round_, access = _report_target(herd, year)
     return jsonify(arsrapport.submit(target, round_, access, _actor(access), sub))
+
+
+def _completion():
+    """The partial answer's body (D9); never from paper, whose entry is "från blankett" (P8)."""
+    if request.args.get("post") is not None:
+        raise ArsrapportError(400, "Svaren för kaniner som saknas skickas inte från blankett.")
+    body = _submission_body()
+    if not isinstance(body, dict):
+        raise ArsrapportError(400, "Skicka svaren som JSON.")
+    return arsrapport.parse_completion(body)
+
+
+# [Next.js] The dry run of a partial answer: body {submission_key, revision, rabbits}; nothing is written.
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/komplettera/torrkorning", methods=["POST"])
+@report_actor_required
+def completion_dry_run(herd, year):
+    patch = _completion()
+    herd, round_, access = _report_target(herd, year)
+    report = arsrapport.current_report(herd, round_)
+    sub = arsrapport.merge_completion(report, patch)
+    on = arsrapport.today()
+    refusals, warnings = arsrapport.check(herd, round_, access, report, sub, on=on, completion=True)
+    return jsonify(
+        {"ok": not refusals, "refusals": [asdict(r) for r in refusals], "warnings": [asdict(w) for w in warnings]}
+    )
+
+
+# [Next.js] Skicka svar: the rabbits a paper form left out, answered on their own (Å22, D9), as a new submission of
+# the report; its arrival date and the rest of it stay. The same request again gets the same Receipt.
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/komplettera", methods=["POST"])
+@report_actor_required
+def complete(herd, year):
+    patch = _completion()
+    saved = _saved_receipt(herd, year, patch.key, lambda _: arsrapport.request_hash(patch, completion=True))
+    if saved is not None:
+        return jsonify(saved)
+    target, round_, access = _report_target(herd, year)
+    return jsonify(arsrapport.submit(target, round_, access, _actor(access), patch, completion=True))
 
 
 # [Next.js] Dra tillbaka: the whole report backed out; body {revision, reason}, the reason required of an editor.
@@ -444,6 +519,25 @@ def status(year):
     return jsonify(arsrapport.status_view(round_, genebank_id, with_phone=with_phone))
 
 
+# [Next.js] "Koppla bort" in the status view (5.1): the genebank's manager, or admin, undoes the account link a main
+# member made with a code to the matrikel's e-mail ("nytt konto"), from the herd's row in the round's status: only
+# the link that row offers (`link_id`, its audit row), for an active herd of the manager's genebank.
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/kontokoppling/<int:link_id>/hav", methods=["POST"])
+@json_login_required
+@manager_required
+def undo_account_link(herd, year, link_id):
+    target, round_ = Herd.get_or_none(Herd.herd == herd), arsrapport.get_round(year)
+    if target is None or not target.is_active or target.herd in OUTSIDE_GENEBANK_HERDS or round_ is None:
+        return problem(404, "Hittades inte", "Kopplingen finns inte.")
+    if not (current_user.is_admin or target.genebank_id in (current_user.is_manager or ())):
+        return problem(403, "Åtkomst nekad", "Du saknar behörighet för denna genbank.")
+    try:
+        member_changes.undo_self_link(target, round_, link_id, actor=current_user)
+    except LinkError as exc:
+        return problem(exc.status, exc.title, exc.detail)
+    return jsonify({"ok": True})
+
+
 # [Next.js] The blank årsblankett as a PDF, put on the private volume by ops (docs/arsrapport.md).
 @arsrapport_bp.route("/v2/arsrapport/blankett.pdf", methods=["GET"])
 @json_login_required
@@ -493,6 +587,22 @@ def new_link(herd, year):
         return denied
     invite.new_link(target, _genebank_round(year, target.genebank_id), current_user, now=arsrapport.now())
     return jsonify({"sent": True})
+
+
+# [Next.js] "Skicka påminnelse": a reminder to the herd's main member now; admin or the herd's genebank manager.
+# `queued` is false when one already waits in the mail queue or went today.
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/paminnelse", methods=["POST"])
+@json_login_required
+def send_reminder(herd, year):
+    target = Herd.get_or_none(Herd.herd == herd)
+    if target is None or target.herd in OUTSIDE_GENEBANK_HERDS:
+        raise ArsrapportError(404, "Besättningen finns inte.")
+    denied = check_genebank_access(target.genebank_id)
+    if denied:
+        return denied
+    round_ = _genebank_round(year, target.genebank_id)
+    queued = remind.send_reminder(target, round_, current_user, now=arsrapport.now())
+    return jsonify({"queued": queued is not None})
 
 
 # "Lägg till kanin från intyget" (4b Task 4, spec 5.8): the certificate's photo first, a `kontroll` item held from the

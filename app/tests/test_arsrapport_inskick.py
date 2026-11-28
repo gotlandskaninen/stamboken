@@ -493,7 +493,14 @@ class InskickTest(ArsrapportTest):
         sid = receipt["submission_id"]
         self.assertEqual(
             (row.recipient_kind, row.recipient_id, row.params, row.ref_type, row.ref_id),
-            ("member", self.member.id, {"submission_id": sid}, "yearly_report_submission", sid),
+            # member_id: the address is resolved for the member it was queued for (PR #280 review)
+            (
+                "member",
+                self.member.id,
+                {"submission_id": sid, "member_id": self.member.id},
+                "yearly_report_submission",
+                sid,
+            ),
         )
         self.assertEqual(
             (row.herd_id, row.genebank_id, row.dedupe_key, row.created_by_id, row.priority),
@@ -564,6 +571,7 @@ class InskickTest(ArsrapportTest):
                 "defects": [],
                 "message": "Allt väl",
                 "litters_added": [],  # the litters the receipt lists (4b)
+                "salda_direkt": [],  # the year's sales no report wrote, which the receipt counts too
             },
         )
         self.assertEqual(len(ops), 1)  # the attestation; measurements are logged in added_measurements

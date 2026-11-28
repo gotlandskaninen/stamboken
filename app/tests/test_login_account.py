@@ -3,7 +3,7 @@
 import os
 import secrets
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from hashlib import sha256
 from itertools import permutations
 from threading import Barrier
@@ -48,16 +48,16 @@ class TestLoginAccount(MatrikelApiTest):
         db.Herd.update(membership=self.member.membership_id).where(db.Herd.id == self.herds[1].id).execute()
         self.initial_count = db.User.select().count()
 
-    def pending(self, client=None):
-        client = client or self.client
-        response = client.post(BASE + "/kod", json={"email": self.member.email})
+    def pending(self, client=None, person=None):
+        client, person = client or self.client, person or self.member
+        response = client.post(BASE + "/kod", json={"email": person.email})
         response.get_data()
         response.close()
-        row = db.LoginCode.select().where(db.LoginCode.member == self.member.id).order_by(db.LoginCode.id.desc()).get()
+        row = db.LoginCode.select().where(db.LoginCode.member == person.id).order_by(db.LoginCode.id.desc()).get()
         response = client.post(BASE + "/kod/verifiera", json={"code": login_code.code(row)})
         self.assertEqual(response.status_code, 200, response.data)
         with client.session_transaction() as session:
-            self.assertEqual(session["pending_member_id"], self.member.id)
+            self.assertEqual(session["pending_member_id"], person.id)
             self.assertNotIn("user_id", session)
         return client
 
@@ -203,14 +203,114 @@ class TestLoginAccount(MatrikelApiTest):
 
     def test_pending_membership_allows_its_main_member_to_create_an_account(self):
         db.Membership.update(membership_status="pending").where(db.Membership.id == self.member.membership_id).execute()
+        self.pending()
+        self.assertEqual(self.create().status_code, 200)
+
+    def test_an_inactive_membership_refuses_every_person_an_account(self):
         family = _mk_person(self.member.membership, "Test", "Family", role="familjemedlem")
+        inactive = db.Membership.update(membership_status="inactive")
+        inactive.where(db.Membership.id == self.member.membership_id).execute()
         with self.assertRaises(matrikel.LinkError) as refused:
             matrikel.link_member_user(family.id, self.viewer.id, actor=self.viewer, mode="matrikel_epost")
         self.assertEqual(
-            refused.exception.detail, "Bara huvudmedlemmen i ett aktivt eller väntande medlemskap kan skapa ett konto."
+            refused.exception.detail, "Bara en person i ett aktivt eller väntande medlemskap kan skapa ett konto."
         )
+
+    def test_family_member_or_keeper_creates_an_account_with_her_grants(self):
+        """#269: the main member put her in with an address and a grant; the main member's account does not stop it."""
+        main_user = data_access.register_user("main@example.org", "pass", username="main")
+        matrikel.link_member_user(self.member.id, main_user.id, actor=self.admin, mode="admin",
+                                  confirmed_herd_ids=[self.herds[1].id])  # fmt: skip
+        # an older owner role on the herd, as legacy stored it: the linked account is not hers
+        db.User.update(_privileges=f'[{{"level": "owner", "herd": {self.herds[1].id}}}]').where(
+            db.User.id == main_user.id
+        ).execute()
+        for role in ("familjemedlem", "skotare"):
+            with self.subTest(role=role):
+                person = _mk_person(self.member.membership, "Test", role.title(), f"{role}@example.org", role=role)
+                matrikel.create_grant(person, self.herds[1], None, self.admin)
+                client = APP.test_client(use_cookies=True)
+                self.pending(client, person)
+                self.assertEqual(self.create(client=client).status_code, 200)
+                user = db.Member.get_by_id(person.id).user
+                self.assertEqual((user.email, user.effective_herd_ids()), (person.email, {self.herds[1].id}))
+
+    def test_a_grant_outside_the_membership_refuses_a_family_member_an_account_by_code(self):
+        """The main member vouches for the address; a grant on another membership's herd needs matrikelansvarig."""
+        keeper = _mk_person(self.member.membership, "Test", "Keeper", "keeper@example.org", role="skotare")
+        matrikel.create_grant(keeper, self.herds[0], None, self.admin)  # a herd outside the membership
+        self.pending(person=keeper)
+        self.assertEqual(self.create().status_code, 409)
+        self.assertIsNone(db.Member.get_by_id(keeper.id).user_id)
+
+    def test_only_an_unlinked_owner_of_a_granted_herd_elsewhere_may_be_the_main_member(self):
+        other_membership = _mk_membership()
+        herd = db.Herd.create(genebank=self.genebanks[0], herd="G9901", membership=other_membership, is_active=True)
+        matrikel.create_grant(self.member, herd, None, self.admin)
+        owner_role = f'[{{"level": "owner", "herd": "{herd.id}"}}]'
+        linked = data_access.register_user("linked-owner@example.org", "pass", username="linked-owner")
+        db.User.update(_privileges=owner_role).where(db.User.id == linked.id).execute()
+        other = _mk_person(other_membership, "Other", "Owner", "other@example.org")
+        matrikel.link_member_user(other.id, linked.id, actor=self.admin, mode="admin", confirmed_herd_ids=[herd.id])
+        self.assertFalse(login_account._existing_account(self.member, self.member.email))
+        unlinked = data_access.register_user("old-owner@example.org", "pass", username="old-owner")
+        db.User.update(_privileges=owner_role).where(db.User.id == unlinked.id).execute()
+        self.assertTrue(login_account._existing_account(self.member, self.member.email))
+
+    def test_a_holder_taking_the_address_after_the_code_refuses_the_family_members_account(self):
+        family = _mk_person(self.member.membership, "Test", "Family", "family@example.org", role="familjemedlem")
+        self.pending(person=family)
+        matrikel.set_member_email(self.member, "family@example.org", self.admin, by="self")
+        self.assertEqual(self.create().status_code, 401)
+        self.assertIsNone(db.Member.get_by_id(family.id).user_id)
+
+    def test_another_persons_workspace_address_gives_the_family_member_no_code(self):
+        family = _mk_person(_mk_membership(), "Test", "Family", "board@gotlandskaninen.se", role="familjemedlem")
+        self.assertEqual(login_code.login_holder("board@gotlandskaninen.se").id, family.id)
+        db.Member.update(workspace_email="Board@Gotlandskaninen.se").where(db.Member.id == self.member.id).execute()
+        self.assertIsNone(login_code.login_holder("board@gotlandskaninen.se"))
+
+    def test_an_accounts_address_gives_the_family_member_no_code(self):
+        family = _mk_person(_mk_membership(), "Test", "Family", "anna@gotlandskaninen.se", role="familjemedlem")
+        self.assertEqual(login_code.login_holder("anna@gotlandskaninen.se").id, family.id)
+        other = data_access.register_user("anna-private@example.org", "pass", username="anna")
+        db.User.update(google_email="Anna@Gotlandskaninen.se").where(db.User.id == other.id).execute()
+        self.assertIsNone(login_code.login_holder("anna@gotlandskaninen.se"))
+
+    def test_her_own_workspace_account_refuses_a_second_account(self):
+        family = _mk_person(self.member.membership, "Test", "Family", "family@example.org", role="familjemedlem")
+        self.assertFalse(login_account._existing_account(family, family.email))
+        older = data_access.register_user("old@example.org", "pass", username="old")
+        db.User.update(google_email="family@gotlandskaninen.se").where(db.User.id == older.id).execute()
+        db.Member.update(workspace_email="family@gotlandskaninen.se").where(db.Member.id == family.id).execute()
+        self.assertTrue(login_account._existing_account(db.Member.get_by_id(family.id), family.email))
+
+    def test_an_ended_persons_previous_address_does_not_stop_the_family_member(self):
+        matrikel.set_member_email(self.member, "ny@example.org", self.admin, by="self")  # the old one counts a week
+        family = _mk_person(_mk_membership(), "Test", "Family", "member@example.org", role="familjemedlem")
+        self.assertEqual(login_code.login_holder("member@example.org").id, self.member.id)
+        db.Member.update(end_date=date.today()).where(db.Member.id == self.member.id).execute()
+        self.assertEqual(login_code.login_holder("member@example.org").id, family.id)
+
+    def test_a_shared_address_stays_the_holders_and_gives_the_family_member_no_code(self):
+        family = _mk_person(self.member.membership, "Test", "Family", self.member.email.upper(), role="familjemedlem")
+        self.assertEqual(login_code.login_holder(self.member.email).id, self.member.id)
         self.pending()
         self.assertEqual(self.create().status_code, 200)
+        self.assertFalse(db.LoginCode.select().where(db.LoginCode.member == family.id).exists())
+
+    def test_a_holder_takes_a_family_members_address_and_keeps_a_previous_one(self):
+        """The family member holds her address only while nobody else has it, now or as a previous address."""
+        family = _mk_person(_mk_membership(), "Test", "Family", "shared@example.org", role="familjemedlem")
+        self.assertEqual(login_code.login_holder("shared@example.org").id, family.id)
+        _mk_person(_mk_membership(), "Test", "Ended", "ended@example.org", role="familjemedlem", end_date=date.today())
+        self.assertIsNone(login_code.login_holder("ended@example.org"))
+        matrikel.set_member_email(self.member, "shared@example.org", self.admin, by="self")  # no AddressTaken
+        self.assertEqual(login_code.login_holder("shared@example.org").id, self.member.id)
+        # The main member's old address still counts for her a while, so it is not the family member's either.
+        later = _mk_person(_mk_membership(), "Test", "Later", "member@example.org", role="familjemedlem")
+        self.assertEqual(login_code.login_holder("member@example.org").id, self.member.id)
+        self.assertNotEqual(login_code.login_holder("member@example.org").id, later.id)
 
     def test_production_access_when_enabled(self):
         self.pending()
@@ -318,11 +418,10 @@ class TestLoginAccount(MatrikelApiTest):
             self.assertEqual(self.create().status_code, 200)
         self.assertEqual(self.client.get("/api/user").status_code, 401)
 
-    def test_changed_contact_role_or_membership_refuses_the_pending_proof(self):
+    def test_changed_contact_or_membership_refuses_the_pending_proof(self):
         self.pending()
         for model, column, value, original, target in (
             (db.Member, db.Member.email, "changed@example.org", self.member.email, self.member.id),
-            (db.Member, db.Member.role, "familjemedlem", "huvudmedlem", self.member.id),
             (db.Membership, db.Membership.membership_status, "inactive", "active", self.member.membership_id),
         ):
             with self.subTest(column=column.name):

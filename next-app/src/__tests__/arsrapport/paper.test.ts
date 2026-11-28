@@ -7,7 +7,7 @@ import {
   paperKey,
   type PaperState,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/lib";
-import { reportYear } from "@/app/(app)/stamboken/(dashboard)/inkorg/lib";
+import { reportYears } from "@/app/(app)/stamboken/(dashboard)/inkorg/lib";
 import type { InboxDetail } from "@/app/(app)/stamboken/(dashboard)/inkorg/lib";
 
 const press = (s: PaperState, ...keys: string[]) =>
@@ -71,6 +71,16 @@ describe("matrikelBody", () => {
       telefon: "070-1",
       adress: { city: "Visby" },
       konto: { konto: "1234567" },
+    });
+  });
+
+  it("sends the account's box with its number, and a box alone not at all", () => {
+    const f = emptyPaperFields();
+    f.konto.typ = "bankgiro";
+    expect(matrikelBody(f)).toBeNull();
+    f.konto.konto = "123-4567";
+    expect(matrikelBody(f)).toEqual({
+      konto: { typ: "bankgiro", konto: "123-4567" },
     });
   });
 
@@ -152,19 +162,41 @@ describe("intygPending", () => {
   });
 });
 
-describe("reportYear", () => {
-  const rounds = [
-    { year: 2025, genebanks: [{ genebank_id: 1 }] },
-    { year: 2026, genebanks: [{ genebank_id: 2 }] },
-    { year: 2027, genebanks: [] },
-  ];
-  it("is the latest round the item's genebank has activated", () => {
-    expect(reportYear(rounds, 1)).toBe(2025);
-    expect(reportYear(rounds, 2)).toBe(2026);
+describe("reportYears", () => {
+  const round = (
+    year: number,
+    genebanks: number[],
+    start_date: string | null = `${year}-12-31`,
+    end_date: string | null = `${year + 1}-03-30`,
+  ) => ({
+    year,
+    start_date,
+    end_date,
+    genebanks: genebanks.map((genebank_id) => ({ genebank_id })),
   });
-  it("is null without a genebank, a round or an activation", () => {
-    expect(reportYear(rounds, 3)).toBeNull();
-    expect(reportYear(rounds, null)).toBeNull();
-    expect(reportYear(null, 1)).toBeNull();
+  const rounds = [round(2025, [1]), round(2026, [2]), round(2027, [])];
+  it("is the round the item's genebank has open today", () => {
+    expect(reportYears(rounds, 1, "2026-02-01")).toEqual([2025]);
+    expect(reportYears(rounds, 2, "2027-02-01")).toEqual([2026]);
+  });
+  it("is the latest activated round once the last one closed", () => {
+    expect(reportYears(rounds, 1, "2026-11-01")).toEqual([2025]);
+  });
+  it("offers the closed year too while the next has not opened (#264)", () => {
+    const both = [round(2026, [1]), round(2027, [1])];
+    expect(reportYears(both, 1, "2027-05-10")).toEqual([2026, 2027]);
+    expect(reportYears(both, 1, "2027-12-31")).toEqual([2027]); // the new round is open
+  });
+  it("leaves out a round without both dates, which never opens", () => {
+    const legacy = [round(2027, [1], "2027-01-01", null), round(2026, [1])];
+    expect(reportYears(legacy, 1, "2027-02-01")).toEqual([2026]);
+  });
+  it("offers only the activated round before the first one opens", () => {
+    expect(reportYears([round(2026, [1])], 1, "2026-12-20")).toEqual([2026]);
+  });
+  it("is empty without a genebank, a round or an activation", () => {
+    expect(reportYears(rounds, 3, "2026-02-01")).toEqual([]);
+    expect(reportYears(rounds, null, "2026-02-01")).toEqual([]);
+    expect(reportYears(null, 1, "2026-02-01")).toEqual([]);
   });
 });

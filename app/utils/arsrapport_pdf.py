@@ -70,11 +70,14 @@ def _sold_and_dead(herd, round_):
         )
         .order_by(HerdTracking.herd_tracking_date, HerdTracking.id)
     )
+    sold = list(sold)
+    dialog = arsrapport.month_only([row.operation_id for row in sold])  # the sale dialog's, without their day
     sold = [
         (
             row.individual_id,
             row.herd_tracking_date,
-            arsrapport.dayless(written.get(str(row.operation_id)), row.individual_id, "sald"),
+            str(row.operation_id) in dialog
+            or arsrapport.dayless(written.get(str(row.operation_id)), row.individual_id, "sald"),
         )
         for row in sold
     ]
@@ -172,17 +175,32 @@ def receipt_context(report, submission) -> dict:
         }
         for rabbit, entry in sorted(entries.items(), key=lambda item: numbers[item[0]])
     ]
+    besides = data.get("salda_direkt") or []  # sold in the year without the report: the sale dialog's, or Sälj
+    sold_numbers = _numbers(sale["individual_id"] for sale in besides)
+    rabbits += [
+        {
+            "number": sold_numbers[sale["individual_id"]],
+            "choice": "Såld " + ("utanför genbanken" if sale["till"] == "utanfor" else f"till {sale['till']}"),
+            "when": _when(sale),
+            "weight": None,
+            "hull": None,
+        }
+        for sale in besides
+    ]
     health = data.get("health")
     diseases = [_disease(name, value) for name, value in (data.get("diseases") or {}).items()]
     named = _numbers(d["individual_id"] for d in data.get("defects") or [])
     defects = [{"number": named.get(d["individual_id"]), "text": d["beskrivning"]} for d in data.get("defects") or []]
+    # a paper form came in on received_on; created_at is only when it was entered (the mail text says the same). An
+    # answer by link to a paper report keeps the day the form came (step 6), which decides "i tid".
+    received = data.get("received_on") if submission.source == "paper" else None
+    if received is None and arsrapport.from_paper(report):
+        received = f"{report.received_at.astimezone(arsrapport.STOCKHOLM):%Y-%m-%d}"
     return {
         "mode": "kvittens",
         "herd": report.herd.herd,
         "year": report.round.report_year,
-        # a paper form came in on received_on; created_at is only when it was entered (the mail text says the same)
-        "received": (data.get("received_on") if submission.source == "paper" else None)
-        or submission.created_at.astimezone(arsrapport.STOCKHOLM).strftime("%Y-%m-%d %H:%M"),
+        "received": received or submission.created_at.astimezone(arsrapport.STOCKHOLM).strftime("%Y-%m-%d %H:%M"),
         "rabbits": rabbits,
         "health": _HEALTH.get(health, "Sjukdomsfall eller defekter"),
         "diseases": diseases,

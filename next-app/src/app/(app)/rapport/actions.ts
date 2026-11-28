@@ -6,6 +6,7 @@ import type { ActionResult } from "../stamboken/(dashboard)/inkorg/actions";
 import {
   reportLinkPath,
   SUBMIT_TIMEOUT_MS,
+  type Completion,
   type DraftData,
   type Father,
   type Litter,
@@ -27,6 +28,7 @@ export type MineEntry = {
   herd: string;
   herd_name: string | null;
   year: number;
+  login_tip: boolean; // signing in by code would reach the production report
 };
 
 const HERD = /^[A-Z]{1,3}[0-9]{1,6}$/;
@@ -123,6 +125,29 @@ export async function submitReport(
   body: Submission,
 ) {
   return call<Receipt>(path(herd, year, "/skicka"), "POST", body, {
+    timeout: SUBMIT_TIMEOUT_MS,
+  });
+}
+
+export async function dryRunCompletion(
+  herd: string,
+  year: number,
+  body: Completion,
+) {
+  return call<{ ok: boolean; refusals: Refusal[]; warnings: Refusal[] }>(
+    path(herd, year, "/komplettera/torrkorning"),
+    "POST",
+    body,
+    { timeout: SUBMIT_TIMEOUT_MS },
+  );
+}
+
+export async function submitCompletion(
+  herd: string,
+  year: number,
+  body: Completion,
+) {
+  return call<Receipt>(path(herd, year, "/komplettera"), "POST", body, {
     timeout: SUBMIT_TIMEOUT_MS,
   });
 }

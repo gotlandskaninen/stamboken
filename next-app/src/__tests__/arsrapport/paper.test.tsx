@@ -17,6 +17,7 @@ import {
   ReportForm,
   type PaperProps,
   type ReportActions,
+  forgetTabWrites,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/ReportForm";
 import type {
   Receipt,
@@ -82,6 +83,7 @@ const paperView = (over: Partial<ReportView> = {}): ReportView =>
   });
 
 beforeEach(() => {
+  forgetTabWrites(); // module memory of the tab, as after a hard load
   window.scrollTo = vi.fn(); // jsdom does not implement it
   window.localStorage.clear();
   refresh.mockReset();
@@ -118,7 +120,7 @@ describe("ReportForm on paper", () => {
     typeNumber("1");
     expect(screen.getByText("1 inmatade, 2 kvar")).toBeTruthy();
   });
-  it("names the item and defaults both dates to the day it came in", () => {
+  it("names the item and defaults the receipt date to the day it came in", () => {
     renderPaper();
     expect(
       screen.getByRole("heading", {
@@ -129,9 +131,6 @@ describe("ReportForm on paper", () => {
     expect((screen.getByLabelText("Mottagen") as HTMLInputElement).value).toBe(
       "2027-01-03",
     );
-    expect(
-      (screen.getByLabelText("Blankettens datum") as HTMLInputElement).value,
-    ).toBe("2027-01-03");
     expect(screen.getByText("Nuvarande konto slutar på ••12")).toBeTruthy();
     expect(screen.queryByRole("link", { name: "Gå till profilen" })).toBeNull();
   });
@@ -332,7 +331,6 @@ describe("ReportForm on paper", () => {
     expect(body).toMatchObject({
       inbox_item_id: 5,
       received_on: "2027-01-03",
-      signed_on: "2027-01-03",
       matrikel: {
         telefon: "070-1234567",
         publicering: { ja: false, utom: [] },
@@ -343,6 +341,7 @@ describe("ReportForm on paper", () => {
         "3": { val: "ej_angiven" },
       },
     });
+    expect(body).not.toHaveProperty("signed_on");
     expect(a.dryRun.mock.calls[0][4]).toBe(5);
     await waitFor(() =>
       expect(p.leave).toHaveBeenCalledWith(
@@ -406,10 +405,13 @@ describe("ReportForm on paper", () => {
       typeNumber("1");
       fireEvent.click(within(row(1)).getByLabelText("Såld"));
       fireEvent.click(screen.getByLabelText("Utanför genbanken"));
+      fireEvent.click(screen.getByRole("radio", { name: "Ja" })); // the buyer has e-mail (before 2027)
       const buyer = {
         name: "Ola Köpare",
         town: "Visby",
         postal_address: "Testgatan 1",
+        email: "ola@example.invalid",
+        notice_only: true,
       };
       fireEvent.change(
         within(screen.getByRole("dialog")).getByLabelText(/Köparens namn/),
@@ -427,6 +429,12 @@ describe("ReportForm on paper", () => {
         within(screen.getByRole("dialog")).getByLabelText(/^Postadress/),
         {
           target: { value: buyer.postal_address },
+        },
+      );
+      fireEvent.change(
+        within(screen.getByRole("dialog")).getByLabelText(/^E-post/),
+        {
+          target: { value: buyer.email },
         },
       );
       fireEvent.change(screen.getByLabelText("Månad"), {
@@ -529,8 +537,7 @@ describe("ReportForm on paper", () => {
           {
             individual_id: null,
             code: "senare_andring",
-            message:
-              "Matrikeln har ändrats efter blankettens datum (adress). Fråga medlemmen.",
+            message: "Kontrollera blankettens uppgift om adress med medlemmen.",
           },
         ],
       }),
@@ -554,7 +561,9 @@ describe("ReportForm on paper", () => {
       await screen.findByText(/Sparat i matrikeln: telefon\./),
     ).toBeTruthy();
     expect(
-      screen.getByText(/ändrats efter blankettens datum \(adress\)/),
+      screen.getByText(
+        "Kontrollera blankettens uppgift om adress med medlemmen.",
+      ),
     ).toBeTruthy();
     expect(screen.getByRole("link", { name: "Nästa blankett" })).toBeTruthy();
     expect(screen.queryByText(/070-1234567/)).toBeNull();
@@ -597,6 +606,20 @@ describe("ReportForm on paper", () => {
     ).toBeTruthy();
   });
 
+  it("asks for a clearing number for a bankkonto only", () => {
+    renderPaper();
+    fireEvent.change(screen.getByLabelText("Clearingnummer"), {
+      target: { value: "8327" },
+    });
+    fireEvent.click(screen.getByLabelText("Plusgiro"));
+    expect(screen.queryByLabelText("Clearingnummer")).toBeNull();
+    fireEvent.click(screen.getByLabelText("Bankkonto"));
+    // the clearing number typed for the other box is gone, not sent with a plusgiro
+    expect(
+      (screen.getByLabelText("Clearingnummer") as HTMLInputElement).value,
+    ).toBe("");
+  });
+
   it("says there is no account when the matrikel has none", () => {
     renderPaper(
       paperView({
@@ -609,6 +632,20 @@ describe("ReportForm on paper", () => {
       }),
     );
     expect(screen.getByText("Inget konto i matrikeln")).toBeTruthy();
+  });
+
+  it("says there is an account when its end is too short to show", () => {
+    renderPaper(
+      paperView({
+        item: {
+          id: 5,
+          received_at: "2027-01-03T10:00:00+00:00",
+          state: "tagen",
+          account_end: "",
+        },
+      }),
+    );
+    expect(screen.getByText("Det finns ett konto i matrikeln")).toBeTruthy();
   });
 
   it("asks nothing of the form first when the intyg are not done", () => {
@@ -647,6 +684,64 @@ describe("ReportForm on paper", () => {
     expect(screen.queryByText(/Medlemmen har påbörjat/)).toBeNull();
   });
 
+  it("hides the member-draft gate while Back reads the page again, and takes the new view without a draft", async () => {
+    vi.useFakeTimers();
+    const draft = {
+      data: { rabbits: { "1": { val: "kvar", vikt: 2.5 } } } as never,
+      updated_at: "2027-01-02T09:00:00+00:00",
+      submission_key: null,
+      own: false,
+    };
+    const gated = paperView({ draft });
+    const a = actions();
+    render(
+      <ReportForm
+        env="demo"
+        view={gated}
+        actions={a}
+        post={5}
+        paper={paperProps()}
+      />,
+    ).unmount();
+    // the same report saved from its ordinary page meanwhile
+    const other = render(
+      <ReportForm env="demo" view={paperView({ item: null })} actions={a} />,
+    );
+    fireEvent.click(within(row(1)).getByLabelText("Finns kvar"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    other.unmount();
+    const { rerender } = render(
+      <ReportForm
+        env="demo"
+        view={gated}
+        actions={a}
+        post={5}
+        paper={paperProps()}
+      />,
+    );
+    await act(async () => {}); // the reload asks for the page once the writes on their way have answered
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(
+      screen.queryByRole("button", { name: "Fortsätt på medlemmens utkast" }),
+    ).toBeNull();
+    expect(screen.getAllByText("Hämtar senaste versionen…")).not.toHaveLength(
+      0,
+    );
+    // the member sent the report meanwhile: no draft, and no crash on the old gate
+    rerender(
+      <ReportForm
+        env="demo"
+        view={paperView()}
+        actions={a}
+        post={5}
+        paper={paperProps()}
+      />,
+    );
+    expect(screen.queryByText(/Medlemmen har påbörjat/)).toBeNull();
+  });
+
   it("starts empty on Börja från blanketten", () => {
     renderPaper(
       paperView({
@@ -681,6 +776,8 @@ describe("ReportForm on paper", () => {
         report_date: "2027-01-02",
         on_time: true,
         submitted: { rabbits: { "1": { val: "kvar", vikt: 2.8 } } as never },
+        not_stated: [],
+        can_complete_missing: false,
         can_change: true,
         can_withdraw: false,
         withdraw_until: null,

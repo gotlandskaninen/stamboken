@@ -116,7 +116,9 @@ export function SalesDialog({
               {" · "}
               {p.to_herd
                 ? `till ${p.to_herd}`
-                : `utanför genbanken, ${p.buyer ? [p.buyer.name, p.buyer.town].filter(Boolean).join(", ") : "köparens uppgifter är raderade"}`}
+                : p.buyer_not_recorded
+                  ? "såld utanför genbanken"
+                  : `utanför genbanken, ${p.buyer ? [p.buyer.name, p.buyer.town].filter(Boolean).join(", ") : "köparens uppgifter är raderade"}`}
               {" · "}
               {fmtDayOrMonth(p.sale_date, p.day_known)}
             </p>

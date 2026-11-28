@@ -402,13 +402,15 @@ CSV-fil som går att öppna i Excel.
   kontaktpersonen. Aktiva medlemskap och friexemplar ingår, men inte de
   som saknar adress. Kryssa i **Med Betala nu** till årets två första nummer.
   Då står "Betala nu" hos dem vars betalningsnotering har ett år före i år.
-- **Exportera Koharen** ger personerna i aktiva medlemskap, med bara de
-  uppgifter hushållet har sagt ja till att publicera: namn, telefon, e-post och
-  adress. Valet gäller hela hushållet och görs av huvudmedlemmen under
-  **Profil**, och syns som **Publiceras i Koharen** på medlemskapets sida. Har
-  hushållet inte svarat är uppgifterna tomma och det står "ej angivet". Filen är
-  underlaget till medlemsförteckningen i Koharen.
+- **Exportera Koharen** ger Koharens lista över aktiva besättningar: en rad
+  per aktiv besättning vars innehavare har svarat ja. Raden har besättningens
+  nummer, innehavarens namn och det innehavaren har sagt ja till av telefon,
+  e-post samt postnummer och ort. Gatuadressen står aldrig med. Den som har
+  svarat nej eller aldrig har svarat står inte med. Huvudmedlemmen svarar under
+  **Profil** eller på blanketten, och svaret syns som **Publiceras i Koharen**
+  på medlemskapets sida.
 
 Filerna innehåller personuppgifter. Spara dem inte där andra kommer åt dem, och
-ta bort dem när du inte behöver dem längre. Varje uttag av MATR och adresslistan
-loggas med vem som tog ut den och när. I testmiljön går de två inte att ta ut.
+ta bort dem när du inte behöver dem längre. Varje uttag av MATR, adresslistan
+och Koharens lista loggas med vem som tog ut den och när. I testmiljön går de
+inte att ta ut.

@@ -17,6 +17,7 @@ import {
   people,
   problemField,
   problemText,
+  takeRead,
   waited,
   type CertForm,
   type InboxDocument,
@@ -287,6 +288,15 @@ describe("the …/spara payload", () => {
       mother: "",
       father: "",
     });
+  });
+  it("takes the count alive at 6 weeks only as read, never from the registry", () => {
+    const count = (source: "läst" | "härlett") =>
+      initialCertForm({
+        fields: { litter_size6w: { value: 4, source } },
+        checks: [],
+      }).litter_size6w;
+    expect(count("läst")).toBe("4");
+    expect(count("härlett")).toBe("");
   });
   it("starts on the paper certificate when the proposal found the rabbit", () => {
     const found = { value: "G9001-2512", source: "läst" as const };
@@ -670,5 +680,26 @@ describe("provenSale, the panel's rule for a proof of a registered sale", () => 
       doc_type: "intyg",
     } as unknown as InboxDocument;
     expect(provenSale(certificate, sale, rows())).toBeNull();
+  });
+});
+
+describe("takeRead (Ta inläst)", () => {
+  it("puts what was read in the field's own form, or offers nothing", () => {
+    const colors = ["viltgrå", "svart"];
+    expect(takeRead("mother", "g1 2511", colors)).toBe("G1-2511");
+    expect(takeRead("father", "G9OO1 2211", colors)).toBe("G9OO1 2211");
+    expect(takeRead("birth_date", "250510", colors)).toBe("2025-05-10");
+    expect(takeRead("birth_date", "10/5-25", colors)).toBe("2025-05-10");
+    expect(takeRead("birth_date", "10/5", colors)).toBeNull();
+    expect(takeRead("birth_date", "31/2-25", colors)).toBeNull();
+    expect(takeRead("sex", "Hona", colors)).toBe("female");
+    expect(takeRead("sex", "hane", colors)).toBe("male");
+    expect(takeRead("sex", "?", colors)).toBeNull();
+    expect(takeRead("litter_size", "5 st", colors)).toBe("5");
+    expect(takeRead("litter_size6w", "fem", colors)).toBeNull();
+    expect(takeRead("color", "Svart", colors)).toBe("svart");
+    expect(takeRead("color", "lila", colors)).toBeNull();
+    expect(takeRead("color", "lila", [])).toBe("lila");
+    expect(takeRead("paper_certificate", " SYN 777 ", colors)).toBe("SYN 777");
   });
 });

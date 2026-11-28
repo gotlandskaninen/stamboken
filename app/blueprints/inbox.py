@@ -18,7 +18,9 @@ import pypdfium2
 import utils.data_access as da
 import utils.inbox as inbox
 import utils.inbox_interpreter as interpreter
+import utils.inbox_paper as inbox_paper
 import utils.inbox_purge as inbox_purge
+import utils.inbox_reconcile as inbox_reconcile
 import utils.purchase_notice as purchase_notice
 import utils.settings as settings
 from extensions import limiter
@@ -30,6 +32,7 @@ from PIL import Image, ImageOps
 from utils.database import (
     DB_PROXY,
     OUTSIDE_GENEBANK_HERDS,
+    Breeding,
     Herd,
     HerdTracking,
     InboxDocument,
@@ -40,7 +43,14 @@ from utils.database import (
     current_holder_row,
     not_voided,
 )
-from utils.herd_tracking import HerdTrackingError, attach_buyer, correct_herd_tracking, is_manager_of
+from utils.herd_tracking import (
+    NOT_RECORDED,
+    HerdTrackingError,
+    attach_buyer,
+    buyer_contact_fields,
+    correct_herd_tracking,
+    is_manager_of,
+)
 from utils.individual_commands import (
     AssignPaperCertificate,
     IndividualRefused,
@@ -48,7 +58,7 @@ from utils.individual_commands import (
     lock_individual_for_edit,
     record_sale,
 )
-from utils.individual_number_v2 import PAPER_NUMBER_REQUIRED, parse_number
+from utils.individual_number_v2 import LITTER_SIZE6W_ABOVE_BORN, PAPER_NUMBER_REQUIRED, parse_number
 from utils.legacy_compat import NOT_PROMOTED
 from utils.matrikel import resolve_own_membership
 
@@ -602,6 +612,37 @@ def reinterpret(item_id, document_id):
     return _locked(item_id, action)
 
 
+# [Next.js] "Hitta pappret": how far the photo is tilted and where the paper lies. It changes nothing. With
+# "straighten" (the masking step, where the angle is fixed) the tilt is not looked for: the paper at that angle.
+# "rotation" is the turn the view shows: the paper is found in the stored one, so another is refused.
+@inbox_bp.route("/inkorg/<int:item_id>/dokument/<int:document_id>/hitta-pappret", methods=["POST"])
+@json_login_required
+@_queue_worker
+def find_paper(item_id, document_id):
+    body = _body()
+    straighten, rotation = body.get("straighten"), body.get("rotation")
+    try:
+        item = InboxItem.get_or_none(InboxItem.id == item_id)
+        if item is None:
+            raise inbox.InboxError(404, "Posten finns inte.")
+        inbox.require_handler(item, current_user)
+        document = inbox.document_of(item, document_id)
+        if document.original_path is None:
+            raise inbox.InboxError(409, "Originalet är raderat.")
+        if straighten is not None:
+            straighten = inbox._straighten(straighten)  # pylint: disable=protected-access  # as PATCH takes it
+        # pylint: disable-next=protected-access
+        if rotation is not None and inbox._rotation(rotation) != document.rotation:
+            raise inbox.InboxError(409, "Fotot visas inte med den sparade vridningen. Ladda om sidan och sök igen.")
+        try:  # no transaction and no lock while the photo is looked at
+            found = inbox_paper.find_paper(inbox.private_path(document.original_path), document.rotation, straighten)
+        except FileNotFoundError:  # erased meanwhile
+            raise inbox.InboxError(409, "Originalet är raderat.") from None
+    except inbox.InboxError as exc:
+        return problem(exc.status, exc.title, exc.detail)
+    return jsonify(found)
+
+
 # [Next.js] A report photo compared with its rabbit (4b): "Stämmer" or "Rättat" closes it.
 @inbox_bp.route("/inkorg/<int:item_id>/dokument/<int:document_id>/kontrollerad", methods=["POST"])
 @json_login_required
@@ -613,6 +654,28 @@ def check_report_photo(item_id, document_id):
         return jsonify({"item": inbox.items_json([item])[0], "document": inbox.documents_json([document], True)[0]})
 
     return _locked(item_id, action)
+
+
+# [Next.js] The reconciliation table: what the handler typed off the certificate beside the registry, recomputed as
+# she types. A read: no lock, nothing written. Only for those who work the item's genebank, since it searches its
+# registry; an item without one searches the genebank its letter names, so it takes a manager.
+@inbox_bp.route("/inkorg/<int:item_id>/dokument/<int:document_id>/avstamning", methods=["POST"])
+@json_login_required
+@_queue_worker
+@limiter.limit("600 per minute", key_func=lambda: str(current_user.id))  # a request as the handler pauses typing
+def reconcile_document(item_id, document_id):
+    user = User.get_by_id(current_user.id)
+    item = InboxItem.get_or_none(InboxItem.id == item_id)
+    try:
+        if item is None:
+            raise inbox.InboxError(404, "Posten finns inte.")
+        if item.genebank_id is None and not inbox.manages(user, None):
+            raise inbox.InboxError(403, "En post utan genbank stäms av av admin eller genbanksansvarig.")
+        inbox.require_worker_of(item, user)
+        document = inbox.document_of(item, document_id)
+    except inbox.InboxError as exc:
+        return problem(exc.status, exc.title, exc.detail)
+    return jsonify(inbox_reconcile.reconcile(item, document, _body(), user))
 
 
 # [Next.js] "Mina inskick": the user's own uploads, in plain words.
@@ -702,8 +765,9 @@ _REFUSED_AS_FORBIDDEN = {"Forbidden", AssignPaperCertificate(None).denied().enve
 _FIELD_BY_DETAIL = (
     (re.compile(r"^Välj mor och far|^Modern "), "mother"),
     (re.compile(r"^Fadern "), "father"),
-    (re.compile(r"levande vid 6 veckor|litter_size6w", re.I), "litter_size6w"),
-    (re.compile(r"antal födda", re.I), "litter_size"),
+    (re.compile(r"^Välj kön"), "sex"),
+    (re.compile(r"levande vid 6 veckor|litter_size6w|^Kullen har \d+ levande", re.I), "litter_size6w"),
+    (re.compile(r"antal födda|^Kullen har (\d+ födda|redan \d+ kaniner)", re.I), "litter_size"),
     (re.compile(r"^Födelsedatum"), "birth_date"),
     (re.compile(r"^name must"), "name"),
     (
@@ -762,8 +826,64 @@ def _live_individual(number):
     return individual
 
 
+def _missing_from_paper(body):
+    """
+    What the queue asks for beyond POST /v2/individual, as "Registrera kanin" does (Jonas 2026-11-27): the colour,
+    the sex (female, male, or null for Okänt, sent as normal registration sends it) and both counts. A certificate
+    that cannot be read is not saved with gaps: the handler finds the details first. The refusal, or None.
+    """
+
+    def count(key):
+        value = body.get(key)
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    if not isinstance(body.get("color"), str) or not body["color"].strip():
+        return "Välj färg."
+    if "sex" not in body or body["sex"] not in ("female", "male", None):
+        return "Välj kön: hona, hane eller okänt."
+    if not (count("litter_size") or 0) >= 1:
+        return "Ange antal födda (minst 1)."
+    if not (count("litter_size6w") or 0) >= 1:
+        return "Ange antal levande vid 6 veckor (minst 1)."
+    if body["litter_size6w"] > body["litter_size"]:  # an existing litter's counts are not checked by registration
+        return LITTER_SIZE6W_ABOVE_BORN
+    return None
+
+
+def _as_on_paper(body, individual):
+    """
+    After registration, in its transaction (a refusal rolls it back), what registration does not hold the paper to:
+    its colour must be in the list of the genebank the rabbit was registered in (registration drops another in
+    silence), and an existing litter's counts must be the paper's. A litter without a count born takes the paper's,
+    as registration fills in the count alive at 6 weeks, if it holds every rabbit the litter has. Raises the refusal.
+    """
+    if individual.color_id is None:
+        raise inbox.InboxError(400, "Välj en färg ur genbankens lista.")
+    litter = Breeding.get_by_id(individual.breeding_id)  # locked by registration
+    born, alive = body["litter_size"], body["litter_size6w"]
+    if litter.litter_size is None:
+        # Registration had no count to hold the litter to: the new rabbit, now one of them, must fit the paper's.
+        others = (
+            Individual.select()
+            .where((Individual.breeding == litter.id) & (Individual.id != individual.id) & not_voided())
+            .count()
+        )
+        if others + 1 > born:
+            raise inbox.InboxError(400, f"Kullen har redan {others} kaniner i Stamboken.")
+        litter.litter_size = born
+        litter.save(only=[Breeding.litter_size])
+    elif litter.litter_size != born:
+        raise inbox.InboxError(400, f"Kullen har {litter.litter_size} födda i Stamboken.")
+    # Registration writes the paper's count alive where the litter had none or a preliminary one: one it keeps was
+    # confirmed, and must be the paper's.
+    if litter.litter_size6w != alive:
+        raise inbox.InboxError(400, f"Kullen har {litter.litter_size6w} levande efter 6 veckor i Stamboken.")
+
+
 def _register_new(body, user, grant):
     """A new rabbit from the certificate, as POST /v2/individual registers it, with a paper certificate."""
+    if missing := _missing_from_paper(body):
+        raise inbox.InboxError(400, missing)
     form = {key: body[key] for key in REGISTRATION_FIELDS if key in body}
     form["certificate_type"] = "paper"
     created = []
@@ -771,9 +891,11 @@ def _register_new(body, user, grant):
     if not created:
         raise _Refused(response)
     individual = created[0]
+    _as_on_paper(body, individual)
     birth = HerdTracking.get((HerdTracking.individual == individual.id) & (HerdTracking.kind == "BIRTH"))
     grant.trace(birth.operation_id)
-    return response[0].get_json(), individual
+    # The rabbit as saved, its litter's counts included: registration answered before _as_on_paper filled them in.
+    return {**response[0].get_json(), "individual": Individual.get_by_id(individual.id).as_dict()}, individual
 
 
 def _same_number(paper_number, individual):
@@ -890,6 +1012,9 @@ def transfer(item_id, document_id):
             item = inbox.lock_item(item_id)
             document = inbox.document_of(item, document_id)
             inbox.require_saving(item, document, user)
+            # A buyer the form filled from the photo (rule 5 b): only while that reading is still the document's.
+            if body.get("from_photo") is True and "sale" not in (document.proposal or {}):
+                raise inbox.InboxError(409, "Läsningen har ändrats, fyll i köparen igen.")
             individual = _live_individual(body.get("individual"))
             inbox.require_same_rabbit(document, individual)
             if document.herd_tracking_id is not None:
@@ -903,7 +1028,13 @@ def transfer(item_id, document_id):
                 if not (is_manager_of(user, seller.genebank_id) or grant.allows(user, seller)):
                     raise inbox.InboxError(403, "Du får inte koppla ett bevis till kaninens försäljning.")
                 # A sale registered without its buyer gets the one the proof shows; past its five years, none.
-                if buyer is not None and attach_buyer(proven, buyer, user) is None:
+                if buyer == NOT_RECORDED:  # såld utanför genbanken (#273): nothing is kept, the proof is cleared
+                    if proven.herd.herd not in OUTSIDE_GENEBANK_HERDS or proven.holder_contact_id is not None:
+                        # read under the rabbit's lock: another handler may have added the buyer meanwhile
+                        raise inbox.InboxError(409, "Försäljningen har redan en köpare. Ladda om sidan.")
+                    buyer_contact_fields(buyer, proven.herd_tracking_date)  # only for sales until 2027
+                    proven.buyer_removed = True
+                elif buyer is not None and attach_buyer(proven, buyer, user) is None:
                     proven.buyer_removed = True  # so the proof is cleared below
                 row = proven
             elif herd in OUTSIDE_GENEBANK_HERDS and buyer is None:
@@ -986,6 +1117,8 @@ def confirm_mask(item_id, document_id):
                 body.get("mask_rects"),
                 body.get("no_personal_data"),
                 body.get("matches_registry"),
+                body.get("copy_frame"),
+                body.get("straighten"),
             )
         ]
         return jsonify({"item": inbox.items_json([item])[0], "document": inbox.documents_json([document])[0]})
@@ -1031,7 +1164,9 @@ def remove_copy(item_id, document_id):
             item = inbox.lock_item(item_id)
             path = inbox.remove_copy(item, inbox.document_of(item, document_id), current_user)
             document = inbox.document_of(item, document_id)
-            answer = {"item": inbox.items_json([item])[0], "document": inbox.documents_json([document])[0]}
+            # The rabbit's manager may not work the item's genebank.
+            shown = inbox.documents_json([document], user=current_user)[0]
+            answer = {"item": inbox.items_json([item])[0], "document": shown}
     except inbox.InboxError as exc:
         return problem(exc.status, exc.title, exc.detail)
     inbox.remove_files([path])

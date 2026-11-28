@@ -34,6 +34,7 @@ export interface RabbitRowProps {
   error?: string;
   onChange: (id: number, patch: Partial<Entry>) => void;
   onSell: (id: number) => void;
+  onUndo?: (herdTrackingId: number) => void; // Ångra a sale after 31 December (r.undo)
   onNextWeight: (id: number) => void;
   // Paper entry: a fourth choice for a rabbit the form does not mention.
   paper?: boolean;
@@ -80,6 +81,7 @@ function RabbitRowImpl({
   error,
   onChange,
   onSell,
+  onUndo,
   onNextWeight,
   paper = false,
 }: RabbitRowProps) {
@@ -145,7 +147,23 @@ function RabbitRowImpl({
       )}
       {r.state === "via_flytt" && !e.val && (
         <p>
-          Flyttad {r.later ? fmtDate(r.later.date) : ""}, räknas via flytten
+          Flyttad{" "}
+          {r.later
+            ? fmtDayOrMonth(r.later.date, r.later.day_known ?? true)
+            : ""}
+          , räknas via flytten
+          {r.undo && onUndo && (
+            <>
+              {" "}
+              <button
+                type="button"
+                className="sb-btn sb-btn-secondary sb-btn-sm"
+                onClick={() => onUndo(r.undo!)}
+              >
+                Ångra
+              </button>
+            </>
+          )}
         </p>
       )}
 

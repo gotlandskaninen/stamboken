@@ -79,6 +79,7 @@ from utils.matrikel import purge_matrikel_audit_values, purge_previous_addresses
 from utils import inbox  # isort:skip
 from utils.inbox import queue_digests  # isort:skip
 from utils.arsrapport_invite import send_due_invitations  # isort:skip
+from utils.arsrapport_remind import send_due_reminders, send_due_unanswered, send_missing_questions  # isort:skip
 from utils import inbox_gmail  # isort:skip
 from utils import inbox_purge  # isort:skip
 from utils import buyer_contact  # isort:skip
@@ -365,6 +366,27 @@ def _catch_up_arsrapport_invitations(now=None):
     now = now or datetime.datetime.now(ZoneInfo("Europe/Stockholm"))
     if now.astimezone(ZoneInfo("Europe/Stockholm")).hour >= 7:
         _send_arsrapport_invitations()
+
+
+def _send_arsrapport_followups():
+    """
+    Leader job every hour and once at startup (step 6), built as _send_mail: it closes its thread's connection. Each
+    follow-up decides itself what is due, in Stockholm time, so a missed run is caught up by the next; one failing
+    stops no other.
+    """
+    now = datetime.datetime.now(datetime.timezone.utc)
+    try:
+        for name, due in (
+            ("reminders", send_due_reminders),
+            ("unanswered lists", send_due_unanswered),
+            ("questions about missing rabbits", send_missing_questions),
+        ):
+            try:
+                APP.logger.info("Queued %s yearly report %s", due(now), name)
+            except Exception:  # pylint: disable=broad-except
+                APP.logger.exception("Queueing the yearly report %s failed", name)
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
 
 
 def _queue_notice_digests():
@@ -3173,6 +3195,26 @@ def initialize_app():
             misfire_grace_time=None,
         )
 
+        # The yearly report's reminders and lists after the invitation (step 6); each is due by its own date, from
+        # 07:00 in Stockholm, so the scan runs on the hour there.
+        scheduler.add_job(
+            _send_arsrapport_followups,
+            "cron",
+            minute=0,
+            timezone=ZoneInfo("Europe/Stockholm"),
+            id="arsrapport_followups",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+        )
+
+        scheduler.add_job(
+            _send_arsrapport_followups,
+            trigger="date",
+            id="arsrapport_followups_startup",
+            misfire_grace_time=None,
+        )
+
         scheduler.add_job(
             _expire_login_codes,
             trigger="interval",
@@ -3290,7 +3332,6 @@ def get_yearly_reports(round_id, genebank_id):
             round_id,
             genebank_id,
             current_user.is_admin or current_user.is_matrikel_admin,
-            frozenset() if current_user.is_admin else current_user.effective_herd_ids(),
         )
 
         return jsonify(
@@ -3323,7 +3364,6 @@ def export_yearly_reports(round_id, genebank_id):
             round_id,
             genebank_id,
             current_user.is_admin or current_user.is_matrikel_admin,
-            frozenset() if current_user.is_admin else current_user.effective_herd_ids(),
         )
 
         return Response(

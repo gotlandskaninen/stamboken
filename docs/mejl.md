@@ -153,6 +153,14 @@ eller, i läget `log`, loggats.
   adressen: att adressen är bytt och av vem (medlemmen själv, matrikelansvarig
   eller någon annan). Den som inte känner igen bytet svarar på mejlet, som
   hamnar i brevlådan som inläsningskön läser. Ingen adress står i mejlet.
+- `kontakt.konto_andrat` (prioritet 0) går till huvudmedlemmens inloggningsadress när
+  kontot för stödet har ändrats i årsrapporten, inloggad eller bekräftat via länken. Det
+  säger vilka två siffror kontot slutar på när mejlet går.
+- `arsrapport.kvitto` och `arsrapport.andrad` hämtar adressen när mejlet går. Ett kvitto
+  för ett inskick via länken går till inloggningsadressen, så att en ny adress som väntar
+  inte får länken. Väntar ändringar från länken på bekräftelse har kvittot ämnet
+  "Årsrapporten är inskickad, bekräfta dina ändringar" och en länk till
+  `/rapport/andringar#<kod>`, som gäller inskicket i 14 dagar.
 
 ## Engångskoder och inloggningsadresser
 
@@ -217,7 +225,12 @@ Koden finns i `app/utils/login_code.py` och `set_member_email` i
   ansökan får 409
   "Adressen används redan av en annan medlem"; medlemmen själv får aldrig det
   beskedet. Två personer med samma adress räknas i nattjobbet och visas i
-  statusvyn som `adresskrock`. En tom sträng är ingen adress.
+  statusvyn som `adresskrock`. En tom sträng är ingen adress. En familjemedlem
+  eller skötare utan konto får också kod och kan skapa sitt konto (#269), men
+  bara till en adress som ingen annan aktiv person har, som kontaktadress,
+  Workspace-adress eller tidigare adress som fortfarande gäller. Hon reserverar
+  ingen adress och tar aldrig en från en innehavare. Har hon tillstånd på en
+  besättning i ett annat medlemskap skapas inget konto med kod.
 - **Sju dagar.** All skrivning av en befintlig persons `Member.email` går
   genom `set_member_email`, utom anonymiseringen, som tömmer adressen själv och
   raderar personens tidigare adresser och kodrader. Byter medlemmen själv
@@ -308,12 +321,29 @@ mejlhistorikens gallring och finns kvar om köparen raderas först. Är köparen
   ut när försäljningen registrerades får köparen ändå informationsmejlet.
   Nattgallringen låter adressen ligga kvar medan mejlet väntar på adresskontroll
   eller utskick. Därefter gallras den som vanligt. Inbjudan går inte.
+- **Utan försäljningsbevis** (`email_notice_only`, #273, till och med 2027)
+  säger `kopare.information` att säljaren gav e-postadressen och att den
+  bara används för mejlet. Stycket om avtrycket utgår, och raderingslänken
+  tar bort uppgifterna om det köpet. Den som köpt flera kaniner hänvisas till
+  dataskyddsadressen. Nattgallringen (`purge_notice_email`) tar bort adressen
+  när mejlet är `sent`, utan avtryck. Adressen ligger kvar medan mejlet
+  väntar, kan försökas igen, väntar på adresskontroll eller på att en
+  återkallad rapport skickas igen. Blir mejlet `bounced`, `failed` och
+  äldre än 30 dagar eller `cancelled` av något annat skäl än en återkallad
+  rapport (till exempel Stoppa i statusvyn), raderar
+  `purge_undelivered_notice` köparen (åtgärden `studs`), och försäljningen
+  står kvar med `buyer_removed`. Kan köparen inte informeras inom en månad
+  (`purge_uninformed`, åtgärden `ej_informerad`) sparas köparen inte: ett
+  väntande försäljningsförslag blir "såld utanför genbanken", och en köpare
+  vars adress har väntat på adresskontroll så länge raderas. Raderingslänken
+  i mejlet tar bara bort det köpet, även innan adressen är gallrad.
 - **`kopare.medlemskap`** går när köparen har sagt ja till att föreningen
   hör av sig om medlemskap (`membership_optin_at`). Ja:et räknas från
   överlåtelsedagen. Har det gått tolv månader när mejlet ska skickas,
   eller har ja:et tagits bort, blir mejlet `cancelled`.
 
-Informationsmejlet förklarar hur länge avtrycket sparas.
+Informationsmejlet förklarar hur länge avtrycket sparas. En köpare utan
+försäljningsbevis får inget avtryck, och mejlet till den nämner inget.
 
 > Vi sparar också ett krypterat avtryck av e-postadressen, inte själva adressen, så länge köpet finns i registret. Det använder vi för att kunna ta bort alla dina uppgifter när du ber om det.
 
