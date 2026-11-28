@@ -159,6 +159,7 @@ export function WorkView({
   item,
   user,
   colors,
+  colorsByLetter,
   herds,
   people,
   noRole = false,
@@ -170,6 +171,8 @@ export function WorkView({
   item: InboxDetail;
   user: QueueUser;
   colors: string[];
+  /** An item without a genebank: each genebank's colours by its letter (CertificateForm). */
+  colorsByLetter?: Record<string, string[]> | null;
   herds: GenebankHerd[];
   people: Person[];
 }) {
@@ -1139,6 +1142,7 @@ export function WorkView({
               itemId={item.id}
               doc={doc}
               colors={colors}
+              colorsByLetter={colorsByLetter}
               canSave={saving}
               onSaved={(d) => advance(d)}
               onSkip={() => advance(doc, true)}

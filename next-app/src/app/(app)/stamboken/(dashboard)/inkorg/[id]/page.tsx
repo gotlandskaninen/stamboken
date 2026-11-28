@@ -73,6 +73,20 @@ export default async function InkorgItemPage({
     colors,
     genebanks.find((g) => g.id === item.genebank_id)?.name,
   );
+  // An item without a genebank (a mail from a sender the register does not know): each genebank's list by its
+  // letter, picked by the number typed. null when the lists could not be fetched.
+  // shortcut: a genebank's initial is its herds' letter (G, M), which the backend finds from its herds
+  // (_genebank_of_letter); read the herds if a genebank's ever starts with another letter.
+  const colorsByLetter = item.genebank_id
+    ? undefined
+    : colors && genebanks.length
+      ? Object.fromEntries(
+          genebanks.map((g) => [
+            g.name.charAt(0).toUpperCase(),
+            colorNamesFor(colors, g.name),
+          ]),
+        )
+      : null;
 
   return (
     <>
@@ -103,6 +117,7 @@ export default async function InkorgItemPage({
           myGenebanks,
         )}
         colors={colorNames}
+        colorsByLetter={colorsByLetter}
         herds={herds}
         people={handlers}
         reportYears={reportYears(rounds, item.genebank_id, todayStockholm())}

@@ -453,6 +453,8 @@ def _litter_counts(raw, struck, litter, fields, checks):
         count = None if raw_key in struck else _count(text)
         counts[key] = (text, count if count else None)  # a litter has at least one, as registration requires
         theirs = getattr(litter, key) if litter is not None else None
+        if key == "litter_size6w" and litter is not None and litter.litter_size6w_preliminary:
+            theirs = None  # a copy of the count born, not confirmed: never proposed, nor compared
         if theirs is not None and not text:
             fields[key] = _field(DERIVED, theirs)
         elif theirs is not None and counts[key][1] is not None:
