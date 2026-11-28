@@ -133,4 +133,26 @@ describe("IndividualCard", () => {
     renderWithTheme(<IndividualCard individual={bought} />);
     expect(screen.getByLabelText("Köpt 2024-03-01 från G1001")).toBeDefined();
   });
+
+  it("marks a paper certificate checked against the registry, dated in Swedish time", () => {
+    renderWithTheme(<IndividualCard individual={mockIndividual} />);
+    expect(screen.queryByText("Intyget kontrollerat")).toBeNull();
+    cleanup();
+    renderWithTheme(
+      <IndividualCard
+        individual={{
+          ...mockIndividual,
+          digital_certificate: null,
+          certificate: "12",
+          paper_certificate_checked: "2026-11-25T23:30:00+00:00",
+        }}
+      />,
+    );
+    expect(screen.getByText("Intyget kontrollerat")).toBeDefined();
+    expect(
+      screen.getByLabelText(
+        "Pappersintyget finns i Stamboken och stämde med registret 2026-11-26",
+      ),
+    ).toBeDefined();
+  });
 });

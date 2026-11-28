@@ -46,6 +46,7 @@ interface VoidHerdTrackingDialogProps {
   mode: VoidMode;
   busy: boolean;
   error: string | null;
+  note?: React.ReactNode; // what the undo does, said before it is asked (the yearly report's Ångra)
   onClose: () => void;
   onConfirm: (reason: string, operationId: string) => void;
 }
@@ -78,6 +79,7 @@ function VoidDialogContent({
   mode,
   busy,
   error,
+  note,
   onClose,
   onConfirm,
 }: VoidHerdTrackingDialogProps) {
@@ -100,6 +102,7 @@ function VoidDialogContent({
             {row.date} · {KIND_LABELS[row.kind]} · {row.herd.label}
           </p>
         )}
+        {note && <p className="sb-meta">{note}</p>}
         {!replaced && (
           <>
             <label className="sb-label" htmlFor="ht-void-reason">

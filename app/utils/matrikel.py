@@ -19,8 +19,9 @@ import json
 import logging
 import re
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
-from peewee import JOIN, Case, IntegrityError, fn
+from peewee import JOIN, Case, IntegrityError, Value, fn
 
 from utils.cache_invalidation import trigger_invalidation
 from utils.data_access import (
@@ -37,6 +38,7 @@ from utils.database import (
     BILLING_FIELDS,
     DB_PROXY,
     OUTSIDE_GENEBANK_HERDS,
+    SUPPORT_ACCOUNT_FIELDS,
     Herd,
     HerdAccessGrant,
     LoginCode,
@@ -48,6 +50,8 @@ from utils.database import (
     MemberPreviousAddress,
     Membership,
     User,
+    redact_herd_account_audits,
+    snapshot_read,
 )
 from utils.herd_contact import (
     compare_with_register,
@@ -58,7 +62,7 @@ from utils.herd_contact import (
     on_person_leaving,
     snapshot_before_leaving,
 )
-from utils.inbox_purge import erase_person_from_inbox, remove_originals
+from utils.inbox_purge import erase_person_from_inbox, erase_user_from_inbox, remove_originals
 from utils.individual_commands import purge_command_free_text
 from utils.login_code import (
     AddressTaken,
@@ -92,6 +96,8 @@ HOUSEHOLD_PII_FIELDS = (
     "organization_name",
     "organization_number",
     *BILLING_FIELDS,
+    # the support account (migration 58): no payout without a person (U14)
+    *SUPPORT_ACCOUNT_FIELDS,
 )
 # postal_address is the pre-v29 spelling, still present in old payloads.
 HOUSEHOLD_PII_KEYS = frozenset((*HOUSEHOLD_PII_FIELDS, "postal_address"))
@@ -247,7 +253,17 @@ def raise_counter_to(value: int) -> None:
 
 
 def write_matrikel_audit(actor: User | None, action: str, membership: Membership, payload: dict) -> MatrikelAudit:
-    """Append one matrikel audit row. Payloads carry before/after values. No actor: the nightly job wrote it."""
+    """
+    Append one matrikel audit row. Payloads carry before/after values. No actor: the nightly job wrote it. Every
+    write logs here, so a write that names contact columns (profile, logged-in report, paper, matrikel staff) also
+    revokes the older changes of those fields that wait for the report link's receipt mail (5.11), except the
+    link's own confirmation, which revokes only older ones.
+    """
+    if payload.get("source") != "link":
+        import utils.member_changes as member_changes  # pylint: disable=import-outside-toplevel  # it imports this
+
+        columns = payload.get("fields") or list(payload.get("after") or ())
+        member_changes.revoke_for_direct_write(getattr(membership, "id", membership), payload.get("person_id"), columns)
     return MatrikelAudit.create(actor=actor, action=action, membership=membership, payload=payload)
 
 
@@ -322,6 +338,216 @@ def redact_household_from_audits(membership: Membership) -> int:
     return touched
 
 
+def _drop_keys(node, keys):
+    if isinstance(node, dict):
+        return {k: _drop_keys(v, keys) for k, v in node.items() if k not in keys}
+    if isinstance(node, list):
+        return [_drop_keys(v, keys) for v in node]
+    return node
+
+
+def _stockholm_midnight(day: date) -> datetime:
+    """The start of `day` in Sweden, as the server's naive local time that created_at holds (datetime.now())."""
+    return datetime.combine(day, datetime.min.time(), ZoneInfo("Europe/Stockholm")).astimezone().replace(tzinfo=None)
+
+
+def _masked_actor_rows():
+    """The log rows whose actor is an anonymised person's own account (#244), as an SQL condition, or None.
+
+    The erasure detaches the account but empties it only when it was still linked; one unlinked before keeps its name.
+    It may be a handler's account, linked by mistake and since corrected, so the mask covers only what she did with
+    it: the self-service actions in her household while the account was linked to her. Handler actions in that span,
+    and everything before and after it, keep the account's name, also on rows about her. Every link and detach
+    writes person_user_(un)linked with both ids, which gives the spans.
+    """
+    links = list(
+        MatrikelAudit.select(MatrikelAudit.id, MatrikelAudit.action, MatrikelAudit.membership, MatrikelAudit.payload)
+        .where(MatrikelAudit.action.in_(("person_user_linked", "person_user_unlinked")))
+        .order_by(MatrikelAudit.id)
+    )
+    person_ids = {(a.payload or {}).get("person_id") for a in links}
+    erased = {
+        m.id
+        for m in Member.select(Member.id).where(
+            Member.id.in_([p for p in person_ids if isinstance(p, int)]),
+            Member.first_name == ANONYMIZED_FIRST_NAME,
+            Member.last_name == ANONYMIZED_LAST_NAME,
+        )
+    }
+    # (person, account) -> [(membership, link row id or None, unlink row id or None)]. Ids, not created_at: the rows
+    # of a membership are written under its lock, so their ids keep the order when the local clock goes back an hour.
+    spans = {}
+    for a in links:
+        person, account = (a.payload or {}).get("person_id"), (a.payload or {}).get("user_id")
+        if person not in erased or not isinstance(account, int):
+            continue
+        pair = spans.setdefault((person, account), [])
+        if a.action == "person_user_linked":
+            pair.append((a.membership_id, a.id, None))
+        elif pair and pair[-1][2] is None and pair[-1][1] is not None:
+            pair[-1] = (*pair[-1][:2], a.id)
+        else:  # linked before the log began
+            pair.append((a.membership_id, None, a.id))
+    source = MatrikelAudit.payload["source"]
+    # What the member's own routes write: /members/me (kontakt_andrad, source profil), her own herd page's change of
+    # the support account (kontakt_andrad, source herd), /my-membership (persons and grants) and her own link (oauth,
+    # matrikel_epost). The rest is a handler's, as are unlinks, also inside a span.
+    # shortcut: the admin routes write person_added, person_removed and grant_* too, without a source; a handler
+    # whose account was linked to her in the same span is masked there. Add a source if that ever matters.
+    self_service = (
+        MatrikelAudit.action.in_(("person_added", "person_removed", "grant_created", "grant_renewed", "grant_revoked"))
+        | ((MatrikelAudit.action == "kontakt_andrad") & source.in_(("profil", "herd")))
+        | ((MatrikelAudit.action == "person_user_linked") & source.in_(("oauth", "matrikel_epost")))
+    )
+    condition = None
+    for (_person, account), pair in spans.items():
+        for membership, start, end in pair:
+            row = (MatrikelAudit.actor == account) & (MatrikelAudit.membership == membership)
+            if start is not None:
+                row &= MatrikelAudit.id >= start
+            if end is not None:
+                row &= MatrikelAudit.id < end
+            condition = row if condition is None else condition | row
+    # COALESCE: a payload without "source" gives NULL, which ~condition in the actor filter would drop
+    return None if condition is None else fn.COALESCE(condition & self_service, False)
+
+
+# Masked in every log row of a membership where someone was anonymised: the household's values, the payment note
+# (kept on the row for the books, its old texts may name a payer) and every person's contact values, since one may
+# have carried hers (a family member added with her e-mail). The names of the others stay.
+ANONYMISED_MEMBERSHIP_KEYS = HOUSEHOLD_PII_KEYS | {"payment_note"} | (PII_PAYLOAD_KEYS - {"first_name", "last_name"})
+
+
+MATRIKEL_AUDIT_VALUE_RETENTION = "12 months"  # a PostgreSQL interval: calendar months
+
+
+def purge_matrikel_audit_values(now) -> int:
+    """Nightly (#244): contact values (addresses, e-mail, phone, notes) in matrikel_audit payloads older than 12
+    months become REDACTED_VALUE. The row stays: who, when, what kind of change, and the keys. Idempotent.
+    shortcut: scans every old row each night; add a flag column if the log grows past a few hundred thousand rows."""
+    cutoff = DB_PROXY.execute_sql(
+        "SELECT %s::timestamp - %s::interval", (now.astimezone().replace(tzinfo=None), MATRIKEL_AUDIT_VALUE_RETENTION)
+    ).fetchone()[0]  # created_at holds the server's naive local time
+    touched = 0
+    with DB_PROXY.atomic():
+        for row in MatrikelAudit.select().where(MatrikelAudit.created_at < cutoff):
+            payload, changed = _redact_node(row.payload or {}, ANONYMISED_MEMBERSHIP_KEYS)
+            if changed:
+                row.payload = payload
+                row.save()
+                touched += 1
+    return touched
+
+
+def _memberships_with_anonymised(membership_ids) -> set[int]:
+    """The memberships where any person has been anonymised. Their household values in the log may name her (a former
+    billing recipient, an address she shared), and the log cannot tell whose they were."""
+    rows = Member.select(Member.membership).where(
+        Member.membership.in_(list(membership_ids)),
+        Member.first_name == ANONYMIZED_FIRST_NAME,
+        Member.last_name == ANONYMIZED_LAST_NAME,
+    )
+    return {r.membership_id for r in rows}
+
+
+@snapshot_read()  # one snapshot: an erasure committing mid-read must not pair her old account with "Borttagen person"
+def query_matrikel_audit(
+    *,
+    full_access,
+    membership_id=None,
+    member_number=None,
+    action=None,
+    actor=None,
+    date_from=None,
+    date_to=None,
+    page=1,
+    per_page=50,
+):
+    """The matrikel's change log for GET /v2/members/audit (#244), newest first.
+
+    `date_from` and `date_to` are dates, both days included, cut at midnight in Sweden. Without `full_access` (a
+    gene bank manager) the payloads lose what GET /v2/members/<id> does not show them: the organisation number and a
+    person's notes. A row about an anonymised person is redacted again on read, should a stored payload have escaped
+    the erasure, user_id included. An anonymised person's former account is shown as REDACTED_VALUE as actor on the
+    rows _masked_actor_rows() names, and the actor filter skips those rows. A membership where any person has been
+    anonymised has the values of ANONYMISED_MEMBERSHIP_KEYS masked in all its rows, for every role: the keys stay, so
+    the change shows, and today's values are on the membership page. The billing_* values are masked in every row.
+    """
+    masked = _masked_actor_rows()
+    q = (
+        MatrikelAudit.select(
+            MatrikelAudit, User, Membership, (masked if masked is not None else Value(False)).alias("actor_masked")
+        )
+        .join(User, JOIN.LEFT_OUTER, on=(MatrikelAudit.actor == User.id))  # NULL actor: the nightly anonymisation
+        .switch(MatrikelAudit)
+        .join(Membership)
+    )
+    if membership_id:
+        q = q.where(MatrikelAudit.membership == membership_id)
+    if member_number:
+        q = q.where(Membership.member_number == member_number)
+    if action:
+        q = q.where(MatrikelAudit.action == action)
+    if actor:
+        # A manager matches only the name the rows show it, or a hit would confirm a handler's hidden e-mail.
+        named = (fn.lower(User.username) == actor.lower()) | (fn.lower(User.email) == actor.lower())
+        shown = fn.lower(fn.COALESCE(User.username, User.email)) == actor.lower()
+        q = q.where(
+            named if full_access else shown,
+            ~masked if masked is not None else True,  # a masked row must not answer for the account either
+        )
+    # The days are Swedish days, as the pages show the times. Capped: the far ends of date overflow the conversion.
+    if date_from:
+        q = q.where(MatrikelAudit.created_at >= _stockholm_midnight(max(date_from, date(1900, 1, 1))))
+    if date_to:
+        q = q.where(
+            MatrikelAudit.created_at < _stockholm_midnight(min(date_to, date(9998, 12, 31)) + timedelta(days=1))
+        )
+    total = q.count()
+    audits = list(q.order_by(MatrikelAudit.created_at.desc(), MatrikelAudit.id.desc()).paginate(page, per_page))
+
+    def person_of(payload):
+        return payload.get("person_id") or payload.get("new_person_id") or payload.get("main_member_id")
+
+    ids = {pid for a in audits if isinstance(pid := person_of(a.payload or {}), int)}
+    persons = {p.id: p for p in Member.select().where(Member.id.in_(list(ids)))} if ids else {}
+    erased = _memberships_with_anonymised({a.membership_id for a in audits})
+    rows = []
+    for a in audits:
+        payload = a.payload or {}
+        person = persons.get(person_of(payload))
+        if person is not None and is_anonymized(person):  # user_id too: her account, as in person_user_linked
+            payload, _ = _redact_node(payload, PII_PAYLOAD_KEYS | {"user_id"})
+        # shortcut: masks the others' and a new household's values too, for good; refine only if someone needs them
+        if a.membership_id in erased:
+            payload, _ = _redact_node(payload, ANONYMISED_MEMBERSHIP_KEYS)
+        # Always: a billing recipient is free text that may name a person of another membership, erased or not.
+        payload, _ = _redact_node(payload, frozenset(BILLING_FIELDS))
+        if not full_access:
+            payload = _drop_keys(payload, {"organization_number"} | ({"notes"} if "person_id" in payload else set()))
+        rows.append(
+            {
+                "id": a.id,
+                "action": a.action,
+                "created_at": a.created_at.astimezone().isoformat(),
+                # the name audit_log's changed_by holds too
+                "actor": (
+                    {"id": None, "name": REDACTED_VALUE}
+                    if a.actor_masked
+                    else {"id": a.actor.id, "name": a.actor.username or a.actor.email}
+                    if a.actor_id
+                    else None
+                ),
+                "membership": {"id": a.membership_id, "member_number": a.membership.member_number},
+                "person": (
+                    {"id": person.id, "name": f"{person.first_name} {person.last_name}".strip()} if person else None
+                ),
+                "payload": payload,
+            }
+        )
+    return {"rows": rows, "total": total, "page": page, "per_page": per_page}
+
+
 VALID_PERSON_ROLES = ("huvudmedlem", "familjemedlem", "skotare")
 
 
@@ -336,6 +562,17 @@ def _new_person_names(data, *, optional):
     if not optional and not (first and last):
         raise PersonNameRequired
     return {"first_name": first, "last_name": last}
+
+
+def _new_holder(membership, actor):
+    """A new huvudmedlem has not answered the Koharen question: the answer was the previous holder's (5.11).
+    In the caller's transaction, under the membership lock."""
+    from utils.members import (  # pylint: disable=import-outside-toplevel  # utils.members imports this module
+        CONSENT_TEXT_VERSION,
+        set_consent,
+    )
+
+    set_consent(membership, {}, source="admin", text_version=CONSENT_TEXT_VERSION, user=actor.id if actor else None)
 
 
 def add_person(membership, data, actor):
@@ -358,6 +595,7 @@ def add_person(membership, data, actor):
         locked = Membership.select().where(Membership.id == membership.id).for_update().get()
         if locked.membership_status == "inactive":
             raise ValueError("Kan inte lägga till personer i ett inaktivt medlemskap")
+        lock_addresses([data.get("email")])  # waits for a code login creating an account on the same address
         person = Member.create(
             membership=membership,
             **_new_person_names(data, optional=locked.organization_name and role == "huvudmedlem"),
@@ -367,6 +605,8 @@ def add_person(membership, data, actor):
         )
         if role == "huvudmedlem" and locked.membership_status != Status.FRIEXEMPLAR:
             reserve_login_address(person.email, person.id)
+        if role == "huvudmedlem":
+            _new_holder(locked, actor)
         write_matrikel_audit(
             actor,
             "person_added",
@@ -425,6 +665,76 @@ def soft_delete_person(member, actor):
         )
 
 
+def limit_open_grants(member):
+    """A person who became skötare: her grants without an end date get one year, as create_grant gives a new one.
+    In the caller's transaction, under the membership lock."""
+    now = datetime.now()
+    return (
+        HerdAccessGrant.update(valid_until=_plus_one_year(date.today()), updated_at=now)
+        .where(
+            HerdAccessGrant.member == member,
+            HerdAccessGrant.revoked_at.is_null(True),
+            HerdAccessGrant.valid_until.is_null(True),
+        )
+        .execute()
+    )
+
+
+def reactivate_person(member, actor):
+    """Undo soft_delete_person for an ended, not anonymized person: clear end_date, audit it.
+
+    Same lock order as the other person writers (membership, then the linked user, then the person).
+    The grants stay revoked. A linked account is never detached here: the caller unlinks it first, as a
+    step of its own, so reactivating cannot give an account its access back. Raises ValueError for an
+    anonymized, still active or linked person, an inactive membership or a second active huvudmedlem;
+    AddressTaken when a main member's address now belongs to someone else.
+    """
+    with DB_PROXY.atomic():
+        person, _user = _lock_for_detach(member.id)
+        membership = Membership.select().where(Membership.id == person.membership_id).get()
+        if is_anonymized(person):
+            raise ValueError("En anonymiserad person kan inte återaktiveras")
+        if person.end_date is None:
+            raise ValueError("Personen är redan aktiv")
+        if membership.membership_status == "inactive":
+            raise ValueError("Kan inte återaktivera personer i ett inaktivt medlemskap")
+        if person.user_id is not None:
+            raise ValueError("Koppla bort kontot först")
+        if (
+            person.role == "huvudmedlem"
+            and Member.select()
+            .where(Member.membership == membership.id, Member.role == "huvudmedlem", Member.end_date.is_null(True))
+            .exists()
+        ):
+            raise ValueError("Medlemskapet har redan en aktiv huvudmedlem")
+        ended = person.end_date
+        person.end_date = None
+        person.save()
+        if _added_by_another(person):  # soft_delete_person stopped her notice; a delivered one is not sent twice
+            queue_member_added(person)
+        if person.role == "huvudmedlem":
+            reserve_holder(person.id)
+            _new_holder(membership, actor)
+            write_matrikel_audit(
+                actor,
+                "main_member_changed",
+                membership,
+                {"previous_person_id": None, "new_person_id": person.id},
+            )
+        write_matrikel_audit(
+            actor,
+            "person_reactivated",
+            membership,
+            {
+                "person_id": person.id,
+                "role": person.role,
+                "before": {"end_date": ended.isoformat()},
+                "after": {"end_date": None},
+            },
+        )
+    return person
+
+
 def swap_main_member(membership, new_main, actor):
     """Atomically demote the current active huvudmedlem and promote `new_main`.
 
@@ -462,6 +772,7 @@ def swap_main_member(membership, new_main, actor):
         new_main.save()
         reserve_holder(new_main.id)
         cancel_member_added([new_main.id])
+        _new_holder(membership, actor)
         write_matrikel_audit(
             actor,
             "main_member_changed",
@@ -499,6 +810,10 @@ def _applications_of(person):
             & (fn.LOWER(MemberApplication.last_name) == last_name.strip().lower())
         )
     return where
+
+
+def _has_active_person(membership):
+    return Member.select().where(Member.membership == membership, Member.end_date.is_null(True)).exists()
 
 
 def anonymize_person(member, actor, deferred_originals=None, deferred_accounts=None):
@@ -577,10 +892,20 @@ def anonymize_person(member, actor, deferred_originals=None, deferred_accounts=N
         # until then, and rows added after that erasure stay
         if not erased_before and all(map(is_anonymized, Member.select().where(Member.membership == membership))):
             on_household_erased(membership.id)
-        if not Member.select().where(Member.membership == membership, Member.end_date.is_null(True)).exists():
+        payload = {"person_id": person.id}
+        clear_household = not _has_active_person(membership)
+        if clear_household:
             # Last active person gone: erase household details. payment_note stays for accounting.
+            cleared = [field for field in SUPPORT_ACCOUNT_FIELDS if getattr(membership, field) is not None]
+            if cleared:
+                payload["fields"] = cleared
             Membership.update(**dict.fromkeys(HOUSEHOLD_PII_FIELDS), updated_at=now).where(
                 Membership.id == membership.id
+            ).execute()
+            # and an account migration 58 left on its herds (no safe target), which the herd audit does not copy
+            Herd.update(bank_account_number=None, bank_name=None).where(
+                Herd.membership == membership.id,
+                Herd.bank_account_number.is_null(False) | Herd.bank_name.is_null(False),
             ).execute()
             redact_household_from_audits(membership)
         application_ids = [
@@ -607,7 +932,7 @@ def anonymize_person(member, actor, deferred_originals=None, deferred_accounts=N
             .returning(MemberApplication.id)
             .execute()
         ]
-        applications_redacted = len(application_ids)
+        payload["applications_redacted"] = len(application_ids)
         forget_recipient("member", person.id)  # the queue keeps no address hash or dedupe key of the erased
         if user is not None:
             forget_recipient("user", user.id)  # nor of the account's mail (notices, applications, the intake queue)
@@ -621,12 +946,7 @@ def anonymize_person(member, actor, deferred_originals=None, deferred_accounts=N
             forget_recipient("login_code", code.id)
         for application_id in application_ids:
             forget_recipient("application", application_id)
-        write_matrikel_audit(
-            actor,
-            "person_anonymized",
-            membership,
-            {"person_id": person.id, "applications_redacted": applications_redacted},
-        )
+        write_matrikel_audit(actor, "person_anonymized", membership, payload)
         if user is not None:
             erase_account(user)  # `user` keeps the values read under the lock
         lost = before - User.get_by_id(user.id).effective_herd_ids() if user is not None else set()
@@ -639,6 +959,8 @@ def anonymize_person(member, actor, deferred_originals=None, deferred_accounts=N
         if user is not None and deferred_accounts is None:
             pictures = profile_pictures_of(user)  # before the purge takes their names
             purge_user_audit_pii(user.id, user.username, user.email)  # last: it locks audit_log until the commit
+        if clear_household and deferred_accounts is None:
+            redact_herd_account_audits([membership.id])
     if deferred_originals is None:
         remove_originals(originals)  # only after the commit: a row never names a removed file
     else:
@@ -649,6 +971,49 @@ def anonymize_person(member, actor, deferred_originals=None, deferred_accounts=N
         deferred_accounts.append(user)
     _invalidate_genebanks(lost_genebanks)
     return person
+
+
+def erase_unlinked_account(user_id, actor_id):
+    """
+    Empties an account that belongs to no person (#250), as anonymize_person empties a person's account: the same
+    steps for the account, in one transaction with its row locked, the audit purge last and the profile pictures
+    removed after the commit. Refuses (LinkError) an actor who is no longer an active admin once the rows are locked,
+    the caller's own account, an account already emptied, one with a role other than Läsrätt and one that a person in
+    the register points to, ended or not: persons are handled in the register. A linker takes this row's lock before
+    it writes member.user_id and refuses an inactive account, so the check holds. What the account sent to the intake
+    queue goes as for a person (erase_user_from_inbox), its files after the commit.
+    """
+    if user_id == actor_id:
+        raise LinkError("Ditt eget konto", "Du kan inte radera uppgifterna i kontot du är inloggad med.", type="self")
+    with DB_PROXY.atomic():
+        # Both rows in id order, as the role writers lock theirs: the actor may lose the admin role while this waits
+        locked = {u.id: u for u in User.select().where(User.id.in_([user_id, actor_id])).order_by(User.id).for_update()}
+        actor = locked.get(actor_id)
+        if actor is None or not actor.is_active or not actor.is_admin:
+            raise LinkError("Åtkomst nekad", "Du är inte längre administratör.", 403, type="not-admin")
+        user = locked.get(user_id)
+        if user is None:
+            raise LinkError("Användare saknas", f"Ingen användare med id {user_id}.", 404, type="user-not-found")
+        if user.email == f"raderad-{user.id}":  # not_erased(), on the locked row
+            raise LinkError("Redan raderat", "Kontots uppgifter är redan raderade.", type="erased")
+        # Läsrätt is no role here: every account gets it on both genebanks (RETENTION_HOLD_LEVELS)
+        if any(p["level"] != "viewer" for p in user.privileges or []):
+            raise LinkError("Kontot har en roll", "Ta bort kontots roller innan uppgifterna raderas.", type="has-role")
+        if Member.select().where(Member.user == user.id).exists():
+            raise LinkError(
+                "Kontot hör till en person",
+                "Kontot är kopplat till en person i matrikeln. Personer anonymiseras i matrikeln.",
+                type="has-person",
+            )
+        User.update(name_on_check_page=False).where(User.id == user.id).execute()
+        forget_recipient("user", user.id)
+        erase_account(user)  # `user` keeps the values read under the lock
+        originals = erase_user_from_inbox(user.id)
+        pictures = profile_pictures_of(user)  # before the purge takes their names
+        purge_user_audit_pii(user.id, user.username, user.email)  # last: it locks audit_log until the commit
+    remove_originals(originals)  # only after the commit: a row never names a removed file
+    for name in pictures:
+        remove_profile_picture(name)
 
 
 ENDED_MEMBER_RETENTION = "12 months"  # a PostgreSQL interval: calendar months, as the privacy policy says (#34)
@@ -748,6 +1113,8 @@ def anonymize_ended_persons(now):
                     pictures |= profile_pictures_of(account)  # before the purge takes their names
                 for account in erased:  # last: the purge locks audit_log until the commit
                     purge_user_audit_pii(account.id, account.username, account.email)
+                if due and not _has_active_person(membership):
+                    redact_herd_account_audits([membership.id])
         except Exception:  # pylint: disable=broad-exception-caught
             logger.exception("Automatic anonymization failed for membership=%s", membership.id)
             failed += 1
@@ -801,15 +1168,18 @@ def set_member_email(person, address, actor, *, by):
     with DB_PROXY.atomic():
         person, user = _lock_for_detach(person.id)  # membership → user → person
         friexemplar = person.membership.membership_status == Status.FRIEXEMPLAR
-        if friexemplar and person.email != address:
+        holder = (
+            not friexemplar and person.end_date is None and (person.role == "huvudmedlem" or person.user_id is not None)
+        )
+        # Someone who holds no login address (ended, friexemplar, or reactivated and not yet linked) must not keep
+        # previous ones: they would wake up when she is linked.
+        if not holder and person.email != address:
+            lock_addresses([address])  # waits for a code login creating an account on the same address
             _expire_previous_addresses([person.id])
         if _same(person.email, address):
             if person.email != address:  # the same address, spelled otherwise
                 Member.update(email=address).where(Member.id == person.id).execute()
             return Member.get_by_id(person.id)
-        holder = (
-            not friexemplar and person.end_date is None and (person.role == "huvudmedlem" or person.user_id is not None)
-        )
         told, login_from = [], None
         if holder:
             # Every address this change can touch, locked in one order before the previous ones are read: a clock
@@ -1172,7 +1542,8 @@ def resolve_own_membership(user):
 # Kontokoppling — ONE lock-owning operation writes
 # member.user_id. Lock order everywhere: membership → user → person, all
 # FOR UPDATE. A link that grants herd access needs admin confirmation,
-# except when a main member creates her own account using a verified code.
+# except when a person creates her own account using a verified code
+# (anyone but the main member only with grants inside her membership, login_account).
 # --------------------------------------------------------------------------
 
 LINK_MODES = ("admin", "cli", "oauth", "matrikel_epost")
@@ -1322,12 +1693,10 @@ def link_member_user(person_id, user_id, *, actor, mode, confirmed_herd_ids=None
             raise LinkError(AddressTaken.title, detail) from exc
         conveyed = link_access_delta(person, user)  # under the locks, right before the save
         conveyed_ids = {h["id"] for h in conveyed}
-        if mode == "matrikel_epost" and (
-            person.role != "huvudmedlem" or person.membership.membership_status == "inactive"
-        ):
+        if mode == "matrikel_epost" and person.membership.membership_status == "inactive":
             raise LinkError(
                 "Kontot kan inte skapas",
-                "Bara huvudmedlemmen i ett aktivt eller väntande medlemskap kan skapa ett konto.",
+                "Bara en person i ett aktivt eller väntande medlemskap kan skapa ett konto.",
             )
         if (
             conveyed_ids
@@ -1362,20 +1731,35 @@ def _detach_user_locked(person: Member, *, actor: User | None, mode: str) -> int
     return user_id
 
 
-def unlink_member_user(person_id, *, actor, mode="admin"):
+def unlink_member_user(person_id, *, actor, mode="admin", link_audit_id=None, invalidate=True):
     """Detach the account — allowed on ended persons too (the release valve
-    for the blocked-relink case). Returns (person, lost_genebank_ids)."""
+    for the blocked-relink case). With `link_audit_id` (the status view's
+    "nytt konto", spec 5.1) only the link that audit row recorded: refused
+    under the locks once the person was linked or unlinked since, or holds
+    another account. A caller with an outer transaction passes
+    invalidate=False and invalidates the lost genebanks after its commit.
+    Returns (person, lost_genebank_ids)."""
     with DB_PROXY.atomic():
         person, user = _lock_for_detach(person_id)
         if user is None:
             raise LinkError("Personen har inget kopplat konto", "Det finns inget konto att koppla bort")
+        if link_audit_id is not None:
+            since = MatrikelAudit.select().where(
+                MatrikelAudit.membership == person.membership_id,
+                MatrikelAudit.action.in_(("person_user_linked", "person_user_unlinked")),
+                MatrikelAudit.id >= link_audit_id,
+            )
+            rows = [row for row in since if (row.payload or {}).get("person_id") == person.id]
+            if [row.id for row in rows] != [link_audit_id] or rows[0].payload.get("user_id") != user.id:
+                raise LinkError("Kopplingen har ändrats", "Kontot har redan kopplats om. Läs in sidan igen.")
         before = user.effective_herd_ids()
         _detach_user_locked(person, actor=actor, mode=mode)
         lost = before - User.get_by_id(user.id).effective_herd_ids()
         lost_genebanks = (
             {h.genebank_id for h in Herd.select(Herd.genebank).where(Herd.id.in_(list(lost)))} if lost else set()
         )
-    _invalidate_genebanks(lost_genebanks)
+    if invalidate:
+        _invalidate_genebanks(lost_genebanks)
     return person, lost_genebanks
 
 

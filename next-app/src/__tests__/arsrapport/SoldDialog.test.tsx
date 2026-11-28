@@ -25,12 +25,13 @@ function dialog(
   canSell = true,
   submitted: BodyEntry["sald"] | null = null,
   rabbit?: Partial<RabbitView>,
+  year = 2025,
 ) {
   render(
     <SoldDialog
       open
       number="M9007-2412"
-      year={2025}
+      year={year}
       genebankId={2}
       ownHerd="M9007"
       loadHerds={() => new Promise(() => {})} // never answers
@@ -49,21 +50,36 @@ function dialog(
 const save = () =>
   fireEvent.click(screen.getByRole("button", { name: "Spara försäljningen" }));
 
-// The name and the town each say what is missing, at the field.
+// The buyer is asked first how they are recorded (#273: "Har köparen e-post?" before 2027), then
+// the name, town, address and e-mail each say what is missing, at the field.
 function expectBuyerAsked() {
-  const name = screen.getByLabelText(/Köparens namn/);
-  const town = screen.getByLabelText(/^Ort/);
+  expect(screen.getByText("Välj om köparen har e-post.")).toBeTruthy();
+  expect(screen.queryByLabelText(/Köparens namn/)).toBeNull();
+  expect(document.activeElement).toBe(
+    screen.getByRole("radio", { name: "Ja" }),
+  ); // the refused choice takes the focus
+  fireEvent.click(screen.getByRole("radio", { name: "Ja" }));
   for (const [field, text] of [
-    [name, "Skriv köparens namn."],
-    [town, "Skriv köparens ort."],
+    [screen.getByLabelText(/Köparens namn/), "Skriv köparens namn."],
+    [screen.getByLabelText(/^Ort/), "Skriv köparens ort."],
     [screen.getByLabelText(/^Postadress/), "Skriv köparens postadress."],
+    [screen.getByLabelText(/^E-post/), "Skriv köparens e-post."],
   ] as const) {
     expect(field.getAttribute("aria-invalid")).toBe("true");
     const described = field.getAttribute("aria-describedby") ?? "";
     expect(document.getElementById(described)?.textContent).toBe(text);
   }
-  expect(document.activeElement).toBe(name);
 }
+
+const typeEpostBuyer = () => {
+  for (const [label, value] of [
+    [/Köparens namn/, "Ola Köpare"],
+    [/^Ort/, "Visby"],
+    [/^Postadress/, "Testgatan 1"],
+    [/^E-post/, "ola@example.invalid"],
+  ] as const)
+    fireEvent.change(screen.getByLabelText(label), { target: { value } });
+};
 
 describe("SoldDialog", () => {
   it("gives the herd picker the member look, and leaves other pickers as they are", () => {
@@ -124,13 +140,15 @@ describe("SoldDialog", () => {
     );
   });
 
-  it("takes the buyer outside the genebank in BuyerFields, with the buyer's yes", () => {
-    const onSave = dialog(null);
+  it("takes the buyer outside the genebank in BuyerFields, with the buyer's yes (a bevis, from 2028)", () => {
+    const onSave = dialog(null, vi.fn(), true, null, undefined, 2028);
     fireEvent.click(screen.getByLabelText("Utanför genbanken"));
     expect(screen.getByTestId("sell-buyer").className).toContain(
       "memberFields",
     ); // the member's larger fields
+    expect(screen.queryByRole("radio", { name: "Ja" })).toBeNull(); // no choice from 2028
     expect(screen.getByText(ON_SEND_TEXT)).toBeTruthy();
+    expect(screen.queryByText(/Ge köparen försäljningsbeviset/)).toBeNull(); // the sale has happened
     expect(screen.queryByLabelText(/E-post/)).toBeNull(); // only with a yes
     fireEvent.change(screen.getByLabelText(/Köparens namn/), {
       target: { value: "Ola Köpare" },
@@ -155,7 +173,7 @@ describe("SoldDialog", () => {
     save();
     expect(onSave).toHaveBeenCalledWith({
       till: "utanfor",
-      ar: 2025,
+      ar: 2028,
       manad: 6,
       dag: null,
       kopare: {
@@ -166,6 +184,53 @@ describe("SoldDialog", () => {
         membership_optin: true,
         email: "ola@example.invalid",
       },
+    });
+  });
+
+  it("takes the e-mail buyer for the association's notice before 2027", () => {
+    const onSave = dialog(null);
+    fireEvent.click(screen.getByLabelText("Utanför genbanken"));
+    expect(screen.getByText("Har köparen e-post?")).toBeTruthy();
+    expect(screen.queryByLabelText(/Köparens namn/)).toBeNull(); // not before the choice
+    fireEvent.click(screen.getByRole("radio", { name: "Ja" }));
+    expect(screen.queryByRole("checkbox")).toBeNull(); // no consent boxes
+    typeEpostBuyer();
+    fireEvent.change(screen.getByLabelText("Månad"), {
+      target: { value: "6" },
+    });
+    save();
+    expect(onSave).toHaveBeenCalledWith({
+      till: "utanfor",
+      ar: 2025,
+      manad: 6,
+      dag: null,
+      kopare: {
+        name: "Ola Köpare",
+        town: "Visby",
+        postal_address: "Testgatan 1",
+        email: "ola@example.invalid",
+        notice_only: true,
+      },
+    });
+  });
+
+  it("saves a sale outside the genebank with no buyer kept when the buyer has no e-mail", () => {
+    const onSave = dialog(null);
+    fireEvent.click(screen.getByLabelText("Utanför genbanken"));
+    fireEvent.click(
+      screen.getByRole("radio", { name: "Nej, såld utanför genbanken" }),
+    );
+    expect(screen.queryByLabelText(/Köparens namn/)).toBeNull();
+    fireEvent.change(screen.getByLabelText("Månad"), {
+      target: { value: "6" },
+    });
+    save();
+    expect(onSave).toHaveBeenCalledWith({
+      till: "utanfor",
+      ar: 2025,
+      manad: 6,
+      dag: null,
+      kopare: { not_recorded: true },
     });
   });
 
@@ -235,6 +300,7 @@ describe("SoldDialog", () => {
   it("requires a replacement buyer's address on a pending proposal", () => {
     const sale = { till: "utanfor", ar: 2025, manad: 10, dag: 10 };
     const onSave = dialog({ ...sale, kopare: null }, vi.fn(), true, sale);
+    fireEvent.click(screen.getByRole("radio", { name: "Ja" }));
     fireEvent.change(screen.getByLabelText(/Köparens namn/), {
       target: { value: "Ola Köpare" },
     });
@@ -243,6 +309,7 @@ describe("SoldDialog", () => {
     });
     save();
     expect(screen.getByText("Skriv köparens postadress.")).toBeTruthy();
+    expect(screen.getByText("Skriv köparens e-post.")).toBeTruthy();
     expect(onSave).not.toHaveBeenCalled();
   });
 
@@ -262,15 +329,7 @@ describe("SoldDialog", () => {
     save();
     expect(onSave).not.toHaveBeenCalled();
     expectBuyerAsked();
-    fireEvent.change(screen.getByLabelText(/Köparens namn/), {
-      target: { value: "Ola Köpare" },
-    });
-    fireEvent.change(screen.getByLabelText(/^Ort/), {
-      target: { value: "Visby" },
-    });
-    fireEvent.change(screen.getByLabelText(/^Postadress/), {
-      target: { value: "Testgatan 1" },
-    });
+    typeEpostBuyer();
     save();
     expect(onSave).toHaveBeenCalledWith(
       expect.objectContaining({

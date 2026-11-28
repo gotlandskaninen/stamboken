@@ -94,8 +94,10 @@ body {
   color: var(--ink);
   margin: 0;
 }
-.head-mid .breed {
-  font-size: 9pt; color: var(--ink-2); margin: 1.2mm 0 0 0;
+.head-mid .breed {  /* bold like the rabbit's and parents' names, without a label (Anders 2026-11-24) */
+  font-family: var(--serif);
+  font-size: 15pt; font-weight: 600;
+  color: var(--ink-2); margin: 1.2mm 0 0 0;
 }
 .cert-nr {
   text-align: center;
@@ -116,13 +118,12 @@ body {
   line-height: 1.1;
 }
 .fields td.vname { font-family: var(--serif); font-size: 11pt; font-weight: 600; }  /* as the parents' names */
-.head-mid .breed { font-size: 10.5pt; }
 .cert-nr .lbl { font-family: var(--sans); font-size: 8.5pt; font-weight: 600; text-transform: none; letter-spacing: 0; color: var(--ink); }
 .cert-nr .sub { font-size: 7.5pt; color: var(--ink-2); margin-top: .8mm; }
 
 /* microtext security line between two equally thin rules — hard to reproduce with copier/scanner */
 .rule { height: 0; border-top: 0.4pt solid var(--line-strong); margin-top: 0.8mm; }
-.rule.top { margin-top: 3.5mm; }
+.rule.top { margin-top: 1.4mm; }  /* 1.4 not 3.5: the bold breed line made the header 2.1 mm taller */
 .microline {
   font-family: var(--mono);
   font-size: 3.2pt; font-weight: 400;
@@ -290,7 +291,7 @@ h1, .sec, .breed { color:var(--skog) !important; }
     <div class="head-mid">
       <p class="eyebrow">Föreningen Gotlandskaninen</p>
       <h1>Genbanksintyg</h1>
-      <p class="breed">Ras: {{ breed }}</p>
+      <p class="breed">{{ breed }}</p>
     </div>
     <div class="cert-nr"><div class="lbl">Kaninens individnummer</div><div class="num">{{ genebank_number }}-{{ genebank_aki }}</div></div>
   </div>
@@ -301,7 +302,7 @@ h1, .sec, .breed { color:var(--skog) !important; }
   <div class="sec"><span class="no">01</span><span class="t">Identitet</span><span class="fill"></span></div>
   <table class="fields">
     <tr><td class="l">Namn</td><td class="v vname">{{ name or '—' }}</td><td class="l">Födelsedatum</td><td class="v">{{ birth_date }}</td></tr>
-    <tr><td class="l">Kön</td><td class="v">{{ sex }}</td><td class="l">Färg / kännetecken</td><td class="v">{% if color_code %}<span class="chip">{{ color_code }}</span> {% endif %}{{ color }}</td></tr>
+    <tr><td class="l">Kön</td><td class="v">{{ sex }}</td><td class="l">Färg och kännetecken</td><td class="v">{% if color_code %}<span class="chip">{{ color_code }}</span> {% endif %}{{ color }}</td></tr>
     <tr><td class="l">Födda i kullen</td><td class="v">{{ litter_size }}</td><td class="l">Levande vid 6 veckor</td><td class="v">{{ litter_size6w }}</td></tr>
     <tr><td class="l">Färganteckning</td><td class="v" colspan="3">{{ color_note or '—' }}</td></tr>
     <tr><td class="l">Ögonfärg</td><td class="v">{{ eye_color or '—' }}</td><td class="l">Klofärg</td><td class="v">{{ claw_color or '—' }}</td></tr>

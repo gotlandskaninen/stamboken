@@ -139,9 +139,9 @@ class TestUploadPhotoEndpoint(UploadFlaskTest):
         self.assertEqual(body["status"], 415)
 
     def test_upload_rejects_oversized_file(self):
-        """File larger than 10MB should be rejected."""
+        """File larger than 25MB should be rejected."""
         self._login_as(self.owner)
-        big = io.BytesIO(b"\xff\xd8\xff" + b"\x00" * (10 * 1024 * 1024 + 1))
+        big = io.BytesIO(b"\xff\xd8\xff" + b"\x00" * (25 * 1024 * 1024 + 1))
         resp = self._upload("G1-2111", big, "huge.jpg")
         self.assertEqual(resp.status_code, 413)
         body = resp.get_json()

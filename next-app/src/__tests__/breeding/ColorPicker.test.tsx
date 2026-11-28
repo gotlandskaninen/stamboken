@@ -1,5 +1,5 @@
 import React from "react";
-import { describe, it, expect, afterEach, vi } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import {
   render,
   screen,
@@ -8,6 +8,12 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { ColorPicker } from "@/components/herd/ColorPicker";
+import { TESTNYCKEL } from "../fargatlas/testnyckel";
+
+const getFargatlas = vi.hoisted(() => vi.fn());
+vi.mock("@/app/(app)/stamboken/(dashboard)/fargatlas/actions", () => ({
+  getFargatlas,
+}));
 
 const options = [
   { id: 22, name: "Viltgrå", comment: "Som en vildkanin" },
@@ -15,6 +21,11 @@ const options = [
 ];
 
 afterEach(cleanup);
+// The picker reads the atlas when it mounts, to know whether the guide has a key; no atlas unless a test says so.
+beforeEach(() => {
+  getFargatlas.mockReset();
+  getFargatlas.mockResolvedValue(null);
+});
 
 describe("ColorPicker", () => {
   it('visar "22 Viltgrå"', () => {
@@ -146,5 +157,295 @@ describe("ColorPicker", () => {
     expect((screen.getByRole("combobox") as HTMLInputElement).value).toBe(
       "12 Albino",
     );
+  });
+
+  it('"Visa färgen" öppnar färgens kort ur atlasen', async () => {
+    getFargatlas.mockResolvedValue({
+      fotoBas: "/api",
+      atlas: {
+        version: "test",
+        grupper: {},
+        farger: [
+          {
+            id: 22,
+            name: "Viltgrå",
+            comment: "Som en vildkanin",
+            beskrivning: "Testbeskrivning",
+            skiljs_fran: null,
+            foton: [],
+          },
+        ],
+      },
+    });
+    render(
+      <ColorPicker
+        options={options}
+        value="Viltgrå"
+        onChange={() => {}}
+        genebank="Gotlandskanin"
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Visa färgen" }));
+    expect(
+      await screen.findByRole("heading", { name: "22 Viltgrå" }),
+    ).toBeDefined();
+    expect(screen.getByText("Testbeskrivning")).toBeDefined();
+  });
+
+  it("läser atlasen igen när kortet öppnas efter ett fel", async () => {
+    getFargatlas.mockReset();
+    getFargatlas
+      .mockResolvedValueOnce(null) // the read when the picker mounts
+      .mockRejectedValueOnce(new Error("nätet"))
+      .mockResolvedValue({
+        fotoBas: "/api",
+        atlas: { version: "test", grupper: {}, farger: [] },
+      });
+    render(
+      <ColorPicker
+        options={options}
+        value="Viltgrå"
+        onChange={() => {}}
+        genebank="Gotlandskanin"
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Visa färgen" }));
+    expect(
+      await screen.findByText(/Färgatlasen gick inte att hämta/),
+    ).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Stäng" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "Visa färgen" }));
+    // while the new read is on its way, the old error is not shown
+    expect(screen.queryByText(/Färgatlasen gick inte att hämta/)).toBeNull();
+    expect(screen.getByLabelText("Hämtar färgen")).toBeDefined();
+    expect(
+      await screen.findByText("Färgen finns inte i färgatlasen."),
+    ).toBeDefined();
+    expect(getFargatlas).toHaveBeenCalledTimes(3); // mount, failed opening, new opening
+  });
+
+  it('ingen "Visa färgen" innan en färg är vald', () => {
+    render(
+      <ColorPicker
+        options={options}
+        value=""
+        onChange={() => {}}
+        genebank="Gotlandskanin"
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Visa färgen" })).toBeNull();
+  });
+
+  describe("Hjälp mig välja", () => {
+    // The atlas's colours come from the database, as the picker's list does.
+    const farg = (id: number, name: string) => ({
+      id,
+      name,
+      comment: null,
+      genebank: "Gotlandskanin",
+      beskrivning: null,
+      skiljs_fran: null,
+      foton: [],
+    });
+    const medNyckel = {
+      fotoBas: "/api",
+      atlas: {
+        version: "test",
+        grupper: {},
+        farger: [farg(11, "Svart"), farg(22, "Viltgrå")],
+        nyckel: TESTNYCKEL,
+      },
+    };
+    // The made-up key's path to 22.
+    const tillViltgra = async () => {
+      for (const text of ["Nej", "Ja, testvilt"])
+        fireEvent.click(
+          await screen.findByRole("button", {
+            name: (namn: string) => namn.startsWith(text),
+          }),
+        );
+    };
+    const oppna = async () =>
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Hjälp mig välja" }),
+      );
+
+    it("guiden sätter färgen och påminner om pälsen", async () => {
+      getFargatlas.mockResolvedValue(medNyckel);
+      const onChange = vi.fn();
+      render(
+        <ColorPicker
+          options={options}
+          value=""
+          onChange={onChange}
+          genebank="Gotlandskanin"
+        />,
+      );
+      await oppna();
+      await tillViltgra();
+      fireEvent.click(screen.getByRole("button", { name: "Ja" }));
+      fireEvent.click(screen.getByRole("button", { name: /^Välj 22/ }));
+      expect(onChange).toHaveBeenCalledWith("Viltgrå");
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      // announced only once the dialog has closed and the picker is readable again
+      const status = await screen.findByText(
+        "Kom ihåg: Testsvar: välj Rex vid Päls.",
+      );
+      expect(status.closest("[aria-hidden=true]")).toBeNull();
+    });
+
+    it("ett nytt val med Nej tar bort förra valets påminnelse", async () => {
+      getFargatlas.mockResolvedValue(medNyckel);
+      render(
+        <ColorPicker
+          options={options}
+          value=""
+          onChange={() => {}}
+          genebank="Gotlandskanin"
+        />,
+      );
+      const valj = async (ja: boolean) => {
+        await oppna();
+        await tillViltgra();
+        fireEvent.click(
+          screen.getByRole("button", { name: ja ? "Ja" : "Nej" }),
+        );
+        fireEvent.click(screen.getByRole("button", { name: /^Välj 22/ }));
+        await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      };
+      await valj(true);
+      expect(await screen.findByText(/Kom ihåg: Testsvar/)).toBeDefined();
+      await valj(false);
+      await waitFor(() => expect(screen.queryByText(/Kom ihåg/)).toBeNull());
+    });
+
+    it("Välj skickar databasens namn som det är, också med ett mellanslag på slutet", async () => {
+      // Some production colour names end with a space; the backend looks the colour up by that exact name.
+      getFargatlas.mockResolvedValue(medNyckel);
+      const onChange = vi.fn();
+      render(
+        <ColorPicker
+          options={[{ id: 22, name: "Viltgrå ", comment: null }]}
+          value=""
+          onChange={onChange}
+          genebank="Gotlandskanin"
+        />,
+      );
+      await oppna();
+      await tillViltgra();
+      fireEvent.click(screen.getByRole("button", { name: /^Välj 22/ }));
+      expect(onChange).toHaveBeenCalledWith("Viltgrå ");
+    });
+
+    it("stäng utan val ändrar inget", async () => {
+      getFargatlas.mockResolvedValue(medNyckel);
+      const onChange = vi.fn();
+      render(
+        <ColorPicker
+          options={options}
+          value="Svart"
+          onChange={onChange}
+          genebank="Gotlandskanin"
+        />,
+      );
+      await oppna();
+      await tillViltgra();
+      fireEvent.click(screen.getByRole("button", { name: "Stäng" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(onChange).not.toHaveBeenCalled();
+      expect((screen.getByRole("combobox") as HTMLInputElement).value).toBe(
+        "3 Svart",
+      );
+    });
+
+    it("ett tryck bredvid dialogen stänger den inte", async () => {
+      getFargatlas.mockResolvedValue(medNyckel);
+      render(
+        <ColorPicker
+          options={options}
+          value=""
+          onChange={() => {}}
+          genebank="Gotlandskanin"
+        />,
+      );
+      await oppna();
+      fireEvent.click(await screen.findByRole("button", { name: /^Nej/ }));
+      fireEvent.click(document.querySelector(".MuiBackdrop-root")!);
+      expect(screen.getByRole("dialog")).toBeDefined();
+      expect(screen.getByText("Testfråga tre?")).toBeDefined();
+    });
+
+    it("Välj stänger inte när färgen saknas i listan", async () => {
+      getFargatlas.mockResolvedValue(medNyckel);
+      const onChange = vi.fn();
+      render(
+        <ColorPicker
+          options={[{ id: 3, name: "Svart", comment: null }]}
+          value="Svart"
+          onChange={onChange}
+          genebank="Gotlandskanin"
+        />,
+      );
+      await oppna();
+      await tillViltgra();
+      fireEvent.click(screen.getByRole("button", { name: /^Välj 22/ }));
+      expect(onChange).not.toHaveBeenCalled();
+      expect(screen.getByRole("dialog")).toBeDefined();
+      expect(screen.getByText(/Färg 22 finns inte i färglistan/)).toBeDefined();
+    });
+
+    it("ingen guide utan nyckel i atlaspaketet", async () => {
+      getFargatlas.mockResolvedValue({
+        ...medNyckel,
+        atlas: { ...medNyckel.atlas, nyckel: null },
+      });
+      render(
+        <ColorPicker
+          options={options}
+          value=""
+          onChange={() => {}}
+          genebank="Gotlandskanin"
+        />,
+      );
+      await waitFor(() => expect(getFargatlas).toHaveBeenCalled());
+      await new Promise((r) => setTimeout(r, 0));
+      expect(
+        screen.queryByRole("button", { name: "Hjälp mig välja" }),
+      ).toBeNull();
+    });
+
+    it("ingen guide medan listan laddas", () => {
+      getFargatlas.mockResolvedValue(medNyckel);
+      render(
+        <ColorPicker
+          options={[]}
+          loading
+          value=""
+          onChange={() => {}}
+          genebank="Gotlandskanin"
+        />,
+      );
+      expect(
+        screen.queryByRole("button", { name: "Hjälp mig välja" }),
+      ).toBeNull();
+    });
+
+    it("ingen guide för mellerud", async () => {
+      getFargatlas.mockResolvedValue(medNyckel);
+      render(
+        <ColorPicker
+          options={[{ id: 101, name: "Albino", comment: null }]}
+          value=""
+          onChange={() => {}}
+          genebank="Mellerudskanin"
+        />,
+      );
+      await new Promise((r) => setTimeout(r, 0));
+      expect(
+        screen.queryByRole("button", { name: "Hjälp mig välja" }),
+      ).toBeNull();
+      expect(getFargatlas).not.toHaveBeenCalled(); // no read for a genebank without a key
+    });
   });
 });

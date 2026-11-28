@@ -40,7 +40,10 @@ from utils.database import (
     YearlyReportRound,
     not_voided,
 )
-from utils.inbox_proposal import build_proposal
+from utils.herd_tracking import HerdTrackingError
+from utils.inbox_paper import MAX_STRAIGHTEN, turned
+from utils.inbox_proposal import SALE_READING, build_proposal
+from utils.individual_commands import lock_individual_for_edit
 from utils.individual_number_v2 import NUMBER_PATTERN, parse_number
 from utils.individual_policy import Role
 from utils.log_masking import mask_tokens
@@ -99,8 +102,10 @@ INCOMPLETE_MONTHS = 12
 REMIND_MONTHS = 11
 MAX_NOTE = 2000
 MAX_RECTS = 20
-# The masking a handwritten certificate (format 1) is offered: its lower third, where seller and buyer write.
-HANDWRITTEN_MASK = [{"x": 0.0, "y": 0.6667, "w": 1.0, "h": 0.3333}]
+# The frame a handwritten certificate (format 1) is offered: all but its lower third, where seller and buyer write.
+HANDWRITTEN_FRAME = {"x": 0.0, "y": 0.0, "w": 1.0, "h": 0.6667}
+MIN_FRAME = 0.1  # the copy keeps at least a tenth of the photo's width and height
+FULL_FRAME = 0.99  # a frame over this share of the photo or more leaves nothing out
 
 
 class InboxError(Exception):
@@ -268,9 +273,15 @@ def create_upload(user, herd, message, stored, *, kind="upload", ref_type=None, 
         ref_type=ref_type,
         ref_data={PURPOSE: held} if held else None,
     )
-    off = {"interpretation_status": "av"} if held else {}
     documents = [
-        InboxDocument.create(item=item, original_path=path, mime="image/jpeg", sha256=sha256, quality=quality, **off)
+        InboxDocument.create(
+            item=item,
+            original_path=path,
+            mime="image/jpeg",
+            sha256=sha256,
+            quality=quality,
+            interpretation_status="av" if held else interpreter.initial_status(quality),
+        )
         for path, sha256, quality in stored
     ]
     log_event(item, user, "inkommen", documents=len(documents), **detail)
@@ -423,6 +434,48 @@ def require_handler(item, user):
 def _set_state(item, state):
     item.state, item.state_changed_at = state, now()
     item.closed_at = item.state_changed_at if state in CLOSED_STATES else None
+    if item.closed_at is not None:  # a closed item saves no sale: the seller and buyer read off its photos go
+        for document in item.documents:
+            if drop_sale_reading(document):
+                document.save(only=[InboxDocument.interpretation, InboxDocument.proposal])
+
+
+def drop_sale_reading(document):
+    """
+    The seller and buyer read off the photo (rule 5 b) leave its reading and proposal, on `document` for the caller
+    to save, once no sale is saved from it any more: a sale was (its buyer is then in BuyerContact, under its own
+    rules), the document is done, dismissed or no longer a certificate, or its item closed. Returns whether there were
+    any.
+    """
+    found = False
+    for name, key in (("interpretation", SALE_READING), ("proposal", "sale")):
+        value = getattr(document, name)
+        if isinstance(value, dict) and key in value:
+            setattr(document, name, {k: v for k, v in value.items() if k != key})
+            found = True
+    return found
+
+
+def sale_ended_since(item_id, document_id, since):
+    """
+    Whether the item's history since `since` holds something that removes the seller and buyer read off the document
+    (drop_sale_reading), also if it was undone: the item closed, the document retyped, dismissed, done or sold. A
+    reading made meanwhile is then not stored (inbox_interpreter.interpret_next).
+    """
+    events = InboxEvent.select(InboxEvent.kind, InboxEvent.detail).where(
+        (InboxEvent.item == item_id) & (InboxEvent.at >= since)
+    )
+    for kind, detail in events.tuples():
+        detail = detail or {}
+        if kind == "lage" and detail.get("to") in CLOSED_STATES:
+            return True
+        if detail.get("document") == document_id and (
+            kind == "kopia"
+            or (kind == "dokument" and {"dismissed", "doc_type"} & set(detail.get("fields", [])))
+            or (kind == "sparad" and detail.get("action") in ("overlatelse", "bevis"))
+        ):
+            return True
+    return False
 
 
 def take(item, user, *, over, expected=None):
@@ -766,14 +819,22 @@ def _waiting_for(value):
     return sorted(set(value))
 
 
-DOCUMENT_FIELDS = ("doc_type", "cert_format", "rotation", "mask_rects", "waiting_for", "dismissed")
-COPY_FIELDS = {"rotation", "mask_rects", "doc_type"}  # fixed once the copy is made: only …/maskning remakes it
+DOCUMENT_FIELDS = ("doc_type", "cert_format", "rotation", "straighten", "mask_rects", "waiting_for", "dismissed")
+# fixed once the copy is made: only …/maskning remakes it
+COPY_FIELDS = {"rotation", "straighten", "mask_rects", "doc_type"}
 
 
 def _rotation(value):
     if isinstance(value, bool) or value not in (0, 90, 180, 270):
         raise InboxError(400, "rotation är 0, 90, 180 eller 270 grader medurs.")
     return value
+
+
+def _straighten(value):
+    """The degrees the photo is straightened by after its quarter turns: -15 to 15 clockwise, to a tenth."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not abs(value) <= MAX_STRAIGHTEN:
+        raise InboxError(400, f"straighten är ett tal från -{MAX_STRAIGHTEN} till {MAX_STRAIGHTEN} grader medurs.")
+    return round(value, 1) + 0.0  # never -0.0
 
 
 def update_document(item, document, user, changes):
@@ -793,13 +854,21 @@ def update_document(item, document, user, changes):
         raise InboxError(400, f"cert_format är null eller en av {', '.join(CERT_FORMATS)}.")
     if "rotation" in changes:
         _rotation(changes["rotation"])
+    if "straighten" in changes:
+        changes = {**changes, "straighten": _straighten(changes["straighten"])}
     if "dismissed" in changes and not isinstance(changes["dismissed"], bool):
         raise InboxError(400, "dismissed är true eller false.")
-    if changes.get("doc_type", document.doc_type) != document.doc_type:  # only certificates are read, never a notice's
-        read = changes["doc_type"] == "intyg" and not unread(item)
-        document.interpretation_status = interpreter.initial_status() if read else "av"
+    # Turned while it waits: a reading of the old turn is dropped when it ends, and was no attempt.
+    if document.interpretation_status == "vantar" and any(
+        key in changes and changes[key] != getattr(document, key) for key in ("rotation", "straighten")
+    ):
         document.attempts = 0
-    for key in ("doc_type", "cert_format", "rotation"):
+    if changes.get("doc_type", document.doc_type) != document.doc_type:  # only certificates are read, never a notice's
+        read = changes["doc_type"] == "intyg" and not unread(item) and document.original_path is not None
+        document.interpretation_status = interpreter.initial_status(document.quality) if read else "av"
+        document.attempts = 0
+        drop_sale_reading(document)  # retyped: read again as a certificate, or not at all
+    for key in ("doc_type", "cert_format", "rotation", "straighten"):
         if key in changes:
             setattr(document, key, changes[key])
     if "mask_rects" in changes:
@@ -808,6 +877,7 @@ def update_document(item, document, user, changes):
         document.waiting_for = _waiting_for(changes["waiting_for"])
     if changes.get("dismissed"):
         document.done_at = document.done_at or now()
+        drop_sale_reading(document)
     elif changes.get("dismissed") is False and document.public_path is None and document.herd_tracking_id is None:
         document.done_at = None
     document.save()
@@ -852,14 +922,16 @@ def reinterpret(item, document, user):
 
 def make_copy(document):
     """
-    The copy shown on the rabbit, made from the original: turned `rotation` degrees clockwise, its mask_rects
-    (fractions of the turned image) painted black, saved as inkorg/kopia/<document id>.jpg without metadata.
-    Only confirm_mask makes it, from the pair it was given, which needs the original.
+    The copy shown on the rabbit, made from the original: turned `rotation` + `straighten` degrees clockwise
+    (inbox_paper.turned), its mask_rects (fractions of the turned image) painted black, then cropped to its
+    copy_frame (a fraction of the same turned image) when it has one, saved without metadata under a new name in
+    inkorg/kopia/, so a transaction rolled back after it leaves the copy it had. Only confirm_mask makes it, from
+    what it was given, which needs the original.
     """
     if document.original_path is None:
         raise InboxError(409, "Originalet är raderat, så kopian kan inte göras om.")
     with Image.open(private_path(document.original_path)) as original:
-        image = original.convert("RGB").rotate(-document.rotation, expand=True)
+        image = turned(original, document.rotation, document.straighten)
     width, height = image.size
     draw = ImageDraw.Draw(image)
     for r in document.mask_rects or []:
@@ -867,30 +939,92 @@ def make_copy(document):
         draw.rectangle(
             [math.floor(box[0]), math.floor(box[1]), math.ceil(box[2]) - 1, math.ceil(box[3]) - 1], fill="black"
         )
-    document.public_path, _ = store_jpeg(image, "kopia", name=str(document.id))
+    if document.copy_frame:  # rounded inwards, as the boxes are outwards: a pixel partly outside the frame is out
+        f = document.copy_frame
+        left, top = math.ceil(f["x"] * width), math.ceil(f["y"] * height)
+        right = min(width, math.floor((f["x"] + f["w"]) * width))
+        bottom = min(height, math.floor((f["y"] + f["h"]) * height))
+        if right <= left or bottom <= top:  # a photo of a few pixels: nothing whole inside the frame
+            raise InboxError(400, "Fotot är för litet för en ram. Ta bort ramen och täck med svarta rutor.")
+        image = image.crop((left, top, right, bottom))
+    document.public_path, _ = store_jpeg(image, "kopia")
 
 
-def confirm_mask(item, document, user, rotation, rects, no_personal_data=None):
+def confirm_mask(
+    item, document, user, rotation, rects, no_personal_data=None, matches_registry=None, frame=None, straighten=None
+):
     """
-    POST …/maskning: the rotation and the rectangles covering the seller and the buyer, stored together, and the copy
-    made from exactly that pair goes on the rabbit; the document is done. The item's handler, while the item is open;
-    a copy already made can be made again by a manager of the item's genebank or an admin at any time.
+    POST …/maskning: the rotation and the straighten (None: the document's), and the rectangles covering the seller
+    and the buyer, stored together with the frame the copy is cropped to (None: the whole photo), and the copy made
+    from exactly those goes on the rabbit; the document is done. The item's handler, while the item is open; a copy
+    already made can be made again by a manager of the item's genebank or an admin at any time. Either way
+    the caller must be allowed to put a copy on the rabbit (may_publish). With matches_registry true the caller
+    found the certificate and the registry in agreement: the rabbit's badge. Each call sets it anew, as it does the
+    pair. Returns the copy it replaced, for the caller to remove after the commit.
     """
-    if not (document.public_path and manages(user, item.genebank_id)):
-        require_handler(item, user)
     if document.doc_type != "intyg" or document.individual_id is None:
+        if not (document.public_path and manages(user, item.genebank_id)):
+            require_handler(item, user)
         raise InboxError(409, "Spara kaninen från intyget först.")
+    try:  # the rabbit under its lock (item, litters, rabbits): its certificate is read once, here
+        lock_individual_for_edit(document.individual_id)
+    except HerdTrackingError as exc:
+        raise InboxError(exc.status, exc.detail) from None
+    rabbit = Individual.get_by_id(document.individual_id)
+    # Redone without holding the item: only by a manager of the rabbit's genebank, or an admin.
+    if not (document.public_path and manages(user, held_in(rabbit).genebank_id)):
+        require_handler(item, user)
+    if not may_publish(user, rabbit):
+        raise InboxError(403, f"Du får inte lägga kopian på {rabbit.number}.")
     rotation, rects = _rotation(rotation), _rects(rects)
+    if straighten is None and document.straighten:  # the boxes may have been drawn at another angle
+        raise InboxError(400, "Ange straighten: vinkeln som rutorna och ramen ritades i.")
+    straighten = document.straighten if straighten is None else _straighten(straighten)
     if rects is None:
         raise InboxError(400, "Ange mask_rects: rektanglarna som täcker säljaren och köparen.")
-    if not rects and no_personal_data is not True:
-        raise InboxError(400, 'En tom mask_rects kräver "no_personal_data": true: intyget visar ingen säljare.')
-    document.rotation, document.mask_rects = rotation, rects
+    frame = None if frame is None else _rects([frame])[0]
+    if frame and min(frame["w"], frame["h"]) < MIN_FRAME:
+        raise InboxError(400, "Ramen runt kopian måste vara minst en tiondel av fotots bredd och höjd.")
+    crops = frame is not None and frame["w"] * frame["h"] < FULL_FRAME
+    if not rects and not crops and no_personal_data is not True:
+        raise InboxError(
+            400, 'En tom mask_rects kräver en copy_frame som lämnar något utanför, eller "no_personal_data": true.'
+        )
+    if matches_registry is not None and not isinstance(matches_registry, bool):
+        raise InboxError(400, "matches_registry är true eller false.")
+    if matches_registry and document.saved_certificate is None:
+        raise InboxError(
+            409, "Fotot sparades innan Stamboken sparade intygsnumret, så det kan inte markeras kontrollerat."
+        )
+    stale = rabbit.certificate != document.saved_certificate or rabbit.number.upper() != document.saved_number
+    if matches_registry and (stale or rabbit.digital_certificate):
+        # The check is of the certificate the photo was saved as: a number changed since is not the one compared.
+        raise InboxError(
+            409,
+            f"{rabbit.number} har ett annat intyg eller individnummer i Stamboken än fotot sparades med "
+            f"({document.saved_certificate}, {document.saved_number}). Kontrollera kaninen igen.",
+        )
+    document.rotation, document.straighten = rotation, straighten
+    document.mask_rects, document.copy_frame = rects, frame
+    document.verified_at, document.verified_by = (now(), user.id) if matches_registry else (None, None)
     document.done_at = document.done_at or now()
+    drop_sale_reading(document)
+    replaced = document.public_path
     make_copy(document)
     document.save()
-    log_event(item, user, "kopia", document=document.id, rects=len(rects), rotation=rotation)
+    log_event(
+        item,
+        user,
+        "kopia",
+        document=document.id,
+        rects=len(rects),
+        frame=bool(frame),
+        rotation=rotation,
+        straighten=straighten,
+        stammer=bool(matches_registry),
+    )
     close_if_done(item, user)
+    return replaced
 
 
 def remove_copy(item, document, user):
@@ -898,14 +1032,47 @@ def remove_copy(item, document, user):
     DELETE …/kopia: the masked copy comes off the rabbit (a badly masked one, with the original gone, cannot be
     made again). The caller holds the item's lock, and removes the returned file after the commit.
     """
-    if not manages(user, item.genebank_id):
+    genebank = held_in(document.individual).genebank_id if document.individual_id else item.genebank_id
+    if not manages(user, genebank):  # the rabbit's genebank: an item without one is any manager's
         raise InboxError(403, "Bara genbanksansvarig och admin kan ta bort en kopia.")
     if document.public_path is None:
         raise InboxError(409, "Dokumentet har ingen kopia.")
     path, document.public_path = document.public_path, None
+    document.verified_at = document.verified_by = None  # the badge goes with the copy
     document.save()
     log_event(item, user, "kopia_borttagen", document=document.id)
     return path
+
+
+def held_in(individual):
+    """The rabbit's herd now; its herd of origin when its latest row has none (a migrated legacy row)."""
+    return individual.current_herd or individual.origin_herd
+
+
+def may_publish(user, individual, grant=None):
+    """
+    May `user` put a copy on `individual`, by linking a photo to it or by making its copy: a manager of its genebank
+    or an admin, or a helper of its genebank. Linking through a save is a write the helper makes as the item's
+    handler (`grant`), never in GX1/MX1; making the copy is not, so a rabbit she has just sold to GX1/MX1 through
+    the item still gets its copy (confirm_mask has checked the handler already).
+    """
+    herd = held_in(individual)
+    if manages(user, herd.genebank_id):
+        return True
+    return herd.genebank_id in (user.is_helper or []) and (grant is None or grant.allows(user, herd))
+
+
+def checked_at(individual):
+    """
+    When the copy shown on the rabbit was found to agree with the registry, while the rabbit still has the paper
+    certificate that was checked; None otherwise. The badge everyone who sees the rabbit sees.
+    """
+    copy = paper_certificate(individual)
+    # A rabbit with a digital certificate shows that one, even beside an old paper number: not the one checked.
+    if copy is None or copy.verified_at is None or not individual.certificate or individual.digital_certificate:
+        return None
+    same = copy.saved_certificate == individual.certificate and copy.saved_number == individual.number.upper()
+    return copy.verified_at if same else None
 
 
 def paper_certificate(individual):
@@ -930,12 +1097,27 @@ def _document_status(document, report=False):
     return "vantar_foralder" if document.waiting_for else "ny"
 
 
-def documents_json(documents, report=False):
-    numbers = {}
+def _proposal_shown(document, user):
+    """
+    The stored proposal, for someone who works the item's genebank; for anyone else in the queue (who may see the
+    item but not work it) only what the photo shows: each field's source and what was read, no checks.
+    """
+    proposal = document.proposal
+    if user is None or not isinstance(proposal, dict) or can_handle(user, document.item.genebank_id):
+        return proposal
+    fields = proposal.get("fields") if isinstance(proposal.get("fields"), dict) else {}
+    seen = {key: {k: f[k] for k in ("source", "read") if k in f} for key, f in fields.items() if isinstance(f, dict)}
+    return {"fields": seen, "checks": []}
+
+
+def documents_json(documents, report=False, user=None):
+    """The documents as the API answers them; with `user`, the proposal as that user may see it (_proposal_shown)."""
+    rabbits = {}
     individual_ids = {d.individual_id for d in documents if d.individual_id}
     if individual_ids:
-        query = Individual.select(Individual.id, Individual.number).where(Individual.id.in_(individual_ids))
-        numbers = dict(query.tuples())
+        rabbits = {r.id: r for r in Individual.select().where(Individual.id.in_(individual_ids))}
+    # The genebank the copy is decided in (confirm_mask, remove_copy): the rabbit's now, not the item's.
+    genebanks = {i: held_in(r).genebank_id for i, r in rabbits.items()}
     same = {}  # the same image (sha256) anywhere in the queue: a duplicate warning
     shas = {d.sha256 for d in documents}
     if shas:
@@ -953,15 +1135,24 @@ def documents_json(documents, report=False):
             "doc_type": d.doc_type,
             "cert_format": d.cert_format,
             "rotation": d.rotation,
+            "straighten": d.straighten,
             "mask_rects": d.mask_rects,
-            "mask_suggestion": HANDWRITTEN_MASK if d.cert_format == "handskrivet" and not d.mask_rects else None,
+            "copy_frame": d.copy_frame,
+            "frame_suggestion": (
+                # never masked: a copy made with no boxes and nothing to hide is redone as it was made
+                HANDWRITTEN_FRAME
+                if d.cert_format == "handskrivet" and not d.copy_frame and d.mask_rects is None
+                else None
+            ),
             "waiting_for": d.waiting_for,
             "interpretation_status": d.interpretation_status,
-            "proposal": d.proposal,
-            "individual": numbers.get(d.individual_id),
+            "proposal": _proposal_shown(d, user),
+            "individual": rabbits[d.individual_id].number if d.individual_id in rabbits else None,
+            "individual_genebank_id": genebanks.get(d.individual_id),
             "herd_tracking_id": d.herd_tracking_id,
             "has_original": d.original_path is not None,
             "has_copy": d.public_path is not None,
+            "verified_at": _iso(d.verified_at),
             "done_at": _iso(d.done_at),
         }
         for d in documents
@@ -1083,7 +1274,7 @@ def item_detail(item, user):
         "message": item.message,
         "mentioned_individuals": _rabbit_numbers(item, events, user),
         "sender_address": item.sender_address,
-        "documents": documents_json(documents, report_photo(item)),
+        "documents": documents_json(documents, report_photo(item), user),
         "events": [
             {"id": e.id, "at": _iso(e.at), "kind": e.kind, "user": _person(e.user_id, names), "detail": e.detail}
             for e in events
@@ -1287,10 +1478,23 @@ def herd_holder(herd_id):
     )
 
 
-def saved(item, document, user, individual, action):
-    """The rabbit a certificate document registered or certified; its seller is the holder of the rabbit's herd."""
+def saved(item, document, user, individual, action, paper_number=None):
+    """
+    The rabbit a certificate document registered or certified, with the certificate number it was saved as and
+    the individual number the paper shows (`paper_number`: a paper Stamboken's number overrode is not this
+    rabbit's, and can never be ticked as matching). The
+    paper is the breeder's: its seller is the holder of the rabbit's herd of origin, and its buyer the holder of the
+    herd it is in now when that is another of the association's, so an erasure of either finds the photo. A sale
+    through the document records the sale's own seller and buyer instead, and they stay.
+    """
     document.individual = individual
-    document.seller_member = herd_holder(individual.current_herd.id) or document.seller_member
+    shown = re.sub(r"\s", "", paper_number).upper() if isinstance(paper_number, str) else None
+    document.saved_certificate, document.saved_number = individual.certificate, shown
+    if document.herd_tracking_id is None:
+        document.seller_member = herd_holder(individual.origin_herd_id) or document.seller_member
+        now_in = held_in(individual)
+        if now_in.id != individual.origin_herd_id and now_in.herd not in OUTSIDE_GENEBANK_HERDS:
+            document.buyer_member = herd_holder(now_in.id) or document.buyer_member
     document.save()
     log_event(item, user, "sparad", document=document.id, action=action, individual=individual.number)
 
@@ -1305,7 +1509,7 @@ def bind_report_photo(item, document, user, individual):
     item.ref_id, item.ref_data = individual.id, None  # held for a purchase no longer: a rabbit's photo is read
     saved(item, document, user, individual, "ny_kanin")
     if document.interpretation_status == "av":  # uploaded for a purchase notice (unread): a rabbit's photo is read (G5)
-        document.interpretation_status = interpreter.initial_status()
+        document.interpretation_status = interpreter.initial_status(document.quality)
         document.save()
     if document.interpretation_status == "klar" and document.interpretation is not None:
         document.proposal = build_proposal(document.interpretation, item.genebank_id, item.herd_id, individual)
@@ -1408,6 +1612,7 @@ def transferred(item, document, user, individual, row, *, linked=False):
     document.herd_tracking_id = row.id
     if proof:
         document.individual, document.done_at = individual, now()
+    drop_sale_reading(document)
     document.save()
     proven = item.documents.select(InboxDocument.herd_tracking_id).where(
         (InboxDocument.doc_type == "bevis") & InboxDocument.herd_tracking_id.is_null(False)

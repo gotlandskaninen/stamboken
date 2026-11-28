@@ -1,3 +1,6 @@
+import { statusLabel } from "@/lib/membershipStatus";
+import { ROLE_LABELS } from "@/app/(app)/medlem/matrikel/types";
+
 // Svenska etiketter för audit-datats råa DB-termer.
 // Okända värden faller tillbaka på råsträngen.
 // Nycklarna täcker alla 12 tabeller i AUDITED_TABLES
@@ -24,6 +27,7 @@ export const OPERATION_LABELS: Record<string, string> = {
   DELETE: "Borttagen",
   SYSTEM: "Systemhändelse",
   REDACT: "Gallring",
+  READ: "Uttag",
 };
 
 // "Skapad av admin" / "Ändrad av admin" — läsbar fras i radhuvudet.
@@ -33,6 +37,16 @@ const OPERATION_PREPOSITION: Record<string, string> = {
   DELETE: "Borttagen av",
   SYSTEM: "Utförd av",
   REDACT: "Utförd av",
+  READ: "Hämtat av",
+};
+
+// Uttagen loggas med record_id "export-<action>-<utc>" (log_export, app/blueprints/common.py).
+const EXPORT_TITLES: Record<string, string> = {
+  avelsprioritet: "Uttag: Avelsprioritet (CSV)",
+  "avelsprioritet-lista": "Uttag: Avelsprioritet (listan på skärmen)",
+  matr: "Uttag: matrikeln (MATR)",
+  "address-list": "Uttag: adresslistan till tryckeriet",
+  koharen: "Uttag: Koharens lista över besättningar",
 };
 
 export const tableLabel = (t: string) => TABLE_LABELS[t] ?? t;
@@ -52,6 +66,10 @@ export function rowTitle(tableName: string, recordId: string): string {
   }
   if (recordId.startsWith("purge-ip-")) {
     return "Gallring av IP-adresser";
+  }
+  const exported = /^export-(.+)-\d{4}-\d{2}-\d{2}T/.exec(recordId);
+  if (exported) {
+    return EXPORT_TITLES[exported[1]] ?? `Uttag: ${exported[1]}`;
   }
   return `${tableLabel(tableName)} #${recordId}`;
 }
@@ -99,6 +117,7 @@ export const FIELD_LABELS: Record<string, string> = {
   wire_phone: "Fast telefon",
   latitude: "Latitud",
   longitude: "Longitud",
+  bank_account_type: "Kontotyp",
   bank_account_number: "Kontonummer",
   bank_name: "Bank",
   // individual
@@ -191,3 +210,94 @@ export function fieldLabel(field: string): string {
   }
   return field;
 }
+
+// ---- Matrikelns ändringslogg (matrikel_audit, #244) ----
+// Åtgärderna skrivs av write_matrikel_audit (app/utils/matrikel.py,
+// app/blueprints/members.py, memberships.py, member_applications.py,
+// app/utils/arsrapport.py, app/cli/members.py). Okända faller tillbaka på
+// råsträngen.
+export const MATRIKEL_ACTION_LABELS: Record<string, string> = {
+  membership_created: "Medlemskap skapat",
+  membership_updated: "Medlemskap ändrat",
+  membership_status_changed: "Status ändrad",
+  member_number_changed: "Medlemsnummer ändrat",
+  membership_retired: "Medlemskap avslutat",
+  herd_membership_linked: "Besättning kopplad",
+  person_added: "Person tillagd",
+  person_updated: "Person ändrad",
+  person_removed: "Person borttagen",
+  person_anonymized: "Person anonymiserad",
+  main_member_changed: "Huvudmedlem bytt",
+  person_user_linked: "Konto kopplat",
+  person_user_unlinked: "Konto bortkopplat",
+  grant_created: "Åtkomst given",
+  grant_renewed: "Åtkomst förnyad",
+  grant_revoked: "Åtkomst återkallad",
+  kontakt_andrad: "Kontaktuppgifter ändrade",
+};
+
+// Fältnamnen i payloaden; samma ord som formulären på medlemssidan
+// (PersonsCard, MembershipFormCard, OrganizationFields).
+const MATRIKEL_FIELD_LABELS: Record<string, string> = {
+  first_name: "Förnamn",
+  last_name: "Efternamn",
+  phone: "Telefon",
+  role: "Roll",
+  workspace_email: "Föreningens e-postadress",
+  end_date: "Slutdatum",
+  address: "Gatuadress",
+  postal_code: "Postnummer",
+  city: "Postort",
+  postal_address: "Postadress",
+  member_number: "Medlemsnummer",
+  membership_status: "Status",
+  organization_name: "Organisationsnamn",
+  organization_number: "Organisationsnummer",
+  billing_name: "Fakturamottagare",
+  billing_address: "Fakturaadress",
+  billing_postal_code: "Fakturapostnummer",
+  billing_city: "Fakturapostort",
+  billing_email: "E-post för faktura",
+  billing_reference: "Fakturareferens",
+  payment_note: "Betalningsnotering",
+  joined_date: "Medlem sedan",
+  publication_consent: "Publiceras i Koharen",
+  user_id: "Konto",
+  valid_until: "Giltig till",
+};
+
+export const matrikelActionLabel = (a: string) =>
+  MATRIKEL_ACTION_LABELS[a] ?? a;
+export const matrikelFieldLabel = (f: string) =>
+  MATRIKEL_FIELD_LABELS[f] ?? fieldLabel(f);
+
+/**
+ * Fälten en händelse ändrade: nycklarna i before/after och listan "fields",
+ * tillsammans. kontakt_andrad bär namnen i "fields" och från pappersblanketten
+ * dessutom e-postens före/efter.
+ */
+export function matrikelChangedFields(
+  payload: Record<string, unknown>,
+): string[] {
+  const { before, after, fields } = payload;
+  const keys = (v: unknown) =>
+    typeof v === "object" && v !== null && !Array.isArray(v)
+      ? Object.keys(v)
+      : [];
+  const named = Array.isArray(fields) ? fields.map(String) : [];
+  return [...new Set([...keys(before), ...keys(after), ...named])];
+}
+
+/** Ett värde i payloaden som text: roll och status på svenska, tomt som tankstreck. */
+export function matrikelValue(field: string, v: unknown): string {
+  if (v === null || v === undefined || v === "") return "—";
+  if (v === true) return "Ja";
+  if (v === false) return "Nej";
+  if (field === "role") return ROLE_LABELS[String(v)] ?? String(v);
+  if (field === "membership_status") return statusLabel(String(v));
+  return typeof v === "object" ? JSON.stringify(v) : String(v);
+}
+
+/** Tid i svensk tid, oavsett serverns och webbläsarens tidszon. */
+export const formatAuditTime = (iso: string) =>
+  new Date(iso).toLocaleString("sv-SE", { timeZone: "Europe/Stockholm" });

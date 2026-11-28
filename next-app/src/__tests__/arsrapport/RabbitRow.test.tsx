@@ -176,6 +176,19 @@ describe("RabbitRow", () => {
     expect(screen.queryAllByRole("radio")).toHaveLength(0);
   });
 
+  it("shows a move the sale dialog gave without its day by its month", () => {
+    const moved = (day_known: boolean) =>
+      rabbit(2, {
+        state: "via_flytt",
+        later: { kind: "TRANSFER", date: "2027-01-31", day_known },
+      });
+    render(<RabbitRow {...props({ r: moved(false) })} />);
+    expect(screen.getByText(/Flyttad januari 2027/)).toBeTruthy();
+    cleanup();
+    render(<RabbitRow {...props({ r: moved(true) })} />);
+    expect(screen.getByText(/Flyttad 31 januari 2027/)).toBeTruthy();
+  });
+
   it("marks a rabbit bought during the year, with the seller in the title (4a Task 5)", () => {
     render(
       <RabbitRow

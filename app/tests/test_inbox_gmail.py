@@ -10,6 +10,7 @@ import email
 import email.policy
 import errno
 import io
+import math
 import os
 import time
 from contextlib import closing
@@ -246,9 +247,12 @@ Subject: Vi har fått dina bilder
 """
 
 
-def report(message_id, part="message/rfc822"):
+def report(message_id, part="message/rfc822", action="failed", status="5.1.1"):
+    """A delivery report on `message_id`; `action` or `status` None leaves that field out."""
     body = "Hej!\n" if part == "message/rfc822" else ""
-    return REPORT.format(part=part, message_id=message_id, body=body).replace("\n", "\r\n").encode()
+    text = REPORT.replace("Action: failed\n", f"Action: {action}\n" if action else "")
+    text = text.replace("Status: 5.1.1\n", f"Status: {status}\n" if status else "")
+    return text.format(part=part, message_id=message_id, body=body).replace("\n", "\r\n").encode()
 
 
 class TestSorting(GmailTest):
@@ -268,6 +272,29 @@ class TestSorting(GmailTest):
                 self.assertEqual(self.items(), [])
                 self.assertEqual(db.GmailProcessed.get_by_id(gmail_id).kind, "bounce")
                 self.assertTrue(self.done(gmail_id))
+
+    def test_a_delay_report_is_no_bounce(self):  # a bounce deletes a buyer told without a bevis (#273)
+        row_id = self.queue()
+        db.MailMessage.update(status="sent").where(db.MailMessage.id == row_id).execute()
+        gmail_id = self.fake.deliver(report(mail.message_id(row_id), action="delayed"))
+        self.read()
+        self.assertEqual(self.row(row_id).status, "sent")
+        self.assertEqual(self.items(), [])
+        self.assertEqual(db.GmailProcessed.get_by_id(gmail_id).kind, "ignored")
+
+    def test_a_report_without_an_action_bounces_only_on_a_permanent_status(self):  # #273: a bounce deletes a buyer
+        for status, kind, state in (
+            ("4.2.0", "ignored", "sent"),
+            ("5.1.1", "bounce", "bounced"),
+            (None, "item", "sent"),
+        ):
+            with self.subTest(status=status):
+                row_id = self.queue()
+                db.MailMessage.update(status="sent").where(db.MailMessage.id == row_id).execute()
+                gmail_id = self.fake.deliver(report(mail.message_id(row_id), action=None, status=status))
+                self.read()
+                self.assertEqual(self.row(row_id).status, state)
+                self.assertEqual(db.GmailProcessed.get_by_id(gmail_id).kind, kind)
 
     def test_a_bounce_of_another_environments_mail_touches_nothing(self):
         row_id = self.queue()
@@ -311,6 +338,24 @@ class TestSorting(GmailTest):
         self.assertIn("Tack!", event.detail["text"])
         (new,) = [i for i in self.items() if i.id != item.id]
         self.assertNotIn(mac, new.message)
+
+    def test_a_reply_to_the_missing_rabbits_question_is_an_ordinary_item(self):  # Å22 (step 6, D7)
+        link, mac = self.quoted_link()
+        asked = mail.enqueue_mail(
+            "arsrapport.fraga_saknade", "member", 1, {"report_id": 7, "code_id": 12}, ref=("yearlyherdreport", 7)
+        )
+        self.holder(self.herds[0])
+        for subtype, body in (("plain", f"Den är död.\n\n> {link}\n"), ("html", f"<p>Den är död.</p><p>{link}</p>")):
+            reply = message(subject="Re: Kaniner saknas på årsblanketten för G1", In_Reply_To=mail.message_id(asked))
+            reply.set_content(body, subtype=subtype)
+            self.fake.deliver(reply)
+        self.read()
+        items = self.items()
+        self.assertEqual([(i.kind, i.herd_id) for i in items], [("meddelande", self.herds[0].id)] * 2)
+        for item in items:
+            self.assertIn("Den är död.", item.message)
+            self.assertNotIn(mac, item.message)
+        self.assertFalse(db.InboxEvent.select().where(db.InboxEvent.kind == "svar").exists())
 
     def test_a_link_rebuilt_by_normalizing_is_masked_on_both_paths(self):  # FA3
         link, mac = self.quoted_link()
@@ -602,7 +647,7 @@ class TestItemsFromMail(GmailTest):
         self.assertEqual(item.message, "En fråga")
 
     def test_files_too_big_too_many_or_of_another_type_are_named_and_not_stored(self):
-        big = encoded(photo()) + b"\0" * (10 * 1024 * 1024)  # a JPEG by its first bytes, over 10 MB
+        big = encoded(photo()) + b"\0" * (25 * 1024 * 1024)  # a JPEG by its first bytes, over 25 MB
         docx = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         files = [("stor.jpg", JPEG, big), ("brev.docx", docx, b"PK\x03\x04syntetisk")]
         files += [(f"{n}.jpg", JPEG, encoded(photo((600, 800), seed=n))) for n in range(11)]
@@ -781,6 +826,16 @@ class TestItemsFromMail(GmailTest):
         self.assertEqual(len(self.documents(item)), 2)
         self.assertEqual(item.events.where(db.InboxEvent.kind == "svar").get().detail["documents"], [added.id])
 
+    def test_a_reply_to_a_purchase_notice_brings_photos_that_are_not_read(self):
+        self.holder(self.herds[0])
+        item = self.waiting()
+        db.InboxItem.update(ref_type="kopanmalan").where(db.InboxItem.id == item.id).execute()
+        with mock.patch.object(settings.interpretation, "interpreter", "gemma"):
+            self.fake.deliver(message(files=[("ny.jpg", JPEG, encoded(photo()))], In_Reply_To=self.our_mail(item)))
+            self.read()
+        self.assertEqual(len(self.documents(item)), 2)  # the reply's photo, not the item's first
+        self.assertEqual(self.documents(item)[-1].interpretation_status, "av")
+
     def test_a_message_that_fails_leaves_no_files(self):
         self.fake.deliver(message(files=[("a.jpg", JPEG, encoded(photo()))]))
         with mock.patch.object(inbox_gmail, "_processed", side_effect=RuntimeError("fel")):
@@ -929,14 +984,22 @@ class TestAskBreeder(GmailTest):
     def test_the_handler_asks_the_holder_with_a_part_of_the_photo_and_the_item_waits(self):
         db.InboxDocument.update(rotation=90).where(db.InboxDocument.id == self.document.id).execute()
         crop = {"x": 0, "y": 0, "w": 0.5, "h": 0.25}
-        resp = self.ask(text="  Står det G1-2112 eller G1-2113?  ", document=self.document.id, crop=crop)
+        resp = self.ask(
+            text="  Står det G1-2112 eller G1-2113?  ", document=self.document.id, crop=crop, rotation=90, straighten=0
+        )
         self.assertEqual(resp.status_code, 200, resp.get_json())
         self.assertEqual(resp.get_json()["state"], "vantar_uppfodare")
         (event,) = db.InboxEvent.select().where(db.InboxEvent.kind == "fraga")
         self.assertEqual(event.user_id, self.helper.id)
         self.assertEqual(
             event.detail,
-            {"text": "Står det G1-2112 eller G1-2113?", "document": self.document.id, "rotation": 90, "crop": crop},
+            {
+                "text": "Står det G1-2112 eller G1-2113?",
+                "document": self.document.id,
+                "rotation": 90,
+                "straighten": 0,
+                "crop": crop,
+            },
         )
         (row,) = self.questions()
         self.assertEqual((row.recipient_kind, row.recipient_id), ("member", self.asked.id))
@@ -950,6 +1013,49 @@ class TestAskBreeder(GmailTest):
         (attachment,) = msg.iter_attachments()
         with Image.open(io.BytesIO(attachment.get_content())) as part:
             self.assertEqual((part.format, part.size), ("JPEG", (800, 300)))  # the turned photo is 1600 x 1200
+
+    def test_the_part_of_the_photo_is_cut_from_the_photo_straightened_as_it_was_when_asked(self):
+        db.InboxDocument.update(straighten=5).where(db.InboxDocument.id == self.document.id).execute()
+        crop = {"x": 0, "y": 0, "w": 0.5, "h": 0.25}
+        resp = self.ask(text="Står det G1-2112?", document=self.document.id, crop=crop, rotation=0, straighten=5)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        (event,) = db.InboxEvent.select().where(db.InboxEvent.kind == "fraga")
+        self.assertEqual(event.detail["straighten"], 5)
+        # Straightened again since: the question shows the part the handler framed, from the photo as it was then.
+        db.InboxDocument.update(straighten=0).where(db.InboxDocument.id == self.document.id).execute()
+        with Image.open(os.path.join(self.folder, self.document.original_path)) as original:
+            width, height = original.rotate(-5, expand=True).size
+
+        def attachment():
+            params = {"item_id": self.item_id, "event_id": event.id}
+            (part,) = inbox_gmail._question_mail(params)["attachments"]  # pylint: disable=protected-access
+            with Image.open(io.BytesIO(part[2])) as image:
+                return image.size
+
+        self.assertEqual(attachment(), (math.ceil(width / 2), math.ceil(height / 4)))
+        # A question asked before the photo could be straightened: cut from the photo turned by its rotation only.
+        db.InboxEvent.update(detail={k: v for k, v in event.detail.items() if k != "straighten"}).where(
+            db.InboxEvent.id == event.id
+        ).execute()
+        self.assertEqual(attachment(), (600, 400))
+
+    def test_a_part_drawn_at_another_turn_than_the_documents_is_refused_before_anything_is_sent(self):
+        db.InboxDocument.update(rotation=90, straighten=2.5).where(db.InboxDocument.id == self.document.id).execute()
+        crop = {"x": 0, "y": 0, "w": 0.5, "h": 0.25}
+        for turn, status in (
+            ({"rotation": 0, "straighten": 2.5}, 409),  # turned since the part was drawn
+            ({"rotation": 90, "straighten": 0}, 409),  # straightened since
+            ({"rotation": 90}, 400),  # which turn is not said
+            ({"rotation": 90, "straighten": 16}, 400),
+        ):
+            with self.subTest(turn):
+                resp = self.ask(text="Står det G1-2112?", document=self.document.id, crop=crop, **turn)
+                self.assertEqual(resp.status_code, status, resp.get_json())
+        self.assertEqual(self.questions(), [])
+        self.assertFalse(db.InboxEvent.select().where(db.InboxEvent.kind == "fraga").exists())
+        self.assertEqual(db.InboxItem.get_by_id(self.item_id).state, "tagen")
+        resp = self.ask(text="Står det G1-2112?", document=self.document.id, crop=crop, rotation=90, straighten=2.5)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
 
     def test_who_may_ask_and_when(self):
         self.login("man")  # in the queue, but not the item's handler

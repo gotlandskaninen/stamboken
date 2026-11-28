@@ -3,7 +3,13 @@ import { redirect } from "next/navigation";
 import { fetchApi } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
 import { Masthead } from "@/components/shell/Masthead";
-import { fmtDate, todayStockholm, type MyReport, type Round } from "./lib";
+import {
+  currentRoundYear,
+  fmtDate,
+  todayStockholm,
+  type MyReport,
+  type Round,
+} from "./lib";
 import styles from "./arsrapport.module.css";
 
 export const dynamic = "force-dynamic";
@@ -18,11 +24,11 @@ export default async function ArsrapportIndex() {
   if (reports.length === 1 && !manages)
     redirect(`/stamboken/arsrapport/${reports[0].herd}/${reports[0].year}`);
 
-  // Managers reach the status view of the latest round (a helper's route is the queue).
+  // Managers reach the status view of the current round, which may not exist yet (a helper's route is the queue).
   const rounds = manages
     ? (await fetchApi<{ rounds: Round[] }>("/v2/arsrapport/rundor")).rounds
     : [];
-  const statusYear = rounds[0]?.year ?? Number(todayStockholm().slice(0, 4));
+  const statusYear = currentRoundYear(rounds, todayStockholm());
 
   return (
     <>

@@ -11,7 +11,7 @@ import herdbook  # noqa: E402
 import utils.data_access as da  # noqa: E402
 import utils.database as db  # noqa: E402
 import utils.inbox as inbox  # noqa: E402
-from utils.herd_tracking import HerdTrackingConflict  # noqa: E402
+from utils.herd_tracking import HerdTrackingConflict, record_herd_tracking  # noqa: E402
 from utils.individual_commands import (  # noqa: E402
     AssignPaperCertificate,
     EditDescription,
@@ -247,21 +247,165 @@ class TestSaveEndpoint(GrantTest):
         certified = {**body, "individual": "G1-2111", "paper_certificate": "P-10", "paper_number": "G1-2111"}
         self.assertEqual(self.save(item2, document2, **certified).status_code, 403)
 
-    def test_a_save_that_changes_nothing_is_refused_and_links_nothing(self):
-        held = self.rabbit("G1-2111")
-        item, document = self.taken(self.manager)
-        self.login("man")
+    def test_a_photo_of_the_certificate_the_rabbit_has_is_linked_and_writes_nothing(self):
+        held = self.rabbit("G1-2111")  # certificate "12" in the fixture
         body = {
             "action": "pappersintyg",
             "individual": held.number,
             "paper_certificate": held.certificate,
             "paper_number": held.number,
         }
-        resp = self.save(item, document, **body)
-        self.assertEqual((resp.status_code, resp.get_json()["detail"][:13]), (409, "Ingen ändring"))
-        self.assertIsNone(db.InboxDocument.get_by_id(document.id).individual_id)
-        self.assertFalse(db.InboxEvent.select().where(db.InboxEvent.kind == "sparad").exists())
+        for user, name in ((self.helper, "hjalp"), (self.manager, "man")):  # a helper too (Jonas 2026-11-26)
+            with self.subTest(name):
+                item, document = self.taken(user)
+                self.login(name)
+                resp = self.save(item, document, **body)
+                self.assertEqual(resp.status_code, 200, resp.get_json())
+                self.assertEqual(resp.get_json()["document"]["status"], "sparad")
+                self.assertEqual(db.InboxDocument.get_by_id(document.id).individual_id, held.id)
+        self.assertEqual(self.rabbit("G1-2111").certificate, "12")
+        self.assertFalse(db.IndividualCommand.select().exists())
         self.assertFalse(db.InboxOperation.select().exists())
+
+    def test_linking_needs_the_rabbits_own_number_and_a_role_in_its_genebank(self):
+        held = self.rabbit("G1-2111")
+        body = {
+            "action": "pappersintyg",
+            "individual": held.number,
+            "paper_certificate": "12",
+            "paper_number": "G1-2111",
+        }
+        item, document = self.taken(self.helper)
+        self.login("hjalp")
+        for other in ("G1-2112", "G1-21011"):  # another rabbit, and one that parses as G1-2111 but is not it
+            resp = self.save(item, document, **{**body, "paper_number": other})
+            self.assertEqual((resp.status_code, resp.get_json().get("field")), (409, "paper_number"), resp.get_json())
+        other, foreign = self.taken(self.mellerud_helper, herd=2)
+        self.login("mhjalp")
+        self.assertEqual(self.save(other, foreign, **body).status_code, 403)
+        for unlinked in (document, foreign):
+            self.assertIsNone(db.InboxDocument.get_by_id(unlinked.id).individual_id)
+        self.assertFalse(db.InboxEvent.select().where(db.InboxEvent.kind == "sparad").exists())
+
+    def test_linking_after_a_sale_through_the_document_keeps_its_seller_and_buyer(self):
+        item, document = self.taken(self.manager)
+        self.login("man")
+        sold = self.transfer(item, document, individual="G1-2111", herd="G2", date=date.today().isoformat())
+        self.assertEqual(sold.status_code, 200, sold.get_json())
+        before = db.InboxDocument.get_by_id(document.id)
+        body = {"action": "pappersintyg", "individual": "G1-2111", "paper_certificate": "12", "paper_number": "G1-2111"}
+        self.assertEqual(self.save(item, document, **body).status_code, 200)
+        after = db.InboxDocument.get_by_id(document.id)
+        self.assertEqual(
+            (after.seller_member_id, after.buyer_member_id), (before.seller_member_id, before.buyer_member_id)
+        )
+        self.assertEqual(after.saved_certificate, "12")
+
+    def test_a_helper_masks_a_rabbit_she_sold_to_gx1_through_the_item(self):
+        outside = db.Herd.create(genebank=self.genebanks[0], herd="GX1", herd_name="Utanför genbanken", is_active=True)
+        item, document = self.taken(self.helper)
+        self.login("hjalp")
+        body = {"action": "pappersintyg", "individual": "G1-2111", "paper_certificate": "12", "paper_number": "G1-2111"}
+        self.assertEqual(self.save(item, document, **body).status_code, 200)
+        sold = self.transfer(item, document, individual="G1-2111", herd="GX1", date=date.today().isoformat())
+        self.assertEqual(sold.status_code, 200, sold.get_json())
+        self.assertEqual(self.rabbit("G1-2111").current_herd.id, outside.id)
+        with mock.patch("utils.inbox.make_copy"):  # the queue's test item has no file; the right is what is tested
+            resp = self.post(
+                f"/{item.id}/dokument/{document.id}/maskning",
+                rotation=0,
+                mask_rects=[{"x": 0, "y": 0.5, "w": 1, "h": 0.5}],
+            )
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+
+    def test_the_paper_shows_the_breeder_as_seller_and_the_holder_now_as_buyer(self):
+        rabbit = self.rabbit("G1-2111")
+        ht_row("TRANSFER", herd=self.herds[1], individual=rabbit, herd_tracking_date=date.today() - timedelta(days=3))
+        item, document = self.taken(self.manager)
+        self.login("man")
+        body = {"action": "pappersintyg", "individual": "G1-2111", "paper_certificate": "12", "paper_number": "G1-2111"}
+        self.assertEqual(self.save(item, document, **body).status_code, 200)
+        saved = db.InboxDocument.get_by_id(document.id)
+        self.assertEqual(
+            (saved.seller_member_id, saved.buyer_member_id),
+            (
+                getattr(inbox.herd_holder(self.herds[0].id), "id", None),
+                getattr(inbox.herd_holder(self.herds[1].id), "id", None),
+            ),
+        )
+
+    def test_a_new_certificate_on_a_certified_rabbit_needs_its_own_number_on_the_paper(self):
+        item, document = self.taken(self.manager)
+        self.login("man")
+        body = {
+            "action": "pappersintyg",
+            "individual": "G1-2111",
+            "paper_certificate": "P-9",
+            "paper_number": "G1-2112",
+        }
+        resp = self.save(item, document, **body)
+        self.assertEqual((resp.status_code, resp.get_json().get("field")), (409, "paper_number"), resp.get_json())
+        self.assertEqual(self.rabbit("G1-2111").certificate, "12")
+        self.assertIsNone(db.InboxDocument.get_by_id(document.id).individual_id)
+
+    def test_an_uncertified_rabbit_without_a_litter_number_still_needs_its_own_number(self):
+        db.Breeding.update(litter_number=None).where(db.Breeding.id == self.rabbit("G1-2112").breeding_id).execute()
+        item, document = self.taken(self.helper)
+        self.login("hjalp")
+        body = {
+            "action": "pappersintyg",
+            "individual": "G1-2112",
+            "paper_certificate": "P-9",
+            "paper_number": "G1-2113",
+        }
+        resp = self.save(item, document, **body)
+        self.assertEqual((resp.status_code, resp.get_json().get("field")), (409, "paper_number"), resp.get_json())
+        self.assertIsNone(self.rabbit("G1-2112").certificate)
+        self.assertIsNone(db.InboxDocument.get_by_id(document.id).individual_id)
+
+    def test_a_paper_overruled_by_stambokens_number_is_never_checked(self):
+        item, document = self.taken(self.manager)
+        self.login("man")
+        first = self.save(item, document, **{**NEW_RABBIT, "paper_number": "G1-2521"})
+        self.assertEqual(first.get_json()["title"], "number_conflict", first.get_json())
+        right = first.get_json()["stamboken_number"]
+        resolution = {"expected_number": right, "choice": "use_stamboken_number"}
+        resp = self.save(item, document, **{**NEW_RABBIT, "paper_number": "G1-2521", "resolution": resolution})
+        self.assertEqual(resp.status_code, 201, resp.get_json())
+        saved = db.InboxDocument.get_by_id(document.id)
+        self.assertEqual((saved.saved_number, saved.individual.number), ("G1-2521", right))
+        with mock.patch("utils.inbox.make_copy"):
+            masked = self.post(
+                f"/{item.id}/dokument/{document.id}/maskning",
+                rotation=0,
+                mask_rects=[{"x": 0, "y": 0.5, "w": 1, "h": 0.5}],
+                matches_registry=True,
+            )
+        self.assertEqual(masked.status_code, 409, masked.get_json())
+
+    def test_a_litter_changed_under_the_link_is_a_conflict(self):
+        item, document = self.taken(self.helper)
+        self.login("hjalp")
+        body = {"action": "pappersintyg", "individual": "G1-2111", "paper_certificate": "12", "paper_number": "G1-2111"}
+        conflict = HerdTrackingConflict("Kullen har ändrats.")
+        with mock.patch("blueprints.inbox.lock_individual_for_edit", side_effect=conflict):
+            resp = self.save(item, document, **body)
+        self.assertEqual(resp.status_code, 409, resp.get_json())
+        self.assertIsNone(db.InboxDocument.get_by_id(document.id).individual_id)
+
+    def test_only_a_role_in_the_rabbits_genebank_makes_its_copy(self):
+        # A mail without a genebank: any queue worker may take it over, but only the rabbit's genebank masks it.
+        item, document = self.taken(self.helper)
+        db.InboxItem.update(genebank=None).where(db.InboxItem.id == item.id).execute()
+        self.login("hjalp")
+        body = {"action": "pappersintyg", "individual": "G1-2111", "paper_certificate": "12", "paper_number": "G1-2111"}
+        self.assertEqual(self.save(item, document, **body).status_code, 200)
+        self.login("mhjalp")
+        self.assertEqual(self.post(f"/{item.id}/ta-over").status_code, 200)
+        rects = {"rotation": 0, "mask_rects": [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}], "matches_registry": True}
+        resp = self.post(f"/{item.id}/dokument/{document.id}/maskning", **rects)
+        self.assertEqual(resp.status_code, 403, resp.get_json())
+        self.assertIsNone(db.InboxDocument.get_by_id(document.id).verified_at)
 
     def test_a_number_conflict_on_an_existing_rabbit_is_not_resolved_by_resolution(self):
         item, document = self.taken(self.helper)
@@ -300,6 +444,149 @@ class TestSaveEndpoint(GrantTest):
         self.assertEqual(resp.get_json().get("field"), "individual", resp.get_json())
         resp = self.save(item, document, action="okand")
         self.assertNotIn("field", resp.get_json())
+
+    def paper_litter(self, born=None, alive=None):
+        """The paper's litter already in Stamboken: G1-1911 and G2-1711, born 2025-05-10, in G1, not yet numbered."""
+        return db.Breeding.create(
+            breeding_herd_id=self.herds[0],
+            mother=self.rabbit("G1-1911"),
+            father=self.rabbit("G2-1711"),
+            birth_date=date(2025, 5, 10),
+            breed_date=date(2025, 4, 9),
+            litter_size=born,
+            litter_size6w=alive,
+        )
+
+    def refused(self, resp, detail, field):
+        self.assertEqual(resp.status_code, 400, resp.get_json())
+        self.assertEqual((resp.get_json()["detail"], resp.get_json().get("field")), (detail, field), resp.get_json())
+
+    def unsaved(self, document):
+        self.assertIsNone(db.InboxDocument.get_by_id(document.id).individual_id)
+        self.assertFalse(db.Individual.select().where(db.Individual.number == "G1-2511").exists())
+
+    def test_a_colour_off_the_list_of_the_genebank_it_is_registered_in_is_refused(self):
+        # Never dropped in silence, also when the litter is named by its id and no mother is sent.
+        item, document = self.taken(self.helper)
+        self.login("hjalp")
+        litter = self.paper_litter(born=5, alive=4)
+        by_id = {k: v for k, v in NEW_RABBIT.items() if k not in ("mother", "father", "birth_date")}
+        for name, body in (("by parents", NEW_RABBIT), ("by its id", {**by_id, "breeding_id": litter.id})):
+            for color in ("lila", "Bleighe", "bläåh"):  # none, another case, Mellerud's
+                with self.subTest(name, color=color):
+                    self.refused(
+                        self.save(item, document, **{**body, "color": color}),
+                        "Välj en färg ur genbankens lista.",
+                        "color",
+                    )
+                    self.unsaved(document)
+        self.assertEqual(self.save(item, document, **NEW_RABBIT).status_code, 201)
+        self.assertEqual(self.rabbit("G1-2511").color.name, "bleighe")
+
+    def test_the_queue_asks_for_everything_the_paper_has(self):
+        # Jonas 2026-11-27: as in "Registrera kanin", colour, sex and both counts are not left out in the queue. On a
+        # litter already in Stamboken, which registration takes without counts.
+        item, document = self.taken(self.helper)
+        self.login("hjalp")
+        self.paper_litter(born=5, alive=4)
+        missing = {
+            "color": [None, ""],
+            "sex": ["", "hona"],  # and left out: not chosen. Okänt is null with the key present, as below
+            "litter_size": [None, "", 0, "fem"],
+            "litter_size6w": [None, "", 0],
+        }
+        for field, values in missing.items():
+            for value in [*values, "left out"]:
+                body = {key: v for key, v in NEW_RABBIT.items() if key != field}
+                if value != "left out":
+                    body[field] = value
+                with self.subTest(field=field, value=value):
+                    resp = self.save(item, document, **body)
+                    self.assertEqual(resp.status_code, 400, resp.get_json())
+                    self.assertEqual(resp.get_json().get("field"), field, resp.get_json())
+        self.unsaved(document)
+        resp = self.save(item, document, **{**NEW_RABBIT, "sex": None})  # Okänt, as normal registration sends it
+        self.assertEqual(resp.status_code, 201, resp.get_json())
+        self.assertIsNone(self.rabbit("G1-2511").sex)
+
+    def test_an_existing_litters_counts_against_the_paper(self):
+        item, document = self.taken(self.helper)
+        self.login("hjalp")
+        litter = self.paper_litter(born=5)
+        above = "Antal levande vid 6 veckor kan inte vara fler än antal födda."
+        self.refused(self.save(item, document, **{**NEW_RABBIT, "litter_size6w": 6}), above, "litter_size6w")
+        self.refused(
+            self.save(item, document, **{**NEW_RABBIT, "litter_size": 4, "litter_size6w": 3}),
+            "Kullen har 5 födda i Stamboken.",
+            "litter_size",
+        )
+        self.unsaved(document)
+        self.assertEqual(self.save(item, document, **NEW_RABBIT).status_code, 201)
+        litter = db.Breeding.get_by_id(litter.id)
+        self.assertEqual((litter.litter_size, litter.litter_size6w), (5, 4))
+
+    def test_a_litter_without_a_count_born_takes_the_papers(self):
+        item, document = self.taken(self.helper)
+        self.login("hjalp")
+        litter = self.paper_litter()
+        resp = self.save(item, document, **NEW_RABBIT)
+        self.assertEqual(resp.status_code, 201, resp.get_json())
+        litter = db.Breeding.get_by_id(litter.id)
+        self.assertEqual((litter.litter_size, litter.litter_size6w), (5, 4))
+        answered = resp.get_json()["individual"]  # the rabbit as saved, its litter's counts filled in
+        self.assertEqual((answered["litter_size"], answered["litter_size6w"]), (5, 4))
+
+    def test_a_litter_without_a_count_born_must_hold_the_rabbits_it_has(self):
+        # An imported litter: no count born, one rabbit already. A paper saying one born cannot be a second.
+        item, document = self.taken(self.helper)
+        self.login("hjalp")
+        litter = self.paper_litter(alive=2)  # a certificate left for the paper's rabbit
+        db.Breeding.update(litter_number=1).where(db.Breeding.id == litter.id).execute()
+        db.Individual.create(
+            origin_herd=self.herds[0], breeding=litter, number="G1-2512", sex="male", certificate="C-2512"
+        )
+        self.refused(
+            self.save(item, document, **{**NEW_RABBIT, "litter_size": 1, "litter_size6w": 1}),
+            "Kullen har redan 1 kaniner i Stamboken.",
+            "litter_size",
+        )
+        self.unsaved(document)
+        self.assertIsNone(db.Breeding.get_by_id(litter.id).litter_size)
+
+    def test_an_existing_litters_count_alive_against_the_paper(self):
+        item, document = self.taken(self.helper)
+        self.login("hjalp")
+        litter = self.paper_litter(born=5, alive=3)
+        self.refused(
+            self.save(item, document, **NEW_RABBIT),  # 4 alive on the paper
+            "Kullen har 3 levande efter 6 veckor i Stamboken.",
+            "litter_size6w",
+        )
+        self.unsaved(document)
+        # Only a copy of the count born: the paper's count confirms it.
+        db.Breeding.update(litter_size6w=5, litter_size6w_preliminary=True).where(db.Breeding.id == litter.id).execute()
+        self.assertEqual(self.save(item, document, **NEW_RABBIT).status_code, 201)
+        litter = db.Breeding.get_by_id(litter.id)
+        self.assertEqual((litter.litter_size6w, litter.litter_size6w_preliminary), (4, False))
+
+    def test_a_mother_in_no_herd(self):
+        # Her latest herd event leaves her in none: no 500. Her litter, if it exists, is born in its own herd.
+        item, document = self.taken(self.helper)
+        self.login("hjalp")
+        ht_row(
+            "TRANSFER",
+            from_herd=self.herds[0],
+            herd=None,
+            individual=self.rabbit("G1-1911"),
+            herd_tracking_date=date(2025, 9, 1),
+        )
+        resp = self.save(item, document, **NEW_RABBIT)
+        self.assertEqual(resp.status_code, 403, resp.get_json())
+        self.assertEqual(resp.get_json()["field"], "mother")
+        self.unsaved(document)
+        self.paper_litter(born=5, alive=4)
+        resp = self.save(item, document, **NEW_RABBIT)
+        self.assertEqual(resp.status_code, 201, resp.get_json())
 
     def test_the_trace_outlives_the_item(self):
         item, document = self.taken(self.helper)
@@ -400,6 +687,24 @@ class TestTransferEndpoint(GrantTest):
         self.assertEqual(db.InboxOperation.select().count(), 1)  # linking writes nothing on the rabbit
         event = self.reload(item).events.where(db.InboxEvent.kind == "sparad").order_by(db.InboxEvent.id.desc()).get()
         self.assertEqual(event.detail["action"], "bevis")
+
+    def test_a_proof_of_a_sale_without_buyer_links_as_sold_outside_and_keeps_no_buyer(self):
+        day = "2026-11-20"  # before the försäljningsbevis: the seller may have no buyer to give (#273)
+        db.HerdTracking.update(herd_tracking_date="2021-02-01").where(
+            db.HerdTracking.individual == self.rabbit("G1-2111")
+        ).execute()
+        sale = record_herd_tracking(self.rabbit("G1-2111"), "GX1", day, "TRANSFER", self.manager)  # no buyer
+        item, proof = self.taken(self.helper)
+        self.login("hjalp")
+        resp = self.client.patch(f"/api/v2/inkorg/{item.id}/dokument/{proof.id}", json={"doc_type": "bevis"})
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+
+        resp = self.transfer(item, proof, individual="G1-2111", herd="GX1", date=day, buyer={"not_recorded": True})
+
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertEqual(resp.get_json()["herd_tracking_id"], sale.id)
+        self.assertEqual(db.BuyerContact.select().count(), 0)
+        self.assertIsNone(db.HerdTracking.get_by_id(sale.id).holder_contact_id)
 
     def test_a_refused_sale_names_its_field(self):
         item, document = self.taken(self.helper)

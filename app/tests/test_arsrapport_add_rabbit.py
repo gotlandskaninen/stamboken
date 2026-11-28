@@ -63,7 +63,7 @@ class AddRabbitTest(ArsrapportTest):
         self.assertEqual(response.status_code, 200)
 
     def upload_photo(self, path=REPORT, content=None, client=None, query_string=None):
-        data = {"file": (io.BytesIO(content or encoded(photo((600, 800)))), "intyg.jpg")}
+        data = {"file": (io.BytesIO(content or encoded(photo())), "intyg.jpg")}
         return (client or self.client).post(
             f"/api/v2/arsrapport{path}/foto", data=data, content_type="multipart/form-data", query_string=query_string
         )
@@ -166,6 +166,14 @@ class TestPhoto(AddRabbitTest):
         self.assertEqual(refused.status_code, 415)
         self.assertIn("Bara JPEG, PNG, WebP, HEIC och PDF", refused.get_json()["detail"])
         self.assertEqual(self.client.post(f"/api/v2/arsrapport{REPORT}/foto").status_code, 400)  # no file
+        self.assertFalse(db.InboxItem.select().exists())
+
+    def test_a_photo_may_be_larger_than_the_apps_limit_but_not_than_one_file(self):
+        self.open_link()
+        over_app_limit = b"\xff\xd8\xff" + bytes(12 * 1024 * 1024)  # a JPEG by its first bytes, not decodable
+        self.assertEqual(self.upload_photo(content=over_app_limit).status_code, 422)  # read, so past 11 MB
+        too_big = self.upload_photo(content=b"\xff\xd8\xff" + bytes(27 * 1024 * 1024))
+        self.assertEqual((too_big.status_code, too_big.mimetype), (413, "application/problem+json"))
         self.assertFalse(db.InboxItem.select().exists())
 
     def test_no_photo_without_access(self):
@@ -765,10 +773,20 @@ class TestReportPhotoReading(AddRabbitTest):
         self.assertEqual(detail["documents"][0]["proposal"], read.proposal)
         self.assertIsNone(inbox.item_detail(queued, self.helper)["registered"])
 
+    def test_a_photo_too_small_is_not_read_once_registered(self):
+        self.open_link()
+        response = self.upload_photo(content=encoded(photo((600, 800))))
+        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+        item_id = response.get_json()["item_id"]
+        self.assertEqual(self.kit(item_id).status_code, 201)
+        (document,) = self.reload(item_id).documents
+        self.assertEqual(document.interpretation_status, "for_litet")
+        self.assertIsNone(interpreter.interpret_next())
+
     def test_a_photo_uploaded_for_a_purchase_is_read_once_a_rabbit_is_registered_from_it(self):
         """The purpose is the client's word: a rabbit's photo is read whatever it was uploaded for (G5)."""
         self.open_link()
-        data = {"file": (io.BytesIO(encoded(photo((600, 800)))), "intyg.jpg")}
+        data = {"file": (io.BytesIO(encoded(photo())), "intyg.jpg")}
         response = self.client.post(
             f"/api/v2/arsrapport{REPORT}/foto?syfte=kop", data=data, content_type="multipart/form-data"
         )

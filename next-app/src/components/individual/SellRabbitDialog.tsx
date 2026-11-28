@@ -28,6 +28,7 @@ import {
   EMPTY_BUYER,
   buyerComplete,
   buyerPayload,
+  saleYear,
   type BuyerDraft,
   type SaleBuyer,
 } from "./BuyerFields";
@@ -189,6 +190,8 @@ function SellRabbitDialogContent({
   }
 
   const dateProblem = validateSaleDate(date, minDate, today);
+  // the buyer's choice follows the sale's year (#273)
+  const year = saleYear(date && isValid(date) ? toIsoDate(date) : null);
   const outsideCode = options.find((h) => isOutsideGenebankHerd(h.herd))?.herd;
   const targetOutside = target ? isOutsideGenebankHerd(target.herd) : false;
   // canResellOutside is "admin or manager of the genebank": they may sell without an address (old papers).
@@ -197,7 +200,7 @@ function SellRabbitDialogContent({
     !!target &&
     !dateProblem &&
     acknowledged &&
-    (!targetOutside || buyerComplete(buyer, addressRequired)) &&
+    (!targetOutside || buyerComplete(buyer, addressRequired, year)) &&
     !isSaving;
 
   const optionLabel = (h: GenebankHerd) =>
@@ -225,7 +228,7 @@ function SellRabbitDialogContent({
       onConfirm(target.herd, toIsoDate(date));
       return;
     }
-    onConfirm(target.herd, toIsoDate(date), buyerPayload(buyer));
+    onConfirm(target.herd, toIsoDate(date), buyerPayload(buyer, year));
   };
 
   const displayName = individualName || individualNumber;
@@ -383,6 +386,7 @@ function SellRabbitDialogContent({
             <BuyerFields
               value={buyer}
               onChange={setBuyer}
+              year={year}
               addressRequired={addressRequired}
             />
           </Box>

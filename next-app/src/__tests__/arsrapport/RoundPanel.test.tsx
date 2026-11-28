@@ -10,9 +10,10 @@ import {
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 const sendTestMail = vi.fn();
+const saveRound = vi.fn();
 vi.mock("@/app/(app)/stamboken/(dashboard)/arsrapport/actions", () => ({
   activateGenebank: vi.fn(),
-  saveRound: vi.fn(),
+  saveRound: (...a: unknown[]) => saveRound(...a),
   sendTestMail: (...a: unknown[]) => sendTestMail(...a),
 }));
 
@@ -128,5 +129,91 @@ describe("RoundPanel invitation", () => {
     );
     expect(screen.getByText(/Inbjudan går till 190/)).toBeTruthy();
     expect(screen.queryByText("Skicka provmejl till mig")).toBeNull();
+  });
+});
+
+describe("RoundPanel activation box", () => {
+  it("tells the manager that old answers do not count for the Koharen list", () => {
+    render(
+      <RoundPanel
+        year={2026}
+        genebankId={1}
+        genebankName="Gotland"
+        round={{ ...round, genebanks: [] }}
+        canEdit
+        recipients={null}
+        env="demo"
+      />,
+    );
+    expect(
+      screen.getByText(
+        "Listan i Koharen tar bara med besättningar vars innehavare har svarat ja i årsrapporten, i profilen eller på blanketten. Svaren från årsrapporterna för 2025 och tidigare räknas inte, så den första listan kan bli kortare än förut.",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText("Aktivera")).toBeTruthy();
+  });
+});
+
+describe("RoundPanel without an open round", () => {
+  it("says a round that closed without activation is closed, with nothing to do", () => {
+    render(
+      <RoundPanel
+        year={2025}
+        genebankId={1}
+        genebankName="Gotland"
+        round={{ ...round, year: 2025, end_date: "2026-03-30", genebanks: [] }}
+        closed
+        canEdit
+        recipients={null}
+        env="demo"
+      />,
+    );
+    expect(screen.getByText("Rundan 2025 är stängd")).toBeTruthy();
+    expect(screen.queryByText("Aktivera")).toBeNull();
+    expect(screen.queryByText("Skicka provmejl till mig")).toBeNull();
+  });
+  it("fills a new round's dates with the defaults", () => {
+    render(
+      <RoundPanel
+        year={2026}
+        genebankId={1}
+        genebankName="Gotland"
+        round={null}
+        canEdit
+        recipients={null}
+        env="demo"
+      />,
+    );
+    expect(screen.getByLabelText("Öppnar")).toHaveProperty(
+      "value",
+      "2026-12-31",
+    );
+    expect(screen.getByLabelText("Stänger")).toHaveProperty(
+      "value",
+      "2027-03-30",
+    );
+  });
+});
+
+describe("RoundPanel with an activated round missing a date", () => {
+  it("saves the shown default with Spara datum", async () => {
+    saveRound.mockResolvedValue({ ok: true });
+    render(
+      <RoundPanel
+        year={2026}
+        genebankId={1}
+        genebankName="Gotland"
+        round={{ ...round, end_date: null }}
+        canEdit
+        recipients={null}
+        env="demo"
+      />,
+    );
+    const save = screen.getByText("Spara datum") as HTMLButtonElement;
+    expect(save.disabled).toBe(false);
+    fireEvent.click(save);
+    await waitFor(() =>
+      expect(saveRound).toHaveBeenCalledWith(2026, {}, "demo"),
+    );
   });
 });

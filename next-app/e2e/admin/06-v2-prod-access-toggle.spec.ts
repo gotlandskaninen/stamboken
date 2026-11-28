@@ -4,7 +4,12 @@
 // contract (§4.6). Both flags are toggled back to leave the stack clean.
 import { test, expect } from "@playwright/test";
 import { loginAs, ADMIN, VICTIM_PROFILE } from "./helpers/auth";
-import { SEARCH_FIELD, V2_TOGGLE, VALIDATED_TOGGLE } from "./helpers/copy";
+import {
+  SAVED_NOTICE,
+  SEARCH_FIELD,
+  V2_TOGGLE,
+  VALIDATED_TOGGLE,
+} from "./helpers/copy";
 
 test.describe("flag toggles audit to hbuser", () => {
   test.beforeEach(async ({ page, context }) => {
@@ -28,7 +33,14 @@ test.describe("flag toggles audit to hbuser", () => {
     await openVictimDetail(page);
     // MUI <Switch> renders an <input type="checkbox"> — the accessible
     // role is "checkbox" (Task 26's Flaggor switches).
-    await page.getByRole("switch", { name: V2_TOGGLE }).click();
+    const toggle = page.getByRole("switch", { name: V2_TOGGLE });
+    const before = await toggle.isChecked();
+    const detailUrl = page.url();
+    await toggle.click();
+    // #249: the toggle saves and stays on the account page with the new state.
+    await expect(page.getByText(SAVED_NOTICE)).toBeVisible();
+    expect(page.url()).toBe(detailUrl);
+    await expect(toggle).toBeChecked({ checked: !before });
 
     // §3.3.1: viewer is server-rendered with shareable URL params.
     await page.goto(
@@ -46,6 +58,7 @@ test.describe("flag toggles audit to hbuser", () => {
     // Toggle back (restore).
     await openVictimDetail(page);
     await page.getByRole("switch", { name: V2_TOGGLE }).click();
+    await expect(page.getByText(SAVED_NOTICE)).toBeVisible();
   });
 
   test("validated toggle audits via the dedicated endpoint", async ({
@@ -53,6 +66,7 @@ test.describe("flag toggles audit to hbuser", () => {
   }) => {
     await openVictimDetail(page);
     await page.getByRole("switch", { name: VALIDATED_TOGGLE }).click();
+    await expect(page.getByText(SAVED_NOTICE)).toBeVisible();
 
     await page.goto(
       "/stamboken/admin/system/audit?table=hbuser&changed_by=test-admin",
@@ -68,5 +82,6 @@ test.describe("flag toggles audit to hbuser", () => {
 
     await openVictimDetail(page);
     await page.getByRole("switch", { name: VALIDATED_TOGGLE }).click(); // restore
+    await expect(page.getByText(SAVED_NOTICE)).toBeVisible();
   });
 });

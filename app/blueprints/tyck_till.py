@@ -29,7 +29,8 @@ logger = logging.getLogger(__name__)
 
 tyck_till_bp = Blueprint("tyck_till", __name__, url_prefix="/api/v2")
 
-MAX_REQUEST = 9 * 1024 * 1024  # nginx takes 10 MB, and the form fields are on top of the images
+MAX_REQUEST = 9 * 1024 * 1024  # a public form whose body is read before its IP limit; nginx takes 10 MB on its pages
+IMAGE_SIDE = 2000  # pixels, as shrink() in the dialog (pointing.ts); bounds the size of the mail
 MAX_TEXT = 5000
 MAX_POINTED = 200
 MAX_IMAGES = 4
@@ -163,8 +164,14 @@ def _images():
         if _kind(file) not in IMAGE_KINDS:  # a PDF is never rendered here
             raise _Refused(problem(415, "Unsupported Media Type", "Otillåten filtyp. Bara JPEG, PNG, WebP och HEIC."))
     for file in files:
-        _each_image(file, MAX_IMAGES - len(encoded), lambda image: encoded.append(inbox.jpeg_bytes(image)))
+        _each_image(file, MAX_IMAGES - len(encoded), lambda image: encoded.append(inbox.jpeg_bytes(_fit(image))))
     return encoded
+
+
+def _fit(image):
+    """At most IMAGE_SIDE on the longest side, as the dialog's shrink(): the mail carries every image."""
+    image.thumbnail((IMAGE_SIDE, IMAGE_SIDE))
+    return image
 
 
 @tyck_till_bp.route("/tyck-till", methods=["POST"])

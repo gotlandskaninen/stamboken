@@ -64,7 +64,9 @@ def _null_originals(where):
     rows = list(rows.where(where & InboxDocument.original_path.is_null(False)).tuples())
     if rows:
         waiting = Case(
-            None, [(InboxDocument.interpretation_status == "vantar", "av")], InboxDocument.interpretation_status
+            None,
+            [(InboxDocument.interpretation_status.in_(("vantar", "for_litet")), "av")],
+            InboxDocument.interpretation_status,
         )
         # The model's reading and the proposal from it are a transcription of the photo: they go with it.
         query = InboxDocument.update(
@@ -339,13 +341,15 @@ def purge_gmail_processed(now):
 
 def purge_change_requests(now):
     """
-    The yearly report's member_change_request 30 days after it was confirmed, expired or revoked (spec 6): a paper
-    e-mail change holds the old and the new address. A mail still queued to it finds no address, as at an erasure.
+    The values of the yearly report's member_change_request 30 days after it was confirmed, expired or revoked
+    (spec 6): the addresses, phone, account and answer go, and the row stays with its kind, dates and revoked_reason,
+    so the status view and the export still say "kontobyte förföll" or "det var inte jag" (U14). A mail still queued
+    to an old address finds none, as at an erasure.
     """
     since = now - CHANGE_REQUEST_AFTER
     request = MemberChangeRequest
     closed = (request.confirmed_at < since) | (request.expires_at < since) | (request.revoked_at < since)
-    return request.delete().where(closed).execute()
+    return request.update(value={}).where(closed & (request.value != {})).execute()
 
 
 def mark_stalled(now):
@@ -412,10 +416,24 @@ def erase_person_from_inbox(member, user_id=None):
     if user_id is not None:
         sent |= InboxItem.sender_user == user_id
         replies |= InboxEvent.detail.contains({"sender_user": user_id})
+    return paths + _erase_sent(sent, replies, user_id)
+
+
+def erase_user_from_inbox(user_id):
+    """
+    What an account sent, for an account that belongs to no person (#250, matrikel.erase_unlinked_account): the
+    items it uploaded and its replies, as erase_person_from_inbox does with them. In the caller's transaction; the
+    caller passes the returned paths to remove_originals after the commit.
+    """
+    return _erase_sent(InboxItem.sender_user == user_id, InboxEvent.detail.contains({"sender_user": user_id}), user_id)
+
+
+def _erase_sent(sent, replies, user_id):
+    """The items matching `sent` and the reply events matching `replies`; returns the paths of the deleted files."""
     _clear_event_text((InboxEvent.kind == "svar") & replies)
     ids = [item_id for (item_id,) in InboxItem.select(InboxItem.id).where(sent).tuples()]
     if not ids:
-        return paths
+        return []
     to_sender = (MailMessage.recipient_kind == "inbox_sender") & MailMessage.recipient_id.in_(ids)
     if user_id is not None:
         to_sender |= (MailMessage.recipient_kind == "user") & (MailMessage.recipient_id == user_id)
@@ -431,7 +449,7 @@ def erase_person_from_inbox(member, user_id=None):
     InboxItem.update(sender_address=None).where(InboxItem.id.in_(kept)).execute()
     for item_id in kept:
         forget_recipient("inbox_sender", item_id)
-    return paths + more
+    return more
 
 
 def erase_document(item, document, user):
@@ -493,6 +511,10 @@ def erase_buyer_from_inbox(herd_tracking_id, whole_items=False):
             & (InboxDocument.individual == sale.individual_id)
             & InboxDocument.doc_type.in_(ORIGINAL_TYPES)
         )
+        # a sale entered from a paper form (the report's direct sale, or Skicka on paper): every page of that form
+        traced = InboxOperation.select(InboxOperation.document).where(InboxOperation.operation_id == sale.operation_id)
+        forms = InboxDocument.select(InboxDocument.item).where(InboxDocument.id.in_(traced))
+        shown |= InboxDocument.item.in_(forms) & (InboxDocument.doc_type == "arsblankett")
     paths = _null_originals(shown)
     _clear_text(InboxDocument.select(InboxDocument.item).where(shown))
     return paths

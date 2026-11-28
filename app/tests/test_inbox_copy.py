@@ -5,14 +5,23 @@ isort:skip_file
 
 import datetime
 import io
+import math
 import os
+from unittest import mock
 
+import numpy as np  # noqa: E402
 import utils.database as db  # noqa: E402
-from PIL import Image  # noqa: E402
+import utils.inbox as inbox  # noqa: E402
+import utils.inbox_gmail as inbox_gmail  # noqa: E402
+import utils.inbox_interpreter as interpreter  # noqa: E402
+from PIL import Image, ImageDraw  # noqa: E402
 
+import tests.test_inbox_paper as paper_photos  # noqa: E402
+from tests.database_test import rewind_migrations  # noqa: E402
+from tests.ht_helpers import ht_row  # noqa: E402
 from tests.inbox_fixtures import InboxTest, encoded  # noqa: E402
 
-RED, BLUE = (220, 30, 30), (30, 30, 220)
+RED, BLUE, GREEN = (220, 30, 30), (30, 30, 220), (30, 200, 30)
 
 
 def red_over_blue():
@@ -86,6 +95,217 @@ class TestCopy(CopyTest):
         self.assertTrue(close(copy.getpixel((600, 400)), (0, 0, 0)))
         self.assertTrue(close(copy.getpixel((600, 1200)), BLUE))
 
+    def test_a_frame_crops_the_copy_without_black_boxes_and_a_redo_without_it_keeps_the_whole_photo(self):
+        item, document = self.saved_document()
+        frame = {"x": 0, "y": 0, "w": 1, "h": 0.5}
+        resp = self.mask(item, document, mask_rects=[], copy_frame=frame)  # no no_personal_data: the frame says it
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertEqual(resp.get_json()["document"]["copy_frame"], frame)
+        copy = self.copy(document)
+        self.assertEqual(copy.size, (1200, 800))  # the top half, red: the blue half is not in the copy
+        self.assertFalse(any(close(copy.getpixel((x, y)), BLUE) for x in range(0, 1200, 50) for y in range(0, 800, 50)))
+        self.login("man")
+        resp = self.mask(item, document, mask_rects=[{"x": 0, "y": 0.5, "w": 1, "h": 0.5}])
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertIsNone(db.InboxDocument.get_by_id(document.id).copy_frame)
+        self.assertEqual(self.copy(document).size, (1200, 1600))
+        events = self.reload(item).events.where(db.InboxEvent.kind == "kopia").order_by(db.InboxEvent.id)
+        self.assertEqual([(e.detail["rects"], e.detail["frame"]) for e in events], [(0, True), (1, False)])
+        # A frame over the whole photo leaves nothing out: it needs no_personal_data as no frame does.
+        whole = {"x": 0, "y": 0, "w": 1, "h": 1}
+        self.assertEqual(self.mask(item, document, mask_rects=[], copy_frame=whole).status_code, 400)
+        resp = self.mask(item, document, mask_rects=[], copy_frame=whole, no_personal_data=True)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+
+    def test_the_frame_crops_the_turned_photo_after_its_boxes_are_painted(self):
+        item, document = self.saved_document()
+        # Turned clockwise the photo is 1600 × 1200, blue on the left and red on the right. The frame keeps all but
+        # its left quarter; the box covers the middle of its right quarter, in fractions of the turned photo.
+        frame = {"x": 0.25, "y": 0, "w": 0.75, "h": 1}
+        resp = self.mask(
+            item, document, rotation=90, mask_rects=[{"x": 0.75, "y": 0.25, "w": 0.25, "h": 0.5}], copy_frame=frame
+        )
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        copy = self.copy(document)
+        self.assertEqual(copy.size, (1200, 1200))
+        self.assertTrue(close(copy.getpixel((200, 600)), BLUE))  # x 400-800 of the turned photo
+        self.assertTrue(close(copy.getpixel((600, 600)), RED))
+        for x in (850, 1000, 1150):  # the box, x 1200-1600 of the turned photo
+            self.assertTrue(close(copy.getpixel((x, 600)), (0, 0, 0)))
+        self.assertTrue(close(copy.getpixel((1000, 100)), RED))  # above the box
+
+    def test_the_frame_is_rounded_inwards_so_no_pixel_partly_outside_it_is_kept(self):
+        item, document = self.saved_document()
+        frame = {"x": 0.0004, "y": 0.0003, "w": 0.5, "h": 0.5}  # 0.48 px in from the left and top of 1200 x 1600
+        resp = self.mask(item, document, mask_rects=[], copy_frame=frame)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertEqual(self.copy(document).size, (599, 799))  # columns 1-599, rows 1-799
+
+    def test_a_frame_with_no_whole_pixel_inside_is_refused(self):
+        item, document = self.saved_document()
+        Image.new("RGB", (4, 4), (200, 0, 0)).save(self.stored(document), "JPEG")  # a photo of a few pixels
+        resp = self.mask(item, document, mask_rects=[], copy_frame={"x": 0.1, "y": 0.1, "w": 0.1, "h": 0.1})
+        self.assertEqual(resp.status_code, 400, resp.get_json())
+        self.assertIsNone(db.InboxDocument.get_by_id(document.id).public_path)
+
+    def test_only_a_handwritten_certificate_without_a_frame_or_boxes_is_offered_its_frame(self):
+        _, document = self.saved_document()
+        document = db.InboxDocument.get_by_id(document.id)
+        frame = {"x": 0, "y": 0, "w": 1, "h": 0.5}
+        for changes, suggestion in (
+            ({"cert_format": "handskrivet"}, inbox.HANDWRITTEN_FRAME),
+            ({"cert_format": "handskrivet", "mask_rects": []}, None),  # confirmed with nothing to hide
+            ({"cert_format": "handskrivet", "mask_rects": [frame]}, None),
+            ({"cert_format": "handskrivet", "copy_frame": frame}, None),
+            ({"cert_format": "datorskrivet"}, None),
+            ({"cert_format": None}, None),
+        ):
+            with self.subTest(changes):
+                document.cert_format, document.mask_rects, document.copy_frame = None, None, None
+                for key, value in changes.items():
+                    setattr(document, key, value)
+                body = inbox.documents_json([document])[0]
+                self.assertEqual(body["frame_suggestion"], suggestion)
+                self.assertEqual(body["copy_frame"], changes.get("copy_frame"))
+                self.assertNotIn("mask_suggestion", body)
+
+    def test_migration_60_adds_the_frame_and_replays(self):
+        self.addCleanup(db.check_migrations)
+        db.DATABASE.execute_sql("ALTER TABLE inbox_document DROP COLUMN copy_frame")
+        for _ in range(2):  # replay-safe
+            rewind_migrations(60)
+            db.check_migrations()
+        self.assertIn("copy_frame", {c.name for c in db.DATABASE.get_columns("inbox_document")})
+
+    def test_a_copy_checked_against_the_registry_gives_the_rabbit_a_badge_everyone_sees(self):
+        item, document = self.saved_document()
+        rects = [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+        for wrong in ("ja", 1):
+            self.assertEqual(self.mask(item, document, mask_rects=rects, matches_registry=wrong).status_code, 400)
+        resp = self.mask(item, document, mask_rects=rects, matches_registry=True)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        stored = db.InboxDocument.get_by_id(document.id)
+        self.assertEqual(resp.get_json()["document"]["verified_at"], stored.verified_at.isoformat())
+        self.assertEqual((stored.verified_by_id, stored.saved_certificate), (self.helper.id, "P-1"))
+
+        self.login("spec")  # a viewer: sees the badge, not the copy
+        rabbit = self.client.get("/api/v2/individual/G1-2112").get_json()
+        self.assertEqual(rabbit["paper_certificate_checked"], stored.verified_at.isoformat())
+        self.assertEqual(self.client.get("/api/v2/individual/G1-2112/paper-certificate").status_code, 403)
+
+        # Another certificate on the rabbit since: not the one checked.
+        db.Individual.update(certificate="P-2").where(db.Individual.number == "G1-2112").execute()
+        self.assertIsNone(self.client.get("/api/v2/individual/G1-2112").get_json()["paper_certificate_checked"])
+        db.Individual.update(certificate="P-1").where(db.Individual.number == "G1-2112").execute()
+
+        self.login("man")  # made again without the check: the badge goes with it, and the old file after the commit
+        old = stored.public_path
+        self.assertEqual(self.mask(item, document, mask_rects=rects).status_code, 200)
+        again = db.InboxDocument.get_by_id(document.id)
+        self.assertIsNone(again.verified_at)
+        self.assertNotEqual(again.public_path, old)
+        self.assertFalse(os.path.exists(os.path.join(self.folder, old)))
+        self.assertIsNone(self.client.get("/api/v2/individual/G1-2112").get_json()["paper_certificate_checked"])
+
+    def test_an_old_certificate_linked_masked_and_checked_shows_its_badge_to_a_member(self):
+        # The case the feature is for: G1-2111 has had certificate "12" since the old registry.
+        self.login("owner")
+        resp = self.upload(("intyg.jpg", encoded(red_over_blue())), accept_warnings="1")
+        item = db.InboxItem.get_by_id(resp.get_json()["item"]["id"])
+        document = item.documents.get()
+        self.login("hjalp")
+        self.post(f"/{item.id}/ta")
+        body = {"action": "pappersintyg", "individual": "G1-2111", "paper_certificate": "12", "paper_number": "G1-2111"}
+        self.assertEqual(self.post(f"/{item.id}/dokument/{document.id}/spara", **body).status_code, 200)
+        self.assertFalse(db.IndividualCommand.select().exists())  # nothing written to the registry
+        rects = [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+        resp = self.mask(item, document, mask_rects=rects, matches_registry=True)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertEqual(resp.get_json()["item"]["state"], "klar")
+        self.login("owner")  # a member without a genebank role
+        rabbit = self.client.get("/api/v2/individual/G1-2111").get_json()
+        self.assertEqual(
+            rabbit["paper_certificate_checked"], db.InboxDocument.get_by_id(document.id).verified_at.isoformat()
+        )
+
+    def test_removing_the_copy_removes_its_check(self):
+        item, document = self.saved_document()
+        self.mask(item, document, mask_rects=[{"x": 0, "y": 0.5, "w": 1, "h": 0.5}], matches_registry=True)
+        self.login("man")
+        resp = self.client.delete(f"/api/v2/inkorg/{item.id}/dokument/{document.id}/kopia")
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        stored = db.InboxDocument.get_by_id(document.id)
+        self.assertEqual((stored.verified_at, stored.verified_by_id), (None, None))
+        self.assertEqual(stored.saved_certificate, "P-1")  # what the photo was saved as stays
+
+    def test_the_check_is_of_the_certificate_the_photo_was_saved_as(self):
+        item, document = self.saved_document()  # saved as P-1
+        db.Individual.update(certificate="P-2").where(db.Individual.number == "G1-2112").execute()
+        rects = [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+        resp = self.mask(item, document, mask_rects=rects, matches_registry=True)
+        self.assertEqual(resp.status_code, 409, resp.get_json())
+        self.assertIsNone(db.InboxDocument.get_by_id(document.id).verified_at)
+        self.assertEqual(self.mask(item, document, mask_rects=rects).status_code, 200)  # unchecked, it goes on
+
+    def test_a_rabbit_with_a_digital_certificate_beside_the_paper_number_gets_no_badge(self):
+        item, document = self.saved_document()  # saved as P-1
+        db.Individual.update(digital_certificate=500000).where(db.Individual.number == "G1-2112").execute()
+        rects = [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+        self.assertEqual(self.mask(item, document, mask_rects=rects, matches_registry=True).status_code, 409)
+        db.InboxDocument.update(verified_at=datetime.datetime.now(datetime.timezone.utc)).where(
+            db.InboxDocument.id == document.id
+        ).execute()
+        self.assertEqual(self.mask(item, document, mask_rects=rects).status_code, 200)
+        db.InboxDocument.update(verified_at=datetime.datetime.now(datetime.timezone.utc)).where(
+            db.InboxDocument.id == document.id
+        ).execute()
+        self.login("spec")
+        self.assertIsNone(self.client.get("/api/v2/individual/G1-2112").get_json()["paper_certificate_checked"])
+
+    def test_a_rabbit_renumbered_since_the_save_is_not_checked(self):
+        item, document = self.saved_document()  # G1-2112, P-1
+        db.Individual.update(number="G1-2118").where(db.Individual.number == "G1-2112").execute()
+        rects = [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+        self.assertEqual(self.mask(item, document, mask_rects=rects, matches_registry=True).status_code, 409)
+
+    def test_a_rabbit_whose_latest_row_has_no_herd_still_has_its_copy_decided(self):
+        item, document = self.saved_document()
+        rabbit = db.Individual.get(db.Individual.number == "G1-2112")
+        ht_row("TRANSFER", individual=rabbit, herd=None, herd_tracking_date=datetime.date.today())
+        rects = [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+        resp = self.mask(item, document, mask_rects=rects, matches_registry=True)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertEqual(resp.get_json()["document"]["individual_genebank_id"], rabbit.origin_herd.genebank_id)
+
+    def test_a_photo_saved_before_the_number_was_kept_is_never_checked(self):
+        item, document = self.saved_document()
+        db.InboxDocument.update(saved_certificate=None).where(db.InboxDocument.id == document.id).execute()
+        rects = [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+        resp = self.mask(item, document, mask_rects=rects, matches_registry=True)
+        self.assertEqual(resp.status_code, 409, resp.get_json())
+        self.assertNotIn("None", resp.get_json()["detail"])
+
+    def test_a_manager_of_another_genebank_who_helps_here_cannot_redo_a_closed_copy(self):
+        item, document = self.saved_document()
+        rects = [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+        self.mask(item, document, mask_rects=rects, matches_registry=True)
+        db.InboxItem.update(genebank=None).where(db.InboxItem.id == item.id).execute()  # any manager "manages" it
+        both = self.user("bada", ("manager", self.genebanks[1].id), ("helper", self.genebanks[0].id))
+        db.User.update(v2_prod_access=True).where(db.User.id == both.id).execute()
+        self.login("bada")
+        self.assertEqual(self.mask(item, document, mask_rects=rects).status_code, 409)  # not the handler, closed
+        self.assertIsNotNone(db.InboxDocument.get_by_id(document.id).verified_at)
+
+    def test_a_failed_cleanup_does_not_fail_a_committed_redo(self):
+        item, document = self.saved_document()
+        rects = [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+        self.mask(item, document, mask_rects=rects)
+        self.login("man")
+        with mock.patch("utils.inbox.remove_files", side_effect=PermissionError("read-only")):
+            resp = self.mask(item, document, mask_rects=rects, matches_registry=True)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertIsNotNone(db.InboxDocument.get_by_id(document.id).verified_at)
+
     def test_masking_needs_a_saved_certificate_and_a_confirmation(self):
         self.login("owner")
         item = db.InboxItem.get_by_id(self.upload().get_json()["item"]["id"])
@@ -102,8 +322,18 @@ class TestCopy(CopyTest):
             {"rotation": None, "mask_rects": rects},
             {"rotation": 45, "mask_rects": rects},
             {"rotation": False, "mask_rects": rects},
-            {"mask_rects": []},  # an empty list says nothing without the explicit confirmation
+            {"mask_rects": []},  # an empty list says nothing without the explicit confirmation or a frame
             {"mask_rects": [], "no_personal_data": "true"},
+            {"rotation": 0, "mask_rects": [], "copy_frame": None},
+            {"rotation": 0, "mask_rects": [], "copy_frame": {"x": 0.5, "y": 0, "w": 0.6, "h": 1}},  # past the edge
+            {"rotation": 0, "mask_rects": [], "copy_frame": {"x": 0, "y": 0, "w": 0.09, "h": 1}},  # under a tenth
+            {"rotation": 0, "mask_rects": rects, "copy_frame": {"x": 0, "y": 0.5, "w": 1, "h": 0.05}},
+            {"rotation": 0, "mask_rects": rects, "copy_frame": {}},
+            {"rotation": 0, "mask_rects": rects, "copy_frame": False},
+            {"rotation": 0, "mask_rects": rects, "copy_frame": [{"x": 0, "y": 0, "w": 1, "h": 0.5}]},
+            {"rotation": 0, "mask_rects": rects, "straighten": 15.1},
+            {"rotation": 0, "mask_rects": rects, "straighten": True},
+            {"rotation": 0, "mask_rects": rects, "straighten": "2"},
         ):
             with self.subTest(body=body):
                 resp = self.post(f"/{item.id}/dokument/{document.id}/maskning", **body)
@@ -179,7 +409,13 @@ class TestCopyIsFixed(CopyTest):
         self.assertEqual(resp.status_code, 200, resp.get_json())
         self.post(f"/{item.id}/lage", state="tagen")  # reopened: its handler again
         before = open(os.path.join(self.folder, db.InboxDocument.get_by_id(document.id).public_path), "rb").read()
-        for body in ({"rotation": 90}, {"mask_rects": None}, {"mask_rects": []}, {"doc_type": "bevis"}):
+        for body in (
+            {"rotation": 90},
+            {"straighten": 2},
+            {"mask_rects": None},
+            {"mask_rects": []},
+            {"doc_type": "bevis"},
+        ):
             with self.subTest(body=body):
                 self.assertEqual(self.patch(item, document, **body).status_code, 409)
         stored = db.InboxDocument.get_by_id(document.id)
@@ -241,3 +477,150 @@ class TestCopyIsFixed(CopyTest):
             [(self.helper.id, 0), (self.manager.id, 180), (self.admin.id, 180)],
         )
         self.assertEqual(self.reload(item).state, "klar")
+
+
+def old_turn(image, rotation, straighten=0):
+    """The quarter turn the copy, the reading and the cut-out were made with before the photo could be straightened."""
+    return image.convert("RGB").rotate(-rotation, expand=True)
+
+
+def tilted_paper():
+    """
+    White paper, 1200 x 1600, with a red row near its top and a green one near its bottom, photographed turned 5°
+    counter-clockwise: straightened by 5° clockwise the rows lie level again.
+    """
+    paper = Image.new("RGB", (1200, 1600), "white")
+    draw = ImageDraw.Draw(paper)
+    draw.rectangle([100, 380, 1099, 419], fill=RED)
+    draw.rectangle([100, 1180, 1099, 1219], fill=GREEN)
+    return paper.rotate(5, expand=True, resample=Image.Resampling.BICUBIC, fillcolor="white")
+
+
+class TestStraighten(CopyTest):
+    """The photo straightened a few degrees after its quarter turns: F, the frame the copy, reading and cut-out use."""
+
+    def patch(self, item, document, **body):
+        return self.client.patch(f"/api/v2/inkorg/{item.id}/dokument/{document.id}", json=body)
+
+    def test_no_straighten_is_the_old_quarter_turn_byte_for_byte_and_a_tenth_of_a_degree_is_not(self):
+        _, document = self.saved_document()
+        document = db.InboxDocument.get_by_id(document.id)
+        source = self.stored(document)
+        document.rotation, document.mask_rects = 90, [{"x": 0, "y": 0.5, "w": 1, "h": 0.25}]
+        document.copy_frame = {"x": 0, "y": 0, "w": 1, "h": 0.6667}
+        crop = {"x": 0.1, "y": 0.2, "w": 0.5, "h": 0.25}
+
+        def made(straighten, turn=inbox.turned):
+            """The copy, the reading and the cut-out with the photo turned by `turn`."""
+            document.straighten = straighten
+            with mock.patch.object(inbox, "turned", turn), mock.patch.object(interpreter, "turned", turn):
+                inbox.make_copy(document)
+                with open(os.path.join(self.folder, document.public_path), "rb") as copy:
+                    return (
+                        copy.read(),
+                        interpreter.prepare_image(source, 90, straighten),
+                        inbox_gmail._cropped(document, crop, 90, straighten),  # pylint: disable=protected-access
+                    )
+
+        before = made(0, old_turn)
+        self.assertEqual(made(0), before)
+        for now, then in zip(made(0.1), before, strict=True):
+            self.assertNotEqual(now, then)
+
+    def test_a_straightened_copy_masks_the_marked_row_and_is_cropped_in_the_straightened_photo(self):
+        item, document = self.saved_document()
+        tilted_paper().save(self.stored(document), "JPEG", quality=95)
+        with Image.open(self.stored(document)) as photo:
+            width, height = inbox.turned(photo, 0, 5).size
+        # Straightened, the paper lies level in the middle of F: its red row at 380-420 of the paper's 1600.
+        left, top = (width - 1200) / 2, (height - 1600) / 2
+        row = {"x": (left + 80) / width, "y": (top + 370) / height, "w": 1040 / width, "h": 60 / height}
+        frame = {"x": 0, "y": 0, "w": 1, "h": (top + 800) / height}  # the top half of the paper: no green row
+        resp = self.mask(item, document, straighten=5, mask_rects=[row], copy_frame=frame)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertEqual(resp.get_json()["document"]["straighten"], 5)
+        self.assertEqual(db.InboxDocument.get_by_id(document.id).straighten, 5)
+
+        copy = self.copy(document)
+        self.assertEqual(copy.width, width)
+        self.assertLessEqual(abs(copy.height - (top + 800)), 1)
+        for x in range(int(left) + 120, int(left) + 1090, 30):  # the row, level from end to end, is covered
+            self.assertTrue(close(copy.getpixel((x, round(top + 400))), (0, 0, 0)), x)
+            self.assertTrue(close(copy.getpixel((x, round(top + 355))), (255, 255, 255)), x)  # and nothing above it
+        colours = [copy.getpixel((x, y)) for x in range(0, copy.width, 10) for y in range(0, copy.height, 10)]
+        self.assertFalse(any(close(c, RED, 60) or close(c, GREEN, 60) for c in colours))
+
+    def test_patch_straightens_by_up_to_15_degrees_either_way_to_a_tenth(self):
+        self.login("owner")
+        item = db.InboxItem.get_by_id(self.upload().get_json()["item"]["id"])
+        document = item.documents.get()
+        self.login("hjalp")
+        self.post(f"/{item.id}/ta")
+        for value, kept in ((4.04, 4.0), (-15, -15.0), (15, 15.0), (3.7, 3.7), (-0.04, 0.0)):
+            with self.subTest(value):
+                resp = self.patch(item, document, straighten=value)
+                self.assertEqual(resp.status_code, 200, resp.get_json())
+                self.assertEqual(resp.get_json()["document"]["straighten"], kept)
+                self.assertEqual(db.InboxDocument.get_by_id(document.id).straighten, kept)  # as the REAL column has it
+        self.assertEqual(str(db.InboxDocument.get_by_id(document.id).straighten), "0.0")  # never -0.0
+        for value in (15.1, -16, True, None, "3", [1], float("nan"), float("inf")):
+            with self.subTest(value):
+                self.assertEqual(self.patch(item, document, straighten=value).status_code, 400)
+        self.assertEqual(db.InboxDocument.get_by_id(document.id).straighten, 0)
+
+    def test_masking_keeps_the_straighten_it_is_given_and_needs_one_on_a_straightened_photo(self):
+        item, document = self.saved_document()
+        self.assertEqual(self.patch(item, document, straighten=3).status_code, 200)
+        with Image.open(self.stored(document)) as photo:
+            three, two = photo.rotate(-3, expand=True).size, photo.rotate(2, expand=True).size
+        rects = [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+        # Boxes without the angle they were drawn at, on a photo straightened by 3°: no copy is made.
+        self.assertEqual(self.mask(item, document, mask_rects=rects).status_code, 400)
+        self.assertIsNone(db.InboxDocument.get_by_id(document.id).public_path)
+        self.assertEqual(self.mask(item, document, mask_rects=rects, straighten=3).status_code, 200)
+        self.assertEqual((db.InboxDocument.get_by_id(document.id).straighten, self.copy(document).size), (3, three))
+        self.login("man")
+        self.assertEqual(self.mask(item, document, mask_rects=rects, straighten=-2).status_code, 200)
+        self.assertEqual((db.InboxDocument.get_by_id(document.id).straighten, self.copy(document).size), (-2, two))
+        self.assertEqual(self.mask(item, document, mask_rects=rects, straighten=0).status_code, 200)
+        self.assertEqual(self.mask(item, document, mask_rects=rects).status_code, 200)  # not straightened: none needed
+        self.assertEqual(
+            (db.InboxDocument.get_by_id(document.id).straighten, self.copy(document).size), (0, (1200, 1600))
+        )
+        events = self.reload(item).events.where(db.InboxEvent.kind == "kopia").order_by(db.InboxEvent.id)
+        self.assertEqual([e.detail["straighten"] for e in events], [3, -2, 0, 0])
+
+    def test_the_frame_round_the_paper_found_keeps_no_line_of_its_lower_third(self):
+        item, document = self.saved_document()
+        certificate = paper_photos.paper()
+        # Just below the paper's two-thirds line (1066.7 of 1600), in the seller and buyer block.
+        ImageDraw.Draw(certificate).rectangle([100, 1075, 1099, 1081], fill=GREEN)
+        photo = Image.new("RGB", (1800, 2200), paper_photos.DARK)
+        photo.paste(certificate, (300, 300))
+        photo.save(self.stored(document), "JPEG", quality=95)
+        url = f"/{item.id}/dokument/{document.id}/hitta-pappret"
+        found = self.post(url, rotation=0, straighten=0).get_json()
+        padded, tight = found["paper"], found["paper_tight"]
+        # The frame the masking sets (image.ts paperFrame): the padded box, cut at the tight box's two thirds,
+        # then rounded inwards as toApiFrame sends it.
+        bottom = math.floor((tight["y"] + tight["h"] * 0.6667) * 1e4 + 1e-6) / 1e4
+        frame = {"x": padded["x"], "y": padded["y"], "w": padded["w"], "h": round(bottom - padded["y"], 4)}
+        # The padded box cut at its own two thirds would have reached the line.
+        self.assertGreater((padded["y"] + padded["h"] * 0.6667) * 2200, 300 + 1075)
+        resp = self.mask(item, document, straighten=0, mask_rects=[], copy_frame=frame)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        copy = np.asarray(self.copy(document), np.int16)
+        self.assertGreater(copy.shape[0], 1000)  # the upper two thirds of the paper, about 1067 rows
+        self.assertFalse((np.abs(copy - GREEN) < 60).all(axis=-1).any())
+
+    def test_migration_61_adds_the_straighten_and_replays(self):
+        self.addCleanup(db.check_migrations)
+        db.DATABASE.execute_sql("ALTER TABLE inbox_document DROP COLUMN straighten")
+        for _ in range(2):  # replay-safe
+            rewind_migrations(61)
+            db.check_migrations()
+        column = db.DATABASE.execute_sql(
+            "SELECT data_type, is_nullable, column_default FROM information_schema.columns "
+            "WHERE table_name = 'inbox_document' AND column_name = 'straighten'"
+        ).fetchone()
+        self.assertEqual(column, ("real", "NO", "0"))

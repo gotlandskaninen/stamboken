@@ -11,7 +11,7 @@ import csv
 import io
 import re
 import secrets
-from datetime import date, datetime, timezone
+from datetime import date
 
 import utils.settings as settings
 from flask import Blueprint, Response, jsonify, request, session
@@ -22,7 +22,7 @@ from utils.data_access import session_holds
 from utils.database import (
     BILLING_FIELDS,
     DB_PROXY,
-    AuditLog,
+    OUTSIDE_GENEBANK_HERDS,
     Genebank,
     Herd,
     HerdAccessGrant,
@@ -49,14 +49,16 @@ from utils.matrikel import (
     is_anonymized,
     membership_recipient,
     parse_postal_fields,
+    query_matrikel_audit,
     set_member_email,
     set_membership_status,
     write_matrikel_audit,
 )
 from utils.members import (
     CONSENT_KEYS,
-    PROFILE_CONSENT_TEXT_VERSION,
+    CONSENT_TEXT_VERSION,
     consent_answered,
+    counted_answers,
     effective_consent,
     set_consent,
     stored_consent,
@@ -64,8 +66,10 @@ from utils.members import (
 from utils.membership_lifecycle import Status, TransitionRefused
 
 from blueprints.common import (
+    DEMO_EXPORT_REFUSED,
     EMAIL_RE,
     json_login_required,
+    log_export,
     matrikel_admin_required,
     matrikel_read_required,
     membership_organization_fields,
@@ -73,6 +77,9 @@ from blueprints.common import (
 )
 
 members_bp = Blueprint("members", __name__, url_prefix="/api")
+
+# A herd in Koharen's list: active, and not the genebank's "sold outside" pseudo herd.
+ACTIVE_GENEBANK_HERD = (Herd.is_active == True) & Herd.herd.not_in(OUTSIDE_GENEBANK_HERDS)  # noqa: E712
 
 VALID_MEMBERSHIP_STATUSES = tuple(Status)
 
@@ -95,7 +102,7 @@ def _person_to_dict(p: Member) -> dict:
     }
 
 
-def _membership_to_dict(ms: Membership, persons: list[Member] | None = None) -> dict:
+def _membership_to_dict(ms: Membership, persons: list[Member] | None = None, counted=None) -> dict:
     # Flat main-member fields (None-safe) match the frontend MembershipRow
     # contract (matrikel/types.ts): the matrikel list renders
     # main_first_name/main_last_name/main_email/main_phone directly.
@@ -113,7 +120,7 @@ def _membership_to_dict(ms: Membership, persons: list[Member] | None = None) -> 
         "city": ms.city,
         "postal_address": ms.postal_address,
         **{field: getattr(ms, field) for field in BILLING_FIELDS},
-        "publication_consent": effective_consent(ms),
+        "publication_consent": effective_consent(ms, counted),
         "payment_note": ms.payment_note,
         "joined_date": ms.joined_date.isoformat() if ms.joined_date else None,
         "notes": ms.notes,
@@ -198,8 +205,10 @@ def list_members():
     # extra round trips on the busiest matrikel endpoint).
     persons_by_membership: dict[int, list[Member]] = {}
     active_herds: dict[int, list[dict]] = {}
+    counted = set()
     if items:
         ids = [ms.id for ms in items]
+        counted = counted_answers(ids)
         for person in Member.select().where(Member.membership.in_(ids)).order_by(Member.id):
             persons_by_membership.setdefault(person.membership_id, []).append(person)
         for herd in (
@@ -216,7 +225,7 @@ def list_members():
         {
             "items": [
                 {
-                    **_membership_to_dict(ms, persons_by_membership.get(ms.id, [])),
+                    **_membership_to_dict(ms, persons_by_membership.get(ms.id, []), counted),
                     "active_herds": active_herds.get(ms.id, []),
                 }
                 for ms in items
@@ -225,6 +234,48 @@ def list_members():
             "page": page,
             "per_page": per_page,
         }
+    )
+
+
+def _id_arg(name: str):
+    """An optional id or number, 1 to int4 max. Unlike _parse_int_arg nothing is clamped: 0 must not mean 1."""
+    raw = request.args.get(name)
+    if not raw:
+        return None
+    if not (raw.isascii() and raw.isdigit() and 1 <= int(raw) <= 2_147_483_647):
+        raise ValueError(f"{name} måste vara ett positivt heltal")
+    return int(raw)
+
+
+@members_bp.route("/v2/members/audit", methods=["GET"])
+@json_login_required
+@matrikel_read_required
+def get_matrikel_audit():
+    """The matrikel's change log (#244). Filters: membership_id (the member page's link), member_number (the number
+    the rows show), action, actor (username or e-mail, any case),
+    from and to (YYYY-MM-DD, both days included), page, per_page (at most 200)."""
+    try:
+        membership_id = _id_arg("membership_id")
+        member_number = _id_arg("member_number")
+        page = _parse_int_arg("page", 1, maximum=2_147_483_647)
+        per_page = _parse_int_arg("per_page", 50, maximum=200)
+        dates = {k: date.fromisoformat(request.args[k]) if request.args.get(k) else None for k in ("from", "to")}
+    except ValueError:
+        return problem(
+            400, "Ogiltig parameter", "Medlemsnummer, id och sidor är positiva heltal. Datum skrivs ÅÅÅÅ-MM-DD."
+        )
+    return jsonify(
+        query_matrikel_audit(
+            full_access=current_user.is_admin or current_user.is_matrikel_admin,
+            membership_id=membership_id,
+            member_number=member_number,
+            action=request.args.get("action") or None,
+            actor=request.args.get("actor") or None,
+            date_from=dates["from"],
+            date_to=dates["to"],
+            page=page,
+            per_page=per_page,
+        )
     )
 
 
@@ -379,6 +430,8 @@ def _me_response(m: Member) -> dict:
     # decide whether the first Spara must submit all four keys — a partial
     # PATCH of an all-off answer would otherwise leave the row "ej angivet".
     data["consent_answered"] = consent_answered(ms)
+    # The Koharen question is about a herd: the profile asks it only with one in the list (5.11)
+    data["has_active_herd"] = Herd.select().where(Herd.membership == ms, ACTIVE_GENEBANK_HERD).exists()
     main = (
         Member.select(Member.first_name, Member.last_name, Member.role, Membership.id, Membership.organization_name)
         .join(Membership)
@@ -640,9 +693,12 @@ def patch_me_consent():
     # PARTIAL update: the body carries only the switches this member
     # actually changed. Unknown keys are refused rather than ignored — a typo
     # would otherwise look to the member like a saved consent.
-    unknown = sorted(key for key in body if key not in CONSENT_KEYS)
+    unknown = sorted(key for key in body if key not in (*CONSENT_KEYS, "text_version"))
     if unknown:
         return problem(400, "Ogiltigt fält", f"Okända samtyckesnycklar: {', '.join(unknown)}")
+    # The version of the text the page showed: a tab opened before the question changed answered another one (5.11)
+    if body.get("text_version") != CONSENT_TEXT_VERSION:
+        return problem(409, "Ladda om sidan", "Frågan om Koharen har ändrats. Ladda om sidan och svara igen.")
 
     # Validate every supplied consent key is a real JSON boolean —
     # rejecting strings like "false" that would otherwise coerce to True.
@@ -681,7 +737,14 @@ def patch_me_consent():
         # (fail-closed).
         merged = {k: v is True for k, v in stored_consent(ms).items() if k in CONSENT_KEYS}
         merged.update(updates)
-        set_consent(ms, merged, source="profil", text_version=PROFILE_CONSENT_TEXT_VERSION, user=current_user.id)
+        set_consent(
+            ms,
+            merged,
+            source="profil",
+            text_version=CONSENT_TEXT_VERSION,
+            user=current_user.id,
+            whole_answer=len(updates) == len(CONSENT_KEYS),
+        )
     return jsonify(_me_response(m))
 
 
@@ -827,7 +890,7 @@ def export_members():
             )
 
     filename = f"matrikel_export_{date.today().isoformat()}.csv"
-    log_member_export("matr")
+    log_export(Membership, "matr")
     return Response(
         buf.getvalue(),
         mimetype="text/csv; charset=utf-8",
@@ -838,66 +901,68 @@ def export_members():
     )
 
 
-KOHAREN_HEADER = ["Nr", "Namn", "Telefon", "E-post", "Gatuadress", "Postnummer", "Postort", "Samtycke"]
+def _csv_download(header, rows, filename):
+    """A CSV for Excel that no browser or proxy keeps: personal data, and a cached copy would skip the audit row."""
+    buf = io.StringIO()
+    buf.write("\ufeff")  # UTF-8 BOM for Excel
+    writer = csv.writer(buf, quoting=csv.QUOTE_ALL)  # a ";" inside a value stays in its cell in sv Excel
+    writer.writerow(header)
+    writer.writerows(rows)
+    return Response(
+        buf.getvalue(),
+        mimetype="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"},
+    )
 
 
-# [Next.js] Phase 19 — consent-aware Koharen listing (new route; the MATR export's contract is untouched, ADR-0006)
+KOHAREN_HEADER = ["Nr", "Namn", "Telefon", "E-post", "Postnummer", "Postort"]
+
+
+# The list of active herds in Koharen, the one purpose of the publication consent (fråga 33, spec 5.11): one row per
+# active herd whose holder said yes, with the herd number as Nr and only what the holder allowed. Never the street
+# address, a family member, or a Nej or never answered ({}) consent.
+# New route; the MATR export's contract is untouched (ADR-0006).
 @members_bp.route("/v2/members/koharen-export", methods=["GET"])
 @json_login_required
 @matrikel_admin_required
 def export_koharen():
-    buf = io.StringIO()
-    buf.write("\ufeff")  # UTF-8 BOM for Excel
-    writer = csv.writer(buf, quoting=csv.QUOTE_ALL)  # a ";" inside a value stays in its cell in sv Excel
-    writer.writerow(KOHAREN_HEADER)
-    q = Membership.select().where(Membership.membership_status == "active")
-    for ms in q.order_by(Membership.member_number.asc(nulls="LAST"), Membership.id):
-        persons = Member.select().where(Member.membership == ms, Member.end_date.is_null(True))
-        if ms.organization_name:
-            persons = [persons.where(Member.role == "huvudmedlem").first()]
-        else:
-            persons = persons.order_by(Member.role != "huvudmedlem", Member.id)
-        # {} = never answered: blank PII + "ej angivet" so the keeper
-        # can fall back to the yearly-report answer by hand. No automatic seeding.
-        answered = consent_answered(ms)
-        consent = effective_consent(ms) if answered else {key: False for key in CONSENT_KEYS}
-        samtycke = "angivet" if answered else "ej angivet"
-        nr = str(ms.member_number) if ms.member_number is not None else ""
-        for person in persons:
-            name = ms.organization_name or person.display_name
-            writer.writerow(
+    if settings.service.demo_instance:
+        return problem(403, "Inte i testmiljön", DEMO_EXPORT_REFUSED)
+    rows = []
+    with snapshot_read():  # herds, memberships and holders from one snapshot
+        herds = list(
+            Herd.select(Herd, Membership)
+            .join(Membership)
+            .where(ACTIVE_GENEBANK_HERD, Membership.membership_status == "active")
+            .order_by(Herd.herd)
+        )
+        holders = {
+            p.membership_id: p
+            for p in Member.select().where(
+                Member.membership.in_({h.membership_id for h in herds}),
+                Member.role == "huvudmedlem",
+                Member.end_date.is_null(True),
+            )
+        }
+        counted = counted_answers({h.membership_id for h in herds})
+        for herd in herds:
+            ms, holder = herd.membership, holders.get(herd.membership_id)
+            consent = effective_consent(ms, counted)  # only a literal true: Nej and {} are no row
+            if holder is None or not consent["name"]:
+                continue
+            rows.append(
                 [
-                    nr,
-                    csv_safe(name) if consent["name"] else "",
-                    csv_safe(person.phone) if consent["phone"] and person else "",
-                    csv_safe(person.email) if consent["email"] and person else "",
-                    csv_safe(ms.address) if consent["address"] else "",
+                    csv_safe(herd.herd),
+                    csv_safe(ms.organization_name or holder.display_name),
+                    csv_safe(holder.phone) if consent["phone"] else "",
+                    csv_safe(holder.email) if consent["email"] else "",
                     csv_safe(ms.postal_code) if consent["address"] else "",
                     csv_safe(ms.city) if consent["address"] else "",
-                    samtycke,
                 ]
             )
-    return Response(
-        buf.getvalue(),
-        mimetype="text/csv; charset=utf-8",
-        headers={"Content-Disposition": 'attachment; filename="koharen-matrikel.csv"'},
-    )
+    log_export(Membership, "koharen", rows=len(rows))
+    return _csv_download(KOHAREN_HEADER, rows, f"koharen-besattningar-{date.today().isoformat()}.csv")
 
-
-def log_member_export(action, **details):
-    """One audit_log row per download of the MATR export or the address list: who, when and which, never a value."""
-    AuditLog.create(
-        table_name=Membership._meta.table_name,
-        record_id=f"export-{action}-{datetime.now(timezone.utc).isoformat()}",
-        operation="READ",
-        new_data={"action": action, **details},
-        changed_by=current_user.username or current_user.email,
-    )
-
-
-# The demo is a nightly copy of production: an export there would carry real members
-# while its audit row is gone at the next sync.
-DEMO_EXPORT_REFUSED = "Exporten går bara att göra i den riktiga Stamboken, där varje uttag loggas."
 
 ADDRESS_LIST_HEADER = ["Nr", "Namn Efternamn", "Adress", "Postadress", "Betala nu"]
 
@@ -964,17 +1029,9 @@ def export_address_list():
                 )
             )
 
-    buf = io.StringIO()
-    buf.write("\ufeff")  # UTF-8 BOM for Excel
-    writer = csv.writer(buf, quoting=csv.QUOTE_ALL)
-    writer.writerow(ADDRESS_LIST_HEADER)
-    writer.writerows(row for _, row in sorted(rows, key=lambda r: r[0]))
-    log_member_export("address-list", rows=len(rows), fee_reminder=fee_reminder)
-    return Response(
-        buf.getvalue(),
-        mimetype="text/csv; charset=utf-8",
-        headers={
-            "Content-Disposition": f'attachment; filename="koharen-adresslista-{date.today().isoformat()}.csv"',
-            "Cache-Control": "no-store",  # personal data: never kept by a browser or a proxy
-        },
+    log_export(Membership, "address-list", rows=len(rows), fee_reminder=fee_reminder)
+    return _csv_download(
+        ADDRESS_LIST_HEADER,
+        [row for _, row in sorted(rows, key=lambda r: r[0])],
+        f"koharen-adresslista-{date.today().isoformat()}.csv",
     )

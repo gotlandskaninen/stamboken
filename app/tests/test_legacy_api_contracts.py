@@ -1723,17 +1723,13 @@ class TestYearlyReportOwnerContracts(FlaskTest):
         """Create a round then POST a yearly report against it."""
         with self.app as ctx:
             self.login(ctx, self.admin)
-            # Create a round first
-            rr = ctx.post(
-                "/api/manage/yearly_report_round",
-                json={
-                    "report_year": 2025,
-                    "start_date": "2025-01-01",
-                    "end_date": "2025-12-31",
-                    "is_active": True,
-                },
-            )
-            round_id = rr.get_json()["round"]
+            round_id = db.YearlyReportRound.create(
+                report_year=2025,
+                start_date=date(2025, 1, 1),
+                end_date=date(2025, 12, 31),
+                is_active=True,
+                created_by=self.admin,
+            ).id
             # POST yearly report for herd
             response = ctx.post(
                 f"/api/herd/{self.herds[0].herd}/yearlyreport",
@@ -1749,16 +1745,13 @@ class TestYearlyReportOwnerContracts(FlaskTest):
         """Create round, POST report, then GET it."""
         with self.app as ctx:
             self.login(ctx, self.admin)
-            rr = ctx.post(
-                "/api/manage/yearly_report_round",
-                json={
-                    "report_year": 2024,
-                    "start_date": "2024-01-01",
-                    "end_date": "2024-12-31",
-                    "is_active": True,
-                },
-            )
-            round_id = rr.get_json()["round"]
+            round_id = db.YearlyReportRound.create(
+                report_year=2024,
+                start_date=date(2024, 1, 1),
+                end_date=date(2024, 12, 31),
+                is_active=True,
+                created_by=self.admin,
+            ).id
             # POST a report
             ctx.post(
                 f"/api/herd/{self.herds[0].herd}/yearlyreport",
@@ -1788,81 +1781,40 @@ class TestYearlyReportAdminContracts(FlaskTest):
             self.assertIn("rounds", data)
             self.assertIsInstance(data["rounds"], list)
 
-    def test_create_round_returns_success_with_id(self):
-        with self.app as ctx:
-            self.login(ctx, self.admin)
-            response = ctx.post(
-                "/api/manage/yearly_report_round",
-                json={
-                    "report_year": 2025,
-                    "start_date": "2025-01-01",
-                    "end_date": "2025-12-31",
-                    "is_active": True,
-                },
-            )
-            self.assertEqual(response.status_code, 201)
-            data = response.get_json()
-            self.assertEqual(data["status"], "success")
-            self.assertIn("round", data)
-            self.assertIsInstance(data["round"], int)
+    def test_round_writes_are_gone(self):
+        """ADR-0020: creating, changing and deleting a round answer 410 and change nothing. The answer is
+        the same for admin, genbanksansvarig and owner, and for an unknown round."""
+        rnd = db.YearlyReportRound.create(
+            report_year=2022, start_date=date(2022, 1, 1), end_date=date(2022, 12, 31), created_by=self.admin
+        )
 
-    def test_create_round_as_owner_returns_403(self):
-        with self.app as ctx:
-            self.login(ctx, self.owner)
-            response = ctx.post("/api/manage/yearly_report_round", json={"report_year": 2025})
-            self.assertEqual(response.status_code, 403)
+        def rounds():
+            return list(db.YearlyReportRound.select().order_by(db.YearlyReportRound.id).dicts())
 
-    def test_patch_round_as_admin(self):
-        with self.app as ctx:
-            self.login(ctx, self.admin)
-            # Create then patch
-            rr = ctx.post(
-                "/api/manage/yearly_report_round",
-                json={
-                    "report_year": 2023,
-                    "start_date": "2023-01-01",
-                    "end_date": "2023-12-31",
-                    "is_active": False,
-                },
-            )
-            round_id = rr.get_json()["round"]
-            response = ctx.patch(
-                f"/api/manage/yearly_report_round/{round_id}",
-                json={
-                    "is_active": True,
-                },
-            )
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.get_json()["status"], "success")
-
-    def test_delete_round_as_admin(self):
-        with self.app as ctx:
-            self.login(ctx, self.admin)
-            rr = ctx.post(
-                "/api/manage/yearly_report_round",
-                json={
-                    "report_year": 2022,
-                    "start_date": "2022-01-01",
-                    "end_date": "2022-12-31",
-                },
-            )
-            round_id = rr.get_json()["round"]
-            response = ctx.delete(f"/api/manage/yearly_report_round/{round_id}")
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.get_json()["status"], "success")
+        before = rounds()
+        gone = {"status": "error", "message": "Årsrapportens rundor hanteras nu i nya Stamboken."}
+        body = {"report_year": 2025, "start_date": "2025-01-01", "end_date": "2025-12-31", "is_active": True}
+        for user in (self.admin, self.manager, self.owner):
+            with self.app as ctx:
+                ctx.get("/api/logout")  # the client keeps the previous user's session
+                self.login(ctx, user)
+                for round_id in (rnd.id, 999999):
+                    for method, url in (
+                        ("post", "/api/manage/yearly_report_round"),
+                        ("patch", f"/api/manage/yearly_report_round/{round_id}"),
+                        ("delete", f"/api/manage/yearly_report_round/{round_id}"),
+                    ):
+                        with self.subTest(user=user.email, method=method, round_id=round_id):
+                            response = getattr(ctx, method)(url, json=body)
+                            self.assertEqual((response.status_code, response.get_json()), (410, gone))
+        self.assertEqual(rounds(), before)
 
     def test_get_yearly_reports_for_round_as_admin(self):
         with self.app as ctx:
             self.login(ctx, self.admin)
-            rr = ctx.post(
-                "/api/manage/yearly_report_round",
-                json={
-                    "report_year": 2021,
-                    "start_date": "2021-01-01",
-                    "end_date": "2021-12-31",
-                },
-            )
-            round_id = rr.get_json()["round"]
+            round_id = db.YearlyReportRound.create(
+                report_year=2021, start_date=date(2021, 1, 1), end_date=date(2021, 12, 31), created_by=self.admin
+            ).id
             response = ctx.get(f"/api/manage/yearly-reports/{round_id}/{self.genebanks[0].id}")
             self.assertEqual(response.status_code, 200)
             data = response.get_json()
@@ -1872,7 +1824,7 @@ class TestYearlyReportAdminContracts(FlaskTest):
     def test_yearly_reports_cut_the_account_for_a_manager_but_not_for_admin(self):
         """Issue #33 follow-up: the routes pass the reader's role, JSON and CSV alike."""
         herd = self.herds[0]
-        herd.bank_account_number = "1234-5"
+        herd.membership = db.Membership.create(bank_account_number="1234-5")  # the account is the membership's
         herd.save()
         rnd = db.YearlyReportRound.create(
             report_year=2019, start_date=date(2019, 1, 1), end_date=date(2019, 12, 31), created_by=self.admin
@@ -1893,10 +1845,12 @@ class TestYearlyReportAdminContracts(FlaskTest):
             if account == "••45":
                 self.assertNotIn("1234-5", csv_text)
 
-    def test_yearly_reports_show_a_managers_own_herd_whole_and_the_other_masked(self):
+    def test_yearly_reports_cut_a_managers_own_herd_too(self):
+        """U2: owning the herd is no right to the whole account, which only admin and matrikel_admin read."""
         a, b = self.herds[0], self.herds[1]
+        membership = db.Membership.create(bank_account_number="1234-5")
         for herd in (a, b):
-            herd.bank_account_number = "1234-5"
+            herd.membership = membership
             herd.save()
         self.manager.add_role("owner", a.id)
         rnd = db.YearlyReportRound.create(
@@ -1912,22 +1866,16 @@ class TestYearlyReportAdminContracts(FlaskTest):
             self.login(ctx, self.manager)
             accounts = {r["herd"]: r["bank_account"] for r in ctx.get(url).get_json()["reports"]}
             csv_text = ctx.get(f"{url}/export").data.decode("utf-8")
-        self.assertEqual(accounts, {a.herd: "1234-5", b.herd: "••45"})
-        self.assertEqual(csv_text.count("1234-5"), 1)  # herd A whole, herd B cut
+        self.assertEqual(accounts, {a.herd: "••45", b.herd: "••45"})
+        self.assertNotIn("1234-5", csv_text)
 
     def test_export_yearly_reports_returns_csv(self):
         """Inventory row: GET /api/manage/yearly-reports/{x}/{x}/export (YearlyReportViewer.tsx:114)."""
         with self.app as ctx:
             self.login(ctx, self.admin)
-            rr = ctx.post(
-                "/api/manage/yearly_report_round",
-                json={
-                    "report_year": 2020,
-                    "start_date": "2020-01-01",
-                    "end_date": "2020-12-31",
-                },
-            )
-            round_id = rr.get_json()["round"]
+            round_id = db.YearlyReportRound.create(
+                report_year=2020, start_date=date(2020, 1, 1), end_date=date(2020, 12, 31), created_by=self.admin
+            ).id
             response = ctx.get(f"/api/manage/yearly-reports/{round_id}/{self.genebanks[0].id}/export")
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.mimetype, "text/csv")
@@ -1978,102 +1926,61 @@ class TestUserAdminContracts(FlaskTest):
             response = ctx.get("/api/manage/user/")
             self.assertEqual(response.status_code, 200)
 
-    def test_manage_user_post_creates_user(self):
-        with self.app as ctx:
-            self.login(ctx, self.admin)
-            response = ctx.post(
-                "/api/manage/user/",
-                json={
-                    "email": "newuser@test.example.com",
-                    "username": "newuser",
-                    "password": "testpass",
-                },
-            )
-            self.assertEqual(response.status_code, 200)
-            data = response.get_json()
-            self.assertIn("status", data)
-            self.assertIn(data["status"], ("created", "success"))
+    def test_account_role_and_password_writes_are_gone(self):
+        """ADR-0020: creating an account, changing one by id, roles and passwords answer 410 and change
+        nothing. The answer is the same for admin, genbanksansvarig and viewer, for another account, the
+        caller's own id and an unknown id, and also without an id (the old own-account change)."""
+        accounts = {"status": "error", "message": "Konton och roller hanteras nu i nya Stamboken."}
+        password = {
+            "status": "error",
+            "message": "Lösenord byts inte längre i gamla Stamboken. Admin återställer lösenord i nya Stamboken.",
+        }
 
-    def test_manage_user_patch_updates_user(self):
-        with self.app as ctx:
-            self.login(ctx, self.admin)
-            response = ctx.patch(
-                f"/api/manage/user/{self.viewer.id}",
-                json={
-                    "id": self.viewer.id,
-                    "fullname": "Updated Viewer Name",
-                },
-            )
-            self.assertEqual(response.status_code, 200)
-            data = response.get_json()
-            self.assertIn("status", data)
+        def snapshot():
+            users = db.User.select(
+                db.User.id, db.User.username, db.User.email, db.User.fullname, db.User.validated,
+                db.User._privileges, db.User.is_active, db.User.v2_prod_access,
+            ).order_by(db.User.id)  # fmt: skip
+            return list(users.tuples()), list(db.Authenticators.select().order_by(db.Authenticators.id).tuples())
 
-    def test_manage_user_self_patch_no_id_returns_status(self):
-        """Inventory row: PATCH /api/manage/user/ (settings.tsx:72) — self-service, no id in URL."""
-        with self.app as ctx:
-            self.login(ctx, self.admin)
-            response = ctx.patch(
-                "/api/manage/user/",
-                json={"email": self.admin.email, "validated": True},
-            )
-            self.assertEqual(response.status_code, 200)
-            self.assertIn("status", response.get_json())
+        before = snapshot()
+        gb = self.genebanks[0].id
+        for user in (self.admin, self.manager, self.viewer):
+            with self.app as ctx:
+                ctx.get("/api/logout")  # the client keeps the previous user's session
+                self.login(ctx, user)
+                for target in (self.viewer.id, user.id, 999999):
+                    form = {
+                        "id": target,
+                        "email": "ny@example.org",
+                        "username": "ny",
+                        "password": "x",
+                        "validated": True,
+                    }
+                    role = {"action": "add", "role": "manager", "user": target, "genebank": gb}
+                    for method, url, body, expected in (
+                        ("POST", "/api/manage/user/", form, accounts),
+                        ("POST", "/api/manage/user/0", form, accounts),
+                        ("POST", f"/api/manage/user/{target}", form, accounts),
+                        ("PATCH", f"/api/manage/user/{target}", form, accounts),
+                        ("UPDATE", f"/api/manage/user/{target}", form, accounts),
+                        ("PATCH", "/api/manage/user/", form, accounts),
+                        ("UPDATE", "/api/manage/user/", form, accounts),
+                        ("POST", "/api/manage/role", role, accounts),
+                        ("PATCH", "/api/manage/role", role, accounts),
+                        ("UPDATE", "/api/manage/role", role, accounts),
+                        ("POST", "/api/manage/setpassword/", {"oldpassword": "pass", "newpassword": "ny"}, password),
+                        ("POST", f"/api/manage/setpassword/{target}", {"newpassword": "ny"}, password),
+                    ):
+                        with self.subTest(user=user.email, method=method, url=url):
+                            response = ctx.open(url, method=method, json=body)
+                            self.assertEqual((response.status_code, response.get_json()), (410, expected))
+        anonymous = APP.test_client().post("/api/manage/setpassword/", json={"newpassword": "ny"})  # a fresh client
+        self.assertEqual((anonymous.status_code, anonymous.get_json()), (410, password))
+        self.assertEqual(snapshot(), before)
 
-    def test_manage_user_patch_other_account_as_viewer_is_forbidden(self):
-        """The body id picks the target, so a non-manager could rewrite any
-        account. Refusal keeps the route's HTTP 200 error envelope (ADR-0006);
-        editing one's own account by id keeps working."""
-        import utils.database as db
-
-        admin = db.User.get_by_id(self.admin.id)
-        admin.validated = True
-        admin.fullname = "Real Admin"
-        admin.save()
-
-        with self.app as ctx:
-            self.login(ctx, self.viewer)
-            response = ctx.patch(
-                f"/api/manage/user/{self.admin.id}",
-                json={"id": self.admin.id, "email": "pwned@example.org", "fullname": "Pwned", "validated": False},
-            )
-            after = db.User.get_by_id(self.admin.id)
-            self.assertEqual(
-                (after.email, after.fullname, after.validated),
-                ("admin", "Real Admin", True),
-                f"viewer rewrote admin account: response={response.get_json()}",
-            )
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.get_json(), {"status": "error", "message": "forbidden"})
-
-            own = ctx.patch(
-                f"/api/manage/user/{self.viewer.id}",
-                json={"id": self.viewer.id, "email": "spec-new@example.org", "validated": False},
-            )
-            self.assertEqual(own.get_json(), {"status": "updated"})
-            self.assertEqual(db.User.get_by_id(self.viewer.id).email, "spec-new@example.org")
-
-    def test_manage_user_patch_admin_account_as_manager_is_forbidden(self):
-        """Managers manage non-admin users only (get_users hides admins)."""
-        import utils.database as db
-
-        with self.app as ctx:
-            self.login(ctx, self.manager)
-            response = ctx.patch(
-                f"/api/manage/user/{self.admin.id}",
-                json={"id": self.admin.id, "email": "pwned@example.org", "validated": False},
-            )
-            self.assertEqual(db.User.get_by_id(self.admin.id).email, "admin", response.get_json())
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.get_json(), {"status": "error", "message": "forbidden"})
-
-            other = ctx.patch(
-                f"/api/manage/user/{self.viewer.id}",
-                json={"id": self.viewer.id, "email": "spec-by-manager@example.org", "validated": True},
-            )
-            self.assertEqual(other.get_json(), {"status": "updated"})
-
-    def test_manage_user_self_patch_cannot_take_another_accounts_email(self):
-        """A self-service PATCH may not take an address another
+    def test_update_user_cannot_take_another_accounts_email(self):
+        """update_user (behind the closed own-account route, ADR-0020) may not take an address another
         account holds (any casing). The CMS itself keys on google_email +
         validated (resolveFlaskUser.ts), never on this field."""
         import utils.database as db
@@ -2084,21 +1991,13 @@ class TestUserAdminContracts(FlaskTest):
         admin.validated = True
         admin.save()
 
-        with self.app as ctx:
-            self.login(ctx, self.owner)
-            patch = ctx.patch("/api/manage/user/", json={"email": cms_admin, "validated": False})
-            cased = ctx.patch("/api/manage/user/", json={"email": "CMS-Admin@Gotlandskaninen.se", "validated": False})
-            me = ctx.get("/api/user").get_json()
+        own = {"id": self.owner.id, "validated": False}
+        patch = da.update_user({**own, "email": cms_admin}, self.owner.uuid)
+        cased = da.update_user({**own, "email": "CMS-Admin@Gotlandskaninen.se"}, self.owner.uuid)
 
-        self.assertEqual(
-            me["email"],
-            "owner",
-            f"owner (id={self.owner.id}) took the CMS admin's email: PATCH -> {patch.get_json()}, "
-            f"GET /api/user email={me['email']!r} validated={me['validated']}",
-        )
-        self.assertEqual(patch.status_code, 200)
-        self.assertEqual(patch.get_json(), {"status": "error", "message": "email already in use"})
-        self.assertEqual(cased.get_json(), {"status": "error", "message": "email already in use"})
+        self.assertEqual(db.User.get_by_id(self.owner.id).email, "owner", f"owner took the CMS admin's email: {patch}")
+        self.assertEqual(patch, {"status": "error", "message": "email already in use"})
+        self.assertEqual(cased, {"status": "error", "message": "email already in use"})
 
     def test_manage_user_get_by_id_returns_shape(self):
         """Inventory row: GET /api/manage/user/{x} (userForm.tsx:111) — admin looks up another user."""
@@ -2111,124 +2010,6 @@ class TestUserAdminContracts(FlaskTest):
             self.assertIn("data", data)
             for key in ("id", "email", "username", "fullname"):
                 self.assertIn(key, data["data"])
-
-    def test_manage_user_post_new_via_id_zero_creates_user(self):
-        """Inventory row: POST /api/manage/user/{x} (userForm.tsx:169) — isNew branch posts
-        .../0. response_fields_used = status;data — add_user() returns {status: "created",
-        data: user.id} (utils/data_access.py:361-362)."""
-        with self.app as ctx:
-            self.login(ctx, self.admin)
-            response = ctx.post(
-                "/api/manage/user/0",
-                json={
-                    "email": "newuser2@test.example.com",
-                    "username": "newuser2",
-                    "password": "testpass",
-                },
-            )
-            self.assertEqual(response.status_code, 200)
-            data = response.get_json()
-            self.assertIn("status", data)
-            self.assertIn("data", data)
-            self.assertIsInstance(data["data"], int)
-
-    def test_setpassword_self(self):
-        with self.app as ctx:
-            self.login(ctx, self.admin)
-            response = ctx.post(
-                "/api/manage/setpassword/",
-                json={
-                    "oldpassword": "pass",
-                    "newpassword": "newpass123",
-                },
-            )
-            self.assertEqual(response.status_code, 200)
-
-    def test_setpassword_other_user_as_admin(self):
-        with self.app as ctx:
-            self.login(ctx, self.admin)
-            response = ctx.post(
-                f"/api/manage/setpassword/{self.viewer.id}",
-                json={
-                    "newpassword": "viewerpass456",
-                },
-            )
-            self.assertEqual(response.status_code, 200)
-
-    def test_setpassword_unauthenticated_fails(self):
-        response = self.app.post("/api/manage/setpassword/", json={"newpassword": "x"})
-        self.assertEqual(response.status_code, 403)
-
-    def test_manage_role_returns_status(self):
-        with self.app as ctx:
-            self.login(ctx, self.admin)
-            response = ctx.post(
-                "/api/manage/role",
-                json={
-                    "user": self.viewer.id,
-                    "level": "manager",
-                    "genebank": self.genebanks[0].id,
-                },
-            )
-            self.assertEqual(response.status_code, 200)
-            self.assertIn("status", response.get_json())
-
-    def test_manage_role_patch_returns_status(self):
-        """Inventory row: PATCH /api/manage/role (userForm.tsx:264) — the
-        `GenebankOperation` payload `updateRole()` actually sends
-        (action/role/user/genebank; the frontend never sends "level" —
-        that's only the internal `_privileges` storage key, database.py:1168)
-        must succeed, not just come back with *a* `status` key."""
-        import utils.database as db
-
-        with self.app as ctx:
-            self.login(ctx, self.admin)
-            response = ctx.patch(
-                "/api/manage/role",
-                json={
-                    "action": "add",
-                    "role": "manager",
-                    "user": self.viewer.id,
-                    "genebank": self.genebanks[0].id,
-                },
-            )
-            self.assertEqual(response.status_code, 200)
-            data = response.get_json()
-            self.assertIn(data["status"], ("updated", "unchanged"))
-            reloaded = db.User.get(db.User.id == self.viewer.id)
-            self.assertTrue(reloaded.has_role("manager", self.genebanks[0].id))
-
-    @unittest.expectedFailure
-    def test_manage_role_remove_last_admin_legacy_contract(self):
-        """Inventory row: PATCH /api/manage/role (userForm.tsx:264) — RISK, fix-candidate.
-
-        This pins the LEGACY CONTRACT the remedy restores, not the old
-        permissive behaviour (the last-admin protection itself is being kept —
-        removing the sole admin's admin role must keep failing). userForm.tsx's
-        manage_role handler (:264-278) expects a denial to look like
-        {status: 'error', message: <string>} with HTTP 200, matching every
-        other denial path in this route (see TestManageRoleLegacyCompat).
-
-        TODAY: utils/data_access.py:1028 raises ValidationError("last-admin"),
-        rendered as HTTP 409 application/problem+json
-        {type, title, status: 409, detail} — no "message" key at all, so
-        userForm.tsx falls to its `default:` case and shows nothing to the
-        admin. The remedy (herdbook.py:669-674 docstring): catch
-        ValidationError in manage_roles and answer {status: error, message:
-        ...} with HTTP 200 instead. Once that lands this test starts passing
-        and the marker must come off.
-        """
-        with self.app as ctx:
-            self.login(ctx, self.admin)
-            response = ctx.patch(
-                "/api/manage/role",
-                json={"action": "remove", "role": "admin", "user": self.admin.id},
-            )
-            self.assertEqual(response.status_code, 200)
-            data = response.get_json()
-            self.assertEqual(data["status"], "error")
-            self.assertIsInstance(data["message"], str)
-            self.assertGreater(len(data["message"]), 0)
 
     def test_manage_role_unauthenticated_returns_401(self):
         response = self.app.post("/api/manage/role", json={})
@@ -2270,12 +2051,10 @@ class TestAdminContracts(FlaskTest):
 
 
 # ============================================================================
-# Manage-role group — Phase 17 legacy-compat guards.
-# POST /api/manage/role is UNTOUCHED in Phase 17 (endpoint split);
-# these tests pin the legacy contract so the v2 work can never regress it.
-# The untouched route returns HTTP 200 with a status/message body — the
-# denial signal is {"status": "error", "message": "forbidden"}, not an
-# HTTP 403.
+# update_role's scope guards, tested on the function. The legacy route
+# /api/manage/role is closed (ADR-0020) and POST /api/v2/admin/role is
+# admin-only, so no route reaches the manager branches today. A denial is
+# {"status": "error", "message": "forbidden"}.
 # ============================================================================
 
 
@@ -2292,68 +2071,36 @@ class TestManageRoleLegacyCompat(FlaskTest):
         db.Member.create(membership=membership, role="familjemedlem", first_name="Test", last_name="Ägare", user=user)
 
     def test_manager_can_grant_manager_via_manage_role_in_own_gb(self):
-        """Documented residual: legacy manager own-gb grants keep
-        working — the earlier hardening stays reverted."""
+        """A manager may grant roles in her own genebank."""
         victim = self._victim()
-        with self.app as ctx:
-            self.login(ctx, self.manager)
-            resp = ctx.post(
-                "/api/manage/role",
-                json={
-                    "action": "add",
-                    "role": "manager",
-                    "user": victim.id,
-                    "genebank": self.genebanks[0].id,
-                },
-            )
-            self.assertEqual(resp.status_code, 200)
-            self.assertEqual(resp.get_json()["status"], "updated")
+        body = self._manage_role(
+            self.manager, action="add", role="manager", user=victim.id, genebank=self.genebanks[0].id
+        )
+        self.assertEqual(body["status"], "updated")
 
     def test_manager_can_grant_viewer_via_manage_role_in_own_gb(self):
         victim = self._victim()
-        with self.app as ctx:
-            self.login(ctx, self.manager)
-            resp = ctx.post(
-                "/api/manage/role",
-                json={
-                    "action": "add",
-                    "role": "viewer",
-                    "user": victim.id,
-                    "genebank": self.genebanks[0].id,
-                },
-            )
-            self.assertEqual(resp.status_code, 200)
-            self.assertEqual(resp.get_json()["status"], "updated")
+        body = self._manage_role(
+            self.manager, action="add", role="viewer", user=victim.id, genebank=self.genebanks[0].id
+        )
+        self.assertEqual(body["status"], "updated")
 
     def test_manager_cannot_grant_admin_via_manage_role(self):
-        """update_role() has never permitted managers to grant admin —
-        unchanged legacy behaviour (denial via body, HTTP stays 200)."""
+        """update_role() has never permitted managers to grant admin."""
         victim = self._victim()
-        with self.app as ctx:
-            self.login(ctx, self.manager)
-            resp = ctx.post(
-                "/api/manage/role",
-                json={"action": "add", "role": "admin", "user": victim.id},
-            )
-            self.assertEqual(resp.status_code, 200)
-            data = resp.get_json()
-            self.assertEqual(data["status"], "error")
-            self.assertEqual(data["message"], "forbidden")
+        body = self._manage_role(self.manager, action="add", role="admin", user=victim.id)
+        self.assertEqual(body, {"status": "error", "message": "forbidden"})
 
     def _manage_role(self, actor, **body):
-        """POST /api/manage/role as `actor`; returns (status_code, json)."""
-        with self.app as ctx:
-            self.login(ctx, actor)
-            resp = ctx.post("/api/manage/role", json=body)
-        return resp.status_code, resp.get_json()
+        """update_role as `actor`; returns its answer."""
+        return da.update_role(body, actor.uuid)
 
     def test_manager_cannot_grant_global_role_with_own_genebank_id(self):
         """The genebank in the body must not authorize admin or
-        matrikel_admin — neither role has a genebank scope. Refusal keeps
-        the route's HTTP 200 error envelope."""
+        matrikel_admin — neither role has a genebank scope."""
         for role in ("admin", "matrikel_admin"):
             with self.subTest(role=role):
-                status, body = self._manage_role(
+                body = self._manage_role(
                     self.manager,
                     action="add",
                     role=role,
@@ -2361,7 +2108,7 @@ class TestManageRoleLegacyCompat(FlaskTest):
                     genebank=self.genebanks[0].id,
                 )
                 after = db.User.get_by_id(self.manager.id)
-                self.assertEqual((status, body), (200, {"status": "error", "message": "forbidden"}))
+                self.assertEqual(body, {"status": "error", "message": "forbidden"})
                 self.assertFalse(after.has_role(role), f"manager became {role}: {after.privileges}")
 
     def test_manager_cannot_revoke_global_role_with_own_genebank_id(self):
@@ -2372,14 +2119,14 @@ class TestManageRoleLegacyCompat(FlaskTest):
         other_admin.add_role("matrikel_admin")
         for role in ("admin", "matrikel_admin"):
             with self.subTest(role=role):
-                status, body = self._manage_role(
+                body = self._manage_role(
                     self.manager,
                     action="remove",
                     role=role,
                     user=other_admin.id,
                     genebank=self.genebanks[0].id,
                 )
-                self.assertEqual((status, body), (200, {"status": "error", "message": "forbidden"}))
+                self.assertEqual(body, {"status": "error", "message": "forbidden"})
                 self.assertTrue(db.User.get_by_id(other_admin.id).has_role(role))
 
     def test_manager_cannot_grant_owner_on_foreign_herd_with_own_genebank_id(self):
@@ -2391,10 +2138,10 @@ class TestManageRoleLegacyCompat(FlaskTest):
         refused = {"status": "error", "message": "forbidden"}
         for extra in ({}, {"genebank": self.genebanks[0].id}):
             with self.subTest(extra=extra):
-                status, body = self._manage_role(
+                body = self._manage_role(
                     self.manager, action="add", role="owner", user=victim.id, herd=foreign_herd.id, **extra
                 )
-                self.assertEqual((status, body), (200, refused))
+                self.assertEqual(body, refused)
                 self.assertFalse(db.User.get_by_id(victim.id).has_role("owner", foreign_herd.id))
 
     def test_manager_cannot_grant_owner_with_non_integer_herd_id(self):
@@ -2407,10 +2154,9 @@ class TestManageRoleLegacyCompat(FlaskTest):
         for herd in (str(foreign_id), float(foreign_id), [foreign_id]):
             for extra in ({}, {"genebank": self.genebanks[0].id}):
                 with self.subTest(herd=herd, extra=extra):
-                    status, body = self._manage_role(
+                    body = self._manage_role(
                         self.manager, action="add", role="owner", user=victim.id, herd=herd, **extra
                     )
-                    self.assertEqual(status, 200)
                     self.assertEqual(body["status"], "error")
                     self.assertEqual(db.User.get_by_id(victim.id).privileges, [])
 
@@ -2424,14 +2170,13 @@ class TestManageRoleLegacyCompat(FlaskTest):
         moved.genebank = self.genebanks[1]
         moved.save()
         victim = self._victim()
-        status, body = self._manage_role(self.manager, action="add", role="owner", user=victim.id, herd="1")
-        self.assertEqual(status, 200)
+        body = self._manage_role(self.manager, action="add", role="owner", user=victim.id, herd="1")
         self.assertEqual(body["status"], "error")
         self.assertEqual(db.User.get_by_id(victim.id).privileges, [])
 
     def test_non_integer_ids_are_malformed_for_admins_too(self):
         """The ids that scope a role must be integers for every caller (the
-        v2 endpoint already requires it); the refusal is the 200 envelope."""
+        v2 endpoint already requires it)."""
         victim = self._victim()
         gb = self.genebanks[0].id
         for body in (
@@ -2441,18 +2186,17 @@ class TestManageRoleLegacyCompat(FlaskTest):
             {"role": "viewer", "genebank": float(gb)},
         ):
             with self.subTest(body=body):
-                status, resp = self._manage_role(self.admin, action="add", user=victim.id, **body)
-                self.assertEqual((status, resp), (200, {"status": "error", "message": "malformed request"}))
+                resp = self._manage_role(self.admin, action="add", user=victim.id, **body)
+                self.assertEqual(resp, {"status": "error", "message": "malformed request"})
         self.assertEqual(db.User.get_by_id(victim.id).privileges, [])
 
     def test_manager_cannot_grant_role_with_integral_float_genebank(self):
         """1.0 == 1, so a float genebank passed the manager's scope check and
         was then stored as 1.0."""
         victim = self._victim()
-        status, body = self._manage_role(
+        body = self._manage_role(
             self.manager, action="add", role="viewer", user=victim.id, genebank=float(self.genebanks[0].id)
         )
-        self.assertEqual(status, 200)
         self.assertEqual(body["status"], "error")
         self.assertEqual(db.User.get_by_id(victim.id).privileges, [])
 
@@ -2461,7 +2205,7 @@ class TestManageRoleLegacyCompat(FlaskTest):
         victim = self._victim()
         foreign_herd = self.herds[2]
         victim.add_role("owner", foreign_herd.id)
-        status, body = self._manage_role(
+        body = self._manage_role(
             self.manager,
             action="remove",
             role="owner",
@@ -2469,20 +2213,20 @@ class TestManageRoleLegacyCompat(FlaskTest):
             herd=foreign_herd.id,
             genebank=self.genebanks[0].id,
         )
-        self.assertEqual((status, body), (200, {"status": "error", "message": "forbidden"}))
+        self.assertEqual(body, {"status": "error", "message": "forbidden"})
         self.assertTrue(db.User.get_by_id(victim.id).has_role("owner", foreign_herd.id))
 
     def test_manager_cannot_grant_owner_on_unknown_herd_with_own_genebank_id(self):
         """The herd must exist — no dangling owner entry via a body genebank."""
         victim = self._victim()
-        status, body = self._manage_role(
+        body = self._manage_role(
             self.manager, action="add", role="owner", user=victim.id, herd=999999, genebank=self.genebanks[0].id
         )
-        self.assertEqual((status, body["status"]), (200, "error"))
+        self.assertEqual(body["status"], "error")
         self.assertEqual(db.User.get_by_id(victim.id).privileges, [])
         victim.add_role("owner", 999999)
-        status, body = self._manage_role(self.manager, action="remove", role="owner", user=victim.id, herd=999999)
-        self.assertEqual((status, body["status"]), (200, "error"))
+        body = self._manage_role(self.manager, action="remove", role="owner", user=victim.id, herd=999999)
+        self.assertEqual(body["status"], "error")
         self.assertTrue(db.User.get_by_id(victim.id).has_role("owner", 999999))
 
     def test_manager_with_null_scope_cannot_write_dangling_owner(self):
@@ -2493,8 +2237,8 @@ class TestManageRoleLegacyCompat(FlaskTest):
         victim = self._victim()
         for action in ("add", "remove"):
             with self.subTest(action=action):
-                status, body = self._manage_role(self.manager, action=action, role="owner", user=victim.id, herd=999999)
-                self.assertEqual((status, body["status"]), (200, "error"))
+                body = self._manage_role(self.manager, action=action, role="owner", user=victim.id, herd=999999)
+                self.assertEqual(body["status"], "error")
                 self.assertEqual(db.User.get_by_id(victim.id).privileges, [])
 
     def test_manager_can_grant_owner_on_own_gb_herd(self):
@@ -2504,10 +2248,10 @@ class TestManageRoleLegacyCompat(FlaskTest):
             with self.subTest(extra=extra):
                 victim = da.register_user(f"owner-target-{i}@ex.se", "pass", username=f"owner-target-{i}")
                 self._person_in_herd(victim, self.herds[0])
-                status, body = self._manage_role(
+                body = self._manage_role(
                     self.manager, action="add", role="owner", user=victim.id, herd=self.herds[0].id, **extra
                 )
-                self.assertEqual((status, body), (200, {"status": "updated"}))
+                self.assertEqual(body, {"status": "updated"})
                 self.assertTrue(db.User.get_by_id(victim.id).has_role("owner", self.herds[0].id))
 
     def test_admin_who_is_also_manager_can_remove_dangling_owner_entry(self):
@@ -2518,17 +2262,17 @@ class TestManageRoleLegacyCompat(FlaskTest):
             with self.subTest(extra=extra):
                 victim = da.register_user(f"dangling-{len(extra)}@ex.se", "pass", username=f"dangling-{len(extra)}")
                 victim.add_role("owner", 999999)
-                status, body = self._manage_role(
+                body = self._manage_role(
                     self.admin, action="remove", role="owner", user=victim.id, herd=999999, **extra
                 )
-                self.assertEqual((status, body), (200, {"status": "updated"}))
+                self.assertEqual(body, {"status": "updated"})
                 self.assertEqual(db.User.get_by_id(victim.id).privileges, [])
 
     def test_admin_who_is_also_manager_can_grant_owner_on_any_herd(self):
         victim = self._victim()
         self._person_in_herd(victim, self.herds[2])
         self.admin.add_role("manager", self.genebanks[0].id)
-        status, body = self._manage_role(
+        body = self._manage_role(
             self.admin,
             action="add",
             role="owner",
@@ -2536,7 +2280,7 @@ class TestManageRoleLegacyCompat(FlaskTest):
             herd=self.herds[2].id,
             genebank=self.genebanks[0].id,
         )
-        self.assertEqual((status, body), (200, {"status": "updated"}))
+        self.assertEqual(body, {"status": "updated"})
         self.assertTrue(db.User.get_by_id(victim.id).has_role("owner", self.herds[2].id))
 
     def test_admin_can_grant_global_role_with_genebank_in_body(self):
@@ -2545,36 +2289,25 @@ class TestManageRoleLegacyCompat(FlaskTest):
         victim = self._victim()
         for role in ("admin", "matrikel_admin"):
             with self.subTest(role=role):
-                status, body = self._manage_role(self.admin, action="add", role=role, user=victim.id, genebank=-1)
-                self.assertEqual((status, body), (200, {"status": "updated"}))
+                body = self._manage_role(self.admin, action="add", role=role, user=victim.id, genebank=-1)
+                self.assertEqual(body, {"status": "updated"})
                 self.assertTrue(db.User.get_by_id(victim.id).has_role(role))
 
     def test_admin_who_is_also_manager_can_grant_global_role(self):
         victim = self._victim()
         self.admin.add_role("manager", self.genebanks[0].id)
-        status, body = self._manage_role(
+        body = self._manage_role(
             self.admin, action="add", role="matrikel_admin", user=victim.id, genebank=self.genebanks[0].id
         )
-        self.assertEqual((status, body), (200, {"status": "updated"}))
+        self.assertEqual(body, {"status": "updated"})
         self.assertTrue(db.User.get_by_id(victim.id).has_role("matrikel_admin"))
 
     def test_manager_cannot_grant_role_in_other_gb(self):
         victim = self._victim()
-        with self.app as ctx:
-            self.login(ctx, self.manager)
-            resp = ctx.post(
-                "/api/manage/role",
-                json={
-                    "action": "add",
-                    "role": "manager",
-                    "user": victim.id,
-                    "genebank": self.genebanks[1].id,
-                },
-            )
-            self.assertEqual(resp.status_code, 200)
-            data = resp.get_json()
-            self.assertEqual(data["status"], "error")
-            self.assertEqual(data["message"], "forbidden")
+        body = self._manage_role(
+            self.manager, action="add", role="manager", user=victim.id, genebank=self.genebanks[1].id
+        )
+        self.assertEqual(body, {"status": "error", "message": "forbidden"})
 
 
 # ============================================================================

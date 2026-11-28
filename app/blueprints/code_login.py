@@ -14,7 +14,7 @@ from utils import settings
 from utils.data_access import auth_log, fetch_user_info, login_generation, logout_epoch
 from utils.database import DB_PROXY
 from utils.login_account import start_pending
-from utils.mail import _normalize, address_hash, enqueue_mail
+from utils.mail import address_hash, enqueue_mail
 from utils.matrikel import LinkError, _lock_for_detach
 
 from blueprints.common import problem
@@ -82,7 +82,7 @@ def _queue_request(address, browser, replaces, source):
 def request_code():
     body = request.get_json(silent=True)
     email = body.get("email") if isinstance(body, dict) else None
-    address = _normalize(email) if isinstance(email, str) and len(email) <= 255 else None
+    address = lc.request_address(email)
     browser = secrets.token_urlsafe(32)
     replaces = request.cookies.get("login_request")
     source = hmac.digest(

@@ -1,4 +1,4 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { ApiError, fetchApi } from "@/lib/api";
 import { MODE_COOKIE, parseMode } from "@/lib/mode";
@@ -6,12 +6,16 @@ import {
   addLitter,
   changeLitter,
   dryRun,
+  dryRunCompletion,
   getFathers,
   getMothers,
   reportPurchase,
   saveDraft,
+  sellNow,
   sendPurchasePhotos,
   submitReport,
+  undoSale,
+  submitCompletion,
   withdrawReport,
 } from "../../actions";
 import { getGenebankHerds } from "../../../individ/[number]/actions";
@@ -40,6 +44,9 @@ export default async function ReportPage({
       `/v2/arsrapport/besattning/${herd}/${year}${post ? `?post=${post}` : ""}`,
     );
   } catch (e) {
+    // A paper form that is no longer the helper's to enter (sent, or handed back): Back lands on its item.
+    if (post && e instanceof ApiError && e.status === 403)
+      redirect(`/stamboken/inkorg/${post}`);
     if (e instanceof ApiError && (e.status === 403 || e.status === 404))
       notFound();
     throw e;
@@ -66,6 +73,8 @@ export default async function ReportPage({
           changeLitter,
           getFathers,
           getMothers,
+          sellNow,
+          undoSale,
         }}
       />
     );
@@ -78,7 +87,9 @@ export default async function ReportPage({
       actions={{
         saveDraft,
         dryRun,
+        dryRunCompletion,
         submitReport,
+        submitCompletion,
         withdrawReport,
         reportPurchase,
         sendPurchasePhotos,
@@ -87,6 +98,8 @@ export default async function ReportPage({
         changeLitter,
         getFathers,
         getMothers,
+        sellNow,
+        undoSale,
       }}
       post={post}
     />

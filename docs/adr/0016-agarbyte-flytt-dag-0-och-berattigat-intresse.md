@@ -236,6 +236,70 @@ köparen igen för att skicka rapporten på nytt. Köparen sparas därför kvar
   rapporten skickas utan den eller med en ny köpare. Ett försäljningsförslag
   tar ingen sparad köpare.
 
+## Tillägg 2026-11-26: försäljning utan försäljningsbevis (#273)
+
+Beviset gäller vid alla försäljningar från 1 januari 2027, och köparen
+informeras enligt art. 14 på beviset. Det kan ha kommit med enstaka
+försäljningar redan 2026. En försäljning utan bevis kan inte spara köparen
+som ovan.
+Jonas beslutade 2026-11-26, efter arbetsgruppens förslag 5 b och 6, en
+övergång för försäljningar till och med 2027 (`TRANSITION_UNTIL`):
+
+* Har köparen e-post skriver säljaren namn, ort, postadress och e-post.
+  Föreningen mejlar köparen (`kopare.information`) vad som sparas och varför,
+  och att uppgifterna kom från säljaren (art. 14.2 f). E-postadressen sparas
+  bara tills mejlet har gått (`email_notice_only`), och utan avtryck. Telefon
+  och kryss tas inte emot, eftersom säljaren inte kan svara ja åt köparen.
+  Namn, ort och postadress sparas i fem år som förut.
+* Studsar mejlet, eller kan det inte längre försökas igen, raderas köparen
+  och försäljningen markeras som en där köparen är borttagen
+  (`buyer_removed`).
+* Har köparen ingen e-post registreras försäljningen utan köpare ("såld
+  utanför genbanken"), och inget sparas om köparen.
+* Före 2026 tar en ny försäljning inte emot en köpare som beviset skulle ha
+  informerat, eftersom beviset inte fanns (`BEVIS_FROM`). Årsrapporten och
+  dess försäljningsförslag gör det inte före 2027 (`REPORT_BEVIS_FROM`). Rättelser av en
+  köpare som registrerats så berörs inte. Gamla intyg följer samma regel
+  (5 b).
+* För en försäljning 2026 eller 2027 väljer säljaren i Sälj, inkorgen och
+  rättelser om köparen fick beviset. Valet följer försäljningsdatumet, inte
+  dagen då försäljningen matas in. Årsrapporten frågar om beviset först för
+  försäljningar 2027, eftersom nästan ingen sålde med bevis 2026. Den som gjorde
+  det registrerar försäljningen under Sälj (Jonas 2026-11-26). Från 2028
+  gäller bara beviset, tills ett nytt beslut flyttar `TRANSITION_UNTIL`.
+* Raderingslänken i mejlet tar bort köparen för det köpet. Utan avtryck
+  hittar länken inte köparens andra köp när deras e-post är gallrad, så
+  mejlet hänvisar den som köpt flera kaniner till dataskyddsadressen (Jonas
+  2026-11-26: inget avtryck i det här fallet).
+
+## Tillägg 2026-11-26 (årsrapport v2): försäljningen registreras direkt
+
+Jonas beslutade 2026-11-26 att en försäljning i årsrapporten registreras
+direkt, som Sälj på kaninens sida och i den gamla appen. Köparen ska inte
+vänta i rapporten till Skicka.
+
+* Före första Skicka kryssar säljaren i samma ruta som i Sälj ("Jag har
+  tagit del av informationen …"). Därefter registrerar "Spara
+  försäljningen" försäljningen med rapportens regler: roll, krav på
+  postadress, årsreglerna för köparen, raderad köpare, rundan öppen och
+  posten på pappersvägen. Köparen sparas då med försäljningen, och
+  `kopare.information` köas genast. Mejlet når därmed köparen inom en
+  månad från att föreningen fick uppgifterna.
+* Försäljningen hör till registret, inte till rapporten. Säljaren kan
+  ångra den i 7 dagar, som på kaninens sida (`SALE_UNDO_WINDOW`). Dra
+  tillbaka lämnar den, och Skicka skriver den aldrig en gång till.
+* Är rapporten redan inskickad (Ändra) går försäljningen med Skicka som
+  förut. Detsamma gäller ett försäljningsförslag från en skötare eller
+  den personliga länken, tills förslag kan finnas före första Skicka.
+* `purge_uninformed` raderar en köpare som inte har fått mejlet inom en
+  månad, också om mejlet ligger i kön eller håller på att skickas och om
+  adressen väntar på genbanksansvarigs kontroll: köparen ska få veta inom
+  en månad, annars sparas inget. Månaden räknas från att försäljningen
+  eller förslaget registrerades, inte från att en pappersblankett kom in
+  i inkorgen (Jonas 2026-11-27). Att en blankett som visar en köpare
+  hanteras inom en månad från att den kom in står i föreningens rutin,
+  inte i koden.
+
 ## Mer information
 
 Köparens uppgifter sparas med berättigat intresse som rättslig grund,
@@ -260,3 +324,5 @@ Relaterade beslut: [ADR-0014](0014-authorization-model.md)
 | 2026-11-18 | Jonas Hagberg | Postadressen sparas på berättigat intresse som namn och ort och krävs vid en ny försäljning utom från genbanksansvarig och admin (issue #111); krysset gäller bara e-post och telefon |
 | 2026-11-23 | Jonas Hagberg | Kontrollsidan: "Såld" för varje byte av besättning i den rättade historiken, och "Intygas av" är den fysiska person som utfärdade intyget, med namn bara efter eget val (issue #6) |
 | 2026-11-25 | Jonas Hagberg | Pappret heter försäljningsbevis i stället för överlåtelsebevis, samma ord som Sälj och Försäljning i Stamboken (arbetsgruppen 2026-11-24/25) |
+| 2026-11-26 | Jonas Hagberg | Tillägg: försäljning utan försäljningsbevis till och med 2027, e-post bara för informationsmejlet eller ingen köpare (#273, förslag 5 b och 6) |
+| 2026-11-26 | Jonas Hagberg | Tillägg: årsrapportens försäljning registreras direkt, som Sälj, med Ångra i 7 dagar |

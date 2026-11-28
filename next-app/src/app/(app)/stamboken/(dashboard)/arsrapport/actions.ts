@@ -6,6 +6,7 @@ import { MODE_COOKIE, parseMode, type Mode } from "@/lib/mode";
 import type { ActionResult } from "../inkorg/actions";
 import {
   SUBMIT_TIMEOUT_MS,
+  type Completion,
   type DraftData,
   type Father,
   type Litter,
@@ -17,6 +18,7 @@ import {
   type ReportView,
   type Refusal,
   type Round,
+  type SaldState,
   type SaleProposalRow,
   type Submission,
 } from "./lib";
@@ -111,7 +113,7 @@ export async function dryRun(
     path(herd, year, "/torrkorning", post),
     "POST",
     body,
-    { timeout: SUBMIT_TIMEOUT_MS },
+    { timeout: SUBMIT_TIMEOUT_MS, isolateDemo: true },
   );
 }
 
@@ -123,6 +125,33 @@ export async function submitReport(
   post?: number,
 ) {
   return call<Receipt>(env, path(herd, year, "/skicka", post), "POST", body, {
+    timeout: SUBMIT_TIMEOUT_MS,
+    isolateDemo: true,
+  });
+}
+
+export async function dryRunCompletion(
+  herd: string,
+  year: number,
+  body: Completion,
+  env: Mode,
+) {
+  return call<{ ok: boolean; refusals: Refusal[]; warnings: Refusal[] }>(
+    env,
+    path(herd, year, "/komplettera/torrkorning"),
+    "POST",
+    body,
+    { timeout: SUBMIT_TIMEOUT_MS },
+  );
+}
+
+export async function submitCompletion(
+  herd: string,
+  year: number,
+  body: Completion,
+  env: Mode,
+) {
+  return call<Receipt>(env, path(herd, year, "/komplettera"), "POST", body, {
     timeout: SUBMIT_TIMEOUT_MS,
   });
 }
@@ -141,6 +170,45 @@ export async function withdrawReport(
     "POST",
     { revision, reason: reason ?? null },
     { timeout: SUBMIT_TIMEOUT_MS },
+  );
+}
+
+// The sale dialog's Spara: one rabbit's sale registered at once (Jonas 2026-11-26); 422 carries the refusals.
+export async function sellNow(
+  herd: string,
+  year: number,
+  individualId: number,
+  sald: SaldState,
+  env: Mode,
+  post?: number,
+) {
+  if (!Number.isSafeInteger(individualId) || individualId <= 0)
+    return refused("Ogiltig kanin.");
+  return call<{ operation_id: string }>(
+    env,
+    path(herd, year, "/forsaljning", post),
+    "POST",
+    { individual_id: individualId, sald },
+    { isolateDemo: true }, // a demo sale never reaches production, nor its buyer mail
+  );
+}
+
+// Ångra a sale the view offers it for (`undo`): the report's route checks the seller's rule again now.
+export async function undoSale(
+  herd: string,
+  year: number,
+  herdTrackingId: number,
+  operationId: string,
+  env: Mode,
+) {
+  if (!Number.isSafeInteger(herdTrackingId) || herdTrackingId <= 0)
+    return refused("Ogiltig försäljning.");
+  return call<unknown>(
+    env,
+    path(herd, year, `/forsaljning/${herdTrackingId}/angra`),
+    "POST",
+    { operation_id: operationId },
+    { isolateDemo: true },
   );
 }
 
@@ -290,6 +358,33 @@ export async function setOnTime(
 // "Ny länk": the herd's old link stops working and a new one is mailed to the main member.
 export async function newLink(herd: string, year: number, env: Mode) {
   return call<{ sent: boolean }>(env, path(herd, year, "/ny-lank"), "POST", {});
+}
+
+// "Skicka påminnelse" queues a reminder for the herd.
+export async function sendReminder(herd: string, year: number, env: Mode) {
+  return call<{ queued: boolean }>(
+    env,
+    path(herd, year, "/paminnelse"),
+    "POST",
+    {},
+  );
+}
+
+// "Koppla bort" (5.1): undo the account link a main member made with a code to the matrikel's e-mail.
+export async function undoAccountLink(
+  herd: string,
+  year: number,
+  linkId: number,
+  env: Mode,
+) {
+  return call<{ ok: boolean }>(
+    env,
+    Number.isSafeInteger(linkId) && linkId > 0
+      ? path(herd, year, `/kontokoppling/${linkId}/hav`)
+      : null,
+    "POST",
+    {},
+  );
 }
 
 // "Skicka provmejl till mig": the invitation without a link, to the manager's own address.

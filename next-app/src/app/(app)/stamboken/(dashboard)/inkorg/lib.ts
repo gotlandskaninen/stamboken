@@ -62,8 +62,13 @@ export interface InboxDocument {
   doc_type: DocType;
   cert_format: string | null;
   rotation: number;
+  /** Degrees clockwise the photo is straightened by after its rotation, -15 to 15. */
+  straighten: number;
   mask_rects: Rect[] | null;
-  mask_suggestion: Rect[] | null;
+  /** The part of the turned photo the copy keeps, or null: the whole photo. */
+  copy_frame: Rect | null;
+  /** The frame a handwritten certificate starts from: all but its lower third. */
+  frame_suggestion: Rect | null;
   waiting_for: string[] | null;
   interpretation_status: InterpretationStatus;
   proposal: Proposal | null;
@@ -72,11 +77,21 @@ export interface InboxDocument {
   herd_tracking_id?: number | null;
   has_original?: boolean;
   has_copy: boolean;
+  /** The copy was checked against the registry (the rabbit's badge), or null. */
+  verified_at?: string | null;
+  /** The genebank of the rabbit the document is saved on: where its copy is redone or removed. */
+  individual_genebank_id?: number | null;
 }
 
 // The image reading (docs/inkorg.md, "Tolkning"): its status on a document and
 // its proposal, fields with where each value came from and the checks in words.
-export type InterpretationStatus = "av" | "vantar" | "klar" | "misslyckad";
+export type InterpretationStatus =
+  | "av"
+  | "vantar"
+  | "klar"
+  | "misslyckad"
+  /** Too small to read by itself (inbox_interpreter.MIN_READ_SIDE): Tolka igen reads it anyway. */
+  | "for_litet";
 export type Source = "läst" | "härlett" | "avviker" | "osäker";
 export type ProposedField = {
   /** null for avviker and osäker: those are read off the photo. */
@@ -90,6 +105,23 @@ export type ProposedField = {
 export type Proposal = {
   fields: Partial<Record<string, ProposedField>>;
   checks: { ok: boolean | null; text: string }[];
+  /** The seller and buyer read at the bottom of a queue certificate (rule 5 b), for the sale panel. */
+  sale?: SaleReading;
+};
+/** What was read, never a confident value: the handler fills the sale with a click and checks it. */
+export type SaleReading = {
+  /** The buyer's herd as read; `found` only when it is one of the genebank's, and only then is it filled in. */
+  buyer_herd: { herd: string; found: boolean } | null;
+  buyer: {
+    name: string;
+    postal_address: string;
+    town: string;
+    email: string;
+  } | null;
+  date: string | null;
+  /** As read; a check says when it is not the rabbit's herd of origin. */
+  seller_herd: string | null;
+  checks: Proposal["checks"];
 };
 
 export type InterpretationSummary = {
@@ -102,6 +134,31 @@ export type InterpretationSummary = {
 /** The proposal the form shows: only a finished reading's. */
 export const shownProposal = (doc: InboxDocument): Proposal | null =>
   doc.interpretation_status === "klar" ? doc.proposal : null;
+
+/**
+ * Stamboken proposes "stämmer med registret": the reading names the rabbit the document is saved on, read and
+ * confirmed by the registry, and no check failed. Only a proposal: the handler ticks the box herself.
+ */
+export const checksPass = (doc: InboxDocument): boolean => {
+  const proposal = shownProposal(doc);
+  if (!proposal || !doc.individual) return false;
+  const { individual, paper_number } = proposal.fields;
+  const same = [individual, paper_number].some(
+    (f) => f?.source === "läst" && f.value === doc.individual,
+  );
+  // The certificate number too: a rabbit read with a digital certificate has none compared.
+  const certificate = proposal.fields.paper_certificate?.source === "läst";
+  // Any row of the paper that is not the rabbit's (a grandparent, the colour) speaks against it.
+  const deviates = Object.values(proposal.fields).some(
+    (f) => f?.source === "avviker",
+  );
+  return (
+    same &&
+    certificate &&
+    !deviates &&
+    !proposal.checks.some((c) => c.ok === false)
+  );
+};
 
 export interface InboxEvent {
   id: number;
@@ -442,7 +499,8 @@ export type CertForm = {
   paper_number: string;
   paper_certificate: string;
   name: string;
-  sex: "" | "female" | "male";
+  /** "unknown" only in the queue, where Okänt is a choice of its own (sent as null). */
+  sex: "" | "female" | "male" | "unknown";
   birth_date: string;
   color: string;
   litter_size: string;
@@ -469,15 +527,125 @@ const EMPTY_FORM: CertForm = {
   individual: "",
 };
 
-/** The form's first values: empty, or what the image reading proposes (läst and härlett carry a value). */
+/**
+ * The form's first values: empty, or what the image reading proposes (läst and härlett carry a value). The count
+ * alive at 6 weeks only as read: one taken from the registry may be a litter's unconfirmed copy of its count born,
+ * and saving would confirm it.
+ */
 export function initialCertForm(proposal: Proposal | null): CertForm {
   const form = { ...EMPTY_FORM };
   for (const key of Object.keys(EMPTY_FORM) as (keyof CertForm)[]) {
+    if (key === "litter_size6w" && proposal?.fields[key]?.source !== "läst")
+      continue;
     const value = proposal?.fields[key]?.value;
     if (value !== undefined && value !== null)
       Object.assign(form, { [key]: String(value) });
   }
   return form;
+}
+
+/** The grandparents on the paper: typed only to compare with the registry, never saved. */
+export type Grandparents = Record<
+  "morfar" | "mormor" | "farfar" | "farmor",
+  string
+>;
+export type RowKey = keyof CertForm | keyof Grandparents;
+
+/** The grandparents' first values: läst and härlett carry a value, as in initialCertForm. */
+export function initialGrandparents(proposal: Proposal | null): Grandparents {
+  const value = (key: keyof Grandparents) => {
+    const v = proposal?.fields[key]?.value;
+    return v === undefined || v === null ? "" : String(v);
+  };
+  return {
+    morfar: value("morfar"),
+    mormor: value("mormor"),
+    farfar: value("farfar"),
+    farmor: value("farmor"),
+  };
+}
+
+// The reconciliation table (docs/inkorg.md, "Avstämning"): each row beside the
+// registry, recomputed from what the handler typed, and the checks in words.
+export type RowStatus = "stammer" | "skiljer" | "osaker" | "ingen";
+export type NearRabbit = {
+  number: string;
+  name: string | null;
+  sex: string | null;
+};
+export type ReconciledRow = {
+  registry: string | number | null;
+  status: RowStatus;
+  /** A number not in the registry: those one character off, to pick from. */
+  near?: NearRabbit[];
+};
+export type Reconciliation = {
+  rows: Partial<Record<RowKey, ReconciledRow>>;
+  checks: Proposal["checks"];
+};
+
+/** "g1 2511" as the registry writes it, "G1-2511"; null for another shape. */
+export function normalNumber(text: string): string | null {
+  const m = text
+    .trim()
+    .toUpperCase()
+    .match(/^([A-Z]+)\s*(\d{1,5})\s*[-–\s]\s*(\d{4,5})$/);
+  return m ? `${m[1]}${m[2]}-${m[3]}` : null;
+}
+
+/** A date read as ÅÅÅÅ-MM-DD, ÅÅMMDD or D/M-ÅÅ(ÅÅ), as ÅÅÅÅ-MM-DD; null otherwise. */
+function isoDate(text: string): string | null {
+  const t = text.trim().replace(/\.$/, "");
+  const ymd =
+    t.match(/^(\d{4})-?(\d{2})-?(\d{2})$/) ??
+    t.match(/^(\d{2})(\d{2})(\d{2})$/);
+  const dmy = t.match(/^(\d{1,2})\/(\d{1,2})[-/ ]?(\d{4}|\d{2})$/);
+  const parts = ymd
+    ? [ymd[1], ymd[2], ymd[3]]
+    : dmy
+      ? [dmy[3], dmy[2], dmy[1]]
+      : null;
+  if (!parts) return null;
+  const [y, m, d] = parts.map(Number);
+  const day = new Date(Date.UTC(y < 100 ? 2000 + y : y, m - 1, d));
+  if (day.getUTCMonth() !== m - 1 || day.getUTCDate() !== d) return null;
+  return day.toISOString().slice(0, 10);
+}
+
+/**
+ * "Ta inläst": what the reading saw, as the field takes it (a number as the
+ * registry writes it, a date as ÅÅÅÅ-MM-DD); null when the field cannot take
+ * it (a sex, date, count or colour it has no value for).
+ */
+export function takeRead(
+  key: RowKey,
+  read: string,
+  colors: string[],
+): string | null {
+  const text = read.trim();
+  switch (key) {
+    case "sex":
+      return /^hon/i.test(text)
+        ? "female"
+        : /^han/i.test(text)
+          ? "male"
+          : /^okän/i.test(text)
+            ? "unknown"
+            : null;
+    case "birth_date":
+      return isoDate(text);
+    case "litter_size":
+    case "litter_size6w":
+      return text.match(/^(\d{1,2})\s*(st\.?)?$/i)?.[1] ?? null;
+    case "color":
+      if (!colors.length) return text;
+      return colors.find((c) => c.toLowerCase() === text.toLowerCase()) ?? null;
+    case "name":
+    case "paper_certificate":
+      return text;
+    default:
+      return normalNumber(text) ?? text;
+  }
 }
 
 /** A proposal that found the rabbit in Stamboken is for its paper certificate. */
@@ -701,20 +869,37 @@ export function queueHref(
 /** A round as /v2/arsrapport/rundor lists it (newest year first). */
 export type RoundRow = {
   year: number;
+  start_date?: string | null;
+  end_date?: string | null;
   genebanks: { genebank_id: number }[];
 };
 
 /**
- * The year of the form entry link: the latest round the item's genebank has
- * activated. It stays after end_date, when paper entry is still allowed (D11).
+ * The years of the form entry link, oldest first: the round the item's
+ * genebank has open `today` (#264 keeps it to one); else its latest activated
+ * round, and while that has not opened, also the latest that has, whose late
+ * paper forms are still entered (D11). The handler picks the year on the form.
  */
-export const reportYear = (
+export function reportYears(
   rounds: RoundRow[] | null,
   genebankId: number | null,
-): number | null =>
-  genebankId === null
-    ? null
-    : ([...(rounds ?? [])]
-        .sort((a, b) => b.year - a.year)
-        .find((r) => r.genebanks.some((g) => g.genebank_id === genebankId))
-        ?.year ?? null);
+  today: string,
+): number[] {
+  if (genebankId === null) return [];
+  // A round without both dates is never open (round_open), so it is no choice.
+  const mine = [...(rounds ?? [])]
+    .filter(
+      (r) =>
+        !!r.start_date &&
+        !!r.end_date &&
+        r.genebanks.some((g) => g.genebank_id === genebankId),
+    )
+    .sort((a, b) => b.year - a.year);
+  const opened = (r: RoundRow) => r.start_date! <= today;
+  const open = mine.find((r) => opened(r) && today <= r.end_date!);
+  if (open) return [open.year];
+  const [latest] = mine;
+  if (!latest) return [];
+  const before = opened(latest) ? undefined : mine.find(opened);
+  return before ? [before.year, latest.year] : [latest.year];
+}

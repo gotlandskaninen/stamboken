@@ -3,6 +3,7 @@ import { Box, Typography } from "@mui/material";
 import type { Metadata } from "next";
 import { LinkButton } from "@/components/public/LinkButton";
 import { PageHeader } from "@/components/public/PageHeader";
+import { TyckTillLink } from "@/components/tyck-till/TyckTillDialog.client";
 import { MANUAL_PATH } from "@/lib/constants";
 
 export const metadata: Metadata = {
@@ -35,7 +36,7 @@ const STEPS: Array<{
   },
   {
     title: "Ditt konto",
-    text: "Du kan logga in med ditt föreningskonto eller med användarnamn och lösenord. Visas knappen Skicka kod kan du använda e-postadressen i matrikeln. Som huvudmedlem kan du då också skapa ett konto.",
+    text: "Har du redan ett konto loggar du in med det, med föreningskontot eller lösenord. Med kod kommer du in på kontot när det är kopplat till din rad i matrikeln. Har du inget konto skapar du det själv första gången du loggar in med kod. Du godkänner reglerna för kontot och kommer sedan direkt in i riktiga stamboken. Kommer det ingen kod, eller säger sidan att det redan finns ett konto som kan vara ditt, skriv till admin@gotlandskaninen.se.",
     link: {
       href: "/kontoregler",
       label: "Läs reglerna för användarkonton",
@@ -43,12 +44,12 @@ const STEPS: Array<{
   },
   {
     title: "Logga in",
-    text: "Klicka på Stamboken uppe till höger och sedan på Logga in i Stamboken. Välj ditt inloggningssätt. Använder du Google väljer du föreningskontot i Googles kontoväljare.",
+    text: "Klicka på Stamboken uppe till höger och sedan på Logga in i Stamboken. Skriv e-postadressen i matrikeln och klicka Skicka kod. Du får ett mejl med en kod på åtta siffror. Du kan också logga in med föreningskontot (Google) eller med användarnamn och lösenord. Är du genbanksansvarig, genbankshjälpare, matrikeladministratör eller administratör använder du föreningskontot.",
     link: { href: `${MANUAL_PATH}#logga-in`, label: "Logga in steg för steg" },
   },
   {
     title: "Öva i testmiljön",
-    text: "Om ditt konto börjar i testmiljön kan du öva på att registrera kaniner där. Testmiljön uppdateras med en kopia av stamboken varje natt. När du har fått tillgång till riktiga stamboken kan du byta miljö i menyn under din bild.",
+    text: "När du loggar in hamnar du i riktiga stamboken. Vill du prova något utan att ändra på riktigt kan du byta till testmiljön i menyn under din bild. Där kan du öva fritt, och allt återställs varje natt.",
     link: {
       href: `${MANUAL_PATH}#testmiljön-och-riktiga-stamboken`,
       label: "Om testmiljön",
@@ -211,8 +212,8 @@ export default function KomIgangPage() {
             >
               projekttavlan för Stamboken
             </a>{" "}
-            på GitHub. Önskemål mejlar du till admin@gotlandskaninen.se, eller
-            lämnar som ett ärende i{" "}
+            på GitHub. Önskemål skickar du med <TyckTillLink />, eller lämnar
+            som ett ärende i{" "}
             <a
               href="https://github.com/gotlandskaninen/stamboken/issues"
               style={linkStyle}

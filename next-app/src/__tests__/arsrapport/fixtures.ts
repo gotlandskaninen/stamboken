@@ -56,3 +56,20 @@ export const view = (over: Partial<ReportView> = {}): ReportView => ({
   item: null,
   ...over,
 });
+
+export const submittedReport = (): NonNullable<ReportView["report"]> => ({
+  id: 1,
+  status: "submitted",
+  source: "login",
+  revision: 0,
+  received_at: "2027-01-03T13:32:00+00:00",
+  report_date: "2027-01-03",
+  on_time: true,
+  submitted: { rabbits: { "1": { val: "kvar", vikt: 2.8 } } },
+  not_stated: [],
+  can_complete_missing: false,
+  can_change: true,
+  can_withdraw: true,
+  withdraw_until: "2027-01-10T13:32:00+00:00",
+  villkor: { hane: true, hona: true, kull: false, i_tid: true },
+});

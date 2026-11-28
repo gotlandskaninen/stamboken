@@ -9,27 +9,38 @@ import {
   within,
 } from "@testing-library/react";
 
-vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
+const refresh = vi.fn();
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
 vi.mock("@/lib/mode-context", () => ({ useMode: () => "demo" }));
 const newLink = vi.fn();
+const sendReminder = vi.fn();
 const saleProposals = vi.fn();
+const undoAccountLink = vi.fn();
 vi.mock("@/app/(app)/stamboken/(dashboard)/arsrapport/actions", () => ({
   setOnTime: vi.fn(),
   newLink: (...a: unknown[]) => newLink(...a),
+  sendReminder: (...a: unknown[]) => sendReminder(...a),
+  undoAccountLink: (...a: unknown[]) => undoAccountLink(...a),
   saleProposals: (...a: unknown[]) => saleProposals(...a),
   approveSale: vi.fn(),
   rejectSale: vi.fn(),
 }));
 
-import { StatusTable } from "@/app/(app)/stamboken/(dashboard)/arsrapport/status/[year]/StatusTable";
+import {
+  BlankFormLink,
+  StatusTable,
+} from "@/app/(app)/stamboken/(dashboard)/arsrapport/status/[year]/StatusTable";
 import type {
+  StatusFilter,
   StatusRow,
   StatusView,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/lib";
 
 afterEach(() => {
   cleanup();
+  refresh.mockClear();
   newLink.mockReset();
+  sendReminder.mockReset();
   saleProposals.mockReset();
 });
 
@@ -45,7 +56,9 @@ const base: StatusRow = {
   herd: "G9001",
   herd_name: "Gård",
   state: "paborjad",
+  needs_report: true,
   inbjudan: null,
+  last_reminder: null,
   ingen_epost: false,
   source: null,
   membership_after_end: null,
@@ -74,23 +87,39 @@ const sent: StatusRow = {
   ...base,
   herd: "G9002",
   state: "inskickad",
+  needs_report: false,
   source: "paper",
   received_at: "2027-01-10T09:00:00+01:00",
   flags: { ej_angivna: 3, ej_angivna_paverkar: true, ...NO_SALES },
 };
-const show = (canEdit: boolean) =>
+const show = (
+  canEdit: boolean,
+  rows = [base, sent],
+  filter: StatusFilter = "alla",
+) =>
   render(
     <StatusTable
-      view={view([base, sent])}
+      view={view(rows)}
       year={2026}
       genebankId={1}
-      filter="alla"
+      filter={filter}
       canEdit={canEdit}
       env="demo"
     />,
   );
 
 describe("StatusTable", () => {
+  it("links to Ej svarat with its count and explains an empty list", () => {
+    const { unmount } = show(true);
+    const tab = screen.getByRole("link", { name: /Ej svarat/ });
+    expect(tab.getAttribute("href")).toBe(
+      "/stamboken/arsrapport/status/2026?genebank_id=1&filter=ej_svarat",
+    );
+    expect(within(tab).getByText("1")).toBeTruthy();
+    unmount();
+    show(true, [sent], "ej_svarat");
+    expect(screen.getByText("Alla besättningar har svarat.")).toBeTruthy();
+  });
   it("shows conditions and I tid only on a row with a report", () => {
     show(true);
     const open = screen.getByText("G9001").closest("tr")!;
@@ -142,6 +171,30 @@ describe("StatusTable", () => {
     expect(phone.getAttribute("href")).toBe("tel:0700000000");
     expect(document.querySelectorAll('a[href^="tel:"]')).toHaveLength(1);
   });
+  it("gives each of two numbers in the phone field its own tel link", () => {
+    render(
+      <StatusTable
+        view={view([{ ...sent, telefon: "08 - 510 122 07 0709 - 55 72 08" }])}
+        year={2026}
+        genebankId={1}
+        filter="alla"
+        canEdit
+        env="demo"
+      />,
+    );
+    const links = [...document.querySelectorAll('a[href^="tel:"]')];
+    expect(links.map((a) => a.getAttribute("href"))).toEqual([
+      "tel:0851012207",
+      "tel:0709557208",
+    ]);
+  });
+  it("says the blank form is missing instead of linking to a 404", () => {
+    render(<BlankFormLink available={false} />);
+    expect(
+      screen.getByText("Den tomma blanketten finns inte på servern än."),
+    ).toBeTruthy();
+    expect(screen.queryByText("Skriv ut tom blankett")).toBeNull();
+  });
   it("shows no payment control", () => {
     show(true);
     expect(document.body.textContent).not.toMatch(/Nordea|pain|betalning/i);
@@ -189,6 +242,9 @@ describe("StatusTable", () => {
     const tr = screen.getByText("G9001").closest("tr")!;
     expect(within(tr).getByText("Ingen e-post")).toBeTruthy();
     expect(within(tr).queryByText("Ny länk")).toBeNull();
+    expect(
+      within(tr).queryByRole("button", { name: "Skicka påminnelse" }),
+    ).toBeNull();
   });
   it("asks before it sends a new link, and sends only on yes", async () => {
     newLink.mockResolvedValue({ ok: true, data: { sent: true } });
@@ -207,10 +263,129 @@ describe("StatusTable", () => {
       expect(newLink).toHaveBeenCalledWith("G9001", 2026, "demo"),
     );
   });
+  it("shows the link's change flags without values, and Koppla bort asks first (5.1, 5.14)", async () => {
+    undoAccountLink.mockResolvedValue({ ok: true, data: { ok: true } });
+    const flagged: StatusRow = {
+      ...sent,
+      flags: {
+        ...sent.flags,
+        andring_vantar: 2,
+        kontobyte_vantar: false,
+        kontobyte_forfoll: true,
+        inte_jag: true,
+        nytt_konto: 41,
+      },
+    };
+    const props = {
+      year: 2026,
+      genebankId: 1,
+      filter: "alla" as const,
+      env: "demo" as const,
+    };
+    const { unmount } = render(
+      <StatusTable {...props} view={view([flagged])} canEdit={false} />,
+    );
+    for (const text of [
+      "Ändring väntar på bekräftelse",
+      "Kontobyte förföll",
+      "Det var inte jag",
+      "Nytt konto",
+    ])
+      expect(screen.getByText(text)).toBeTruthy();
+    expect(screen.queryByText("Kontobyte väntar på bekräftelse")).toBeNull();
+    expect(screen.queryByText("Koppla bort kontot")).toBeNull(); // a helper sees, but does not undo
+    unmount();
+    render(<StatusTable {...props} view={view([flagged])} canEdit />);
+    fireEvent.click(screen.getByText("Koppla bort kontot"));
+    expect(screen.getByText(/Andra behörigheter påverkas inte\./)).toBeTruthy();
+    expect(undoAccountLink).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Koppla bort" }));
+    await waitFor(() =>
+      expect(undoAccountLink).toHaveBeenCalledWith("G9002", 2026, 41, "demo"),
+    );
+  });
   it("offers Ny länk only to a manager", () => {
     show(false);
     expect(screen.queryByText("Ny länk")).toBeNull();
   });
+
+  it("queues a reminder without claiming delivery", async () => {
+    sendReminder.mockResolvedValue({ ok: true, data: { queued: true } });
+    show(true);
+    const tr = screen.getByText("G9001").closest("tr")!;
+    fireEvent.click(
+      within(tr).getByRole("button", { name: "Skicka påminnelse" }),
+    );
+    expect(sendReminder).toHaveBeenCalledWith("G9001", 2026, "demo");
+    expect((await screen.findByRole("status")).textContent).toBe(
+      "Påminnelsen ligger i mejlkön.",
+    );
+    expect(within(tr).queryByText(/skickad/i)).toBeNull();
+    expect(refresh).toHaveBeenCalled();
+  });
+  it("explains when a reminder is already queued or went today", async () => {
+    sendReminder.mockResolvedValue({ ok: true, data: { queued: false } });
+    show(true);
+    fireEvent.click(screen.getByRole("button", { name: "Skicka påminnelse" }));
+    expect((await screen.findByRole("status")).textContent).toBe(
+      "En påminnelse finns redan i mejlkön eller har skickats i dag.",
+    );
+    expect(refresh).toHaveBeenCalled();
+  });
+  it("hides reminder action from helpers", () => {
+    show(false);
+    expect(
+      screen.queryByRole("button", { name: "Skicka påminnelse" }),
+    ).toBeNull();
+  });
+  it("clears the previous queue message when a reminder is refused", async () => {
+    sendReminder
+      .mockResolvedValueOnce({ ok: true, data: { queued: true } })
+      .mockResolvedValueOnce({
+        ok: false,
+        problem: { status: 409, title: "Rundan är stängd." },
+      });
+    show(true);
+    const button = screen.getByRole("button", { name: "Skicka påminnelse" });
+    fireEvent.click(button);
+    await screen.findByRole("status");
+    await waitFor(() => expect(button.hasAttribute("disabled")).toBe(false));
+    fireEvent.click(button);
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "Rundan är stängd.",
+    );
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+  it("hides the reminder action on a row that needs no report", () => {
+    show(true, [sent]);
+    expect(
+      screen.queryByRole("button", { name: "Skicka påminnelse" }),
+    ).toBeNull();
+  });
+  it.each([
+    ["queued", null, "Påminnelse i mejlkön"],
+    ["sending", null, "Påminnelse i mejlkön"],
+    ["sent", "2027-01-10T09:00:00+01:00", "Påminnelse skickad 10 januari 2027"],
+    ["failed", null, "Påminnelsen misslyckades"],
+    ["bounced", null, "Påminnelsen studsade"],
+    ["sent", null, null],
+    ["logged", null, null],
+    ["blocked", null, null],
+    [null, null, null],
+  ] as const)(
+    "shows the latest reminder for %s with sent_at %s",
+    (status, sent_at, text) => {
+      const last_reminder = status
+        ? { queued_at: "2027-01-09T10:00:00+01:00", sent_at, status }
+        : null;
+      show(false, [{ ...base, last_reminder }]);
+      const tr = screen.getByText("G9001").closest("tr")!;
+      expect(within(tr).queryByText(/påminnelse/i)?.textContent ?? null).toBe(
+        text,
+      );
+    },
+  );
 
   it("flags a preliminary count, and not a confirmed one", () => {
     const row = (preliminart: boolean): StatusRow => ({

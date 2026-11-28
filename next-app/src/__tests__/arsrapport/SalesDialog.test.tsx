@@ -35,6 +35,7 @@ const inGenebank: SaleProposalRow = {
   buyer: null,
   sale_date: "2025-10-03",
   day_known: true,
+  buyer_not_recorded: false,
   buyer_notified_at: null,
   kopanmalan: null,
   kopanmalan_avviker: null,
@@ -49,6 +50,7 @@ const outside: SaleProposalRow = {
   buyer: { name: "Zelda Uniquebuyer", town: "Visby" },
   sale_date: "2025-11-30",
   day_known: false, // "november 2025" in the report: the 30th is made up
+  buyer_not_recorded: false,
   buyer_notified_at: "2026-01-11T10:00:00+00:00",
 };
 
@@ -183,6 +185,27 @@ describe("SalesDialog", () => {
     expect(row.textContent).toContain(
       "utanför genbanken, köparens uppgifter är raderade",
     );
+  });
+
+  it("says såld utanför genbanken for a sale whose seller kept no buyer (#273)", async () => {
+    saleProposals.mockResolvedValue({
+      ok: true,
+      data: {
+        forslag: [{ ...outside, buyer: null, buyer_not_recorded: true }],
+      },
+    });
+    render(
+      <SalesDialog
+        herd="G9001"
+        year={2025}
+        env="demo"
+        onDecided={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    const row = await screen.findByRole("region", { name: "G9001-2402" });
+    expect(row.textContent).toContain("såld utanför genbanken");
+    expect(row.textContent).not.toContain("raderade");
   });
 
   it("approves a sale and reloads the list", async () => {

@@ -169,13 +169,23 @@ async function markSold(
       .click();
   } else {
     await dialog.getByRole("radio", { name: "Utanför genbanken" }).check();
+    // a sale before 2027 had no försäljningsbevis: the buyer is kept with an e-mail for the notice (#273)
+    await dialog.getByRole("radio", { name: "Ja" }).check();
     await dialog.getByLabel("Köparens namn").fill(to.outside);
     await dialog.getByLabel(/^Ort/).fill("Mellerud");
     await dialog.getByLabel(/^Postadress/).fill("Testgatan 1");
+    await dialog
+      .getByLabel(/^E-post/)
+      .fill(`${to.outside.replace(/\W+/g, "").toLowerCase()}@example.org`);
   }
   await dialog.getByLabel(/^År/).selectOption(when.ar);
   await dialog.getByLabel(/^Månad/).selectOption(when.manad);
   if (when.dag) await dialog.getByLabel("Dag (frivillig)").fill(when.dag);
+  // Before the first Skicka the sale is registered at once, after Sälj's tick box (Jonas 2026-11-26).
+  const ack = dialog.getByRole("checkbox", {
+    name: /^Jag har tagit del av informationen/,
+  });
+  if (await ack.count()) await ack.check();
   await dialog.getByRole("button", { name: "Spara försäljningen" }).click();
   await expect(dialog).toBeHidden();
 }
@@ -253,6 +263,41 @@ test("3. Typ A: medianbesättning i mobilen", async ({ page, context }) => {
       { type: "sekunder", description: String(seconds) },
     );
   expect(taps).toBeLessThanOrEqual(20);
+});
+
+// Back from the profile used to show the page as it was before the save, and the next save met "ändrad på en
+// annan enhet" (Jonas 2026-11-26). Only a real browser has Next's router cache. M9006 is reported in full later.
+test("3b. Tillbaka från profilen behåller det sparade", async ({
+  page,
+  context,
+}) => {
+  await loginInline(page, context, USERS.owner);
+  await page.goto("/stamboken/arsrapport/M9006/2025");
+  await expect(rows(page)).toHaveCount(6);
+  await hydrated(page);
+  const saveOf = () =>
+    page.waitForResponse(
+      (r) =>
+        r.request().method() === "POST" &&
+        r.url().endsWith("/stamboken/arsrapport/M9006/2025"),
+    );
+  let saved = saveOf();
+  await kvar(rabbit(page, "M9006-2411")).check();
+  await saved;
+  // "Dina uppgifter" are in the report now (step 5): the menu's profile link leaves it the same way.
+  // The tests run at phone width, where the menu sits behind its button.
+  await page.getByRole("button", { name: "Meny" }).click();
+  await page.locator('a[href="/stamboken/profil"]:visible').first().click();
+  await page.waitForURL("**/stamboken/profil");
+  await page.goBack();
+  await expect(kvar(rabbit(page, "M9006-2411"))).toBeChecked();
+  saved = saveOf();
+  await kvar(rabbit(page, "M9006-2412")).check();
+  await saved;
+  await expect(page.getByText(/annan enhet/)).toHaveCount(0);
+  await page.reload();
+  await expect(kvar(rabbit(page, "M9006-2411"))).toBeChecked();
+  await expect(kvar(rabbit(page, "M9006-2412"))).toBeChecked();
 });
 
 test("4. Typ B: ovan användare, långsamt nät och smal skärm", async ({
@@ -355,6 +400,9 @@ test("5. Typ C: stor besättning med döda och sålda", async ({
   for (const n of outside)
     await markSold(page, r(n), { outside: `Köpare ${n}` });
   await markSold(page, r(2556), { herd: "M1220" });
+  // Registered at once and sold in 2025: off the list, under "Sålda under 2025".
+  await expect(rows(page)).toHaveCount(24);
+  await expect(page.getByText(/^M9003-2556 till M1220/)).toBeVisible();
   // 20 stay: 17 adults with a weight, 3 kits.
   for (const n of [...range(2314, 2320), ...range(2431, 2440)]) {
     await kvar(r(n)).check();
@@ -368,7 +416,7 @@ test("5. Typ C: stor besättning med döda och sålda", async ({
   await test.step("bred skärm", async () => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await rows(page).last().scrollIntoViewIfNeeded();
-    await expect(page.getByText(/av 30 klara/)).toBeInViewport();
+    await expect(page.getByText(/av 24 klara/)).toBeInViewport();
     await expect(page.getByLabel("Hitta en kanin")).toBeInViewport();
     await expect(page.getByRole("button", { name: SEND })).toBeInViewport();
 
@@ -428,17 +476,8 @@ test("5. Typ C: stor besättning med döda och sålda", async ({
   await expect(page.getByText(/^Inskickad/)).toHaveCount(0);
   expect((await storedReport(page, "M9003")).report).toBeNull();
   await shot(page, "typ-c-dragen-tillbaka");
-  await expect(rows(page)).toHaveCount(30);
-  // The five buyers outside the genebank are kept across Dra tillbaka (Jonas 2026-11-16), shown only as saved,
-  // so Skicka goes through at once.
-  await r(outside[0])
-    .getByRole("button", { name: "Ändra", exact: true })
-    .click();
-  const dialog = page.getByRole("dialog");
-  await expect(dialog).toContainText("Köparen finns sparad.");
-  await expect(dialog).not.toContainText(`Köpare ${outside[0]}`);
-  await dialog.getByRole("button", { name: "Avbryt" }).click();
-  await expect(dialog).toBeHidden();
+  // The six sales are the register's, not the report's: Dra tillbaka leaves them, and the rabbits stay off the list.
+  await expect(rows(page)).toHaveCount(24);
   await page.getByRole("button", { name: SEND }).click();
   await submitted(page);
   await shot(page, "typ-c-kvitto-igen");
@@ -597,7 +636,8 @@ test("9. Typ G: död och försäljning vid årsskiftet", async ({
   await submitted(page);
   await loginInline(page, context, USERS.manager);
   expect(await villkor()).toMatchObject({ hane: true, hona: true });
-  expect(await alive()).toEqual(["M9007-2411", "M9007-2412"]);
+  // The female's sale was registered at once: she counts by her move, without the report's attestation.
+  expect(await alive()).toEqual(["M9007-2411"]);
 
   // b) The same on 31 December 2025: both were gone on 31 December.
   await loginInline(page, context, USERS.owner);
@@ -606,13 +646,19 @@ test("9. Typ G: död och försäljning vid årsskiftet", async ({
   await male.getByLabel(/^År/).selectOption("2025");
   await male.locator('select[id^="month-"]').selectOption("12");
   await male.getByLabel("Dag (frivillig)").fill("31");
-  await female.getByRole("button", { name: "Ändra", exact: true }).click();
-  const dialog = page.getByRole("dialog");
-  await dialog.getByLabel(/^År/).selectOption("2025");
-  await dialog.getByLabel(/^Månad/).selectOption("12");
-  await dialog.getByLabel("Dag (frivillig)").fill("31");
-  await dialog.getByRole("button", { name: "Spara försäljningen" }).click();
-  await expect(dialog).toBeHidden();
+  // Her sale is the register's: Ångra it, then sell her in the report, which goes with Skicka now.
+  await female.getByRole("button", { name: "Ångra" }).click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Ångra försäljning" })
+    .click(); // Ångra asks first
+  await expect(female.getByRole("radio", { name: "Såld" })).toBeVisible();
+  await markSold(
+    page,
+    female,
+    { herd: "M9001" },
+    { ar: "2025", manad: "12", dag: "31" },
+  );
   await shot(page, "typ-g-andrad");
   await page.getByRole("button", { name: SEND }).click();
   await submitted(page);
@@ -795,4 +841,32 @@ test("11. Genbanksansvarig ser rätt status för alla typer", async ({
 
   await page.goto("/stamboken/arsrapport/status/2025?filter=att_ringa");
   await expect(page.getByText("Inga besättningar att ringa.")).toBeVisible();
+});
+
+test("12. Dina uppgifter: huvudmedlemmen ändrar i rapporten, andra ser vem som gör det", async ({
+  page,
+  context,
+}) => {
+  await loginInline(page, context, USERS.owner);
+  // M9001's main member is this account (5.11, D1): the details are filled in and saved with Skicka
+  await page.goto("/stamboken/arsrapport/M9001/2025");
+  await page.getByRole("button", { name: /^(Ändra|Fortsätt ändra)$/ }).click();
+  await expect(page.getByText(/^E-post: /)).toBeVisible();
+  await page.getByLabel("Telefon").fill("0709-555 666");
+  // test 9 sold M9007-2412 to M9001 on 31 December, so the report now asks about her too
+  const bought = rabbit(page, "M9007-2412");
+  await kvar(bought).check();
+  await weight(bought).fill("2,8");
+  await page.getByRole("button", { name: SEND }).click();
+  await submitted(page);
+  await expect(page.getByText("Sparat i matrikeln: telefon.")).toBeVisible();
+  // M9002 is the account's herd, but its main member is someone else
+  await page.goto("/stamboken/arsrapport/M9002/2025");
+  await page.getByRole("button", { name: /^(Ändra|Fortsätt ändra)$/ }).click();
+  await expect(
+    page.getByText(
+      "Huvudmedlemmen ändrar kontaktuppgifterna, kontot för stödet och svaret om Koharen.",
+    ),
+  ).toBeVisible();
+  await expect(page.getByLabel("Telefon")).toHaveCount(0);
 });

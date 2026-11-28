@@ -1,0 +1,18 @@
+{% block subject %}Kaniner saknas på årsblanketten för {{ herd }}{% endblock %}
+
+{% block body %}
+Hej!
+
+Årsrapporten för {{ year }} har kommit in. De här kaninerna saknas på blanketten:
+
+{% for rabbit in rabbits %}{{ rabbit }}
+{% endfor %}
+De är markerade som ej rapporterade tills du har svarat.
+
+Ange om de finns kvar, är döda eller sålda:
+{{ link }}
+
+Datumet då årsrapporten kom in ändras inte.
+
+Du kan också svara på det här mejlet.
+{% endblock %}

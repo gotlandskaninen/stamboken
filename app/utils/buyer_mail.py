@@ -116,9 +116,13 @@ def _rabbit_name(rabbit):
     return name
 
 
-def _last_kept_date(purge_at):
-    day = purge_at.astimezone(_STOCKHOLM).date() - timedelta(days=1)
+def sv_date(day):
+    """A date as Swedish text: "30 mars 2027"."""
     return f"{day.day} {_MONTHS[day.month - 1]} {day.year}"
+
+
+def _last_kept_date(purge_at):
+    return sv_date(purge_at.astimezone(_STOCKHOLM).date() - timedelta(days=1))
 
 
 def _membership_current(contact):
@@ -196,6 +200,7 @@ def _information_mail(params, attempt=1):
         "token": link_token(ERASE_PURPOSE, contact.id),
         "consent": contact.contact_consent_at is not None,
         "membership": membership,
+        "notice_only": contact.email_notice_only,  # no försäljningsbevis (#273): the e-mail only for this mail
         "certificate": pdf is not None,
         "sent_note": note,
         "attachments": [(f"genbanksintyg-{rabbit.number}.pdf", "application/pdf", pdf)] if pdf else [],
@@ -215,7 +220,7 @@ def _membership_mail(params):
 def _same_buyer(contact_id):
     """The linked contact and reviewed or unambiguous matches, also after an e-mail has been purged."""
     contact = BuyerContact.get_or_none(BuyerContact.id == contact_id)
-    if contact is None:
+    if contact is None or contact.email_notice_only:  # its mail promises this sale's details only (#273)
         return {contact_id}
     email = (contact.email or "").strip().lower()
     key = address_hash(email) if email else contact.erased_email_hash
@@ -235,7 +240,8 @@ def _same_buyer(contact_id):
 def _pending_proposals(contact_ids):
     from utils.herd_tracking import _buyer_name_key  # pylint: disable=import-outside-toplevel
 
-    contacts = list(BuyerContact.select().where(BuyerContact.id.in_(contact_ids)))
+    # a buyer without a försäljningsbevis erases this sale only, never a pending one (#273)
+    contacts = list(BuyerContact.select().where(BuyerContact.id.in_(contact_ids), ~BuyerContact.email_notice_only))
     addresses = {address_hash(c.email): c.email.strip().lower() for c in contacts if c.email}
     buyers = {
         (_buyer_name_key(c.name), address_hash(c.email) if c.email else c.erased_email_hash)

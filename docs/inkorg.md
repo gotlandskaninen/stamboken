@@ -21,18 +21,19 @@ Driften av mejlläsningen står i [inkorg-gmail.md](inkorg-gmail.md).
 9. [Ta, ta över och tilldela](#ta-ta-över-och-tilldela)
 10. [Byta läge](#byta-läge)
 11. [Dokument](#dokument)
-12. [Spara det intyget visar](#spara-det-intyget-visar)
-13. [Registrera en försäljning](#registrera-en-försäljning)
-14. [Maskning och kopian på kaninen](#maskning-och-kopian-på-kaninen)
-15. [Bilderna](#bilderna)
-16. [Fråga uppfödaren](#fråga-uppfödaren)
-17. [Mejlade poster](#mejlade-poster)
-18. [Mina inskick](#mina-inskick)
-19. [Notiser](#notiser)
-20. [Mejl](#mejl)
-21. [Tolkning](#tolkning)
-22. [Gallring](#gallring)
-23. [Gränser och sådant gränssnittet behöver veta](#gränser-och-sådant-gränssnittet-behöver-veta)
+12. [Avstämning](#avstämning)
+13. [Spara det intyget visar](#spara-det-intyget-visar)
+14. [Registrera en försäljning](#registrera-en-försäljning)
+15. [Maskning och kopian på kaninen](#maskning-och-kopian-på-kaninen)
+16. [Bilderna](#bilderna)
+17. [Fråga uppfödaren](#fråga-uppfödaren)
+18. [Mejlade poster](#mejlade-poster)
+19. [Mina inskick](#mina-inskick)
+20. [Notiser](#notiser)
+21. [Mejl](#mejl)
+22. [Tolkning](#tolkning)
+23. [Gallring](#gallring)
+24. [Gränser och sådant gränssnittet behöver veta](#gränser-och-sådant-gränssnittet-behöver-veta)
 
 ## Begrepp
 
@@ -78,8 +79,8 @@ produktionsbehörighet. Resten av kön, notislistan och originalen kräver produ
 i riktiga Stamboken.
 
 Rollen genbankshjälpare delas ut som andra roller: `POST /api/v2/admin/role` med
-`{"operation": "add", "user_id": 5, "role": {"level": "helper", "genebank": 1}}` (admin), eller
-den äldre `POST /api/manage/role` (genbanksansvarig i sin egen genbank). Användarlistan
+`{"operation": "add", "user_id": 5, "role": {"level": "helper", "genebank": 1}}` (admin). Den äldre
+`POST /api/manage/role` är stängd ([ADR-0020](adr/0020-gamla-appen-stangs-en-funktion-i-taget.md)). Användarlistan
 `GET /api/v2/admin/users?role=helper` filtrerar på rollen, och `role_summary` visar till exempel
 `helper(G)`. En hjälpare får läsrätt i sin genbank men ingen egen rätt att ändra kaniner: hen
 skriver bara genom en post hen har tagit.
@@ -147,11 +148,13 @@ Allt annat nekas med 409. `ny` och `vantar_uppfodare` kan inte sättas med `…/
 ## Arbetsgången
 
 1. Ta posten (`…/ta`), eller få den tilldelad.
-2. Gå igenom dokumenten: vrid dem rätt och ange typ och format (`PATCH …/dokument/{dok}`).
+2. Gå igenom dokumenten: vrid dem rätt, räta upp ett snett foto, och ange typ och format
+   (`PATCH …/dokument/{dok}`; vinkeln kan hittas med `…/hitta-pappret`).
 3. Ett intyg: spara det intyget visar (`…/spara`), en ny kanin eller pappersintyget på en kanin
-   som finns. Visar intyget också en försäljning, registrera den nu (`…/overlat`): ett dokument som
+   som finns. Medan handläggaren skriver av pappret ställs det bredvid registret (`…/avstamning`). Visar intyget också en försäljning, registrera den nu (`…/overlat`): ett dokument som
    är klart går inte att spara eller sälja från.
-4. Bekräfta vridning och maskning (`…/maskning`). Kopian läggs på kaninen och dokumentet blir klart.
+4. Bekräfta vridning, ram och maskning (`…/maskning`). Kopian läggs på kaninen och dokumentet blir
+   klart.
 5. Ett försäljningsbevis: typen `bevis`, sedan `…/overlat`. Beviset blir klart med försäljningen.
 6. Ett foto som inte ska sparas: `dismissed: true`.
 7. När det sista dokumentet är klart eller avfärdat blir posten `klar`, och uppladdaren får en
@@ -273,15 +276,19 @@ för en post med `ref_type` `sale_proposal`, vars statusvy avgör förslaget, oc
   "doc_type": "intyg",
   "cert_format": null,
   "rotation": 0,
+  "straighten": 0,
   "mask_rects": null,
-  "mask_suggestion": null,
+  "copy_frame": null,
+  "frame_suggestion": null,
   "waiting_for": null,
   "interpretation_status": "av",
   "proposal": null,
   "individual": null,
+  "individual_genebank_id": null,
   "herd_tracking_id": null,
   "has_original": true,
   "has_copy": false,
+  "verified_at": null,
   "done_at": null
 }
 ```
@@ -296,14 +303,27 @@ för en post med `ref_type` `sale_proposal`, vars statusvy avgör förslaget, oc
   `v1_pdf` (utskriven v1-PDF), `intyg_b` (det nya tomma intyget B), `digitalt_v2` (digitalt intyg
   med QR-kod).
 - `rotation`: 0, 90, 180 eller 270 grader medurs, så att intyget står rätt.
+- `straighten`: grader medurs som fotot rätas upp med efter `rotation`, från −15 till 15 med en
+  decimal; 0 för ett foto som inte rätats upp. Kopian, tolkningen och utsnittet till uppfödaren
+  görs av fotot vridet `rotation` + `straighten` grader: bilden blir den vridna bildens omskrivna
+  rektangel, med vitt i hörnen (ram F), räknad som Pillows `Image.rotate` med `expand` gör det.
+  Skulle ram F få fler än 40 miljoner bildpunkter (gränsen för en uppladdning, till exempel ett
+  långt smalt foto vridet 15 grader) förminskas fotot först. Är `straighten` 0 är bilden exakt den
+  kvartsvridna, bildpunkt för bildpunkt. Rektanglar, ram och utsnitt är bråkdelar av ram F.
 - `mask_rects`: rektanglarna som täcker säljaren och köparen, se
   [Maskning](#maskning-och-kopian-på-kaninen). `null` tills handläggaren har angett dem.
-- `mask_suggestion`: förslaget när `cert_format` är `handskrivet` och `mask_rects` saknas: den
-  nedre tredjedelen, `[{"x": 0.0, "y": 0.6667, "w": 1.0, "h": 0.3333}]`. Annars `null`.
+- `copy_frame`: ramen som kopian beskärs till, en rektangel som i
+  [Maskning](#maskning-och-kopian-på-kaninen), eller `null` (hela fotot). Sätts bara med `…/maskning`.
+- `frame_suggestion`: ramen som maskningen börjar med när `cert_format` är `handskrivet` och varken
+  `copy_frame` eller `mask_rects` är satta: allt utom den nedre tredjedelen, där säljaren och
+  köparen skriver, `{"x": 0.0, "y": 0.0, "w": 1.0, "h": 0.6667}`. Annars `null`. Arbetsvyn börjar
+  med samma ram för ett foto som aldrig maskerats, oavsett format.
 - `waiting_for`: `null` eller en lista med de föräldranummer dokumentet väntar på.
 - `interpretation_status`: bildtolkningen av fotot, se [Tolkning](#tolkning). `av` (tolkningen är
-  avstängd, eller dokumentet är inget intyg), `vantar` (i kö), `klar` (förslaget finns) eller
-  `misslyckad` (två försök gick fel; handläggaren skriver av fälten själv).
+  avstängd, eller dokumentet är inget intyg), `vantar` (i kö), `klar` (förslaget finns),
+  `misslyckad` (två försök gick fel; handläggaren skriver av fälten själv) eller `for_litet`
+  (fotots kortsida är under 1000 pixlar, `MIN_READ_SIDE`, så det tolkas inte av sig självt;
+  "Tolka igen" tolkar det ändå).
 - `proposal`: `null`, eller förslaget från tolkningen när `interpretation_status` är `klar`:
 
   ```json
@@ -330,14 +350,29 @@ för en post med `ref_type` `sale_proposal`, vars statusvy avgör förslaget, oc
   (hämtat ur registret), `avviker` (intyget och registret säger olika) eller `osäker`. Bara `läst` och
   `härlett` har ett `value` att fylla i formuläret med; `avviker` och `osäker` har `value: null` och
   skrivs av från fotot. `read` är det tolkningen läste på intyget och `registry` registrets värde där
-  de skiljer sig. `checks` är kontrollerna i ord; `ok` är `true`, `false` eller `null` (upplysning).
+  de skiljer sig. Ett intygsnummer som redan finns på en annan kanin har inget `registry`: kontrollen
+  säger vilken kanin det finns på. Finns kaninen redan i Stamboken (`individual`) ställs varje fält som
+  lästes bredvid kaninen: mor och far, far- och morföräldrarna, födelsedatum, antal, namn, kön och färg
+  är `läst` (eller `härlett`) när de är kaninens, annars `avviker` med kaninens värde som `registry`.
+  Med digitalt intyg och allt i ordning finns bara `individual`. `checks` är kontrollerna i ord; `ok` är
+  `true`, `false` eller `null` (upplysning). Den som inte arbetar i postens genbank, men ser posten i kön,
+  får bara det fotot visar: varje fälts `source` och `read`, och inga `checks`.
   Förslaget sparas aldrig av sig självt: det är handläggarens `…/spara` som skriver.
+  Ett intyg i kön kan också ha `sale`, säljaren och köparen från fotot: se
+  [Säljare och köpare](#tolkning) under Tolkning.
 - `individual`: kaninens nummer när dokumentet är sparat, annars `null`.
 - `herd_tracking_id`: raden i besättningshistoriken för försäljningen som registrerats genom
   dokumentet (för ett bevis: försäljningen det visar).
 - `has_original`: originalet finns. `false` när det är gallrat eller raderat på begäran (se
   [Gallring](#gallring)); `…/original` svarar då 404.
 - `has_copy`: kopian finns.
+- `verified_at`: när handläggaren bekräftade kopian med "stämmer med registret"
+  (`matches_registry` i [Maskning](#maskning-och-kopian-på-kaninen)), annars `null`. Dokumentet
+  sparar också intygsnumret och individnumret det sparades med (`saved_certificate`, `saved_number`,
+  inte i svaret); märkningen gäller bara så länge kaninen har kvar båda. Ett intyg som sparades före version 56 har inget sådant nummer
+  och kan inte märkas.
+- `individual_genebank_id`: genbanken för kaninen dokumentet är sparat på, där kopian görs om och tas
+  bort (se [Maskning](#maskning-och-kopian-på-kaninen)); `null` när dokumentet inte är sparat.
 
 ### Händelser
 
@@ -355,10 +390,10 @@ för en post med `ref_type` `sale_proposal`, vars statusvy avgör förslaget, oc
 | `lage` | `{"from": "tagen", "to": "ofullstandig", "note": "Pappersintyget saknas"}`; `note` bara när den gavs, `duplicate_of` vid `dubblett` |
 | `dokument` | `{"document": 31, "fields": ["mask_rects", "rotation"]}` |
 | `sparad` | `{"document": 31, "action": "ny_kanin" \| "pappersintyg", "individual": "G1-2511"}`, eller vid en försäljning `{"document": 31, "action": "overlatelse", "individual": "G1-2111", "herd": "G2", "missing_proof": true}`; `"action": "bevis"` när ett bevis kopplas till en försäljning som redan är registrerad |
-| `kopia` | `{"document": 31, "rects": 1, "rotation": 90}`; varje anrop till `…/maskning` |
+| `kopia` | `{"document": 31, "rects": 1, "frame": true, "rotation": 90, "straighten": 2.5, "stammer": true}`; varje anrop till `…/maskning`; `frame` är om kopian beskars till en ram, `stammer` är `matches_registry` |
 | `original_visat` | `{"document": 31}` |
 | `foralder_inlagd` | `{"individual": "G1-2431"}`; en kanin som posten väntade på är inlagd |
-| `fraga` | `{"text": "Står det G1-2112?", "document": 31, "rotation": 0, "crop": {"x": 0, "y": 0, "w": 0.5, "h": 0.25}}`; de tre sista bara med utsnitt |
+| `fraga` | `{"text": "Står det G1-2112?", "document": 31, "rotation": 0, "straighten": 0, "crop": {"x": 0, "y": 0, "w": 0.5, "h": 0.25}}`; de fyra sista bara med utsnitt. En fråga från före upprätningen saknar `straighten`, som då är 0 |
 | `svar` | `{"text": "Ja.", "documents": [33], "not_saved": ["brev.docx"]}`; `user` är `null`, `not_saved` bara när något inte sparades |
 | `tolka_igen` | `{"document": 31}`; handläggaren lade dokumentet i tolkningens kö igen |
 | `kontrollerad` | `{"document": 31, "outcome": "stammer" \| "rattat"}`; ett foto från årsrapporten är jämfört med kaninen (`…/kontrollerad`) |
@@ -383,7 +418,7 @@ anrop till uppladdningen, nekade också, räknas i en andra gräns på 60 i timm
 | Fält | | |
 |---|---|---|
 | `herd` | krävs | besättningsnumret, till exempel `G1` |
-| `files` | krävs, upprepas | 1–10 filer: JPEG, PNG, WebP, HEIC eller PDF, högst 10 MB allt som allt (se nedan) |
+| `files` | krävs, upprepas | 1–10 filer: JPEG, PNG, WebP, HEIC eller PDF, högst 25 MB styck och 50 MB allt som allt (se nedan) |
 | `message` | valfritt | uppladdarens meddelande, högst 2000 tecken |
 | `accept_warnings` | valfritt | `1` eller `true`: spara också när någon bild har en varning |
 
@@ -447,7 +482,7 @@ aldrig kopplas kan skrotas, och uppfödaren får då ladda upp det igen.
 |---|---|
 | 400 | `Välj besättning.` (saknas eller okänd), `Ingen fil bifogad.`, `Högst 10 bilder per inskick. En PDF räknas sida för sida.`, `Meddelandet får vara högst 2000 tecken.` |
 | 403 | `Du kan bara skicka in för dina egna besättningar.` |
-| 413 | `Inskicket är för stort. …` (hela begäran över 10 MB), `Filen är för stor. Max 10 MB.`, `Bilden har för många pixlar. Max 40 megapixlar.` |
+| 413 | `Inskicket är för stort. …` (hela begäran över 50 MB), `Filen är för stor. Max 25 MB.`, `Bilden har för många pixlar. Max 40 megapixlar.` |
 | 415 | `Otillåten filtyp. Bara JPEG, PNG, WebP, HEIC och PDF.` |
 | 422 | `Filen kunde inte läsas. Den kan vara skadad.` |
 | 429 | för många inskick den senaste timmen |
@@ -641,11 +676,12 @@ Stamboken (numren tas då bort, se [Dokument](#dokument)).
 | `doc_type` | `intyg`, `bevis`, `arsblankett` eller `annat`. Blir dokumentet ett intyg läggs det i tolkningens kö (när tolkningen är på); andra typer tolkas inte (`interpretation_status: "av"`) |
 | `cert_format` | `null` eller ett av formaten under [Dokument](#dokument) i objekten |
 | `rotation` | 0, 90, 180 eller 270 (grader medurs) |
+| `straighten` | ett tal från −15 till 15 (grader medurs efter `rotation`), avrundat till en decimal. Inte `true`/`false`, NaN eller oändligt. Ändras `rotation` eller `straighten` medan dokumentet väntar på tolkningen räknas försöken om från 0: en läsning av den gamla vridningen kastas och var inget försök |
 | `mask_rects` | `null` eller en lista med högst 20 rektanglar, se [Maskning](#maskning-och-kopian-på-kaninen) |
 | `waiting_for` | `null`, `[]` eller en lista med ett eller två individnummer (till exempel `G1-2431`) som inte finns i Stamboken än |
 | `dismissed` | `true` avfärdar dokumentet (klart utan att något sparas, till exempel ett foto som inte är ett intyg); `false` ångrar det, om inget har sparats från dokumentet |
 
-När dokumentet har en kopia nekas `rotation`, `mask_rects` och `doc_type` (409): kopian görs bara om
+När dokumentet har en kopia nekas `rotation`, `straighten`, `mask_rects` och `doc_type` (409): kopian görs bara om
 med `…/maskning`. `doc_type` nekas också när något har sparats från dokumentet (en kanin eller en
 försäljning). Blir det sista dokumentet avfärdat blir posten `klar`.
 
@@ -654,7 +690,8 @@ försäljning). Blir det sista dokumentet avfärdat blir posten `klar`.
 **Fel:** 400 för ett okänt fält, ett ogiltigt värde, ett nummer som inte går att läsa eller som
 redan finns i Stamboken (`"G1-2111 finns redan i Stamboken."`); 404 när dokumentet inte hör till
 posten; 409 när anroparen inte är handläggare, när kopian är gjord och anropet ändrar `rotation`,
-`mask_rects` eller `doc_type`, eller när typen ändras på ett dokument som något har sparats från.
+`straighten`, `mask_rects` eller `doc_type`, eller när typen ändras på ett dokument som något har
+sparats från.
 
 **Väntar på förälder.** Saknas en förälder i Stamboken: ange förälderns nummer i `waiting_for`
 och byt läge till `vantar_foralder`. Finns redan alla nummer i `waiting_for` i Stamboken nekas bytet
@@ -682,6 +719,47 @@ inte sparats än (`Bara ett intyg som inte är sparat kan tolkas.`) eller när o
 Ett foto från årsrapporten (`kind: "kontroll"`, `ref_type: "individual"`) tolkas också när kaninen
 redan är sparad, eftersom tolkningen jämförs med det uppfödaren registrerade.
 
+### `POST /api/v2/inkorg/{id}/dokument/{dok}/hitta-pappret`
+
+"Hitta pappret": hur mycket fotot lutar och var pappret ligger. Ingenting ändras: gränssnittet
+visar vinkeln, och handläggaren sparar den med `PATCH` (`straighten`) eller med maskningen. Ingen
+händelse loggas.
+
+Kroppen är `{"rotation": 90}` eller `{"rotation": 90, "straighten": 2.5}` (som i `PATCH`).
+`rotation` är vridningen som vyn visar. Är den inte dokumentets sparade svarar API:t 409, så att
+pappret aldrig hamnar i en annan kvartsvridning än den handläggaren ser. Med `straighten` letas
+ingen lutning: `angle` är den vinkeln och pappret letas i fotot vridet med den. Det gör arbetsvyn i
+maskningssteget, där vinkeln är låst.
+
+**Svar 200:** `{"angle": 4.0, "paper": {"x": 0.18, "y": 0.14, "w": 0.64, "h": 0.72}, "paper_tight": {"x": 0.195, "y": 0.155, "w": 0.61, "h": 0.69}}`.
+
+- `angle`: den `straighten` som lägger fotots skrift vågrätt, i steg om 0,1 grad. 0,0 när ingen
+  vinkel tydligt slår fotot som det är, och när lutningen är under 0,3 grader. Med `straighten` i
+  kroppen: den.
+- `paper`: pappret, i bråkdelar av fotot vridet dokumentets `rotation` plus `angle`, med 1,5 %
+  marginal; `null` när inget ljust område av rimlig storlek (20–97 % av fotot) sticker ut, till
+  exempel på ett ljust bord eller när fotot bara är papper.
+- `paper_tight`: samma papper utan marginal, eller `null`. Arbetsvyns ram får sin underkant av
+  den: två tredjedelar av det täta pappret, så att marginalen aldrig når ned i säljarens och
+  köparens tredjedel. Ramens övriga kanter är `paper`s.
+
+Letas på en grå kopia med högst 800 bildpunkter på längsta sidan (`app/utils/inbox_paper.py`).
+Vinkeln: de mörka bildpunkterna (Otsus tröskel) vrids från −15 till 15 grader i steg om 0,5 och
+sedan 0,1, och för varje vinkel summeras kvadraten av skillnaden mellan intilliggande raders andel
+mörka bildpunkter. Den bästa vinkeln gäller bara när den slår vinkeln 0 med minst 50 %. Pappret:
+de ljusa bildpunkterna på det upprätade fotot, med skrift upp till 9 bildpunkter igenfylld; den
+längsta följden av rader och kolumner där andelen ljust är minst hälften av den största andelen.
+Hörnen som vridningen lägger till räknas varken som papper eller bord. Pappret måste visa en kant
+mot bordet på tre sidor, eller på två motstående (ett papper som fyller fotots bredd eller höjd).
+Annars är det ljusa området bordet, och `paper` och `paper_tight` är `null`: ett ljust bord med
+mörkt bara till höger och nedanför ger kanter på två sidor som möts i ett hörn.
+
+**Vem:** handläggaren (posten i ett läge med handläggare).
+
+**Fel:** 400 när `rotation` eller `straighten` är ogiltig; 403 för den som inte arbetar i kön
+eller i postens genbank; 404 när posten eller dokumentet inte finns; 409 när anroparen inte är
+handläggare, när `rotation` inte är dokumentets eller när originalet är raderat.
+
 ### `POST /api/v2/inkorg/{id}/dokument/{dok}/kontrollerad`
 
 Ett foto från årsrapporten är jämfört med kaninen som registrerades från det. Kroppen är
@@ -701,6 +779,103 @@ genbank kan ta posten, som andra poster.
 är ett foto från årsrapporten, när anroparen inte är handläggare eller posten inte är tagen, när
 posten och dokumentet inte pekar på samma registrerade kanin, eller när dokumentet redan är klart.
 
+## Avstämning
+
+### `POST /api/v2/inkorg/{id}/dokument/{dok}/avstamning`
+
+Avstämningstabellen i intygsformuläret: det handläggaren har skrivit av från pappret, rad för rad
+bredvid registret, och kontrollerna i ord. Formuläret anropar den medan handläggaren skriver. Den
+läser bara: inget skrivs och posten låses inte.
+
+**Vem:** den som arbetar i postens genbank: admin, eller genbanksansvarig eller genbankshjälpare i den.
+En post utan genbank: admin eller genbanksansvarig. Högst 600 anrop i minuten per användare (429).
+
+Kroppen har formulärets fält och far- och morföräldrarna, som strängar (antalen får vara tal). Alla
+är valfria:
+
+```json
+{
+  "mode": "ny_kanin",
+  "paper_number": "G1-2511",
+  "paper_certificate": "123456",
+  "name": "Stina",
+  "sex": "female",
+  "birth_date": "2025-05-10",
+  "color": "viltgrå",
+  "litter_size": 5,
+  "litter_size6w": 4,
+  "mother": "G1-1911",
+  "father": "G2-1711",
+  "morfar": "G1-1611",
+  "mormor": "G1-1712",
+  "farfar": "G2-1411",
+  "farmor": "G2-1512"
+}
+```
+
+`mode` är `ny_kanin` eller `pappersintyg`. Med `pappersintyg` kommer också `individual`, kaninens
+nummer i Stamboken.
+
+**Svar 200:**
+
+```json
+{
+  "rows": {
+    "mother": {"registry": "G1-1911 Stina", "status": "stammer"},
+    "father": {
+      "registry": "finns inte",
+      "status": "skiljer",
+      "near": [{"number": "G2-1711", "name": "Olle", "sex": "male"}]
+    },
+    "birth_date": {"registry": null, "status": "osaker"}
+  },
+  "checks": [{"ok": false, "text": "Far G3-1711 finns inte i Stamboken."}]
+}
+```
+
+Raderna är fälten i kroppen; med `pappersintyg` kommer `individual` först. `registry` är registrets
+värde för raden: ett nummer med kaninens namn, ett datum ÅÅÅÅ-MM-DD, ett antal, kön som `female` eller
+`male`, eller `null`. `status` är
+
+- `stammer`: det inskrivna är registrets värde. Nummer jämförs som registret skriver dem (`g1 2511`
+  är `G1-2511`), datum som ÅÅÅÅ-MM-DD.
+- `skiljer`: det inskrivna är något annat, eller ett nummer som inte finns i registret
+  (`registry: "finns inte"`). `near` listar då kaninerna vars besättningsnummer är ett tecken ifrån,
+  med samma individsiffror. Ingen av dem väljs.
+- `osaker`: inget är inskrivet, men tolkningen läste något där (`read` i dokumentets `proposal`).
+- `ingen`: registret har inget att jämföra med, eller inget är inskrivet eller läst.
+
+Bara det inskrivna slås upp, aldrig det tolkningen läste: en förälder som bara är läst väljer aldrig
+en kull. Ett nummer slås upp med bokstaven som den skrivits. Allt söks i postens genbank. En post utan
+genbank söker i den genbank vars besättningar börjar med bokstaven i det inskrivna numret
+(`individual`, annars `paper_number`), men bara om anroparen arbetar i den genbanken (läsrätt räcker
+inte); annars jämförs inget och kontrollen säger det. En kanin eller kull nämns bara för den som får läsa den, som i
+`GET /api/v2/individual/{nummer}`: kaninens besättning är i en av anroparens genbanker. En annan står
+som `"en kanin i en annan genbank"` och jämförs inte. `stammer` betyder det `…/spara` tar emot: ett
+intygsnummer jämförs som det skrivits, bara utan mellanslag först och sist, och är det längre än 20
+tecken skiljer det sig. En färg stämmer bara med genbankens stavning.
+
+- `pappersintyg`: finns `individual` i genbanken kommer varje rads `registry` från den kaninen:
+  numret, intygsnumret, namnet, könet, färgen, kullens födelsedatum och antal, mor och far, och deras
+  föräldrar som far- och morföräldrar. Har kaninen digitalt intyg är intygsnumrets `registry`
+  `"digitalt intyg"`, och en kontroll säger att pappersintyget ersätter det digitala när det sparas.
+- `ny_kanin`: mor och far är kaninerna med de inskrivna numren, och far- och morföräldrarna är deras
+  föräldrar i registret. Har mor och far rätt kön och är födelsedatumet helt prövas `paper_number` som
+  vid registreringen: `registry` är numret Stamboken ger, skrivet som registreringen skriver det
+(G1-25012 är G1-2512). Födelsedatum och antal kommer från deras
+  kull född samma dag, om den finns. `paper_certificate` stämmer med `registry: "ledigt"` när
+  intygsnumret är ledigt. En kanin i genbanken som redan har det står som `registry`; finns det i en
+  annan genbank står `"används redan"`. `color` stämmer när färgen finns i genbankens färglista.
+
+Kontrollerna säger bland annat om individnumrets bokstav inte är genbankens, om dess besättning inte
+finns, om årssiffrorna inte stämmer med födelsedatumet, om en far- eller morförälder har samma nummer
+som föräldern, om mor och far finns, om numret stämmer med kullen och om intygsnumret är ledigt. Har
+mor och far ingen kull född den dagen listas förälderns kullar ("Kull i Stamboken: …"). Kontrollen av numret mot kullen nämner de kaniner och kullar som anroparen
+skulle se i 409-svaret från `…/spara`; andra står utan nummer ("En kanin i kullen saknar intyg.").
+
+**Fel:** 403 för den som inte arbetar i postens genbank; 404 när posten inte finns eller dokumentet
+inte hör till den; 429 vid för många anrop.
+
 ## Spara det intyget visar
 
 ### `POST /api/v2/inkorg/{id}/dokument/{dok}/spara`
@@ -714,6 +889,11 @@ Två sorters anrop, valda med `action`.
 
 Registrerar kaninen precis som `POST /api/v2/individual` gör (samma regler och felsvar), alltid
 med pappersintyg. Kullen anges med föräldrarna och födelsedatumet; finns den inte skapas den.
+
+Kön kräver mer än `POST /api/v2/individual`: färg, kön och båda antalen ska också finnas, som i
+"Registrera kanin" (Jonas beslut 2026-11-27). Går intyget inte att läsa letar handläggaren fram
+uppgifterna innan kaninen sparas; ingen kanin sparas med tomma obligatoriska fält. Formuläret
+låter inte handläggaren klicka Spara förrän allt är ifyllt.
 
 ```json
 {
@@ -738,11 +918,11 @@ Vad på intyget som hör till vilket fält:
 | Kaninens nummer (individnumret) | `paper_number`, krävs, till exempel `G1-2511` |
 | Intygsnummer | `paper_certificate`, krävs, högst 20 tecken |
 | Namn | `name`, högst 50 tecken |
-| Kön | `sex`: `female`, `male` |
+| Kön | `sex`, krävs: `female`, `male` eller `null` för okänt (nyckeln måste finnas) |
 | Födelsedatum | `birth_date`, krävs om `breeding_id` saknas |
-| Färg | `color`: färgens namn som det står i genbankens färglista |
-| Kullstorlek (antal födda) | `litter_size`, krävs när kullen skapas, minst 1 |
-| Antal levande vid 6 veckor | `litter_size6w`, krävs när kullen skapas, minst 1 och högst `litter_size`; står inte alltid på intyget |
+| Färg | `color`, krävs: färgens namn som det står i färglistan för genbanken kaninen registreras i (kullens besättning) |
+| Kullstorlek (antal födda) | `litter_size`, krävs, minst 1; för en kull som finns lika med kullens |
+| Antal levande vid 6 veckor | `litter_size6w`, krävs, minst 1 och högst `litter_size` |
 | Mor: nummer | `mother`, krävs om `breeding_id` saknas: en registrerad kanin |
 | Far: nummer | `father`, som `mother`; samma genbank som modern |
 | Mor och far: namn och färg; far- och morföräldrarna (nummer, namn och färg) | skickas inte. De följer av mor och far i registret. Visa registrets uppgifter bredvid fotot så att handläggaren kan jämföra. |
@@ -770,7 +950,7 @@ Kullen skapas i moderns besättning, och kaninen föds där. Kaninen måste vara
 
 | Status | När |
 |---|---|
-| 400 | `Välj mor och far bland registrerade kaniner.` (en unge utan föräldrar), ett datum, en kullstorlek eller ett individnummer som saknas eller är fel |
+| 400 | `Välj färg.`, `Välj kön: hona, hane eller okänt.`, `Ange antal födda (minst 1).`, `Ange antal levande vid 6 veckor (minst 1).`, `Antal levande vid 6 veckor kan inte vara fler än antal födda.`, och efter registreringens egna kontroller `Välj en färg ur genbankens lista.` (färgen finns inte i listan för genbanken kaninen registreras i) `Kullen har N födda i Stamboken.` (en kull som finns har ett annat antal födda än pappret; har den inget tar den pappersintygets), `Kullen har redan N kaniner i Stamboken.` (pappersintygets antal födda rymmer inte kullens kaniner och den nya) och `Kullen har N levande efter 6 veckor i Stamboken.` (kullens bekräftade antal är ett annat än papprets; ett preliminärt ersätts av papprets) (med `field`, inget sparas); `Välj mor och far bland registrerade kaniner.` (en unge utan föräldrar), ett datum, en kullstorlek eller ett individnummer som saknas eller är fel |
 | 403 | anroparen får inte registrera i moderns besättning (`Modern finns inte i en besättning där du får registrera kaniner.` eller `Åtkomst nekad`) |
 | 409, `title: "number_conflict"` | pappersintygets individnummer stämmer inte med det Stamboken ger. Svaret har kontrollens fält: `stamboken_number`, `paper_number`, `check_status`, `conflicts`, `choices`, `actions`. Inget sparas. Visa skillnaden; väljer handläggaren Stambokens nummer, skicka samma anrop med `"resolution": {"expected_number": "<stamboken_number>", "choice": "use_stamboken_number"}`. Stämmer pappret, lämna posten till genbanksansvarig. |
 | 409, `title: "litter_order_conflict"` | kullen är född före en kull som redan har kullnummer det året |
@@ -789,13 +969,23 @@ och genbanksansvarigs rätt, inte hjälparens. En hjälpare får därför kontro
 `individual` är kaninens nummer i Stamboken, `paper_number` numret som står på intyget. En
 hjälpare får bara sätta intyget på en kanin som saknar intyg.
 
+**Ett foto av intyget kaninen redan har.** Har kaninen redan just det intygsnumret skrivs ingenting i
+registret: dokumentet kopplas till kaninen, så att kopian kan läggas på den med
+[maskningen](#maskning-och-kopian-på-kaninen). Det gäller de flesta kaniner från det gamla registret.
+Också en hjälpare får koppla, för en kanin i en genbank där hen är hjälpare och inte i GX1/MX1
+(Jonas 2026-11-26), liksom genbanksansvarig och admin. `paper_number` måste vara kaninens nummer.
+Händelsen `sparad` loggas som vid andra sparanden, men ingen rad i `inbox_operation`, eftersom inget
+skrevs.
+
 **Svar 200:** `{"individual": <kaninen>, "item": <post>, "document": <dokument>}`.
 
 **Fel:** 400 utan intygsnummer eller individnummer, eller när intygsnumret redan finns
 (`Individual certificate already exists`); 403 när anroparen inte får ändra kaninen eller kaninen
-redan har intyg och anroparen inte är genbanksansvarig eller admin; 404 när kaninen inte finns;
-409 `Ingen ändring: G1-2511 har redan intyget 123456.` när kaninen redan har just det intyget (inget
-sparas och dokumentet kopplas inte till kaninen); 409 `number_conflict` när `paper_number` inte är kaninens nummer i Stamboken (eller finns på en annan
+redan har ett annat intyg och anroparen inte är genbanksansvarig eller admin, och när en kanin med
+just det intyget ligger utanför anroparens genbanker; 404 när kaninen inte finns;
+409 när kaninen redan har ett intyg (just det, ett annat eller ett digitalt) men `paper_number` inte
+är exakt kaninens nummer (inget sparas eller kopplas);
+409 `number_conflict` när `paper_number` inte är kaninens nummer i Stamboken (eller finns på en annan
 kanin), med samma fält som ovan. `resolution` läses inte här: kaninens nummer är redan satt och
 pappret kan inte rätta det, så ett intyg med ett annat nummer lämnar handläggaren till
 genbanksansvarig (`hos_genbanksansvarig`).
@@ -844,6 +1034,7 @@ En köpare utanför föreningen:
 | `herd` | köparens besättningsnummer. En köpare utanför föreningen: genbankens besättning för kaniner sålda utanför genbanken, `GX1` (gotlandskanin) eller `MX1` (mellerudskanin). |
 | `date` | försäljningsdatumet |
 | `buyer` | valfritt, bara till GX1/MX1: köparen utanför föreningen ([ADR-0016](adr/0016-agarbyte-flytt-dag-0-och-berattigat-intresse.md)). `name` och `town` krävs, och `postal_address` när den som registrerar varken är genbanksansvarig eller admin; `email` och `phone` bara med `contact_consent` eller `membership_optin`. Annars 400. Med `buyer` går också GX1 till GX1, för genbanksansvarig och admin. När beviset kopplas till en försäljning som redan finns sätts köparen på den bara om försäljningen saknar köpare (registrerad i gamla appen); har den redan en köpare blir svaret 409 |
+| `from_photo` | valfritt, `true` när panelen fylldes i från fotots läsning ([Säljare och köpare](#tolkning)). Har dokumentet inte längre någon `sale` blir svaret 409 "Läsningen har ändrats, fyll i köparen igen." Utan fältet prövas inget |
 
 **Vem:** handläggaren, med samma krav på posten som för `…/spara` men för alla dokumenttyper.
 En hjälpare får sälja kaniner i sin genbank som en ägare får.
@@ -872,48 +1063,71 @@ sin plats i historiken. Alla andra får 400.
 | 400 | besättning eller datum saknas eller är okänd; `title: "Ogiltig försäljning"` med försäljningens regler: datumet i framtiden, före 43 dagars ålder eller före kaninens senaste händelse, en annan genbank, en kanin utan intyg till en annan besättning än GX1/MX1, kaninen finns redan där |
 | 403 | anroparen får inte sälja kaninen |
 | 404 | kaninen finns inte |
-| 409 | som för `…/spara`; en försäljning är redan registrerad genom dokumentet; eller besättningshistoriken skulle bli motsägelsefull (med `rows`) |
+| 409 | som för `…/spara`; en försäljning är redan registrerad genom dokumentet; `from_photo` utan läsning; eller besättningshistoriken skulle bli motsägelsefull (med `rows`) |
 
 ## Maskning och kopian på kaninen
 
-Kopian på kaninen är originalet vridet `rotation` grader medurs, med svarta rektanglar över
-säljarens och köparens uppgifter. Den ska inte visa andra personuppgifter än uppfödarens.
+Kopian på kaninen är originalet vridet `rotation` + `straighten` grader medurs (ram F, se
+[Dokument](#dokument) i objekten), med svarta rektanglar över det
+som ska döljas, och beskuret till ramen när det finns en. Den ska inte visa andra personuppgifter
+än uppfödarens.
 
-**Rektanglarna** anges i bråkdelar av bilden *efter* vridningen: `x` och `y` är det övre vänstra
-hörnet, `w` och `h` bredd och höjd, alla mellan 0 och 1, och rektangeln måste ligga inom bilden.
-`{"x": 0, "y": 0.5, "w": 1, "h": 0.5}` täcker den nedre halvan. Gränssnittet kan förhandsvisa
-kopian genom att rita rektanglarna över det vridna originalet.
+**Ramen** (`copy_frame`) är den del av fotot som kopian behåller. På det gröna handskrivna intyget
+är det överdelen, ned till säljaren och köparen, så att deras uppgifter hamnar utanför kopian. De
+svarta rektanglarna täcker det som ändå syns innanför ramen. Originalet och tolkningen av det
+ändras inte. En ram som täcker hela fotot (minst 99 %) lämnar inget utanför och räknas som ingen
+ram. I arbetsvyn tar bara ramens kant och hörn emot musen; inne i ramen flyttar ett drag fotot.
+
+**Rektanglarna** och ramen anges i bråkdelar av bilden *efter* vridningen och upprätningen: `x` och `y` är det övre
+vänstra hörnet, `w` och `h` bredd och höjd, alla mellan 0 och 1, och rektangeln måste ligga inom
+bilden. `{"x": 0, "y": 0.5, "w": 1, "h": 0.5}` täcker den nedre halvan. Kopian görs i den ordningen:
+originalet vrids, rektanglarna målas svarta, och sedan beskärs bilden till ramen. Gränssnittet
+förhandsvisar kopian genom att rita ramen och rektanglarna över det vridna originalet och dämpa
+fotot utanför ramen.
 
 ### `POST /api/v2/inkorg/{id}/dokument/{dok}/maskning`
 
-Bekräftar vridningen och maskningen tillsammans och gör kopian av just det paret.
+Bekräftar vridningen, upprätningen, rektanglarna och ramen tillsammans och gör kopian av just dem.
 
 ```json
-{"rotation": 90, "mask_rects": [{"x": 0, "y": 0.6667, "w": 1, "h": 0.3333}]}
+{"rotation": 90, "straighten": 2.5, "mask_rects": [], "copy_frame": {"x": 0, "y": 0, "w": 1, "h": 0.6667}}
 ```
 
 | Fält | |
 |---|---|
 | `rotation` | krävs: 0, 90, 180 eller 270 grader medurs |
-| `mask_rects` | krävs: rektanglarna i bråkdelar av bilden vriden `rotation` grader. Får inte vara `null` |
-| `no_personal_data` | `true` krävs när `mask_rects` är en tom lista: intyget visar ingen säljare eller köpare |
+| `straighten` | vinkeln som rektanglarna och ramen ritades i, från −15 till 15 som i `PATCH`. Krävs när dokumentets `straighten` inte är 0 (400 annars, innan någon kopia görs); utelämnad eller `null` är annars 0 |
+| `mask_rects` | krävs: rektanglarna i bråkdelar av bilden vriden `rotation` + `straighten` grader. Får inte vara `null` |
+| `copy_frame` | valfritt: ramen som kopian beskärs till, i bråkdelar av samma bild, minst 0,1 bred och hög. Utelämnad eller `null`: hela fotot |
+| `no_personal_data` | `true` krävs när `mask_rects` är en tom lista och `copy_frame` saknas eller täcker hela fotot (minst 99 %): intyget visar ingen säljare eller köpare |
+| `matches_registry` | `true` när handläggaren har jämfört intyget med registret och de stämmer. Ger kaninen märkningen "Intyget kontrollerat" (se nedan). Handläggaren kryssar i det själv varje gång, också när kopian görs om. Gränssnittet visar "Förslag: stämmer" när tolkningen läste kaninens eget nummer och intygsnumret (båda `läst`) och ingen kontroll gick emot, men handläggaren avgör (Jonas 2026-11-26). Utelämnat eller `false`: ingen märkning. Kaninen måste ha kvar det intygsnummer och individnummer som fotot sparades med (`saved_certificate`, `saved_number`), annars 409: kontrollen gäller det intyg handläggaren jämförde |
 
-Båda värdena sparas på dokumentet i samma transaktion som kopian görs. Det som redan står på
-dokumentet (från `PATCH`) används inte: kopian visar exakt det paret som skickades.
+Vridningen, vinkeln, rektanglarna och ramen sparas på dokumentet i samma transaktion som kopian görs, också
+en ram som saknas: en kopia som görs om utan ram är hela fotot. Det som redan står på dokumentet
+(från `PATCH`) används inte: kopian visar exakt det som skickades. Likaså
+`matches_registry`: varje anrop sätter `verified_at` och den som bekräftade (`verified_by`) på nytt,
+eller tar bort dem. Görs kopian om utan `matches_registry` försvinner märkningen. Kaninen läses under
+sitt lås. En ny kopia sparas under ett nytt filnamn, och den gamla filen tas bort efter commit; går
+det inte loggas det, svaret är ändå 200, och nattjobbet tar filen.
 
 **Vem:** handläggaren medan posten är öppen. Har dokumentet redan en kopia får också
-genbanksansvarig för postens genbank och admin göra om den, i alla lägen och också när posten är
+genbanksansvarig för kaninens genbank och admin göra om den, i alla lägen och också när posten är
 stängd eller någon annan har den, så att en felaktig kopia kan rättas. Dokumentet måste vara ett
-sparat intyg (`individual` satt).
+sparat intyg (`individual` satt). Den som gör kopian måste dessutom ha en roll i kaninens genbank:
+genbanksansvarig, admin eller hjälpare i den genbanken (403 annars), också när hjälparen just har
+sålt kaninen till GX1/MX1 genom posten. Det spelar
+roll för ett mejl utan genbank, som vem som helst i kön kan ta. En hjälpare som inte har en roll i
+kaninens genbank lämnar posten till genbanksansvarig.
 
 Dokumentet blir klart (`status: "klar"`, `has_copy: true`). Är alla dokument i posten klara
 eller avfärdade blir posten `klar`, uppladdaren får notisen `klar` och mejlet `inlasning.klar`, en gång per post: en post som öppnas igen och
 stängs på nytt berättar inte igen.
-Varje anrop loggas som händelsen `kopia`.
+Varje anrop loggas som händelsen `kopia`, med `stammer` (`true` eller `false`).
 
 **Svar 200:** `{"item": <post>, "document": <dokument>}`.
 
-**Fel:** 400 när `rotation` eller `mask_rects` saknas eller är ogiltiga, eller när `mask_rects` är tom
+**Fel:** 400 när `rotation` eller `mask_rects` saknas eller är ogiltiga, när `straighten` är ogiltig eller saknas på ett upprätat foto, när `copy_frame` inte ligger
+inom bilden eller är smalare eller lägre än 0,1, eller när `mask_rects` är tom utan `copy_frame` och
 utan `"no_personal_data": true`; 409 när dokumentet inte är ett sparat intyg, anroparen inte får göra
 kopian eller originalet är raderat.
 
@@ -946,6 +1160,22 @@ tillgänglig, eller saknar ett inläst pappersintyg (`Kaninen har inget inläst 
 Gränssnittet kan använda 404 för att dölja "Pappersintyg" på kaninens sida, med `HEAD` på samma adress:
 samma status (200, 403 eller 404) utan bilden.
 
+**Märkningen.** `GET /api/v2/individual/{nummer}` har `paper_certificate_checked`: tiden då kopian
+som visas (den senaste) bekräftades med `matches_registry`, så länge kaninen har kvar det
+pappersintyg som jämfördes; annars `null`. Alla som ser kaninen ser märkningen "Intyget
+kontrollerat" (Jonas 2026-11-26); själva kopian bara de som får se intyget. Märkningen hör till
+kopian som visas: tas den bort (`…/kopia`, som också tar bort bekräftelsen) visas nästa kopia med sin
+egen bekräftelse eller ingen, och görs den om utan bekräftelsen försvinner märkningen. Får kaninen
+ett annat intyg, digitalt eller ett annat pappersnummer, försvinner märkningen också. En kanin som
+har ett digitalt intyg bredvid ett gammalt pappersnummer visar det digitala, och får ingen märkning
+(409 vid `matches_registry`).
+
+Vad märkningen betyder, och det enda den betyder: handläggaren X kryssade vid tiden T i att fotot av
+intyget N för kaninen R stämmer med registret. Den visas bara så länge kaninen fortfarande heter R och
+har pappersintyget N, och inte har något digitalt intyg. Ändras annat på kaninen efteråt, till exempel
+namn eller föräldrar, står märkningen kvar: den säger vad som stämde när det jämfördes, inte att
+allt i registret är oförändrat sedan dess.
+
 ## Fråga uppfödaren
 
 ### `POST /api/v2/inkorg/{id}/fraga`
@@ -953,14 +1183,15 @@ samma status (200, 403 eller 404) utan bilden.
 **Vem:** handläggaren, med posten i läget `tagen`.
 
 ```json
-{"text": "Står det G1-2112 eller G1-2113?", "document": 31, "crop": {"x": 0, "y": 0, "w": 0.5, "h": 0.25}}
+{"text": "Står det G1-2112 eller G1-2113?", "document": 31, "crop": {"x": 0, "y": 0, "w": 0.5, "h": 0.25}, "rotation": 90, "straighten": 0}
 ```
 
 | Fält | |
 |---|---|
 | `text` | krävs, högst 2000 tecken |
-| `crop` | valfritt: utsnittet av fotot som frågan gäller, en rektangel som i [Maskning](#maskning-och-kopian-på-kaninen) (bråkdelar av bilden efter dokumentets vridning) |
+| `crop` | valfritt: utsnittet av fotot som frågan gäller, en rektangel som i [Maskning](#maskning-och-kopian-på-kaninen) (bråkdelar av bilden efter dokumentets sparade vridning och upprätning, som sparas med frågan) |
 | `document` | krävs med `crop`: dokumentet som utsnittet är ur |
+| `rotation`, `straighten` | krävs med `crop`: vridningen och vinkeln som utsnittet ritades i. Är de inte längre dokumentets svarar API:t 409 (`Fotot har vridits sedan utsnittet ritades.`) och ingenting skickas |
 
 Frågan sparas som händelsen `fraga`, och mejlet `inlasning.fraga` köas till besättningens
 innehavare enligt matrikeln (medlemskapets huvudmedlem). Ämnesraden slutar med "(ärende 12)".
@@ -995,7 +1226,7 @@ och inställningar: [inkorg-gmail.md](inkorg-gmail.md)). Varje mejl i inkorgen b
 
 En ny post får avsändarens adress i `sender_address`, mejlets text i `message` (en HTML-text
 utan taggar; bara de första 100 000 tecknen läses och högst 10 000 sparas) och en gissad besättning. Bilagorna går genom samma kontroller som en uppladdning
-([Ladda upp](#ladda-upp)): JPEG, PNG, WebP, HEIC och PDF, högst 10 MB styck och högst 10 bilder
+([Ladda upp](#ladda-upp)): JPEG, PNG, WebP, HEIC och PDF, högst 25 MB styck (lika stort som Gmail låter en avsändare bifoga; Gmail tar emot större) och högst 10 bilder
 per mejl. En bild vars kortaste sida är under 200 bildpunkter (en logotyp i signaturen, en
 spårningspixel) är inget dokument. Övriga bilagor sparas inte, men deras namn står i händelsen `inkommen`. Ett foto som
 skickats inbäddat i texten räknas som en bilaga. Genbanksansvarig och hjälpare i postens
@@ -1135,15 +1366,19 @@ formuläret. Förslaget är bara ifyllda fält: inget sparas förrän handlägga
 
 - Ett nytt dokument av typen `intyg` väntar (`vantar`) när tolkningen är på, liksom ett dokument
   som byter typ till `intyg` och ett som får "Tolka igen".
+- Ett foto vars kortsida är under 1000 bildpunkter (`MIN_READ_SIDE`) är för litet för handskriften
+  och får `for_litet` i stället. Det tolkas inte av sig självt. Handläggaren ser varför och kan be om
+  ett större foto, skriva av fälten eller klicka "Tolka igen", som tolkar det ändå.
 - Schemaläggarens jobb `inbox_interpret` tar varje minut det äldsta väntande intyget i en öppen
-  post, om inget sparats från det: ett dokument per körning. Fotot vrids som handläggaren vridit
-  det, skalas ned till högst 2 000 bildpunkter på längsta sidan och förstärks (grön kanal, delad
+  post, om inget sparats från det: ett dokument per körning. Fotot vrids och rätas upp som
+  handläggaren gjort det (`rotation` + `straighten`), men beskärs aldrig till kopians ram, som
+  skär bort säljaren och köparen. Det skalas ned till högst 2 000 bildpunkter på längsta sidan och förstärks (grön kanal, delad
   med bakgrunden, sträckt kontrast). Ingen databastransaktion eller -anslutning hålls medan
   modellen läser.
 - Svaret hålls först mot schemat: okända nycklar tas bort, ett värde av fel typ räknas som saknat,
   en text kortas till 200 tecken och förlorar NUL-tecken. Det sparas sedan i `interpretation`,
   förslaget i `proposal`, tolkaren i `interpreter` och tiden i `interpreted_at`. Ett dokument får två försök, sedan är det `misslyckad`.
-- Vrids, köas om eller ändras dokumentet medan modellen läser kastas svaret, och dokumentet
+- Vrids, rätas upp, köas om eller ändras dokumentet medan modellen läser kastas svaret, och dokumentet
   väntar kvar.
 
 **Kontrollerna** (`app/utils/inbox_proposal.py`). Modellen gissar hellre än lämnar ett fält tomt,
@@ -1152,14 +1387,24 @@ så hur säkert ett fält är avgörs av kontrollerna mot registret, aldrig av m
 1. Nummer, datum och antal normaliseras: nummer med och utan mellanslag och bokstav, datum som
    ÅÅMMDD, D/M-ÅÅ och ÅÅÅÅ-MM-DD, "st" i antal. En bokstav läst som siffra (S för 5, O för 0, l för
    1) ger aldrig `läst`.
-2. Bara postens genbank söks: kaniner byter aldrig genbank.
+2. Bara postens genbank söks: kaniner byter aldrig genbank. Ett mejl vars avsändare matrikeln inte
+   ger en genbank (adressen finns inte där, eller medlemskapet har besättningar i båda genbankerna
+   eller ingen) har ingen genbank; då söks den genbank vars besättningar börjar med bokstaven som
+   lästes före kaninens besättningsnummer (G eller M). Det gäller bara sökningen: postens genbank,
+   som avgör vem som får ta posten, sätts aldrig från det modellen läste. Börjar individnumret på
+   intyget med en annan bokstav än genbankens nummer säger en kontroll det: antingen är bokstaven
+   fel läst eller posten i fel genbank, och det ser handläggaren på fotot.
 3. En förälder är bekräftad när numret finns och förälderns egna föräldrar i registret stämmer
    med intyget, minst en av dem och ingen emot. Fel kön eller ett annat namn i registret gör
    föräldern osäker. Kullsyskon har samma föräldrar och födelsedatum, och en felläst siffra landar
    på ett av dem: en förälder med ett kullsyskon av samma kön är bekräftad bara när namnet på
    intyget är dess eget. Far- och morföräldrar föreslås bara under en bekräftad förälder. Står något
    annat på intyget markeras hela grenen, eftersom det lika gärna kan vara föräldern som är fel
-   läst.
+   läst. Är en far- eller morförälder inläst med förälderns eget nummer (mormor som mor) har
+   modellen läst fel ruta: ingen kanin är sin egen förälder. Då blir grenen osäker i stället för
+   avviker. Den rutan jämförs inte med registret, inte heller en ruta med den andra förälderns
+   nummer (modellen läste föräldrarnas rad två gånger), och föräldern används inte för att hitta
+   kullen. Den andra rutan jämförs som vanligt.
 4. Ett nummer ett tecken fel ger registrets nummer som `härlett`, om bara en kanin passar.
 5. Kaninens eget nummer: årssiffrorna mot födelsedatumet och numret mot kullen (samma kontroll
    som pappersnumret vid registreringen), och intygsnumret ska vara ledigt.
@@ -1173,7 +1418,7 @@ Stamboken prövas den på samma sätt: föräldrarna mot registret, kön och nam
 har ett kullsyskon av samma kön. Ett annat födelsedatum än kullens gör den `avviker`, utan värde.
 Har den digitalt intyg och går allt igenom blir förslaget bara "finns redan med digitalt intyg". Ger tolkningen inte två
 bekräftade föräldrar hjälper registret: en förälder som hittats, eller uppladdarens besättning när
-ingen förälder gick att läsa, ger sina kullar. En enda kull född det lästa datumet fyller i mor och
+ingen förälder gick att läsa, ger sina kullar. En bekräftad förälder går före en som bara hittats. En enda kull född det lästa datumet fyller i mor och
 far som `härlett`; annars listas kullarna i `checks`.
 
 Ett foto från årsrapporten som tolkas efter att kaninen sparats jämförs med den kaninen, vilket
@@ -1182,6 +1427,61 @@ registrerades, `avviker` med det registrerade värdet när det inte gör det, oc
 överstruket eller inte går att läsa. Kontrollerna är desamma som för en kanin som redan finns.
 Tolkades fotot innan kaninen sparades, jämförs den sparade tolkningen med kaninen när fotot kopplas
 till den, utan någon ny tolkning.
+
+**Säljare och köpare.** Förut skulle tolkningen inte skriva av intygets nedre del, och den vanliga
+läsningen ber fortfarande om det: "Säljarens och köparens uppgifter ska inte skrivas av". Jonas
+ändrade regeln 2026-11-27, så att försäljningen på ett gammalt intyg kan fyllas i (regel 5 b):
+
+- Den vanliga läsningen sparas först, i en egen kort transaktion. Sedan läser modellen säljaren och
+  köparen i ett andra anrop, med ett eget litet schema (`SALE_SCHEMA`: säljarens besättningsnummer,
+  köparens namn, utdelningsadress, postnummer, ort, e-post och besättningsnummer, och datumet) och
+  en egen prompt. Säljarens namn och telefonnumret skrivs aldrig av. Huvudschemat är oförändrat: ett
+  längre schema fick modellen att upprepa ett fält tills svaret klipptes. Dör jobbet under det andra
+  anropet finns den vanliga läsningen kvar, och inget försök går åt.
+- Svaret hålls mot schemat som det första. Dessutom stryks ett fält som inte kan vara det det
+  säger: en e-post som inte har formen av en adress, ett postnummer som inte är fem siffror
+  (mellanslag går bra), en säljares besättning som inte är ett besättningsnummer och varje värde
+  med ett telefonnummer i, också ett skrivet med 0046 eller med andra streck och mellanslag (U+2010
+  till U+2015, minustecknet och hårt mellanslag). Samma telefonkontroll gäller köparens postadress
+  när en försäljning sparas. Det som återstår sparas i `interpretation.forsaljning`.
+- Bara intyg i kön läses så, i en post utan `ref_type`. Foton som skickas in genom årsrapporten för
+  ett köp av en kanin som saknas i Stamboken (S7) blir en vanlig uppladdning och läses så. Ett foto
+  från årsrapporten som kontrollerar en registrerad kanin, och ett foto till en köpanmälan, läses
+  aldrig så. Ett foto som inte tolkas (`for_litet`) får ingen andra läsning heller, förrän "Tolka
+  igen" läser det. Misslyckas det andra anropet, eller är svaret tomt, står den vanliga läsningen kvar
+  utan säljare och köpare.
+- Det andra anropet görs bara om försäljningen fortfarande kan sparas från dokumentet: det är ett
+  intyg, inte klart, ingen försäljning är sparad från det, originalet och läsningen finns kvar och
+  posten är öppen. Det prövas under postens lås före anropet och igen innan svaret sparas. Redan när
+  dokumentet tas prövas under låset att posten inte har stängts och dokumentet inte blivit klart.
+  Har posten stängts, eller dokumentet avfärdats, bytt typ, blivit klart eller fått en försäljning
+  sedan läsningen började, sparas inte svaret, också om posten har öppnats igen (postens historik
+  avgör). "Tolka igen" efter en försäljning läser alltså bara kaninen.
+- Förslaget får `sale`: `buyer_herd` (`{"herd": "G123", "found": true}` när köparens
+  besättningsnummer finns i genbanken som det står; annars numret som det lästes, med `"found":
+  false` och en kontroll "Köparens besättning … finns inte i genbanken"), `buyer` (`name`,
+  `postal_address` som gata och postnummer, `town` och `email`, som de lästes), `date` (ÅÅÅÅ-MM-DD
+  när datumet går att tolka), `seller_herd` (som det lästes) och `checks`. Säljarens besättning
+  jämförs med kaninens ursprungsbesättning, registrets eller, när registret inte bekräftar kaninens
+  nummer, den lästa: en annan besättning "avviker", och utan registrets nummer "kan inte bekräftas".
+- Inget av det är säkert. Försäljningspanelen visar det under "Från fotot", och "Fyll i från fotot"
+  lägger in det först när handläggaren klickar: besättningen när den finns i genbanken, annars
+  köparen utanför föreningen med e-posten bara för föreningens mejl (`notice_only`) för en
+  försäljning till och med 2027. Köparen börjar då från tomma fält. Byter handläggaren till
+  försäljningsbeviset, eller flyttas datumet till ett år utan mejlet, försvinner e-posten från fotot,
+  så att den aldrig blir en kontaktadress; en e-post som handläggaren ändrat står kvar. Finns
+  besättningen som lästes inte i genbanken töms besättningen och köparen, och panelen ber
+  handläggaren välja. Telefon och köparens kryss fylls aldrig i. Ändras eller försvinner läsningen
+  (posten stängdes och öppnades igen) töms det som fylldes i från den, och sparandet skickar
+  `from_photo`, så att servern nekar en försäljning vars läsning är borta. När försäljningen är
+  sparad visar panelen bara det.
+- Bara köns arbetare (admin, genbanksansvariga och hjälpare) får `sale`, i `GET …/{id}` och i
+  svaren på dokumentets åtgärder. De ser redan originalet. Uppladdaren ser inte posten, och varken
+  "Mina inskick" eller årsrapportens ärenden visar tolkningen.
+- `sale` och `interpretation.forsaljning` tas bort när en försäljning sparas från dokumentet
+  (`…/overlat`; köparen finns sedan i `buyer_contact` under sina egna regler), när dokumentet blir
+  klart, avfärdas eller byter typ från intyg, och när posten stängs. Gallringen och raderingen tar
+  hela tolkningen med originalet, som förut.
 
 **Inställningar** (`.docker/api-variables.env`):
 
@@ -1259,9 +1559,11 @@ standard 12.
 ### En person raderas
 
 När en person anonymiseras i matrikeln (`anonymize_person`) raderas originalen till de dokument där
-personen är sparad som säljare eller köpare, och texten i deras poster. Säljaren är innehavaren av
-kaninens besättning när ett intyg sparas, och av säljarens besättning vid en försäljning; köparen är
-innehavaren av köparens besättning vid en försäljning till en medlem. Innehavaren är medlemskapets
+personen är sparad som säljare eller köpare, och texten i deras poster. När ett intyg sparas är
+säljaren innehavaren av kaninens ursprungsbesättning (intyget är uppfödarens) och köparen innehavaren
+av besättningen kaninen står i nu, om det är en annan av föreningens. Vid en försäljning är säljaren
+innehavaren av säljarens besättning och köparen innehavaren av köparens besättning vid en försäljning
+till en medlem; de står kvar om intyget sparas efter försäljningen genom samma dokument. Innehavaren är medlemskapets
 huvudmedlem i matrikeln. Finns en kopia är den det enda som blir kvar, med säljar- och köparblocket
 täckt.
 
@@ -1297,8 +1599,8 @@ Tar bort dokumentets maskade kopia, till exempel när den är dåligt maskad och
 så att `…/maskning` inte kan göra om den. Kopian försvinner från kaninens sida och filen raderas efter
 commit. Händelsen `kopia_borttagen` loggas, utan fritext.
 
-**Vem:** genbanksansvarig för postens genbank och admin (en post utan genbank: alla
-genbanksansvariga), i alla lägen.
+**Vem:** genbanksansvarig för kaninens genbank och admin, i alla lägen. Bekräftelsen
+(`verified_at`, `verified_by`) tas bort med kopian.
 
 **Svar 200:** `{"item": <post i listform>, "document": <dokument>}`.
 
@@ -1307,11 +1609,15 @@ dokumentet inte hör till den; 409 när dokumentet inte har någon kopia.
 
 ## Gränser och sådant gränssnittet behöver veta
 
-- En begäran till uppladdningen får vara högst 10 MB allt som allt, filer och formulär tillsammans:
-  lika mycket som nginx släpper igenom (`client_max_body_size 10M`). Ett större inskick nekas med 413
-  (problem+json när begäran når Flask, annars nginx egen sida), så gränssnittet bör räkna filernas
-  storlek före sändningen och dela upp inskicket. Resten av API:t tar högst 11 MB, men nginx högst
-  10 MB.
+- En fil får vara högst 25 MB och en begäran till uppladdningen högst 50 MB allt som allt, filer och
+  formulär tillsammans: lika mycket som nginx släpper igenom på uppladdningssidorna
+  (`client_max_body_size 50M` i en egen location; resten av sajten har 10M). Next.js
+  släpper igenom lika mycket till Server Actions och middleware (`bodySizeLimit` och
+  `proxyClientMaxBodySize` i `next.config.js`). Ett större inskick nekas med 413 (problem+json när
+  begäran når Flask, annars nginx egen sida), så gränssnittet räknar filernas storlek före
+  sändningen (högst 25 MB per fil och 48 MB allt som allt) och ber om ett nytt inskick för resten.
+  Kaninens foto och årsrapportens foto tar högst 26 MB (en fil och formuläret), Tyck till 9 MB och
+  resten av API:t 11 MB.
 - Telefonens filväljare: `<input type="file" accept="image/*,application/pdf" multiple>` ger både
   kamera och bildbibliotek.
 - Bilderna kräver inloggningens cookie. Använd dem som `src` i samma ursprung, eller hämta dem

@@ -6,7 +6,12 @@ import { useRouter } from "next/navigation";
 import type { Mode } from "@/lib/mode";
 import { useMode } from "@/lib/mode-context";
 import { ConfirmDialog } from "../../../admin/_components/ConfirmDialog";
-import { newLink, setOnTime } from "../../actions";
+import {
+  newLink,
+  sendReminder,
+  setOnTime,
+  undoAccountLink,
+} from "../../actions";
 import {
   INVITATION_TEXT,
   ROW_STATES,
@@ -15,6 +20,7 @@ import {
   countByState,
   filterRows,
   fmtDate,
+  phoneNumbers,
   todayStockholm,
   type RowState,
   type StatusFilter,
@@ -44,13 +50,37 @@ const CONDITIONS = [
 ] as const;
 const ON_TIME = { "": null, ja: true, nej: false } as const;
 
+function reminderText(reminder: StatusRow["last_reminder"]) {
+  switch (reminder?.status) {
+    case "queued":
+    case "sending":
+      return "Påminnelse i mejlkön";
+    case "sent":
+      return reminder.sent_at
+        ? `Påminnelse skickad ${fmtDate(reminder.sent_at)}`
+        : null;
+    case "failed":
+      return "Påminnelsen misslyckades";
+    case "bounced":
+      return "Påminnelsen studsade";
+    default:
+      return null;
+  }
+}
+
 // "Skriv ut tom blankett": the blank form is generic, so the page has one link.
-export function BlankFormLink() {
+export function BlankFormLink({ available }: { available: boolean }) {
   const mode = useMode();
   const apiBase =
     mode === "demo" && process.env.NEXT_PUBLIC_API_TEST_URL
       ? process.env.NEXT_PUBLIC_API_TEST_URL
       : "/api";
+  if (!available)
+    return (
+      <p className={`${inkorg.muted} ${styles.blankMissing}`}>
+        Den tomma blanketten finns inte på servern än.
+      </p>
+    );
   return (
     <a
       href={`${apiBase}/v2/arsrapport/blankett.pdf`}
@@ -83,7 +113,12 @@ export function StatusTable({
   const [busy, setBusy] = useState(false);
   const [ask, setAsk] = useState<string | null>(null); // the herd whose "Ny länk" awaits its confirmation
   const [sales, setSales] = useState<string | null>(null); // the herd whose "Försäljningar" is open
+  // the herd and account link whose "Koppla bort" awaits its yes
+  const [unlink, setUnlink] = useState<{ herd: string; id: number } | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
   const errorRef = useRef<HTMLParagraphElement>(null);
   useEffect(() => {
     if (error) errorRef.current?.focus();
@@ -94,6 +129,7 @@ export function StatusTable({
   const today = todayStockholm();
   const counts = useMemo(() => countByState(view.rows), [view.rows]);
   const callCount = filterRows(view.rows, "att_ringa", deadline, today).length;
+  const unanswered = filterRows(view.rows, "ej_svarat", deadline, today).length;
   const rows = filterRows(view.rows, filter, deadline, today);
 
   const href = (f: StatusFilter) => {
@@ -103,6 +139,7 @@ export function StatusTable({
   };
   const tabs: [StatusFilter, string, number | null][] = [
     ["att_ringa", "Att ringa", callCount],
+    ["ej_svarat", "Ej svarat", unanswered],
     ...ROW_STATES.filter((s) => counts[s] > 0 || s === filter).map(
       (s): [StatusFilter, string, number] => [
         s,
@@ -117,6 +154,7 @@ export function StatusTable({
     if (busy) return;
     setBusy(true);
     setError(null);
+    setMessage(null);
     try {
       const res = await setOnTime(
         herd,
@@ -149,8 +187,56 @@ export function StatusTable({
     }
   }
 
+  async function remind(herd: string) {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const res = await sendReminder(herd, year, env);
+      if (!res.ok) setError(res.problem.detail || res.problem.title);
+      else {
+        setMessage(
+          res.data.queued
+            ? "Påminnelsen ligger i mejlkön."
+            : "En påminnelse finns redan i mejlkön eller har skickats i dag.",
+        );
+        startTransition(() => router.refresh());
+      }
+    } catch {
+      setError("Det gick inte att nå servern. Försök igen.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function undoLink(link: { herd: string; id: number }) {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await undoAccountLink(link.herd, year, link.id, env);
+      if (!res.ok) setError(res.problem.detail || res.problem.title);
+      else startTransition(() => router.refresh());
+    } catch {
+      setError("Det gick inte att nå servern. Försök igen.");
+    } finally {
+      setBusy(false);
+      setUnlink(null);
+    }
+  }
+
   return (
     <>
+      <ConfirmDialog
+        open={unlink !== null}
+        title="Koppla bort kontot"
+        body="Koppla bort kontot från medlemskapet? Åtkomsten som medlemskapskopplingen gav försvinner för medlemskapets besättningar. Andra behörigheter påverkas inte."
+        confirmLabel="Koppla bort"
+        busy={busy}
+        onConfirm={() => unlink !== null && undoLink(unlink)}
+        onClose={() => setUnlink(null)}
+      />
       <ConfirmDialog
         open={ask !== null}
         title={`Ny länk till ${ask ?? ""}`}
@@ -194,13 +280,20 @@ export function StatusTable({
           {error}
         </p>
       )}
+      {message && (
+        <p role="status" className={inkorg.muted}>
+          {message}
+        </p>
+      )}
       {rows.length === 0 ? (
         <p className={inkorg.muted}>
           {filter === "alla"
             ? "Inga besättningar i genbanken."
             : filter === "att_ringa"
               ? "Inga besättningar att ringa."
-              : `Inga besättningar i ${ROW_STATE_FILTER[filter]}.`}
+              : filter === "ej_svarat"
+                ? "Alla besättningar har svarat."
+                : `Inga besättningar i ${ROW_STATE_FILTER[filter]}.`}
         </p>
       ) : (
         <section className="sb-card">
@@ -225,7 +318,9 @@ export function StatusTable({
                   locked={busy || pending}
                   onTime={changeOnTime}
                   onNewLink={setAsk}
+                  onReminder={remind}
                   onSales={setSales}
+                  onUnlink={setUnlink}
                 />
               ))}
             </tbody>
@@ -243,7 +338,9 @@ function Row({
   locked,
   onTime,
   onNewLink,
+  onReminder,
   onSales,
+  onUnlink,
 }: {
   row: StatusRow;
   year: number;
@@ -251,9 +348,12 @@ function Row({
   locked: boolean;
   onTime: (herd: string, value: string) => void;
   onNewLink: (herd: string) => void;
+  onReminder: (herd: string) => void;
   onSales: (herd: string) => void;
+  onUnlink: (link: { herd: string; id: number }) => void;
 }) {
   const reported = row.received_at !== null;
+  const reminder = reminderText(row.last_reminder);
   // The state already says "Ingen e-post" when nothing else is going on.
   const flagNoEmail = row.ingen_epost && row.state !== "ingen_epost";
   const override =
@@ -266,6 +366,11 @@ function Row({
     f.forsaljning_avvisad > 0 ||
     f.kopt_efter_inskick > 0 ||
     f.kop_anmalt > 0 ||
+    !!f.andring_vantar ||
+    !!f.kontobyte_vantar ||
+    !!f.kontobyte_forfoll ||
+    !!f.inte_jag ||
+    !!f.nytt_konto ||
     row.statistik.preliminart;
   return (
     <tr>
@@ -276,14 +381,20 @@ function Row({
         >
           {row.herd}
         </Link>
-        {row.herd_name && <div className={inkorg.muted}>{row.herd_name}</div>}
-        {row.telefon && (
-          <div>
-            <a href={`tel:${row.telefon.replace(/[^\d+]/g, "")}`}>
-              {row.telefon}
-            </a>
-          </div>
+        {row.herd_name && row.herd_name !== "-" && (
+          <div className={inkorg.muted}>{row.herd_name}</div>
         )}
+        {row.telefon &&
+          phoneNumbers(row.telefon).map((phone, i) => (
+            <div key={i}>
+              <a
+                className={styles.phone}
+                href={`tel:${phone.replace(/[^\d+]/g, "")}`}
+              >
+                {phone}
+              </a>
+            </div>
+          ))}
       </td>
       <td data-label="Läge">
         <span className={`sb-badge ${BADGE[row.state] ?? ""}`}>
@@ -295,6 +406,7 @@ function Row({
         {row.inbjudan && (
           <div className={inkorg.muted}>{INVITATION_TEXT[row.inbjudan]}</div>
         )}
+        {reminder && <div className={inkorg.muted}>{reminder}</div>}
         {row.state === "avslutar" && row.membership_after_end && (
           <div className={inkorg.muted}>
             {MEMBERSHIP_TEXT[row.membership_after_end]}
@@ -304,7 +416,7 @@ function Row({
       <td data-label="Villkor för stödet">
         {reported
           ? CONDITIONS.map(([key, label]) => (
-              <span key={key} style={{ marginRight: 8, whiteSpace: "nowrap" }}>
+              <span key={key} className={styles.condition}>
                 {label}{" "}
                 {row.villkor[key] ? (
                   <span className={styles.yes}>✓</span>
@@ -316,59 +428,74 @@ function Row({
           : "–"}
       </td>
       <td data-label="Flaggor">
-        {flagNoEmail && (
-          <span className="sb-badge" style={{ marginRight: 8 }}>
-            Ingen e-post
-          </span>
+        {flagged ? (
+          <div className={styles.flags}>
+            {flagNoEmail && <span className="sb-badge">Ingen e-post</span>}
+            {row.statistik.preliminart && (
+              <span className="sb-badge">Preliminärt antal</span>
+            )}
+            {f.ej_angivna > 0 && (
+              <span
+                className={`sb-badge ${f.ej_angivna_paverkar ? inkorg.badgeWarn : ""}`}
+              >
+                {f.ej_angivna} ej angivna
+                {f.ej_angivna_paverkar && " (påverkar stödet)"}
+              </span>
+            )}
+            {f.forsaljning_vantar > 0 && (
+              <span className="sb-badge">
+                {f.forsaljning_vantar === 1
+                  ? "Försäljning väntar"
+                  : `${f.forsaljning_vantar} försäljningar väntar`}
+              </span>
+            )}
+            {f.forsaljning_avvisad > 0 && (
+              <span
+                className={`sb-badge ${
+                  f.forsaljning_avvisad_paverkar ? inkorg.badgeWarn : ""
+                }`}
+              >
+                Försäljning avvisad, medlemmen väljer igen
+                {f.forsaljning_avvisad_paverkar && " (påverkar stödet)"}
+              </span>
+            )}
+            {f.kopt_efter_inskick > 0 && (
+              <span className="sb-badge">Köpt efter inskick</span>
+            )}
+            {f.kop_anmalt > 0 && (
+              // purchase notices with no pending sale: registered from the queue (4a Task 5)
+              <Link
+                href={`/stamboken/inkorg?herd=${row.herd}&kind=kontroll`}
+                className="sb-badge"
+              >
+                {f.kop_anmalt === 1
+                  ? "Köp anmält"
+                  : `${f.kop_anmalt} köp anmälda`}
+              </Link>
+            )}
+            {!!f.andring_vantar && (
+              <span className="sb-badge">Ändring väntar på bekräftelse</span>
+            )}
+            {f.kontobyte_vantar && (
+              <span className={`sb-badge ${inkorg.badgeWarn}`}>
+                Kontobyte väntar på bekräftelse
+              </span>
+            )}
+            {f.kontobyte_forfoll && (
+              <span className={`sb-badge ${inkorg.badgeWarn}`}>
+                Kontobyte förföll
+              </span>
+            )}
+            {f.inte_jag && (
+              <span className={`sb-badge ${inkorg.badgeWarn}`}>
+                Det var inte jag
+              </span>
+            )}
+            {!!f.nytt_konto && <span className="sb-badge">Nytt konto</span>}
+          </div>
+        ) : (
+          "–"
         )}
-        {row.statistik.preliminart && (
-          <span className="sb-badge" style={{ marginRight: 8 }}>
-            Preliminärt antal
-          </span>
-        )}
-        {f.ej_angivna > 0 && (
-          <span
-            className={`sb-badge ${f.ej_angivna_paverkar ? inkorg.badgeWarn : ""}`}
-            style={{ marginRight: 8 }}
-          >
-            {f.ej_angivna} ej angivna
-            {f.ej_angivna_paverkar && " (påverkar stödet)"}
-          </span>
-        )}
-        {f.forsaljning_vantar > 0 && (
-          <span className="sb-badge" style={{ marginRight: 8 }}>
-            {f.forsaljning_vantar === 1
-              ? "Försäljning väntar"
-              : `${f.forsaljning_vantar} försäljningar väntar`}
-          </span>
-        )}
-        {f.forsaljning_avvisad > 0 && (
-          <span
-            className={`sb-badge ${
-              f.forsaljning_avvisad_paverkar ? inkorg.badgeWarn : ""
-            }`}
-            style={{ marginRight: 8 }}
-          >
-            Försäljning avvisad, medlemmen väljer igen
-            {f.forsaljning_avvisad_paverkar && " (påverkar stödet)"}
-          </span>
-        )}
-        {f.kopt_efter_inskick > 0 && (
-          <span className="sb-badge" style={{ marginRight: 8 }}>
-            Köpt efter inskick
-          </span>
-        )}
-        {f.kop_anmalt > 0 && (
-          // purchase notices with no pending sale: registered from the queue (4a Task 5)
-          <Link
-            href={`/stamboken/inkorg?herd=${row.herd}&kind=kontroll`}
-            className="sb-badge"
-            style={{ marginRight: 8 }}
-          >
-            {f.kop_anmalt === 1 ? "Köp anmält" : `${f.kop_anmalt} köp anmälda`}
-          </Link>
-        )}
-        {!flagged && "–"}
       </td>
       <td data-label="Mottagen">
         {row.received_at ? fmtDate(row.received_at) : "–"}
@@ -391,6 +518,28 @@ function Row({
               onClick={() => onNewLink(row.herd)}
             >
               Ny länk
+            </button>
+          )}
+          {canEdit && row.needs_report && !row.ingen_epost && (
+            <button
+              type="button"
+              className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
+              disabled={locked}
+              onClick={() => onReminder(row.herd)}
+            >
+              Skicka påminnelse
+            </button>
+          )}
+          {canEdit && !!row.flags.nytt_konto && (
+            <button
+              type="button"
+              className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
+              disabled={locked}
+              onClick={() =>
+                onUnlink({ herd: row.herd, id: row.flags.nytt_konto! })
+              }
+            >
+              Koppla bort kontot
             </button>
           )}
           {canEdit && row.flags.forsaljning_vantar > 0 && (

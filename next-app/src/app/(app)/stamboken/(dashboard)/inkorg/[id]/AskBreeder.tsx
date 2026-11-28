@@ -9,17 +9,20 @@ import styles from "../inkorg.module.css";
  * "Fråga uppfödaren": a question by mail to the herd's holder, who answers by
  * replying. With "Bifoga utsnitt" a frame lies on the photo (the caller draws
  * it with the photo's rectangle editor) and its part of the photo goes along.
- * `crop` is the frame in the document's saved rotation, as the API takes it.
+ * `crop` is the frame in the document's saved rotation, as the API takes it,
+ * and `turn` that rotation and the straighten it was drawn in.
  */
 export function AskBreeder({
   itemId,
   documentId,
   crop,
+  turn,
   onFrame,
 }: {
   itemId: number;
   documentId: number | null;
   crop: Rect | null;
+  turn: { rotation: number; straighten: number } | null;
   onFrame: (on: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -54,7 +57,9 @@ export function AskBreeder({
         e.preventDefault();
         start(async () => {
           const part =
-            crop && documentId !== null ? { document: documentId, crop } : null;
+            crop && turn && documentId !== null
+              ? { document: documentId, crop, ...turn }
+              : null;
           const res = await askBreeder(itemId, text, part);
           if (res.ok) close();
           else setError(res.problem.detail);

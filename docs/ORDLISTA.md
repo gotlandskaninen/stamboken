@@ -43,6 +43,18 @@ Kod: `Individual.active` (`is_active`) · Legacy-manual: "Aktiva djur", "Inaktiv
 En aktiv kanin som inte är kastrerad och har känt kön. Antalet visas på översikten i Min besättning.\
 Kod: aktiv + `castration_date` tom + `sex` · Legacy-manual: – · Legacy: – · Nytt UI: samma
 
+**Avelsprioritet**\
+Fliken under Genetik som visar vilka kaniner som är viktigast att avla på, i tre nivåer: Högsta,
+Hög och Övriga. Högsta är den enda kaninen i beräkningen med gener från ett founderdjur, eller en
+kanin vars medelsläktskap är på eller under gränsen för de 5 % minst släkta. Hög är på eller under
+gränsen för de 25 % minst släkta, bland de 25 % med flest unika gener, eller bär gener från ett
+founderdjur som har liten andel av generna. Övriga är resten. Nivåerna är Stambokens egen regel,
+inte en vedertagen standard (PMx rangordnar efter medelsläktskap inom kön och har inga sådana
+klasser). Gränserna räknas fram ur kaninerna i genbanken och varje kanin jämförs med dem; hur många
+som hamnar på varje nivå beror på genbanken. Ordet Kritisk används inte, varken här eller om
+founderdjurens läge.\
+Kod: `calculate_genetic_priorities` (`priority`: `critical`, `important`, `normal`) · Legacy-manual: – · Legacy: – · Nytt UI: samma, "Högsta", "Hög", "Övriga" (workList.ts:79–81)
+
 **Benring**\
 Ringen runt kaninens ben, med serie och löpnummer (till exempel GKF 123). De flesta kaniner tatueras
 inte längre i örat; de märks med benring och chip.\
@@ -96,12 +108,43 @@ eller numret på en obduktionsrapport. Död är en egen status; kaninen räknas 
 eller som inaktiv. I nya Stamboken kan en dödsrapportering ångras.\
 Kod: `death_date`, `death_note` · Legacy-manual: "Döda djur", "Anteckningar om kaninens död" · Legacy: "Rapportera som död", "Dödsdatum", "Dödsnotering" · Nytt UI: "Rapportera död", "Dödsdatum", "Dödsorsak"
 
+**Effektiv populationsstorlek (Ne)**\
+Hur stor en idealisk population skulle vara för att förlora genetisk variation lika långsamt som
+genbanken; ju större, desto bättre. Stamboken räknar den från hur mycket inaveln har ökat per
+generation hos varje kanin i beräkningen (realiserad Ne, Gutiérrez m.fl. 2008), både för i dag och
+för varje stängt år i trenden. Visas som heltal. FAO anger minst 50, Frankham m.fl. 2014 minst 100.\
+Kod: `effective_population_size` (`calculate_realised_ne`) · Legacy-manual: – · Legacy: – · Nytt UI: samma, "Ne" (OverviewTab.tsx:222, Laget.tsx, TrendChart.tsx)
+
+**Founderdjur**\
+Rasens ursprungsdjur: kaniner utan kända föräldrar i stamboken. Bestämd form plural founderdjuren.
+En bärare av ett founderdjur är en kanin i beräkningen som har gener från det. Ordet förklaras där
+det först står på en skärm och under Förklaringar. Har en kanin bara en känd förälder räknas den
+okända föräldern som ett eget founderdjur i FE, men inte i antalet founderdjur. Skriv inte founder,
+grundare eller grunddjur.\
+Kod: `identify_founders` · Legacy-manual: – · Legacy: – · Nytt UI: samma, "Founderdjurens läge" (FoundersAtRiskPanel.tsx:186)
+
+**Founderdjursekvivalenter / effektivt antal founderdjur (FE)**\
+Så många founderdjur som, om alla hade lämnat lika stor andel av generna, skulle ge samma spridning
+av generna som i dag (Lacy 1989). Ju högre FE, desto jämnare fördelning. Okända föräldrar räknas med,
+så FE kan bli större än antalet founderdjur med bärare. På
+skärmen heter måttet effektivt antal founderdjur och visas med en decimal. Det är inte samma mått
+som founder genome equivalents (FGE), som också räknar med att gener går förlorade av slumpen.\
+Kod: `founder_equivalents` · Legacy-manual: – · Legacy: – · Nytt UI: "Effektivt antal founderdjur (FE)" (OverviewTab.tsx:236), "FE" (TrendChart.tsx)
+
 **Färg / färganteckning**\
 Färgen väljs ur genbankens lista med godkända färger; saknas färgen kontaktar du genbanksansvarig.
 I färganteckning kompletterar du med fritext när färgen i listan inte stämmer helt, till exempel
 efter "brokad på annat sätt", eller "sv/v" för mellerudskanin med holländarteckning. Ögonfärg,
 klofärg, bukfärg och avvikande hårlag är egna fält.\
 Kod: `color` (`Color`), `color_note`, `eye_color`, `claw_color`, `belly_color`, `hair_notes` · Legacy-manual: "Färganteckning" · Legacy: "Färg", "Färganteckning" · Nytt UI: samma
+
+**Färgatlas**\
+Föreningens färgnummer med foto och beskrivning, ordnade i grupper efter bestämningsnyckeln. Färgens
+nummer är dess id i Stamboken, och numret anger grundfärgen, också när pälsen är rex. Sidan Färgatlas
+i Stamboken visas bara för inloggade, och länken Visa färgen i färgvalet öppnar färgens kort.
+Hjälp mig välja är bestämningsnyckeln: en fråga i taget fram till ett färgnummer, bara för
+gotlandskanin.\
+Kod: `Color.id`, `/stamboken/fargatlas`, `/api/v2/fargatlas` (nyckeln och texterna ur atlaspaketet) · Legacy-manual: – · Legacy: – · Nytt UI: "Färgatlas", "Visa färgen", "Hjälp mig välja", "Resurser"
 
 **Genbank**\
 Alla besättningar och alla kaniner av en ras i föreningens bevarandeprogram. Föreningen har två
@@ -263,8 +306,10 @@ Kod: `Individual`, `Bunny.fate` (`registered`) · Legacy-manual: "Registrerade d
 
 **Riktiga stamboken / testmiljön**\
 Riktiga stamboken är den som gäller; det du sparar där syns för alla. Testmiljön är en kopia där du
-kan öva fritt. Den skrivs över varje natt, och en gul rad överst visar att du är där. Nya användare
-börjar i testmiljön och byter i avatarmenyn när administratören gett dem tillgång.\
+kan öva fritt. Den skrivs över varje natt, och en gul rad överst visar att du är där. Ett konto med
+tillgång till riktiga stamboken hamnar där vid inloggning (alla aktiva konton fick den 2026-11-25) och
+når testmiljön i avatarmenyn; ett konto utan tillgång hamnar i testmiljön. Testmiljön har egen adress, sb.gotlandskaninen.se, och där
+är du alltid i testmiljön.\
 Kod: `sb_mode` (`prod`, `demo`), `v2_prod_access` · Legacy-manual: "den skarpa sidan", "Testsystemet" · Legacy: "TESTSYSTEMET" · Nytt UI: "riktiga stamboken", "testmiljön"
 
 **Skötare**\
@@ -281,8 +326,12 @@ Kod: `butchered`, `death_note` · Legacy-manual: "slaktats" · Legacy: "slaktats
 **Släktskapskoefficient / medelsläktskap (MK)**\
 Hur nära släkt två kaniner är, i procent. En avkommas inavelskoefficient är lika med släktskapen
 mellan föräldrarna. Medelsläktskap (MK) är en kanins genomsnittliga släktskap med de aktiva djuren
-i genbanken; ett lågt värde betyder att kaninen bär ovanliga gener som är viktiga att föra vidare.\
-Kod: `mean_kinship`, `inbreeding` · Legacy-manual: "släkt" · Legacy: "Genomsnittligt släktskap" · Nytt UI: "MK — Genomsnittlig medelkinship", "kinship-koefficient"
+i genbanken; ett lågt värde betyder att kaninen bär ovanliga gener som är viktiga att föra vidare.
+Det finns ingen gräns för vad som är ett högt medelsläktskap: talet stiger ju mer av stamtavlan som är
+känd (FAO 2023, CGRFA-19/23/10.2/Inf.4, s. 12), och tal räknade på olika uppsättningar kaniner går
+inte att jämföra. Genetiksidan visar därför dagens värde utan färg och, bredvid, de två senaste
+stängda åren, som båda räknas på respektive års kaniner.\
+Kod: `mean_kinship`, `inbreeding` · Legacy-manual: "släkt" · Legacy: "Genomsnittligt släktskap" · Nytt UI: "Medelsläktskap (MK)" på genetiksidan, i procent (OverviewTab.tsx:249), "kinship-koefficienten" under Parningsförslag
 
 **Släktträd / härstamning**\
 Släktträdet visar kaninens föräldrar, mor- och farföräldrar och längre bakåt. Härstamningen är
@@ -343,8 +392,8 @@ Kod: `voided_at`, `IndividualCommand` · Legacy-manual: – · Legacy: – · Ny
 Varje år bekräftar du att varje registrerad kanin finns kvar i din besättning vid årets slut, och
 besättningen lämnar en årsrapport (kullar, födda ungar, avelsdjur) som är grund för genbanksstödet.
 En kanin som inte årsrapporterats inom 13 månader blir inaktiv. Årsrapporten lämnas i Stamboken
-Online sedan 2024. I det nya gränssnittet är den inte byggd än: menyvalet Årsrapportera visar
-"Kommer snart".\
+Online sedan 2024. I det nya gränssnittet lämnas den under Årsrapport i menyn, eller på
+pappersblanketten; menyvalet Årsrapportera på kaninens sida visar fortfarande "Kommer snart".\
 Kod: `YearlyHerdReport`, `HerdTracking` (`kind` ATTESTATION) · Legacy-manual: "Årsrapportering", "Årsrapportera" · Legacy: "Årsrapport", "Årsrapportera" · Nytt UI: samma
 
 **Ändringshistorik**\
@@ -379,7 +428,8 @@ ordet i `scripts/check-ui-terms.sh`, med datum om det beslutades 2026-10-30 (se 
 | Säljdatum | "försäljningsdatum" (manual:219) | "Köpdatum" (individual_sellingform.tsx:101), "Säljdatum" (felmeddelande, individual_add.tsx:428) | "Försäljningsdatum" (`individual.sell.dateLabel`) | "Säljdatum" (`individual.sell.dateLabel`) | Säljdatum (beslut 2026-10-30) |
 | Såld | "dit kaninen ska flytta", "flyttat" (manual:219–220) | "Individen har flyttats till besättning" (individual_sell.tsx:249), "flyttas till ... för flytten" (individual_sell.tsx:174–175) | "{{name}} har flyttats till {{herd}}." (`individual.sell.moved`) | "{{name}} är såld till {{herd}}." (`individual.sell.moved`); "Flytt", "Flyttad hit" i historiken (herdTracking.ts:58, 65) | Såld; flytt bara i historiken |
 | Försäljning i ändringsloggen | – | – | "Överlåtelse" (auditLabels.ts:158) | "Försäljning" (auditLabels.ts:158) | Försäljning |
-| Pappret vid försäljning | – | – | – | "Försäljningsbevis" (PurchaseDialog.tsx, `buyerNote`) | Försäljningsbevis, aldrig "överlåtelsebevis" (beslut 2026-11-25) |
+| Pappret vid försäljning | – | – | – | "Försäljningsbevis" (PurchaseDialog.tsx, `buyerNote`, `buyerGotBevis`) | Försäljningsbevis, aldrig "överlåtelsebevis" (beslut 2026-11-25) |
+| Försäljning utan köpare | – | – | – | "Nej, såld utanför genbanken" (`individual.sell.buyerMode_utan`) | Såld utanför genbanken, ordagrant ur förslaget 5 b och 6 (Jonas 2026-11-26, #273) |
 | Rollen genbanksansvarig | "genbanksansvarig" (manual:178, 201) | "Manager" (userForm.tsx:83, individual_view.tsx:453), "Endast Manager" (field_with_permission.tsx:73), "genbanksansvarig" (individual_form.tsx:131) | "Manager" (KontoCard.tsx:124), "Genbanksansvarig" (RolePicker.tsx:76) | "Genbanksansvarig" (KontoCard.tsx:124, RolePicker.tsx:76), "Endast genbanksansvarig" (min-besattning-ui.tsx:244) | Genbanksansvarig |
 | Övriga roller | "vanlig användare" (manual:188) | "Owner", "Viewer" (userForm.tsx:82, 84) | samma som nu | "Besättningsägare", "Läsrätt", "Administratör", "Matrikeladministratör" (RolePicker.tsx:74–79) | Besättningsägare bara som rollnamn i admin, Uppfödare i text (beslut 2026-10-30); Läsrätt, inte "Granskare" (#214) |
 | Fliken med kullar | "Kullar och parningar" (manual:125, 128) | "Kullar och parningar" (herd_view.tsx:141, individual_form.tsx:290) | "Kullar & parningar" (min-besattning-ui.tsx:13), "Kullar & Parningar" (`breeding.listTitle`, används inte) | "Kullar och parningar" (min-besattning-ui.tsx:13, `breeding.listTitle`, används inte) | Kullar och parningar (beslut 2026-10-30) |
@@ -397,7 +447,7 @@ ordet i `scripts/check-ui-terms.sh`, med datum om det beslutades 2026-10-30 (se 
 | Provparning | "Provparning", "provpara" (manual:68, 61) | "Provparning" (navigation.tsx:194) | samma som nu | "Provparning" (`sidebar.provparning`), "Provpara" (`individual.edit.testMate`), "testparning" (bli-genbanksbesattning/page.tsx:112, stamboken-online/page.tsx:45) | Öppen fråga |
 | Registrera | "registrera/skapa intyg" (manual:145) | "Registrera" (navigation.tsx:248) | samma som nu | "Registrera" (`litterRoster.registerButton`), "Skriv in ungen i stamboken" (`litterRoster.registerTooltip`) | Öppen fråga |
 | Oregistrerade ungar | "Oregistrerade djur" (manual:30), "Skapa oregistrerade kaniner" (manual:141) | "Visa oregistrerade djur" (herd_view.tsx:184), "Skapa oregistrerade kaniner" (breeding_form.tsx:890) | samma som nu | "Kullista" (`litterRoster.title`), "Lägg till ungar" (`litterRoster.add`), "Behålls oreg." (`bunny.fate.kept_unregistered`) | Öppen fråga |
-| Släktskap | "släkt" (manual:61) | "Genomsnittligt släktskap/ Mean Kinship" (individual_view.tsx:255) | samma som nu | "MK — Genomsnittlig medelkinship", "kinship-koefficienten" (GeneticsInfoPanel.tsx:34, 80) | Öppen fråga |
+| Släktskap | "släkt" (manual:61) | "Genomsnittligt släktskap/ Mean Kinship" (individual_view.tsx:255) | "MK — Genomsnittlig medelkinship", "kinship-koefficienten" (GeneticsInfoPanel.tsx:34, 80) | "Medelsläktskap (MK)" (GeneticsInfoPanel.tsx:57), "kinship-koefficienten" (GeneticsInfoPanel.tsx:106, Parningsförslag) | Öppen fråga |
 | Testmiljön | "Testsystemet", "den skarpa sidan" (manual:238–239) | "OBS DETTA ÄR TESTSYSTEMET!" (navigation.tsx:345) | samma som nu | "testmiljön", "riktiga stamboken" (AvatarMenu.tsx:199–200), "TESTMILJÖ" (DemoBanner.client.tsx:21), "Demosynkronisering" (SystemPillNav.tsx:23) | Öppen fråga |
 | Webbkurs | – | "Validerad" (userForm.tsx:353) | samma som nu | "Webbkurs genomförd (validerad)" (UserEditClient.tsx:366) | Öppen fråga |
 | Administrationen | – | "Administrera" (navigation.tsx:259) | samma som nu | "Administration" (`sidebar.adminSection`) | Öppen fråga |
@@ -421,7 +471,7 @@ Bara i nya Stamboken:
 - Kullista, Öde, Preliminärt nummer (`litterRoster.title`, `litterRoster.fateLabel`, `litterRoster.provisionalNumber`). Gamla Stambokens motsvarighet var "Skapa oregistrerade kaniner".
 - Ändringshistorik, Ångra, Återställ, Visa ångrade, Korrigera historik (individual-detail.tsx:733, AuditTimeline.tsx:201, HerdHistorySection.tsx:98, HerdTrackingCorrectionDialog.tsx:152).
 - Statusarna Slaktad, Avlivad, Försvunnen (RabbitExplorer.tsx:50–52) och märkena Kastrerad och Köpt (KaninerTab.tsx:102, IndividualCard.tsx:467). Gamla UI visar bara Aktiv, Inaktiv och Död (individual_view.tsx:554–555).
-- Rollerna Skötare, Matrikeladministratör, Huvudmedlem, Familjemedlem (PersonerClient.tsx:296, RolePicker.tsx:75, matrikel/types.ts:85–86) och genetiksidans mått (Ne, FGE, ΔF i GeneticsInfoPanel.tsx).
+- Rollerna Skötare, Matrikeladministratör, Huvudmedlem, Familjemedlem (PersonerClient.tsx:296, RolePicker.tsx:75, matrikel/types.ts:85–86) och genetiksidans mått (Ne, FE, ΔF, founderdjur och avelsprioritet i GeneticsInfoPanel.tsx).
 - Flera hanar i samma provparning: "Lägg till en hane till" (ProvparningClient.tsx:483).
 
 Finns i båda, trots att det kan se nytt ut: **Verifiera intyg** (gamla: ladda upp PDF-filen,
@@ -449,6 +499,10 @@ Projektägaren beslutade 2026-10-30:
 13. Beslutat 2026-11-12: **Besättning** om en enskild uppfödares kaniner, aldrig genbank. **Genbank** är hela rasens bevarade population, och föreningen har två. **Genbanksbesättning** får användas som förtydligande. Orden följer handlingsplanen och FAO, se posterna Besättning och Genbank.
 14. **Medlemsavgift**, inte årsavgift, om avgiften för ett års medlemskap (beslutat 2026-11-18).
 15. Beslutat 2026-11-21: **Stamboken Online** om webbsystemet när texten utanför systemet ber läsaren göra något där, **Stamboken** om registret. Se posten Stamboken / Stamboken Online.
+16. Beslutat 2026-11-25: **Founderdjur** (bestämd form plural founderdjuren) om rasens ursprungsdjur, alltid med en svensk förklaring där ordet först står och under Förklaringar; inte founder, grundare eller founder-linje. Se posten Founderdjur.
+17. Beslutat 2026-11-25: **Avelsprioritet** som rubrik och kolumn, med nivåerna **Högsta**, **Hög** och **Övriga**. Kritisk används inte längre, inte heller om founderdjurens läge. Se posten Avelsprioritet.
+18. Beslutat 2026-11-25: **Ne** på genetiksidan är en och samma skattning i kortet och i trenden: realiserad Ne från varje kanins inavelsökning (Gutiérrez m.fl. 2008), i trenden räknad för varje år på det årets kaniner. Se posten Effektiv populationsstorlek (Ne).
+19. Beslutat 2026-11-25: **Medelsläktskap (MK)** visas utan gräns och färg (inte "under 5 %"), med de två senaste stängda åren bredvid, räknade på samma regel. Ingen källa ger en absolut gräns (FAO 2023, s. 12). Se posten Släktskapskoefficient / medelsläktskap (MK).
 
 ## Öppna frågor
 
@@ -468,7 +522,7 @@ Inget av detta är beslutat. En rad per fråga med alternativen.
 - **Färgfält**: "Bukfärg" eller "Färg på buken"; "Klofärg" eller "Klofärg(er)"; "Hårlag" eller "Avvikande hårlag" (nya UI har båda).
 - **Avkomma i genbanken** (legacy) eller **Avkommor** (nya UI).
 - **Oregistrerade djur** (manual:30) eller **oregistrerad unge** och **kullista**.
-- **Släktskap**: "Genomsnittligt släktskap", "MK — Genomsnittlig medelkinship" eller "släktskapskoefficient", som inget av gränssnitten använder.
+- **Släktskap**: "Genomsnittligt släktskap" (legacy), "Medelsläktskap (MK)" (genetiksidan sedan 2026-11-25), "kinship-koefficienten" (Parningsförslag) eller "släktskapskoefficient", som inget av gränssnitten använder.
 - **Testmiljön**: "Testsystemet" och "den skarpa sidan" (manual:238–239, navigation.tsx:345) eller "testmiljön" och "riktiga stamboken"; ska admin säga "Demosynkronisering" eller "testmiljö"?
 - **Webbkurs genomförd** eller **Validerad**.
 - **Administration** eller **Administrera**.

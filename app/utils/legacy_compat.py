@@ -29,6 +29,8 @@ DEFAULT_CLASSROOM_URL = "https://classroom.google.com/c/NjE3MDI1MzY2OTAz?cjc=27x
 # tests/data/legacy_calls.tsv. On a legacy host these need a validated account
 # (the web course), not v2_prod_access. Pairs, not URLs: legacy's
 # GET /api/individual/<nr> is here, v2's PATCH on the same URL is not.
+# A route closed by ADR-0020 stays listed: the legacy source keeps its call
+# site, so a validated account on a legacy host gets the 410 text, not a 403.
 LEGACY_ENDPOINTS = frozenset(
     {
         ("breeding", "GET"),
@@ -117,6 +119,10 @@ EXEMPT_ENDPOINTS = frozenset(
         ("rapport_link.open_link", "POST"),
         ("rapport_link.mine", "GET"),
         ("rapport_link.contacts", "GET"),
+        # The receipt mail's confirmation page (step 5): each call checks its own token.
+        ("rapport_link.show_changes", "POST"),
+        ("rapport_link.confirm_changes", "POST"),
+        ("rapport_link.not_me", "POST"),
         # The public membership application (not its listing, which is GET)
         # and the genebank names its form shows.
         ("member_applications.create_application", "POST"),

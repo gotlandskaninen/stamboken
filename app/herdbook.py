@@ -75,10 +75,11 @@ from utils.individual_commands import purge_command_free_text  # isort:skip
 from utils.log_masking import TokenMaskFilter  # isort:skip
 from utils.mail import purge_old_mail, send_pending  # isort:skip
 from utils import login_code  # isort:skip
-from utils.matrikel import purge_previous_addresses  # isort:skip
+from utils.matrikel import purge_matrikel_audit_values, purge_previous_addresses  # isort:skip
 from utils import inbox  # isort:skip
 from utils.inbox import queue_digests  # isort:skip
 from utils.arsrapport_invite import send_due_invitations  # isort:skip
+from utils.arsrapport_remind import send_due_reminders, send_due_unanswered, send_missing_questions  # isort:skip
 from utils import inbox_gmail  # isort:skip
 from utils import inbox_purge  # isort:skip
 from utils import buyer_contact  # isort:skip
@@ -167,7 +168,7 @@ APP.config.update(
     CACHE_DEFAULT_TIMEOUT=300,
     UPLOAD_FOLDER=UPLOAD_DIR,
     PROFILE_UPLOAD_FOLDER=os.path.join(UPLOAD_DIR, "profiler"),
-    MAX_CONTENT_LENGTH=11 * 1024 * 1024,  # 11MB — upload endpoint validates 10MB max
+    MAX_CONTENT_LENGTH=11 * 1024 * 1024,  # JSON, forms and the profile picture; larger uploads raise it per request
 )
 
 
@@ -283,6 +284,10 @@ def _purge_command_free_text():
             APP.logger.info("Purged %s previous addresses", purge_previous_addresses(now))
         except Exception:  # pylint: disable=broad-except
             APP.logger.exception("Purging the previous addresses failed")
+        try:
+            APP.logger.info("Purged contact values from %s matrikel log rows", purge_matrikel_audit_values(now))
+        except Exception:  # pylint: disable=broad-except
+            APP.logger.exception("Purging the matrikel log values failed")
         count = purge_command_free_text(now)
         APP.logger.info("Purged free text from %s command log rows", count)
     finally:
@@ -361,6 +366,27 @@ def _catch_up_arsrapport_invitations(now=None):
     now = now or datetime.datetime.now(ZoneInfo("Europe/Stockholm"))
     if now.astimezone(ZoneInfo("Europe/Stockholm")).hour >= 7:
         _send_arsrapport_invitations()
+
+
+def _send_arsrapport_followups():
+    """
+    Leader job every hour and once at startup (step 6), built as _send_mail: it closes its thread's connection. Each
+    follow-up decides itself what is due, in Stockholm time, so a missed run is caught up by the next; one failing
+    stops no other.
+    """
+    now = datetime.datetime.now(datetime.timezone.utc)
+    try:
+        for name, due in (
+            ("reminders", send_due_reminders),
+            ("unanswered lists", send_due_unanswered),
+            ("questions about missing rabbits", send_missing_questions),
+        ):
+            try:
+                APP.logger.info("Queued %s yearly report %s", due(now), name)
+            except Exception:  # pylint: disable=broad-except
+                APP.logger.exception("Queueing the yearly report %s failed", name)
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
 
 
 def _queue_notice_digests():
@@ -560,7 +586,11 @@ def rate_limit_exceeded(error):  # pylint: disable=unused-argument
 
 
 KINSHIP_LIFETIME = 300
-DASHBOARD_LIFETIME = 3600  # Dashboard aggregates change rarely (hourly refresh)
+# Keyed on the snapshot's content (_memo_key), so a long life never serves changed inputs. Bounded by
+# Redis memory, which has no maxmemory: about 110 KiB per memoized pedigree state of a large genebank.
+# Its bodies are memoized with source_check: herdbook.py is outside genetics.CODE_VERSION, and a
+# deploy that changes a body (what it passes on) must miss the week-old entries.
+DASHBOARD_LIFETIME = 7 * 24 * 3600
 
 
 # Before_request
@@ -1014,6 +1044,15 @@ def get_users():
     return jsonify(users=users)
 
 
+def _admin_gone(message):
+    """ADR-0020: a closed admin write of the old app. Nothing is written, whoever asks.
+    The legacy forms show `message`."""
+    return jsonify({"status": "error", "message": message}), 410
+
+
+ACCOUNTS_GONE = "Konton och roller hanteras nu i nya Stamboken."
+
+
 @APP.route(
     "/api/manage/user/",
     defaults={"u_id": False},
@@ -1023,111 +1062,27 @@ def get_users():
 @login_required
 def manage_user(u_id):
     """
-    Returns user information and a list of all roles for the requested `u_id`.
-
-    The return value from this function should be:
-        JSON: {
-            status: 'unchanged' | 'updated' | 'created' | 'success' | 'error',
-            message?: string,
-            data?: any
-        }
+    Returns user information and a list of all roles for the requested `u_id`
+    (the caller's own without an id). Every write is closed (ADR-0020) and
+    answers 410.
     """
-
-    # Handle file upload for profile pictures
-    profile_picture_url = None
-    if "profile_picture" in request.files:
-        file = request.files["profile_picture"]
-        if file and file.filename and allowed_file(file.filename):
-            # Create unique filename
-            filename = secure_filename(file.filename)
-            unique_filename = f"{uuid.uuid4().hex}_{filename}"
-            file_path = os.path.join(APP.config["UPLOAD_FOLDER"], unique_filename)
-
-            try:
-                file.save(file_path)
-                profile_picture_url = unique_filename  # Only filename, not full URL
-                APP.logger.info("Profile picture uploaded")
-            except Exception as e:
-                APP.logger.error("Error uploading file: %s", type(e).__name__)  # e carries the path
-                return jsonify({"status": "error", "message": "Failed to upload image"})
-
-    # Get form data (could be JSON or form data depending on upload)
-    if request.content_type and "multipart/form-data" in request.content_type:
-        form = request.form.to_dict()
-    else:
-        form = request.json if request.method != "GET" else {}
-
-    # Add profile picture URL to form if uploaded
-    if profile_picture_url:
-        form["profile_picture"] = profile_picture_url
-
-    if not u_id:
-        # If not provided, default to current user.
-        u_id = current_user.id
-        if form:
-            form["id"] = u_id
-
-    if request.method == "GET":
-        retval = da.get_user(u_id, session.get("user_id", None))
-    if request.method in ("UPDATE", "PATCH"):
-        retval = da.update_user(form, session.get("user_id", None))
-        if retval.get("status") == "updated":
-            auth_log.info("user updated actor=%s target=%s", current_user.id, form.get("id", u_id))
-    if request.method == "POST":
-        retval = da.add_user(form, session.get("user_id", None))
-        if retval.get("status") != "error":
-            auth_log.info("user created actor=%s", current_user.id)
-    return jsonify(retval)
+    if request.method != "GET":
+        return _admin_gone(ACCOUNTS_GONE)
+    return jsonify(da.get_user(u_id or current_user.id, session.get("user_id", None)))
 
 
 @APP.route("/api/manage/setpassword/", defaults={"u_id": False}, methods=["POST"])
 @APP.route("/api/manage/setpassword/<u_id>", methods=["POST"])
 def change_userpassword(u_id):
-    """
-    Set password for user u_id. Administrators can set password for any user.
-    Non-administrators need to present the old password or a token.
-    """
-
-    if request.method != "POST":
-        return abort(400)  # Makes the linter happy
-
-    form = request.json
-
-    if not current_user.is_authenticated:
-        return abort(403)  # Makes the linter happy
-
-    if not u_id:
-        u_id = current_user.id
-    # Basic auth's one-request session has no mark, so it never holds here: no password change through Basic auth.
-    retval = da.change_password(current_user, u_id, form, session_stamps=session)
-    if retval:
-        auth_log.info("password changed actor=%s target=%s", current_user.id, u_id)
-    return jsonify(retval)
+    """Gone (ADR-0020): an admin resets passwords in the new Stamboken (/api/v2/admin/users/<id>/password-reset)."""
+    return _admin_gone("Lösenord byts inte längre i gamla Stamboken. Admin återställer lösenord i nya Stamboken.")
 
 
 @APP.route("/api/manage/role", methods=["POST", "PATCH", "UPDATE"])
 @login_required
 def manage_roles():
-    """
-    Changes or adds roles for the user identified by `u_id`, and returns a
-    status a json status message.
-    The input data should be formatted like:
-        {action: add | remove,
-         role: owner | manager | viewer,
-         user: <id>,
-         herd | genebank: <id>
-        }
-
-    The return value will be formatted like:
-        JSON: {
-            status: 'unchanged' | 'updated' | 'created' | 'success' | 'error',
-            message?: string,
-            data?: any
-        }
-    """
-    form = request.json
-    status = da.update_role(form, session.get("user_id", None))
-    return jsonify(status)
+    """Gone (ADR-0020): roles are granted and removed in the new Stamboken (POST /api/v2/admin/role)."""
+    return _admin_gone(ACCOUNTS_GONE)
 
 
 @APP.route("/api/manage/herd", methods=["POST", "PATCH"])
@@ -1617,8 +1572,8 @@ def _link_member_if_any(user, verified_email) -> None:
     Auto-link a Member to this freshly-authenticated User by matching the
     address the identity provider just verified against
     Member.workspace_email (the provisioned login, NOT the contact email).
-    Never User.email: any user can rewrite that through
-    PATCH /api/manage/user/. No verified address, no link.
+    Never User.email: it is no verified address (the old app let any user
+    rewrite it). No verified address, no link.
     Case-insensitive — the unique index is on LOWER(workspace_email) and
     Google may deliver different casing.
 
@@ -2215,10 +2170,16 @@ def check_ind_intyg():
     )
 
 
-def _memo_key(snap):
-    version, day, definition, algorithm, epoch = snap.key
-    # The epoch identifies the database: a restored one can repeat a version already memoized.
-    return f"{epoch}:{version}:{day.isoformat()}:{definition}:{algorithm}"
+def _memo_key(snap, eligible=False):
+    """The shared memo key: what the results are computed from, never the global version or the day.
+
+    A write that leaves the genebank's pedigree and membership alone (the other genebank, a
+    herd-tracking note) or a new day keeps the key, and the cached results with it. Carrier
+    eligibility moves with the date (age cap); only founders at risk reads it (`eligible`).
+    """
+    _version, _day, definition, algorithm, _epoch = snap.key
+    key = f"{snap.fingerprint}:{definition}:{algorithm}:{genetics.CODE_VERSION}"
+    return f"{key}:{snap.eligible_fingerprint}" if eligible else key
 
 
 def _pinned_snapshot(g_id):
@@ -2230,12 +2191,12 @@ def _pinned_snapshot(g_id):
     return genetics.ps.pinned(snap) if snap is not None else contextlib.nullcontext()
 
 
-def _on_snapshot(g_id, cached, *params):
-    """Run a memoized genetics body on one pinned snapshot, cached under that snapshot's key.
+def _on_snapshot(g_id, cached, *params, eligible=False):
+    """Run a memoized genetics body on one pinned snapshot, cached under that snapshot's content key.
 
-    A result computed on snapshot v is stored under v even if v+1 is published
-    meanwhile, so it can never be served as v+1. Without a snapshot (a failed
-    cold build) the body runs uncached and returns the service's empty result;
+    A result computed on snapshot v is stored under v's inputs even if v+1 is
+    published meanwhile, so it is never served for other inputs. Without a
+    snapshot (a failed cold build) the body runs uncached and returns the service's empty result;
     when reading the snapshot fails, the uncached body fails as it always did.
     The memoized `_<name>_cached` bodies take `snap_key` only as part of the cache key.
     """
@@ -2247,7 +2208,7 @@ def _on_snapshot(g_id, cached, *params):
     if snap is None:
         return cached.uncached(g_id, None, *params)
     with genetics.ps.pinned(snap):
-        return cached(g_id, _memo_key(snap), *params)
+        return cached(g_id, _memo_key(snap, eligible), *params)
 
 
 def get_ind_inbreeding(i_number, g_id):
@@ -2376,7 +2337,7 @@ def get_population_metrics(g_id):
     return _on_snapshot(g_id, _get_population_metrics_cached)
 
 
-@CACHE.memoize(timeout=DASHBOARD_LIFETIME)
+@CACHE.memoize(timeout=DASHBOARD_LIFETIME, source_check=True)
 def _get_population_metrics_cached(g_id, snap_key):  # pylint: disable=unused-argument
     return genetics.get_population_metrics(g_id)
 
@@ -2386,17 +2347,17 @@ def get_founder_statistics(g_id):
     return _on_snapshot(g_id, _get_founder_statistics_cached)
 
 
-@CACHE.memoize(timeout=DASHBOARD_LIFETIME)
+@CACHE.memoize(timeout=DASHBOARD_LIFETIME, source_check=True)
 def _get_founder_statistics_cached(g_id, snap_key):  # pylint: disable=unused-argument
     return genetics.get_founder_statistics(g_id)
 
 
 def get_founders_at_risk(g_id):
     """Get founders at risk for genebank, shared across workers via Redis."""
-    return _on_snapshot(g_id, _get_founders_at_risk_cached)
+    return _on_snapshot(g_id, _get_founders_at_risk_cached, eligible=True)
 
 
-@CACHE.memoize(timeout=DASHBOARD_LIFETIME)
+@CACHE.memoize(timeout=DASHBOARD_LIFETIME, source_check=True)
 def _get_founders_at_risk_cached(g_id, snap_key):  # pylint: disable=unused-argument
     return genetics.get_founders_at_risk(g_id)
 
@@ -2406,7 +2367,7 @@ def get_genetic_priorities(g_id):
     return _on_snapshot(g_id, _get_genetic_priorities_cached)
 
 
-@CACHE.memoize(timeout=DASHBOARD_LIFETIME)
+@CACHE.memoize(timeout=DASHBOARD_LIFETIME, source_check=True)
 def _get_genetic_priorities_cached(g_id, snap_key):  # pylint: disable=unused-argument
     return genetics.get_genetic_priorities(g_id)
 
@@ -2416,7 +2377,7 @@ def get_breeding_suggestions(g_id, max_pairs=20, max_inbreeding=0.0625, max_per_
     return _on_snapshot(g_id, _get_breeding_suggestions_cached, max_pairs, max_inbreeding, max_per_male, max_per_female)
 
 
-@CACHE.memoize(timeout=DASHBOARD_LIFETIME)
+@CACHE.memoize(timeout=DASHBOARD_LIFETIME, source_check=True)
 def _get_breeding_suggestions_cached(g_id, snap_key, max_pairs, max_inbreeding, max_per_male, max_per_female):  # pylint: disable=unused-argument
     return genetics.get_breeding_suggestions(
         g_id,
@@ -2517,6 +2478,7 @@ def population_metrics(g_id):
     - mean_equiv_gen: Average equivalent complete generations
     - mean_full_gen: Average full generations
     - mean_max_gen: Average maximum generations
+    - reference_start: ISO date the snapshot's reference population counts life signs from
     """
     try:
         genebank_id = int(g_id)
@@ -2526,7 +2488,12 @@ def population_metrics(g_id):
         if not user or not (user.is_admin or genebank_id in (user.is_manager or [])):
             return jsonify({"status": "error", "message": "Åtkomst nekad"}), 403
 
-        metrics = get_population_metrics(genebank_id)
+        # One pinned snapshot for the numbers and their date. The date is added after the memo,
+        # so it is right whatever the memo is keyed on; the cached dict is copied, never changed.
+        with _pinned_snapshot(genebank_id) as snap:
+            metrics = dict(get_population_metrics(genebank_id))
+        start = snap.reference_start if snap is not None else None
+        metrics["reference_start"] = start.isoformat() if start else None
         return jsonify(metrics)
     except Exception as ex:
         APP.logger.error(f"Could not calculate population metrics: {ex}")
@@ -2750,6 +2717,10 @@ def genetic_priorities(g_id):
     except Exception as ex:
         APP.logger.error(f"Could not calculate genetic priorities: {ex}")
         return jsonify({"error": "Error calculating genetic priorities"}), 500
+
+
+# The work list and its CSV (blueprints/genetics.py) read the same memoized priorities; ADR-0007: no import of herdbook.
+APP.extensions["genetic_priorities"] = get_genetic_priorities
 
 
 @APP.route("/api/<int:g_id>/breeding-suggestions/")
@@ -2993,52 +2964,26 @@ def get_yearly_report_rounds():
         return jsonify({"status": "error", "message": "Unauthorized"})
 
 
+ROUNDS_GONE = "Årsrapportens rundor hanteras nu i nya Stamboken."
+
+
+# Gone (ADR-0020): rounds are set in the new Stamboken (PUT /api/v2/arsrapport/rundor/<year>), on the same table.
 @APP.route("/api/manage/yearly_report_round", methods=["POST"])
 @login_required
 def create_yearly_report_round():
-    """
-    Creates a new YearlyReportRound.
-    Only accessible to admin or manager users.
-    """
-    user_id = session.get("user_id", None)
-    form = request.json
-    result = da.create_yearly_report_round(form, user_id)
-    if result["status"] == "success":
-        return jsonify(result), 201
-    else:
-        return jsonify(result), 403
+    return _admin_gone(ROUNDS_GONE)
 
 
 @APP.route("/api/manage/yearly_report_round/<int:round_id>", methods=["PATCH"])
 @login_required
 def update_yearly_report_round(round_id):
-    """
-    Updates an existing YearlyReportRound.
-    Only accessible to admin or manager users.
-    """
-    user_id = session.get("user_id", None)
-    form = request.json
-    form["id"] = round_id
-    result = da.update_yearly_report_round(round_id, form, user_id)
-    if result["status"] == "success":
-        return jsonify(result)
-    else:
-        return jsonify(result), 403
+    return _admin_gone(ROUNDS_GONE)
 
 
 @APP.route("/api/manage/yearly_report_round/<int:round_id>", methods=["DELETE"])
 @login_required
 def delete_yearly_report_round(round_id):
-    """
-    Deletes an existing YearlyReportRound.
-    Only accessible to admin or manager users.
-    """
-    user_id = session.get("user_id", None)
-    result = da.delete_yearly_report_round(round_id, user_id)
-    if result["status"] == "success":
-        return jsonify(result)
-    else:
-        return jsonify(result), 403
+    return _admin_gone(ROUNDS_GONE)
 
 
 @APP.route("/", defaults={"path": ""})
@@ -3257,6 +3202,26 @@ def initialize_app():
             misfire_grace_time=None,
         )
 
+        # The yearly report's reminders and lists after the invitation (step 6); each is due by its own date, from
+        # 07:00 in Stockholm, so the scan runs on the hour there.
+        scheduler.add_job(
+            _send_arsrapport_followups,
+            "cron",
+            minute=0,
+            timezone=ZoneInfo("Europe/Stockholm"),
+            id="arsrapport_followups",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+        )
+
+        scheduler.add_job(
+            _send_arsrapport_followups,
+            trigger="date",
+            id="arsrapport_followups_startup",
+            misfire_grace_time=None,
+        )
+
         scheduler.add_job(
             _expire_login_codes,
             trigger="interval",
@@ -3374,7 +3339,6 @@ def get_yearly_reports(round_id, genebank_id):
             round_id,
             genebank_id,
             current_user.is_admin or current_user.is_matrikel_admin,
-            frozenset() if current_user.is_admin else current_user.effective_herd_ids(),
         )
 
         return jsonify(
@@ -3407,7 +3371,6 @@ def export_yearly_reports(round_id, genebank_id):
             round_id,
             genebank_id,
             current_user.is_admin or current_user.is_matrikel_admin,
-            frozenset() if current_user.is_admin else current_user.effective_herd_ids(),
         )
 
         return Response(

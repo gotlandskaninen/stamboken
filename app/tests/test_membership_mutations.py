@@ -1,7 +1,7 @@
 """Tests for /api/v2/memberships and /api/v2/persons mutations (Member Model v2)."""
 
 import json
-from datetime import datetime
+from datetime import date, datetime, timezone
 from unittest.mock import patch
 
 import utils.data_access as da  # noqa: E402
@@ -94,6 +94,112 @@ class TestMatrikelDomainFunctions(DatabaseTest):
         _other_membership, other_main, _other_family = _make_membership(number=7)
         with self.assertRaises(ValueError):
             matrikel.swap_main_member(self.membership, other_main, self.admin)
+
+    def test_reactivate_person_restores_active_row(self):
+        before = db.Member.get_by_id(self.family.id)
+        matrikel.soft_delete_person(self.family, self.admin)
+        matrikel.reactivate_person(self.family, self.admin)
+        after = db.Member.get_by_id(self.family.id)
+        self.assertIsNone(after.end_date)
+        self.assertEqual((after.role, after.email), (before.role, before.email))
+        self.assertTrue(db.MatrikelAudit.select().where(db.MatrikelAudit.action == "person_reactivated").exists())
+
+    def test_reactivate_person_audits_the_removed_end_date(self):
+        matrikel.soft_delete_person(self.family, self.admin)
+        db.Member.update(end_date=date(2024, 3, 1)).where(db.Member.id == self.family.id).execute()
+        matrikel.reactivate_person(self.family, self.admin)
+        audit = db.MatrikelAudit.get(db.MatrikelAudit.action == "person_reactivated")
+        self.assertEqual(audit.payload["before"], {"end_date": "2024-03-01"})
+        self.assertEqual(audit.payload["after"], {"end_date": None})
+
+    def test_matrikel_email_correction_of_ended_person_ends_previous_addresses(self):
+        user = da.register_user("fam@example.com", "pass", username="fam")
+        self.family.user = user
+        self.family.save()
+        matrikel.set_member_email(self.family, "frank.ny@example.com", self.admin, by="self")
+        prev = db.MemberPreviousAddress.select().where(db.MemberPreviousAddress.member == self.family.id)
+        self.assertTrue(any(r.login_until > datetime.now(timezone.utc) for r in prev))  # seven days of grace
+        matrikel.soft_delete_person(self.family, self.admin)
+        matrikel.unlink_member_user(self.family.id, actor=self.admin)
+        matrikel.set_member_email(self.family, "frank.ratt@example.com", self.admin, by="matrikel")
+        matrikel.reactivate_person(self.family, self.admin)
+        now = datetime.now(timezone.utc)
+        rows = db.MemberPreviousAddress.select().where(db.MemberPreviousAddress.member == self.family.id)  # re-read
+        live = [r.address for r in rows if r.login_until is not None and r.login_until > now]
+        self.assertEqual(live, [])
+        self.assertEqual(db.Member.get_by_id(self.family.id).email, "frank.ratt@example.com")
+
+    def _added_notice(self, person):
+        return db.MailMessage.get(db.MailMessage.dedupe_key == f"medlemskap.tillagd:{person.id}")
+
+    def test_reactivate_requeues_an_undelivered_added_notice(self):
+        person = matrikel.add_person(
+            self.membership, {"first_name": "Nina", "last_name": "Nysson", "email": "nina@example.com"}, self.admin
+        )
+        matrikel.soft_delete_person(person, self.admin)
+        self.assertEqual(self._added_notice(person).status, "cancelled")
+        matrikel.reactivate_person(person, self.admin)
+        self.assertEqual(self._added_notice(person).status, "queued")
+
+    def test_reactivate_does_not_resend_a_delivered_added_notice(self):
+        person = matrikel.add_person(
+            self.membership, {"first_name": "Nina", "last_name": "Nysson", "email": "nina@example.com"}, self.admin
+        )
+        db.MailMessage.update(status="sent").where(
+            db.MailMessage.dedupe_key == f"medlemskap.tillagd:{person.id}"
+        ).execute()
+        matrikel.soft_delete_person(person, self.admin)
+        matrikel.reactivate_person(person, self.admin)
+        self.assertEqual(self._added_notice(person).status, "sent")
+
+    def test_reactivate_main_member_audits_the_new_main(self):
+        db.Member.update(end_date=date(2024, 3, 1)).where(db.Member.id == self.main.id).execute()
+        matrikel.reactivate_person(self.main, self.admin)
+        audit = db.MatrikelAudit.get(db.MatrikelAudit.action == "main_member_changed")
+        self.assertEqual(audit.payload, {"previous_person_id": None, "new_person_id": self.main.id})
+
+    def test_reactivate_second_main_member_refused(self):
+        db.Member.update(role="huvudmedlem", end_date=date(2024, 3, 1)).where(db.Member.id == self.family.id).execute()
+        with self.assertRaises(ValueError):
+            matrikel.reactivate_person(self.family, self.admin)
+        self.assertIsNotNone(db.Member.get_by_id(self.family.id).end_date)
+
+    def test_reactivate_person_in_inactive_membership_refused(self):
+        matrikel.soft_delete_person(self.family, self.admin)
+        db.Membership.update(membership_status="inactive").where(db.Membership.id == self.membership.id).execute()
+        with self.assertRaises(ValueError):
+            matrikel.reactivate_person(self.family, self.admin)
+        self.assertIsNotNone(db.Member.get_by_id(self.family.id).end_date)
+
+    def test_reactivate_person_refuses_anonymized_and_active(self):
+        with self.assertRaises(ValueError):
+            matrikel.reactivate_person(self.family, self.admin)  # still active
+        matrikel.anonymize_person(self.family, self.admin)
+        with self.assertRaises(ValueError):
+            matrikel.reactivate_person(self.family, self.admin)
+        self.assertIsNotNone(db.Member.get_by_id(self.family.id).end_date)
+
+    def test_reactivate_person_refused_while_account_linked(self):
+        user = da.register_user("fam@example.com", "pass", username="fam")
+        self.family.user = user
+        self.family.save()
+        matrikel.soft_delete_person(self.family, self.admin)
+        with self.assertRaises(ValueError):
+            matrikel.reactivate_person(self.family, self.admin)
+        self.assertIsNotNone(db.Member.get_by_id(self.family.id).end_date)
+        matrikel.unlink_member_user(self.family.id, actor=self.admin)
+        matrikel.reactivate_person(self.family, self.admin)
+        self.assertIsNone(db.Member.get_by_id(self.family.id).end_date)
+
+    def test_reactivate_main_member_refused_when_address_taken(self):
+        # An ended huvudmedlem whose address another main member now holds.
+        db.Member.update(end_date=datetime.now().date()).where(db.Member.membership == self.membership).execute()
+        db.Member.update(role="huvudmedlem").where(db.Member.id == self.family.id).execute()
+        _, other, _ = _make_membership(7)
+        db.Member.update(email="frank@example.com").where(db.Member.id == other.id).execute()
+        with self.assertRaises(matrikel.AddressTaken):
+            matrikel.reactivate_person(self.family, self.admin)
+        self.assertIsNotNone(db.Member.get_by_id(self.family.id).end_date)
 
     def test_anonymize_person(self):
         user = da.register_user("fam@example.com", "pass", username="fam")
@@ -765,6 +871,49 @@ class TestPersonMutationEndpoints(MatrikelAdminTestBase):
         resp = self.patch_json(f"/api/v2/persons/{self.main.id}", {"role": "familjemedlem"})
         self.assertEqual(resp.status_code, 409)
         self.assertEqual(db.Member.get_by_id(self.main.id).role, "huvudmedlem")
+
+    def test_patch_person_change_family_to_skotare(self):
+        resp = self.patch_json(f"/api/v2/persons/{self.family.id}", {"role": "skotare"})
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(db.Member.get_by_id(self.family.id).role, "skotare")
+
+    def test_reactivate_endpoint_403_for_manager_and_owner(self):
+        self.client.delete(f"/api/v2/persons/{self.family.id}")
+        for username in ("man", "owner"):
+            self.client.get("/api/logout")
+            self.login(username)
+            resp = self.client.post(f"/api/v2/persons/{self.family.id}/reactivate")
+            self.assertEqual(resp.status_code, 403, username)
+        self.assertIsNotNone(db.Member.get_by_id(self.family.id).end_date)
+
+    def test_reactivate_endpoint_refuses_linked_account(self):
+        user = da.register_user("fam@example.com", "pass", username="fam")
+        self.family.user = user
+        self.family.save()
+        self.client.delete(f"/api/v2/persons/{self.family.id}")
+        resp = self.client.post(f"/api/v2/persons/{self.family.id}/reactivate")
+        self.assertEqual(resp.status_code, 409)
+        self.assertIn("Koppla bort kontot först", resp.get_json()["detail"])
+
+    def test_reactivate_endpoint(self):
+        self.login()
+        self.assertEqual(self.client.post(f"/api/v2/persons/{self.family.id}/reactivate").status_code, 409)  # active
+        self.assertEqual(self.client.delete(f"/api/v2/persons/{self.family.id}").status_code, 200)
+        resp = self.client.post(f"/api/v2/persons/{self.family.id}/reactivate")
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertIsNone(db.Member.get_by_id(self.family.id).end_date)
+        self.client.post(f"/api/v2/persons/{self.family.id}/anonymize")
+        self.assertEqual(self.client.post(f"/api/v2/persons/{self.family.id}/reactivate").status_code, 409)
+
+    def test_patch_person_to_skotare_limits_open_grants_to_a_year(self):
+        grant = db.HerdAccessGrant.create(member=self.family, herd=self.herds[0], granted_by=self.admin)
+        self.assertIsNone(grant.valid_until)
+        self.login()
+        resp = self.patch_json(f"/api/v2/persons/{self.family.id}", {"role": "skotare"})
+        self.assertEqual(resp.status_code, 200, resp.data)
+        valid_until = db.HerdAccessGrant.get_by_id(grant.id).valid_until
+        self.assertIsNotNone(valid_until)
+        self.assertGreater(valid_until, date.today())
 
     def test_patch_person_promote_second_main_409(self):
         resp = self.patch_json(f"/api/v2/persons/{self.family.id}", {"role": "huvudmedlem"})

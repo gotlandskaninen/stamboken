@@ -27,6 +27,7 @@ from utils.database import (
     lock_individuals,
 )
 from utils.herd_tracking import (
+    NOT_RECORDED,
     QUEUE_CHANGED,
     HerdTrackingConflict,
     HerdTrackingForbidden,
@@ -45,7 +46,7 @@ from utils.herd_tracking import (
 )
 from utils.inbox_purge import remove_originals
 from utils.individual_commands import FREE_TEXT_RETENTION
-from utils.mail import address_hash, forget_recipient, is_address
+from utils.mail import SALE_WITHDRAWN, address_hash, forget_recipient, is_address
 
 logger = logging.getLogger("herdbook.buyer_contact")
 FAILED_NOTICE_KEPT = timedelta(days=30)  # a failed first notice to the buyer can be retried this long
@@ -134,6 +135,8 @@ def review_buyer_email(contact_id, body, user):
                     "town": contact.town,
                     "contact_consent": bool(contact.contact_consent_at),
                     "membership_optin": bool(contact.membership_optin_at),
+                    "notice_only": contact.email_notice_only,
+                    **({"postal_address": contact.postal_address} if contact.email_notice_only else {}),
                 },
                 sale.herd_tracking_date,
             )
@@ -292,15 +295,20 @@ def purge_proposal_buyers(now):
             _dead_since(individual_ids, now)
         )
 
-    pending = SaleProposal.select().where(SaleProposal.state == "foreslagen", SaleProposal.buyer.is_null(False))
+    pending = SaleProposal.select().where(
+        SaleProposal.state == "foreslagen",
+        SaleProposal.buyer.is_null(False),
+        ~SaleProposal.buyer.contains(NOT_RECORDED),  # såld utanför genbanken holds no buyer (#273)
+    )
     found = list(pending.where(due(pending.select(SaleProposal.individual))).order_by(SaleProposal.id))
     return sum(sale_proposal.clear_buyer(proposal, "gallring_forslag", still=due) for proposal in found)
 
 
-def _null_fields(where, changes, action):
+def _null_fields(where, changes, action, *, email_hash=True):
     """
     Nulls `changes` on the buyers matching `where`, one audit_log row each naming the columns that went (never the
-    values), and the mail queue forgets an e-mail address that went; returns how many.
+    values), and the mail queue forgets an e-mail address that went; returns how many. An e-mail that goes leaves
+    its avtryck (erased_email_hash) unless `email_hash` is False.
     """
     columns = [field.name for field in changes]
     with DB_PROXY.atomic():
@@ -316,7 +324,7 @@ def _null_fields(where, changes, action):
             log_buyer_contact(contact_id, "UPDATE", action, fields=gone)
             if "email" in gone:
                 email = before[contact_id]["email"]
-                if settings.mail.link_secret and is_address(email):
+                if email_hash and settings.mail.link_secret and is_address(email):
                     BuyerContact.update(erased_email_hash=address_hash(email)).where(
                         BuyerContact.id == contact_id
                     ).execute()
@@ -377,7 +385,97 @@ def purge_membership_optin(now):
     return _purge_consent(now, due, optin, BuyerContact.contact_consent_at, "gallring_medlemskap")
 
 
-RULES = (purge_membership_optin, purge_sold_on, purge_dead, purge_expired, purge_proposal_buyers)
+def _notices(condition):
+    """The buyers whose kopare.information is in `condition`."""
+    return MailMessage.select(MailMessage.recipient_id).where(
+        MailMessage.recipient_kind == "buyer_contact", MailMessage.kind == "kopare.information", condition
+    )
+
+
+def purge_notice_email(now):  # pylint: disable=unused-argument  # every rule takes the run's time
+    """
+    #273: an e-mail the seller gave without a försäljningsbevis goes once the notice has gone, and leaves no
+    avtryck. Kept while the notice waits, may be retried, waits for a manager's address check, or for a withdrawn
+    report to be sent again.
+    """
+    due = (
+        BuyerContact.email_notice_only
+        & BuyerContact.email.is_null(False)
+        & BuyerContact.id.in_(_notices(MailMessage.status == "sent"))
+    )
+    return _null_fields(due, {BuyerContact.email: None}, "gallring_efter_mejl", email_hash=False)
+
+
+def purge_undelivered_notice(now):
+    """
+    #273: a buyer the notice did not reach is not kept: the mail bounced, also after its e-mail went, or failed and
+    can no longer be retried (FAILED_NOTICE_KEPT). The sale stays, marked as one whose buyer was removed.
+    """
+    undelivered = _notices(
+        (MailMessage.status == "bounced")
+        | ((MailMessage.status == "failed") & (MailMessage.created_at < now - FAILED_NOTICE_KEPT))
+        # stopped, or not built (the buyer no longer holds the rabbit); a withdrawn report's mail may resume
+        | ((MailMessage.status == "cancelled") & (MailMessage.last_error != SALE_WITHDRAWN))
+    )
+
+    def due():
+        return BuyerContact.email_notice_only & BuyerContact.id.in_(undelivered)
+
+    with DB_PROXY.atomic():
+        count, paths = _delete_under_locks(BuyerContact.select(BuyerContact.id).where(due()), due, "studs")
+    remove_originals(paths)
+    return count
+
+
+NOTICE_WITHIN = timedelta(days=30)  # art. 14.3: the buyer without a försäljningsbevis is told within a month
+
+
+def purge_uninformed(now):
+    """
+    #273: a buyer without a försäljningsbevis is kept only if the association can tell them within a month. A
+    pending proposal's e-mail buyer becomes "såld utanför genbanken", and a buyer whose notice has not gone in that
+    time goes, including when its notice is still queued or sending.
+    """
+    late = now - NOTICE_WITHIN
+
+    def waiting(_individual_ids):
+        return (SaleProposal.created_at < late) & SaleProposal.buyer.contains({"notice_only": True})
+
+    found = SaleProposal.select().where(SaleProposal.state == "foreslagen", waiting(None)).order_by(SaleProposal.id)
+    count = sum(
+        sale_proposal.clear_buyer(proposal, "ej_informerad", still=waiting, to=dict(NOT_RECORDED)) for proposal in found
+    )
+
+    # the month runs from when the association got the address: a proposal's submission, else the sale's entry
+    proposed = (
+        SaleProposal.select(fn.MIN(SaleProposal.created_at))
+        .join(HerdTracking, on=(HerdTracking.id == SaleProposal.herd_tracking_id))
+        .where(HerdTracking.holder_contact == BuyerContact.id)
+    )
+
+    def unsent():  # the e-mail goes once the notice has (purge_notice_email)
+        got = fn.COALESCE(proposed, BuyerContact.created_at)
+        told = BuyerContact.id.in_(_notices(MailMessage.status == "sent"))
+        return BuyerContact.email_notice_only & BuyerContact.email.is_null(False) & ~told & (got < late)
+
+    with DB_PROXY.atomic():
+        deleted, paths = _delete_under_locks(
+            BuyerContact.select(BuyerContact.id).where(unsent()), unsent, "ej_informerad"
+        )
+    remove_originals(paths)
+    return count + deleted
+
+
+RULES = (
+    purge_membership_optin,
+    purge_sold_on,
+    purge_dead,
+    purge_expired,
+    purge_proposal_buyers,
+    purge_undelivered_notice,
+    purge_uninformed,
+    purge_notice_email,
+)
 
 
 def run(now):

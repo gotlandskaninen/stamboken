@@ -16,15 +16,19 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
 import {
   ReportForm,
   type ReportActions,
+  forgetTabWrites,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/ReportForm";
 import {
   PENDING_SALE_TEXT,
+  fromBody,
+  toDraft,
+  type BodyEntry,
   type Receipt,
   type ReportCase,
   type ReportView,
   type Submission,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/lib";
-import { rabbit, view } from "./fixtures";
+import { rabbit, submittedReport, view } from "./fixtures";
 import "@/i18n"; // BuyerFields' labels
 
 const receipt: Receipt = {
@@ -75,6 +79,7 @@ const actions = (): {
   }) as never;
 
 beforeEach(() => {
+  forgetTabWrites(); // module memory of the tab, as after a hard load
   window.scrollTo = vi.fn(); // jsdom does not implement it
   window.localStorage.clear();
   refresh.mockReset();
@@ -91,20 +96,6 @@ const local = () => {
   );
   return key ? window.localStorage.getItem(key) : null;
 };
-const submittedReport = () => ({
-  id: 1,
-  status: "submitted",
-  source: "login",
-  revision: 0,
-  received_at: "2027-01-03T13:32:00+00:00",
-  report_date: "2027-01-03",
-  on_time: true,
-  submitted: { rabbits: { "1": { val: "kvar", vikt: 2.8 } } as never },
-  can_change: true,
-  can_withdraw: true,
-  withdraw_until: "2027-01-10T13:32:00+00:00",
-  villkor: { hane: true, hona: true, kull: false, i_tid: true },
-});
 const row = (n: number) =>
   // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- n is a test constant, not user input
   screen.getByRole("group", { name: new RegExp(`G9001-${n}\\b`) });
@@ -118,8 +109,534 @@ const fillAll = () => {
     });
   }
 };
+const sellOutside = () => {
+  choose(1, "Såld");
+  fireEvent.click(screen.getByLabelText("Utanför genbanken"));
+  fireEvent.click(screen.getByRole("radio", { name: "Ja" })); // the buyer has e-mail (before 2027)
+  fireEvent.change(screen.getByLabelText(/Köparens namn/), {
+    target: { value: "Ola Köpare" },
+  });
+  fireEvent.change(screen.getByLabelText(/^Ort/), {
+    target: { value: "Visby" },
+  });
+  fireEvent.change(screen.getByLabelText(/^Postadress/), {
+    target: { value: "Testgatan 1" },
+  });
+  fireEvent.change(screen.getByLabelText(/^E-post/), {
+    target: { value: "ola@example.invalid" },
+  });
+  fireEvent.change(screen.getByLabelText("Månad"), {
+    target: { value: "6" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Spara försäljningen" }));
+};
 const send = () =>
   fireEvent.click(screen.getByRole("button", { name: "Skicka årsrapporten" }));
+
+describe("paper omissions", () => {
+  const draftKey = "22222222-2222-4222-8222-222222222222";
+  const savedText =
+    "Svaret är sparat. Datumet då årsrapporten kom in är oförändrat.";
+  const completionActions = () => ({
+    ...actions(),
+    dryRunCompletion: vi.fn<NonNullable<ReportActions["dryRunCompletion"]>>(
+      () => ok({ ok: true, refusals: [], warnings: [] }),
+    ),
+    submitCompletion: vi.fn<NonNullable<ReportActions["submitCompletion"]>>(
+      () => ok(receipt),
+    ),
+  });
+  const missingView = (notStated = [1, 2, 3], revision = 4) => {
+    const ids = [1, 2, 3, 4];
+    const rabbits: Record<string, BodyEntry> = {};
+    for (const id of ids)
+      rabbits[id] = notStated.includes(id)
+        ? { val: "ej_angiven" }
+        : { val: "kvar", vikt: 2.8 };
+    return view({
+      report: {
+        ...submittedReport(),
+        source: "paper",
+        revision,
+        not_stated: notStated,
+        can_complete_missing: notStated.length > 0,
+        submitted: { rabbits },
+      },
+      rabbits: ids.map((id) => rabbit(id)),
+      draft: {
+        data: toDraft(fromBody({ rabbits, message: "Min oskickade ändring" })),
+        updated_at: "2027-01-04T10:00:00+00:00",
+        submission_key: draftKey,
+        own: true,
+      },
+    });
+  };
+  const sendAnswer = () =>
+    fireEvent.click(screen.getByRole("button", { name: "Skicka svar" }));
+
+  it("shows the paper's day, not a time, after the last answer by link", () => {
+    const v = missingView([]);
+    v.report = {
+      ...v.report!,
+      source: "link",
+      from_paper: true,
+      received_at: "2027-01-11T23:00:00+00:00",
+    };
+    render(<ReportForm env="demo" view={v} actions={completionActions()} />);
+    expect(
+      screen.getByText(
+        /Klart\. Årsrapporten för G9001 kom in 12 januari 2027\./,
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(/kl\. 00\.00/)).toBeNull();
+  });
+
+  it("shows only missing rabbits and sends only answered rows", async () => {
+    const a = completionActions();
+    render(<ReportForm env="demo" view={missingView()} actions={a} />);
+    expect(screen.getAllByRole("radio", { name: "Finns kvar" })).toHaveLength(
+      3,
+    );
+    expect(screen.queryByText("Kanin4")).toBeNull();
+    expect(screen.queryByRole("radio", { checked: true })).toBeNull();
+    expect(screen.queryByText("✓ Klar")).toBeNull();
+    choose(2, "Finns kvar");
+    fireEvent.change(within(row(2)).getByLabelText("Vikt"), {
+      target: { value: "3,1" },
+    });
+    sendAnswer();
+    expect(await screen.findByText(savedText)).toBeTruthy();
+    const body = {
+      submission_key: expect.stringMatching(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+      ),
+      revision: 4,
+      rabbits: { "2": { val: "kvar", vikt: 3.1, ej_vagd: null, hull: null } },
+    };
+    expect(a.dryRunCompletion).toHaveBeenCalledWith(
+      "G9001",
+      2026,
+      body,
+      "demo",
+    );
+    const sent = a.dryRunCompletion.mock.calls[0][2];
+    expect(sent.submission_key).not.toBe(draftKey);
+    expect(a.submitCompletion).toHaveBeenCalledWith(
+      "G9001",
+      2026,
+      sent,
+      "demo",
+    );
+    expect(a.submitReport).not.toHaveBeenCalled();
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it("answers nothing without a choice", () => {
+    const a = completionActions();
+    render(<ReportForm env="demo" view={missingView()} actions={a} />);
+    sendAnswer();
+    expect(screen.getByRole("alert").textContent).toContain(
+      "Välj för minst en kanin.",
+    );
+    expect(a.dryRunCompletion).not.toHaveBeenCalled();
+    expect(a.submitCompletion).not.toHaveBeenCalled();
+  });
+
+  it("shows what a chosen row still needs before sending any answers", async () => {
+    const a = completionActions();
+    a.dryRunCompletion.mockImplementationOnce(() =>
+      ok({
+        ok: false,
+        refusals: [{ individual_id: 1, code: "vikt_saknas", message: "" }],
+        warnings: [],
+      }),
+    );
+    render(<ReportForm env="demo" view={missingView()} actions={a} />);
+    choose(1, "Finns kvar");
+    choose(2, "Död");
+    sendAnswer();
+    expect(within(row(2)).getByText("Välj månad.")).toBeTruthy();
+    expect(a.dryRunCompletion).not.toHaveBeenCalled();
+    fireEvent.change(within(row(2)).getByLabelText("Månad"), {
+      target: { value: "2" },
+    });
+    sendAnswer();
+    expect(
+      await within(row(1)).findByText(
+        "Vuxna kaniner behöver vikt eller Ej vägd.",
+      ),
+    ).toBeTruthy();
+    expect(a.submitCompletion).not.toHaveBeenCalled();
+  });
+
+  it("keeps a browser copy through an answer: offered, never saved over", async () => {
+    vi.useFakeTimers();
+    const a = completionActions();
+    const v = missingView();
+    // the browser holds an edit the server never got, at the server draft's version
+    const mine = toDraft({
+      ...fromBody(v.draft!.data),
+      message: "Bara i webbläsaren",
+    });
+    const copy = JSON.stringify({
+      data: mine,
+      updated_at: v.draft!.updated_at,
+      revision: 4,
+    });
+    window.localStorage.setItem("arsrapport:demo:G9001:2026", copy);
+    const next = missingView([2, 3], 5);
+    next.draft!.updated_at = "2027-01-04T10:01:00+00:00";
+    // the old code autosaved the copy at its old version: the server answers 409 with its newer draft
+    a.saveDraft.mockImplementation(async (...args: unknown[]) =>
+      args[3] === next.draft!.updated_at
+        ? ok({
+            updated_at: "2027-01-04T10:02:00+00:00",
+            submission_key: draftKey,
+          })
+        : {
+            ok: false as const,
+            problem: {
+              status: 409,
+              title: "Konflikt",
+              detail: "Rapporten har ändrats på en annan enhet.",
+              extensions: { draft: next.draft },
+            },
+          },
+    );
+    const { rerender } = render(<ReportForm env="demo" view={v} actions={a} />);
+    expect(
+      screen.getByText("Du har fler ändringar som inte är skickade."),
+    ).toBeTruthy();
+    choose(1, "Finns kvar");
+    fireEvent.change(within(row(1)).getByLabelText("Vikt"), {
+      target: { value: "2,8" },
+    });
+    await act(async () => {
+      sendAnswer();
+    });
+    expect(screen.getByRole("status").textContent).toBe(savedText);
+    rerender(<ReportForm env="demo" view={next} actions={a} />);
+    expect(screen.queryByText("Kanin1")).toBeNull();
+    choose(2, "Död");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    expect(a.saveDraft).not.toHaveBeenCalled();
+    expect(local()).toBe(copy);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Visa hela rapporten" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Fortsätt ändra" }));
+    // the refreshed draft is shown, the browser copy waits for the member's choice
+    expect(
+      screen.getByText("Osparade ändringar på den här enheten"),
+    ).toBeTruthy();
+    expect(screen.getByDisplayValue("Min oskickade ändring")).toBeTruthy();
+    expect(
+      within(row(2)).getByRole("radio", { name: "Död", checked: true }),
+    ).toBeTruthy();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    expect(a.saveDraft).not.toHaveBeenCalled();
+    expect(local()).toBe(copy);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Använd den lokala kopian" }),
+    );
+    expect(screen.getByDisplayValue("Bara i webbläsaren")).toBeTruthy();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    const [, , data, updatedAt] = a.saveDraft.mock.calls[0];
+    expect(updatedAt).toBe(next.draft!.updated_at); // over the newer draft only by choice, never a 409
+    expect((data as { message: string }).message).toBe("Bara i webbläsaren");
+    expect(screen.getByDisplayValue("Bara i webbläsaren")).toBeTruthy();
+  });
+
+  it("forgets focused answers when a conflict reloads the form", async () => {
+    const a = completionActions();
+    a.submitCompletion.mockImplementationOnce(() => fail(409));
+    const withDeath = (v: ReportView) => {
+      const drafted = fromBody(v.draft!.data);
+      drafted.rabbits[1] = {
+        ...drafted.rabbits[1],
+        val: "dod",
+        dod: { ar: 2026, manad: 6, dag: null, slaktad: false, anteckning: "" },
+      };
+      v.draft = { ...v.draft!, data: toDraft(drafted) };
+      return v;
+    };
+    const { rerender } = render(
+      <ReportForm env="demo" view={withDeath(missingView())} actions={a} />,
+    );
+    choose(1, "Finns kvar");
+    fireEvent.change(within(row(1)).getByLabelText("Vikt"), {
+      target: { value: "2,8" },
+    });
+    sendAnswer(); // the report changed meanwhile: 409, and the form reloads
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+    rerender(
+      <ReportForm
+        env="demo"
+        view={withDeath(missingView([1, 2, 3], 5))}
+        actions={a}
+      />,
+    );
+    expect(within(row(1)).queryByRole("radio", { checked: true })).toBeNull();
+    choose(2, "Finns kvar");
+    fireEvent.change(within(row(2)).getByLabelText("Vikt"), {
+      target: { value: "3,1" },
+    });
+    await act(async () => {
+      sendAnswer();
+    });
+    const [, , sent] = a.submitCompletion.mock.calls[1];
+    expect(Object.keys(sent.rabbits)).toEqual(["2"]); // never the draft's death for rabbit 1
+  });
+
+  it("offers another tab's browser copy on the way back to the full form", async () => {
+    vi.useFakeTimers();
+    const a = completionActions();
+    const v = missingView();
+    const { rerender } = render(<ReportForm env="demo" view={v} actions={a} />);
+    choose(1, "Finns kvar");
+    fireEvent.change(within(row(1)).getByLabelText("Vikt"), {
+      target: { value: "2,8" },
+    });
+    // another tab saved nothing yet: its only copy is in the browser, at the version before the answer
+    const theirs = JSON.stringify({
+      data: toDraft({
+        ...fromBody(v.draft!.data),
+        message: "Från den andra fliken",
+      }),
+      updated_at: v.draft!.updated_at,
+      revision: 4,
+      writer: "another tab",
+    });
+    window.localStorage.setItem("arsrapport:demo:G9001:2026", theirs);
+    await act(async () => {
+      sendAnswer();
+    });
+    const next = missingView([2, 3], 5);
+    next.draft!.updated_at = "2027-01-04T10:01:00+00:00";
+    rerender(<ReportForm env="demo" view={next} actions={a} />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Visa hela rapporten" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Fortsätt ändra" }));
+    expect(
+      screen.getByText("Osparade ändringar på den här enheten"),
+    ).toBeTruthy();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    expect(a.saveDraft).not.toHaveBeenCalled();
+    expect(local()).toBe(theirs);
+  });
+
+  it("takes another tab's newer copy at the same stamps back to the full form", async () => {
+    vi.useFakeTimers();
+    const a = completionActions();
+    const v = missingView();
+    const copyOf = (message: string, writer: string) =>
+      JSON.stringify({
+        data: toDraft({ ...fromBody(v.draft!.data), message }),
+        updated_at: v.draft!.updated_at,
+        revision: 4,
+        writer,
+      });
+    window.localStorage.setItem(
+      "arsrapport:demo:G9001:2026",
+      copyOf("Kopia från början", "this tab"),
+    );
+    render(<ReportForm env="demo" view={v} actions={a} />); // adopts it at mount
+    choose(2, "Finns kvar"); // typed here, not sent
+    fireEvent.change(within(row(2)).getByLabelText("Vikt"), {
+      target: { value: "3,1" },
+    });
+    // another tab replaces the copy at the same server stamps
+    window.localStorage.setItem(
+      "arsrapport:demo:G9001:2026",
+      copyOf("Nyare i den andra fliken", "another tab"),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Visa hela rapporten" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Fortsätt ändra" }));
+    expect(screen.getByDisplayValue("Nyare i den andra fliken")).toBeTruthy();
+    expect(
+      within(row(2)).getByRole("radio", { name: "Finns kvar", checked: true }),
+    ).toBeTruthy();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    const [, , data] = a.saveDraft.mock.calls[0];
+    expect((data as { message: string }).message).toBe(
+      "Nyare i den andra fliken",
+    );
+  });
+
+  it("sends only the rows answered on the focused page, never a draft's", async () => {
+    const a = completionActions();
+    const v = missingView();
+    // the member's draft from the full form has a death for rabbit 2, not sent
+    const drafted = fromBody(v.draft!.data);
+    drafted.rabbits[2] = {
+      ...drafted.rabbits[2],
+      val: "dod",
+      dod: { ar: 2026, manad: 6, dag: null, slaktad: false, anteckning: "" },
+    };
+    v.draft = { ...v.draft!, data: toDraft(drafted) };
+    render(<ReportForm env="demo" view={v} actions={a} />);
+    expect(screen.queryByRole("radio", { checked: true })).toBeNull();
+    choose(1, "Finns kvar");
+    fireEvent.change(within(row(1)).getByLabelText("Vikt"), {
+      target: { value: "2,8" },
+    });
+    await act(async () => {
+      sendAnswer();
+    });
+    expect(screen.getByRole("status").textContent).toBe(savedText);
+    const [, , sent] = a.submitCompletion.mock.calls[0];
+    expect(Object.keys(sent.rabbits)).toEqual(["1"]);
+  });
+
+  it("takes the refreshed draft back to the full form, with unsent answers on top", async () => {
+    vi.useFakeTimers();
+    const a = completionActions();
+    const { rerender } = render(
+      <ReportForm env="demo" view={missingView()} actions={a} />,
+    );
+    choose(1, "Finns kvar");
+    fireEvent.change(within(row(1)).getByLabelText("Vikt"), {
+      target: { value: "2,8" },
+    });
+    await act(async () => {
+      sendAnswer();
+    });
+    // another tab saved a change before the answer; the server kept it and moved the version on
+    const next = missingView([2, 3], 5);
+    const other = "Ändrad i en annan flik";
+    next.draft = {
+      ...next.draft!,
+      data: {
+        ...next.draft!.data,
+        message: other,
+        form: { ...next.draft!.data.form!, message: other },
+      },
+      updated_at: "2027-01-04T10:05:00+00:00",
+    };
+    rerender(<ReportForm env="demo" view={next} actions={a} />);
+    choose(2, "Död"); // typed here, not sent
+    fireEvent.click(
+      screen.getByRole("button", { name: "Visa hela rapporten" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Fortsätt ändra" }));
+    expect(screen.getByDisplayValue("Ändrad i en annan flik")).toBeTruthy();
+    expect(
+      within(row(2)).getByRole("radio", { name: "Död", checked: true }),
+    ).toBeTruthy();
+    fireEvent.change(screen.getByDisplayValue("Ändrad i en annan flik"), {
+      target: { value: "Ändrad i en annan flik." },
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    const [, , data, updatedAt] = a.saveDraft.mock.calls[0];
+    expect(updatedAt).toBe(next.draft!.updated_at);
+    expect((data as { message: string }).message).toBe(
+      "Ändrad i en annan flik.",
+    );
+  });
+
+  it("keeps a typed answer on Ändra without a draft or local copy", () => {
+    const v = { ...missingView(), draft: null };
+    render(<ReportForm env="demo" view={v} actions={completionActions()} />);
+    choose(2, "Finns kvar");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Visa hela rapporten" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Ändra" }));
+    expect(
+      within(row(2)).getByRole("radio", { name: "Finns kvar", checked: true }),
+    ).toBeTruthy();
+  });
+
+  it("retries a timeout with the same key and body", async () => {
+    const a = completionActions();
+    a.submitCompletion.mockImplementationOnce(() => fail(504));
+    const { rerender } = render(
+      <ReportForm env="demo" view={missingView([1, 2])} actions={a} />,
+    );
+    sellOutside();
+    sendAnswer();
+    fireEvent.click(await screen.findByRole("button", { name: "Försök igen" }));
+    expect(await screen.findByText(savedText)).toBeTruthy();
+    expect(a.dryRunCompletion).toHaveBeenCalledTimes(1);
+    expect(a.submitCompletion).toHaveBeenCalledTimes(2);
+    const first = a.submitCompletion.mock.calls[0][2];
+    expect(a.submitCompletion.mock.calls[1][2]).toEqual(first);
+    expect(first.rabbits["1"].sald?.kopare).toMatchObject({
+      name: "Ola Köpare",
+    });
+    rerender(<ReportForm env="demo" view={missingView([2], 5)} actions={a} />);
+    choose(2, "Finns kvar");
+    fireEvent.change(within(row(2)).getByLabelText("Vikt"), {
+      target: { value: "3" },
+    });
+    sendAnswer();
+    await waitFor(() => expect(a.submitCompletion).toHaveBeenCalledTimes(3));
+    expect(a.submitCompletion.mock.calls[2][2].submission_key).not.toBe(
+      first.submission_key,
+    );
+    rerender(<ReportForm env="demo" view={missingView([], 6)} actions={a} />);
+    expect(
+      screen.getByText("Alla kaniner på listan är besvarade."),
+    ).toBeTruthy();
+    expect(screen.queryByRole("radio")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Skicka svar" })).toBeNull();
+  });
+
+  it("reload after link completion still shows remaining paper omissions", async () => {
+    const v = missingView([2, 3], 5);
+    v.report!.source = "link";
+    const a = completionActions();
+    a.submitCompletion.mockImplementationOnce(() => fail(409));
+    const { rerender } = render(
+      <ReportForm link env="prod" view={v} actions={a} />,
+    );
+    expect(
+      screen.getByRole("heading", { name: "Kaniner som saknas på blanketten" }),
+    ).toBeTruthy();
+    expect(screen.getAllByRole("radio", { name: "Finns kvar" })).toHaveLength(
+      2,
+    );
+    expect(row(2)).toBeTruthy();
+    expect(row(3)).toBeTruthy();
+    choose(2, "Finns kvar");
+    sendAnswer();
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+    rerender(
+      <ReportForm link env="prod" view={missingView([3], 6)} actions={a} />,
+    );
+    expect(screen.queryByText("Kanin2")).toBeNull();
+    expect(row(3)).toBeTruthy();
+  });
+
+  it("shows the full receipt when nothing is missing", () => {
+    render(
+      <ReportForm
+        env="demo"
+        view={missingView([])}
+        actions={completionActions()}
+      />,
+    );
+    expect(
+      screen.getByText(/Klart\. Årsrapporten för G9001 kom in/),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Skicka svar" })).toBeNull();
+  });
+});
 
 describe("ReportForm", () => {
   it("renders the heading with no sticky offset and no dashboard shell", () => {
@@ -362,15 +879,145 @@ describe("ReportForm", () => {
     expect(a.saveDraft).toHaveBeenCalled();
   });
 
-  it("asks no consent question and links Dina uppgifter to the profile", () => {
-    render(<ReportForm env="demo" view={view()} actions={actions()} />);
-    expect(screen.queryByText(/Koharen\? Listan/)).toBeNull();
-    expect(screen.getByText("Dina uppgifter")).toBeTruthy();
+  it("lets the main member change Dina uppgifter and sends only what changed (5.11)", async () => {
+    const a = actions();
+    const details = {
+      mode: "main" as const,
+      contact: {
+        address: "Gamla vägen 1",
+        postal_code: "621 41",
+        city: "Slite",
+        phone: "0709-111 222",
+        email: "g9001@example.invalid",
+      },
+      publicering: { ja: false, utom: [] },
+      publicering_version: 7,
+      konto: "••••5512",
+    };
+    render(
+      <ReportForm
+        env="demo"
+        view={view({ member_details: details })}
+        actions={a}
+      />,
+    );
     expect(
-      screen
-        .getByRole("link", { name: "Gå till profilen" })
-        .getAttribute("href"),
-    ).toBe("/stamboken/profil");
+      (screen.getByLabelText("Gatuadress") as HTMLInputElement).value,
+    ).toBe("Gamla vägen 1");
+    expect(screen.getByText("Konto för stödet: ••••5512")).toBeTruthy();
+    expect(screen.getByText("E-post: g9001@example.invalid")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Telefon"), {
+      target: { value: "0709-777 888" },
+    });
+    fireEvent.click(screen.getByRole("radio", { name: "Ja" }));
+    fillAll();
+    send();
+    await waitFor(() => expect(a.submitReport).toHaveBeenCalled());
+    const body = a.submitReport.mock.calls[0][2] as Submission;
+    expect(body.matrikel).toEqual({
+      telefon: "0709-777 888",
+      publicering: {
+        ja: true,
+        utom: ["phone", "email", "address"],
+        version: 7,
+        text_version: "2026-11-20",
+      },
+    });
+    // never in the draft or the browser
+    expect(JSON.stringify(a.saveDraft.mock.calls)).not.toContain("0709-777");
+    expect(JSON.stringify({ ...window.localStorage })).not.toContain(
+      "0709-777",
+    );
+  });
+
+  it("sends nothing of Dina uppgifter when the main member changed nothing", async () => {
+    const a = actions();
+    const details = {
+      mode: "main" as const,
+      contact: {
+        address: "",
+        postal_code: "",
+        city: "",
+        phone: "",
+        email: "",
+      },
+      publicering: null,
+      publicering_version: null,
+      konto: null,
+    };
+    render(
+      <ReportForm
+        env="demo"
+        view={view({ member_details: details })}
+        actions={a}
+      />,
+    );
+    expect(screen.getByText("Inget konto för stödet i matrikeln")).toBeTruthy();
+    fillAll();
+    send();
+    await waitFor(() => expect(a.submitReport).toHaveBeenCalled());
+    expect((a.submitReport.mock.calls[0][2] as Submission).matrikel).toBe(
+      undefined,
+    );
+  });
+
+  it("the link's receipt lists changes to confirm and expired ones, and offers an account last", () => {
+    render(
+      <ReportForm
+        link
+        env="prod"
+        accountOffer
+        view={view({
+          access: "code",
+          source: "link",
+          report: submittedReport(),
+          member_details: {
+            mode: "link",
+            changes: [
+              {
+                falt: "telefon",
+                state: "vantar",
+                expires_at: "2027-01-17T13:32:00+00:00",
+              },
+              {
+                falt: "konto",
+                state: "forfallen",
+                expires_at: "2027-01-01T10:00:00+00:00",
+              },
+            ],
+          },
+        })}
+        actions={actions()}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "Du har ändringar att bekräfta i mejlet (telefon). Bekräfta senast 17 januari 2027.",
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/Ändringen av konto gällde till 1 januari 2027/),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("link", { name: "Skapa konto" }).getAttribute("href"),
+    ).toBe("/auth/sign-in");
+  });
+
+  it("tells an owner who is not the main member who changes the details", () => {
+    render(
+      <ReportForm
+        env="demo"
+        view={view({ member_details: { mode: "none" } })}
+        actions={actions()}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "Huvudmedlemmen ändrar kontaktuppgifterna, kontot för stödet och svaret om Koharen.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByLabelText("Telefon")).toBeNull();
+    expect(screen.queryByRole("link", { name: "Gå till profilen" })).toBeNull();
   });
 
   it("counts done rabbits and keeps a row that became done under 'Inte klara'", () => {
@@ -437,6 +1084,7 @@ describe("ReportForm", () => {
     );
     expect(within(row(1)).queryByText("✓ Klar")).toBeNull();
     fireEvent.click(within(row(1)).getByRole("button", { name: "Ändra" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Ja" })); // the buyer has e-mail (before 2027)
     fireEvent.change(screen.getByLabelText(/Köparens namn/), {
       target: { value: "Ola Köpare" },
     });
@@ -445,6 +1093,9 @@ describe("ReportForm", () => {
     });
     fireEvent.change(screen.getByLabelText(/^Postadress/), {
       target: { value: "Testgatan 1" },
+    });
+    fireEvent.change(screen.getByLabelText(/^E-post/), {
+      target: { value: "ola@example.invalid" },
     });
     fireEvent.click(
       screen.getByRole("button", { name: "Spara försäljningen" }),
@@ -490,27 +1141,194 @@ describe("ReportForm", () => {
     expect(screen.queryByText(/Köparen finns sparad/)).toBeNull();
   });
 
+  // Jonas 2026-11-26: before the first Skicka the dialog registers the sale at once, after Sälj's tick box.
+  const ACK =
+    "Jag har tagit del av informationen och vill ta bort kaninen från min besättning.";
+  const sellingActions = () => ({
+    ...actions(),
+    sellNow: vi.fn<(...args: unknown[]) => Promise<unknown>>(() =>
+      ok({ operation_id: "op" }),
+    ),
+    undoSale: vi.fn<(...args: unknown[]) => Promise<unknown>>(() => ok(null)),
+  });
+  const typeSaleOutside = () => {
+    choose(1, "Såld");
+    fireEvent.click(screen.getByLabelText("Utanför genbanken"));
+    fireEvent.click(screen.getByRole("radio", { name: "Ja" })); // e-mail, before 2027
+    for (const [label, value] of [
+      [/Köparens namn/, "Ola Köpare"],
+      [/^Ort/, "Visby"],
+      [/^Postadress/, "Testgatan 1"],
+      [/^E-post/, "ola@example.invalid"],
+    ] as const)
+      fireEvent.change(screen.getByLabelText(label), { target: { value } });
+    fireEvent.change(screen.getByLabelText("Månad"), {
+      target: { value: "6" },
+    });
+  };
+  const spara = () =>
+    fireEvent.click(
+      screen.getByRole("button", { name: "Spara försäljningen" }),
+    );
+
+  it("registers a sale at once once the box is ticked, then lets go of the row and reads the view again", async () => {
+    vi.useFakeTimers();
+    const a = sellingActions();
+    render(<ReportForm env="demo" view={view()} actions={a as never} />);
+    choose(1, "Finns kvar"); // an entry the sale must take away
+    typeSaleOutside();
+    expect(
+      screen.getByText(
+        "Köparen får ett mejl om vad föreningen sparar. Du kan ångra försäljningen i 7 dagar.",
+      ),
+    ).toBeTruthy();
+    spara();
+    expect(
+      screen.getByText("Kryssa i rutan för att registrera försäljningen."),
+    ).toBeTruthy();
+    expect(a.sellNow).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByLabelText(ACK));
+    await act(async () => {
+      spara();
+      await vi.advanceTimersByTimeAsync(10);
+    });
+    expect(a.sellNow).toHaveBeenCalledTimes(1);
+    const [herdCode, year, id, sald] = a.sellNow.mock.calls[0] as unknown as [
+      string,
+      number,
+      number,
+      { till: string; manad: number; kopare: { name: string } },
+    ];
+    expect([
+      herdCode,
+      year,
+      id,
+      sald.till,
+      sald.manad,
+      sald.kopare.name,
+    ]).toEqual(["G9001", 2026, 1, "utanfor", 6, "Ola Köpare"]);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(refresh).toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    const data = a.saveDraft.mock.calls.at(-1)?.[2];
+    expect(data?.rabbits["1"]).toBeUndefined(); // the register holds the sale now, not the draft
+  });
+
+  it("leaves a late sale to Skicka, which asks for the reason", () => {
+    const a = sellingActions();
+    const round = {
+      start_date: "2025-12-31",
+      deadline: "2026-01-31",
+      end_date: "2026-03-01",
+      activated: true,
+      open: false,
+    };
+    render(
+      <ReportForm
+        env="demo"
+        view={view({ access: "manager", round })}
+        actions={a as never}
+      />,
+    );
+    typeSaleOutside();
+    expect(screen.queryByLabelText(ACK)).toBeNull();
+    spara();
+    expect(a.sellNow).not.toHaveBeenCalled();
+  });
+
+  it("counts the year's sales the report did not write among Sålda", () => {
+    const report = {
+      ...submittedReport(),
+      submitted: {
+        rabbits: { "1": { val: "kvar", vikt: 2.8 } },
+        salda_direkt: [{ individual_id: 3 }, { individual_id: 4 }],
+      } as never,
+    };
+    render(
+      <ReportForm env="demo" view={view({ report })} actions={actions()} />,
+    );
+    expect(screen.getByText("Sålda").previousElementSibling?.textContent).toBe(
+      "2",
+    );
+  });
+
+  it("keeps the dialog open with the server's refusal", async () => {
+    const a = sellingActions();
+    a.sellNow.mockImplementationOnce(() =>
+      fail(422, {
+        refusals: [
+          {
+            individual_id: 1,
+            code: "kopare",
+            message: "Ange köparens postadress.",
+          },
+        ],
+      }),
+    );
+    render(<ReportForm env="demo" view={view()} actions={a as never} />);
+    typeSaleOutside();
+    fireEvent.click(screen.getByLabelText(ACK));
+    await act(async () => spara());
+    expect(
+      within(screen.getByRole("dialog")).getByText("Ange köparens postadress."),
+    ).toBeTruthy();
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("offers Ångra on a sale of the year and on a rabbit counted by its move, and asks first", async () => {
+    const a = sellingActions();
+    const sales = [
+      {
+        individual_id: 3,
+        number: "G9001-3",
+        to_herd: "GX1",
+        date: "2026-06-30",
+        day_known: true,
+        undo: 55,
+      },
+    ];
+    const moved = rabbit(2, {
+      state: "via_flytt",
+      later: { kind: "TRANSFER", date: "2027-01-05" },
+      undo: 56,
+      undo_to: "G9002",
+    });
+    render(
+      <ReportForm
+        env="demo"
+        view={view({ sales, rabbits: [rabbit(1), moved] })}
+        actions={a as never}
+      />,
+    );
+    const BACK = "Kaninen kommer tillbaka till din besättning.";
+    const NOTE =
+      "Kaninen kommer tillbaka till din besättning, och köparens uppgifter tas bort.";
+    for (const [i, id, note] of [
+      [0, 56, BACK], // the row comes before "Sålda under 2026"; sold to G9002, a herd in the genebank
+      [1, 55, NOTE], // sold outside the genebank
+    ] as const) {
+      fireEvent.click(screen.getAllByRole("button", { name: "Ångra" })[i]);
+      const dialog = screen.getByRole("dialog");
+      expect(within(dialog).getByText(note)).toBeTruthy();
+      expect(a.undoSale).toHaveBeenCalledTimes(i); // nothing undone before the question is answered
+      await act(async () =>
+        fireEvent.click(
+          within(dialog).getByRole("button", { name: "Ångra försäljning" }),
+        ),
+      );
+      expect(a.undoSale.mock.calls[i].slice(0, 3)).toEqual(["G9001", 2026, id]);
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    }
+    expect(refresh).toHaveBeenCalled();
+  });
+
   it("holds a buyer outside the genebank in memory only: the draft and localStorage never get it", async () => {
     vi.useFakeTimers();
     const a = actions();
     render(<ReportForm env="demo" view={view()} actions={a} />);
-    choose(1, "Såld");
-    fireEvent.click(screen.getByLabelText("Utanför genbanken"));
-    fireEvent.change(screen.getByLabelText(/Köparens namn/), {
-      target: { value: "Ola Köpare" },
-    });
-    fireEvent.change(screen.getByLabelText(/^Ort/), {
-      target: { value: "Visby" },
-    });
-    fireEvent.change(screen.getByLabelText(/^Postadress/), {
-      target: { value: "Testgatan 1" },
-    });
-    fireEvent.change(screen.getByLabelText("Månad"), {
-      target: { value: "6" },
-    });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Spara försäljningen" }),
-    );
+    sellOutside();
     expect(
       within(row(1)).getByText(/Såld till utanför genbanken, juni 2026/),
     ).toBeTruthy();
@@ -724,6 +1542,8 @@ describe("ReportForm", () => {
             },
           } as never,
         },
+        not_stated: [],
+        can_complete_missing: false,
         can_change: true,
         can_withdraw: true,
         withdraw_until: "2027-01-10T13:32:00+00:00",
@@ -801,6 +1621,8 @@ describe("ReportForm", () => {
             report_date: "2027-01-03",
             on_time: true,
             submitted: { rabbits: sale },
+            not_stated: [],
+            can_complete_missing: false,
             can_change: true,
             can_withdraw: true,
             withdraw_until: "2027-01-10T13:32:00+00:00",
@@ -1079,6 +1901,7 @@ describe("ReportForm", () => {
     expect(a.saveDraft.mock.calls[0][2].rabbits["1"].val).toBe("kvar");
     expect(a.saveDraft.mock.calls[0][3]).toBe(draft.updated_at);
     cleanup();
+    forgetTabWrites(); // a new page load: the mock's answer above is not this view's history
 
     copy("2026-12-31T10:00:00+00:00");
     render(
@@ -1210,6 +2033,440 @@ describe("ReportForm", () => {
     expect(
       (within(row(1)).getByLabelText("Finns kvar") as HTMLInputElement).checked,
     ).toBe(false); // reset from the reloaded view
+  });
+
+  // Next shows the view object from before the save again when the user comes Back (Jonas 2026-11-26).
+  const savedDraft = (rabbits: Record<string, { val: string }>) =>
+    view({
+      draft: {
+        data: { rabbits },
+        updated_at: "2026-12-31T10:00:00+00:00",
+        submission_key: null,
+        own: true,
+      },
+    } as never);
+  const checked = (n: number) =>
+    (within(row(n)).getByLabelText("Finns kvar") as HTMLInputElement).checked;
+  // saveDraft as the server answers it: a save from an older version gets the 409
+  const server = () => {
+    let at: string | null = null;
+    let stored: unknown = null;
+    return vi.fn(
+      (_h: string, _y: number, data: unknown, seen: string | null) => {
+        if (seen !== at)
+          return fail(409, {
+            draft: {
+              data: stored,
+              updated_at: at,
+              submission_key: null,
+              own: true,
+            },
+          });
+        stored = data;
+        at = "2026-12-31T10:00:00+00:00";
+        return ok({ updated_at: at, submission_key: null });
+      },
+    );
+  };
+  const answerLater = () => {
+    let answer!: () => void;
+    const call = new Promise((resolve) => {
+      answer = () =>
+        resolve({
+          ok: true,
+          data: {
+            updated_at: "2026-12-31T10:00:00+00:00",
+            submission_key: null,
+          },
+        });
+    });
+    return { call, answer };
+  };
+
+  it("reads the page again when Back brings a view from before its own save, and saves on without a conflict", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    a.saveDraft.mockImplementation(server());
+    const before = view();
+    const first = render(<ReportForm env="demo" view={before} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    expect(a.saveDraft).toHaveBeenCalledTimes(1);
+    first.unmount(); // to the profile, and Back
+    const { rerender } = render(
+      <ReportForm env="demo" view={before} actions={a} />,
+    );
+    await act(async () => {}); // the reload asks for the page once the writes on their way have answered
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(screen.getAllByText("Hämtar senaste versionen…")).not.toHaveLength(
+      0,
+    );
+    expect(
+      within(row(2)).getByLabelText("Finns kvar").matches(":disabled"),
+    ).toBe(true);
+    rerender(
+      <ReportForm
+        env="demo"
+        view={savedDraft({ "1": { val: "kvar" } })}
+        actions={a}
+      />,
+    );
+    expect(checked(1)).toBe(true);
+    expect(screen.getAllByText(/sparat \(senast 11\.00\)/)).not.toHaveLength(0);
+    choose(2, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    expect(a.saveDraft).toHaveBeenCalledTimes(2);
+    expect(a.saveDraft.mock.calls[1][3]).toBe("2026-12-31T10:00:00+00:00");
+    expect(screen.queryByText(/annan enhet/)).toBeNull();
+  });
+
+  it("keeps a change made just before leaving, when Back reads the page again", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    const before = view();
+    const first = render(<ReportForm env="demo" view={before} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    choose(2, "Finns kvar"); // left before its autosave: only the local copy has it
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    first.unmount();
+    const { rerender } = render(
+      <ReportForm env="demo" view={before} actions={a} />,
+    );
+    await act(async () => {}); // the reload asks for the page once the writes on their way have answered
+    expect(refresh).toHaveBeenCalledTimes(1);
+    rerender(
+      <ReportForm
+        env="demo"
+        view={savedDraft({ "1": { val: "kvar" } })}
+        actions={a}
+      />,
+    );
+    expect([checked(1), checked(2)]).toEqual([true, true]);
+    expect(
+      screen.queryByText("Osparade ändringar på den här enheten"),
+    ).toBeNull();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    expect(a.saveDraft).toHaveBeenCalledTimes(2);
+    expect(a.saveDraft.mock.calls[1][2]).toMatchObject({
+      rabbits: { "1": { val: "kvar" }, "2": { val: "kvar" } },
+    });
+  });
+
+  it("waits for a save still on its way when Back comes first, then reads the page again", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    const later = answerLater();
+    a.saveDraft.mockImplementationOnce(() => later.call);
+    const before = view();
+    const first = render(<ReportForm env="demo" view={before} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    expect(a.saveDraft).toHaveBeenCalledTimes(1);
+    first.unmount(); // Back before the save has answered
+    const { rerender } = render(
+      <ReportForm env="demo" view={before} actions={a} />,
+    );
+    expect(screen.getAllByText("Hämtar senaste versionen…")).not.toHaveLength(
+      0,
+    );
+    expect(refresh).not.toHaveBeenCalled(); // not before the save is in
+    await act(async () => {
+      later.answer();
+    });
+    await act(async () => {}); // the reload asks for the page once the writes on their way have answered
+    expect(refresh).toHaveBeenCalledTimes(1);
+    rerender(
+      <ReportForm
+        env="demo"
+        view={savedDraft({ "1": { val: "kvar" } })}
+        actions={a}
+      />,
+    );
+    expect(checked(1)).toBe(true);
+  });
+
+  it("reads a view again after a save from another page of the same report", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    const ordinary = view();
+    render(<ReportForm env="demo" view={ordinary} actions={a} />).unmount();
+    // the paper page of the same report has its own view and the same draft
+    const other = render(<ReportForm env="demo" view={view()} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    other.unmount();
+    render(<ReportForm env="demo" view={ordinary} actions={a} />);
+    await act(async () => {}); // the reload asks for the page once the writes on their way have answered
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the reload on the receipt too, with Ladda om sidan when it does not answer", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    const sent = view({ report: submittedReport() } as never);
+    render(<ReportForm env="demo" view={sent} actions={a} />).unmount();
+    const other = render(<ReportForm env="demo" view={view()} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    other.unmount();
+    render(<ReportForm env="demo" view={sent} actions={a} />);
+    expect(screen.getAllByText("Hämtar senaste versionen…")).not.toHaveLength(
+      0,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(screen.getByRole("button", { name: "Ladda om sidan" })).toBeTruthy();
+  });
+
+  it("leaves a newer local copy alone when an older save answers", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    const later = answerLater();
+    a.saveDraft.mockImplementationOnce(() => later.call);
+    render(<ReportForm env="demo" view={view()} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    // a form mounted later (Back, another tab) wrote its own copy meanwhile
+    const key = Object.keys(window.localStorage).find((k) =>
+      k.startsWith("arsrapport:"),
+    )!;
+    window.localStorage.setItem(
+      key,
+      JSON.stringify({
+        data: { rabbits: { "2": { val: "kvar" } } },
+        updated_at: null,
+        revision: null,
+        writer: "a form mounted later",
+      }),
+    );
+    await act(async () => {
+      later.answer();
+    });
+    expect(local()).toContain('"2"');
+  });
+
+  it("waits for every save the old form still has queued before it reads the page again", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    const first = answerLater();
+    const second = answerLater();
+    a.saveDraft
+      .mockImplementationOnce(() => first.call)
+      .mockImplementationOnce(() => second.call);
+    const before = view();
+    const old = render(<ReportForm env="demo" view={before} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    choose(2, "Finns kvar"); // its autosave waits behind the first save
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    expect(a.saveDraft).toHaveBeenCalledTimes(1);
+    old.unmount();
+    render(<ReportForm env="demo" view={before} actions={a} />);
+    await act(async () => {
+      first.answer();
+    });
+    expect(a.saveDraft).toHaveBeenCalledTimes(2); // the old form sends the queued one
+    expect(refresh).not.toHaveBeenCalled();
+    await act(async () => {
+      second.answer();
+    });
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves another form's local copy alone when a late save meets a conflict", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    let answer!: (v: unknown) => void;
+    a.saveDraft.mockImplementationOnce(
+      () => new Promise((resolve) => (answer = resolve)),
+    );
+    render(<ReportForm env="demo" view={view()} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    const key = Object.keys(window.localStorage).find((k) =>
+      k.startsWith("arsrapport:"),
+    )!;
+    window.localStorage.setItem(
+      key,
+      JSON.stringify({
+        data: { rabbits: { "2": { val: "kvar" } } },
+        updated_at: null,
+        revision: null,
+        writer: "a form mounted later",
+      }),
+    );
+    await act(async () => {
+      answer({
+        ok: false,
+        problem: {
+          status: 409,
+          title: "t",
+          detail: "x",
+          extensions: {
+            draft: {
+              data: { rabbits: {} },
+              updated_at: "2026-12-31T11:00:00+00:00",
+              submission_key: null,
+              own: true,
+            },
+          },
+        },
+      });
+    });
+    expect(local()).toContain('"2"');
+  });
+
+  it("waits for a Skicka still being checked when Back comes first", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    let checked!: (v: unknown) => void;
+    a.dryRun.mockImplementationOnce(
+      () => new Promise((resolve) => (checked = resolve)),
+    );
+    const before = view();
+    const old = render(<ReportForm env="demo" view={before} actions={a} />);
+    fillAll();
+    send();
+    old.unmount(); // Back while the dry run is on its way
+    render(<ReportForm env="demo" view={before} actions={a} />);
+    expect(screen.getAllByText("Hämtar senaste versionen…")).not.toHaveLength(
+      0,
+    );
+    await act(async () => {});
+    expect(refresh).not.toHaveBeenCalled();
+    await act(async () => {
+      checked({ ok: true, data: { ok: true, refusals: [], warnings: [] } });
+    });
+    expect(a.submitReport).toHaveBeenCalledTimes(1);
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it("reads a view again that holds another draft version than the last one this tab saved", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    const first = render(<ReportForm env="demo" view={view()} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    first.unmount();
+    // a page read before that save answered, shown for the first time
+    render(<ReportForm env="demo" view={view()} actions={a} />);
+    await act(async () => {});
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not let a retry overwrite the copy another form wrote since", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    a.saveDraft.mockImplementation(() => fail(502)); // offline
+    render(<ReportForm env="demo" view={view()} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    const key = Object.keys(window.localStorage).find((k) =>
+      k.startsWith("arsrapport:"),
+    )!;
+    window.localStorage.setItem(
+      key,
+      JSON.stringify({
+        data: { rabbits: { "2": { val: "kvar" } } },
+        updated_at: null,
+        revision: null,
+        writer: "a form mounted later",
+      }),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5100); // the retry
+    });
+    expect(local()).toContain('"2"');
+  });
+
+  it("offers Ladda om sidan when a write on its way does not answer", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    a.saveDraft.mockImplementationOnce(() => new Promise(() => {}));
+    const before = view();
+    const old = render(<ReportForm env="demo" view={before} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    old.unmount();
+    render(<ReportForm env="demo" view={before} actions={a} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(screen.getByRole("button", { name: "Ladda om sidan" })).toBeTruthy();
+  });
+
+  it("takes only the view its own reload brings, not one another refresh brought meanwhile", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    const later = answerLater();
+    a.saveDraft.mockImplementationOnce(() => later.call);
+    const before = view();
+    const old = render(<ReportForm env="demo" view={before} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    old.unmount();
+    const { rerender } = render(
+      <ReportForm env="demo" view={before} actions={a} />,
+    );
+    rerender(<ReportForm env="demo" view={view()} actions={a} />); // read before the save
+    expect(screen.getAllByText("Hämtar senaste versionen…")).not.toHaveLength(
+      0,
+    );
+    await act(async () => {
+      later.answer();
+    });
+    rerender(
+      <ReportForm
+        env="demo"
+        view={savedDraft({ "1": { val: "kvar" } })}
+        actions={a}
+      />,
+    );
+    expect(screen.queryByText("Hämtar senaste versionen…")).toBeNull();
+    expect(checked(1)).toBe(true);
+  });
+
+  it("does not read the page again on Back when nothing was saved from it", async () => {
+    const a = actions();
+    const before = view();
+    render(<ReportForm env="demo" view={before} actions={a} />).unmount();
+    render(<ReportForm env="demo" view={before} actions={a} />);
+    await act(async () => {});
+    expect(refresh).not.toHaveBeenCalled();
   });
 
   it("an error link clears the search and filter and focuses the control that needs input", async () => {
@@ -1419,13 +2676,8 @@ describe("ReportForm", () => {
       getMothers: vi.fn(() => ok({ honor: [] })) as never,
       changeLitter: changeLitter as never,
     };
-    render(
-      <ReportForm
-        env="demo"
-        view={view({ litters: [preliminary] })}
-        actions={withLitters}
-      />,
-    );
+    const shown = view({ litters: [preliminary] });
+    render(<ReportForm env="demo" view={shown} actions={withLitters} />);
     expect(screen.getAllByText(/\(preliminärt\)/).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "Lägg till kull" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Bekräfta antalet" }));
@@ -1448,6 +2700,11 @@ describe("ReportForm", () => {
     await waitFor(() =>
       expect(screen.queryAllByText(/\(preliminärt\)/)).toHaveLength(0),
     );
+    // the litter is written, the view is not: Back reads the page again
+    cleanup();
+    render(<ReportForm env="demo" view={shown} actions={withLitters} />);
+    await act(async () => {}); // the reload asks for the page once the writes on their way have answered
+    expect(refresh).toHaveBeenCalledTimes(1);
   });
 
   it("lists litters as a table with a summary line", () => {

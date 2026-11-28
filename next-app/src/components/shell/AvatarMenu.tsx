@@ -19,6 +19,7 @@ import {
 } from "@mui/material";
 import AccountCircleIcon from "@mui/icons-material/AccountCircle";
 import { useUser } from "@/lib/user-context";
+import { TRIED_DEMO_KEY } from "@/lib/constants";
 import { TyckTillDialog } from "@/components/tyck-till/TyckTillDialog.client";
 import {
   hasAnyVisible,
@@ -81,6 +82,13 @@ export function AvatarMenu({ unread = 0 }: { unread?: number }) {
   const handleModeConfirm = async () => {
     setModeDialogOpen(false);
     await setMode(switchingToDemo ? "demo" : "prod");
+    if (switchingToDemo) {
+      try {
+        localStorage.setItem(TRIED_DEMO_KEY, "1");
+      } catch {
+        // unavailable storage: the checklist step stays open
+      }
+    }
     // CR-01: RTK cache keys don't include mode; purge so refetches read the new
     // sb_mode cookie instead of the other backend's cached rows.
     dispatch(apiSlice.util.resetApiState());

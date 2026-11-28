@@ -30,7 +30,10 @@ export interface RabbitView {
   death_date: string | null;
   death_day_known: boolean; // false: the report gave it without its day, so its month is shown
   state: "att_valja" | "redan_rapporterad" | "via_flytt";
-  later: { kind: string; date: string } | null;
+  // day_known false: the report's sale dialog gave it without its day, so its month is shown
+  later: { kind: string; date: string; day_known?: boolean } | null;
+  undo?: number | null; // a sale after 31 December the viewer may Ångra (the `later` move)
+  undo_to?: string; // that sale's buyer herd, for Ångra's question
   buyer_removed?: boolean;
   removed_buyer_dates?: string[];
   registered_buyer_date?: string;
@@ -177,13 +180,47 @@ export interface DraftData {
 export type Utom = "phone" | "email" | "address";
 // The API takes what is left out; the form asks what may appear, none ticked at first.
 export const UTOM_ALL: Utom[] = ["phone", "email", "address"];
+// The form's boxes Bankkonto, Bankgiro and Plusgiro; only a bankkonto has a clearing number.
+export type KontoTyp = "bankkonto" | "bankgiro" | "plusgiro";
 export interface Matrikel {
   adress?: { address?: string; postal_code?: string; city?: string };
   telefon?: string;
   epost?: string;
-  konto?: { clearing?: string; konto?: string; bank?: string };
-  publicering?: { ja: boolean; utom: Utom[] };
+  konto?: { typ?: KontoTyp; clearing?: string; konto?: string; bank?: string };
+  // A digital answer names the text it answers (CONSENT_TEXT_VERSION), as the profile's does.
+  // Logged in, `version` is the answer the page showed: a change made elsewhere since is a refusal, not overwritten.
+  publicering?: {
+    ja: boolean;
+    utom: Utom[];
+    text_version?: string;
+    version?: number | null;
+  };
 }
+
+// ReportView.member_details (5.11, D1): the main member's own details logged in, the link's changes without any
+// stored value, nothing for paper (its PaperChanges) or for anyone else.
+export interface DetailsChange {
+  falt: "adress" | "telefon" | "epost" | "konto" | "publicering";
+  state: "vantar" | "forfallen";
+  expires_at: string;
+}
+export type MemberDetailsView =
+  | {
+      mode: "main";
+      contact: {
+        address: string;
+        postal_code: string;
+        city: string;
+        phone: string;
+        email: string;
+      };
+      publicering: { ja: boolean; utom: Utom[] } | null;
+      publicering_version: number | null; // the stored answer's version
+      konto: string | null; // "••••4567"
+    }
+  | { mode: "link"; changes: DetailsChange[] }
+  | { mode: "paper" }
+  | { mode: "none" };
 
 export interface Submission extends DraftData {
   submission_key: string;
@@ -192,7 +229,14 @@ export interface Submission extends DraftData {
   inbox_item_id?: number;
   received_on?: string;
   signed_on?: string;
+  signed_on_confirmed?: boolean; // distinguishes an entered receipt-day signature from the old form's default
   matrikel?: Matrikel;
+}
+
+export interface Completion {
+  submission_key: string;
+  revision: number;
+  rabbits: Record<string, BodyEntry>;
 }
 
 export interface ReportView {
@@ -223,6 +267,7 @@ export interface ReportView {
     to_herd: string;
     date: string;
     day_known: boolean; // false: the report gave it without its day (5.3), so its month is shown
+    undo?: number | null; // the sale's row, when the viewer may Ångra it as on the rabbit page
   }[];
   // The report's sale proposals not taken back (5.9), without the buyer.
   forslag: {
@@ -243,8 +288,16 @@ export interface ReportView {
     received_at: string;
     report_date: string;
     on_time: boolean;
-    submitted: (Partial<DraftData> & { received_on?: string }) | null;
+    submitted:
+      | (Partial<DraftData> & {
+          received_on?: string;
+          salda_direkt?: { individual_id: number }[]; // the year's sales no report wrote
+        })
+      | null;
     can_change: boolean;
+    not_stated: number[];
+    from_paper?: boolean; // a submission came from paper: the receipt shows its day, not a time
+    can_complete_missing: boolean;
     can_withdraw: boolean;
     withdraw_until: string | null;
     villkor: Villkor;
@@ -261,6 +314,7 @@ export interface ReportView {
     state: string;
     account_end: string | null;
   };
+  member_details?: MemberDetailsView;
 }
 
 export interface MyReport {
@@ -335,8 +389,10 @@ export interface BodyEntry {
 
 export const SUBMIT_TIMEOUT_MS = 30_000;
 
-// The wording of the blankett's question about the listing in Koharen
-// (CONSENT_TEXT_VERSION "2026-11-20" on the server). Only the paper form shows it.
+// The wording of the blankett's question about the listing in Koharen, shown by
+// PublicationFields. The profile sends its version with every answer; the
+// server refuses another (CONSENT_TEXT_VERSION in app/utils/members.py).
+export const CONSENT_TEXT_VERSION = "2026-11-20";
 export const CONSENT_TEXT =
   "Får din besättning stå med i Koharens lista över aktiva besättningar? Koharen är föreningens tidning på papper och går bara till medlemmar. Listan gör det lättare för besättningarna att hitta varandra.";
 
@@ -391,7 +447,7 @@ export const REFUSAL_TEXT: Record<string, string> = {
     "Kaninen har en senare händelse i Stamboken. Genbanksansvarig kan rätta.",
   forsaljning_skotare:
     "Försäljningen registreras av ägaren eller genbanksansvarig.",
-  kopare_saknas: "Skriv köparens namn och ort.",
+  kopare_saknas: "Fyll i köparen, eller välj såld utanför genbanken.",
   halsa_saknas: "Välj Inga sjukdomsfall eller defekter, eller Ja.",
   ej_angiven_digitalt: "Ej angiven finns bara när en blankett matas in.",
   orsak_kravs: "Skriv varför rapporten ändras.",
@@ -706,6 +762,8 @@ export function toBody(
   revision: number | null,
   // Skicka sends only the rabbits on the current list: a sold one may linger in a local copy (FB1)
   listed?: readonly number[],
+  // and the year's sold rabbits (view.sales), whose defects still go with the report
+  sold: readonly number[] = [],
 ): Submission {
   const rabbits: Record<string, BodyEntry> = {};
   for (const [id, e] of Object.entries(state.rabbits)) {
@@ -735,7 +793,12 @@ export function toBody(
     defects:
       state.health === "ja"
         ? state.defects
-            .filter((d) => !listed || listed.includes(d.individual_id))
+            .filter(
+              (d) =>
+                !listed ||
+                listed.includes(d.individual_id) ||
+                sold.includes(d.individual_id),
+            )
             .map((d) => ({
               individual_id: d.individual_id,
               beskrivning: d.beskrivning.trim() || null,
@@ -952,7 +1015,7 @@ export interface PaperFields {
   adress: { address: string; postal_code: string; city: string };
   telefon: string;
   epost: string;
-  konto: { clearing: string; konto: string; bank: string };
+  konto: { typ: "" | KontoTyp; clearing: string; konto: string; bank: string };
   consent: "" | "ja" | "nej";
   utom: Utom[];
 }
@@ -961,7 +1024,7 @@ export const emptyPaperFields = (): PaperFields => ({
   adress: { address: "", postal_code: "", city: "" },
   telefon: "",
   epost: "",
-  konto: { clearing: "", konto: "", bank: "" },
+  konto: { typ: "", clearing: "", konto: "", bank: "" },
   consent: "",
   utom: [],
 });
@@ -981,11 +1044,67 @@ export function matrikelBody(f: PaperFields): Submission["matrikel"] | null {
   if (f.telefon.trim()) body.telefon = f.telefon.trim();
   if (f.epost.trim()) body.epost = f.epost.trim();
   const konto = filled(f.konto);
-  if (Object.keys(konto).length) body.konto = konto;
+  // A ticked box alone changes nothing: then the server takes no lock either.
+  if (konto.clearing || konto.konto || konto.bank) body.konto = konto;
   if (f.consent)
     body.publicering = {
       ja: f.consent === "ja",
       utom: f.consent === "ja" ? f.utom : [],
+    };
+  return Object.keys(body).length ? body : null;
+}
+
+// "Dina uppgifter" starts from the matrikel for the logged-in main member, empty for the link and for paper.
+export function detailsFields(d?: MemberDetailsView): PaperFields {
+  const f = emptyPaperFields();
+  if (d?.mode !== "main") return f;
+  const { address, postal_code, city, phone } = d.contact;
+  const p = d.publicering;
+  return {
+    ...f,
+    adress: { address, postal_code, city },
+    telefon: phone,
+    consent: p ? (p.ja ? "ja" : "nej") : "",
+    utom: p?.utom ?? [],
+  };
+}
+
+// What Skicka sends of "Dina uppgifter" (5.11, D3), or null: the link's filled fields, as on paper, and the main
+// member's changed ones, a cleared one as "" (the profile's rule). A Koharen answer carries its text version.
+export function detailsBody(
+  d: MemberDetailsView | undefined,
+  f: PaperFields,
+): Matrikel | null {
+  if (d?.mode !== "main" && d?.mode !== "link") return null;
+  let body: Matrikel = {};
+  if (d.mode === "link") body = matrikelBody(f) ?? {};
+  else {
+    const start = detailsFields(d);
+    const adress = Object.fromEntries(
+      (["address", "postal_code", "city"] as const)
+        .filter((k) => f.adress[k].trim() !== start.adress[k].trim())
+        .map((k) => [k, f.adress[k].trim()]),
+    );
+    if (Object.keys(adress).length) body.adress = adress;
+    if (f.telefon.trim() !== start.telefon.trim())
+      body.telefon = f.telefon.trim();
+    const konto = matrikelBody({ ...emptyPaperFields(), konto: f.konto });
+    if (konto?.konto) body.konto = konto.konto;
+    const utom = (u: Utom[]) => [...u].sort().join();
+    if (
+      f.consent &&
+      (f.consent !== start.consent || utom(f.utom) !== utom(start.utom))
+    )
+      body.publicering = {
+        ja: f.consent === "ja",
+        utom: f.consent === "ja" ? f.utom : [],
+        version: d.publicering_version,
+      };
+  }
+  if (body.publicering)
+    body.publicering = {
+      ...body.publicering,
+      text_version: CONSENT_TEXT_VERSION,
     };
   return Object.keys(body).length ? body : null;
 }
@@ -1115,7 +1234,14 @@ export interface StatusRow {
   herd: string;
   herd_name: string | null;
   state: RowState;
+  needs_report: boolean; // active herd without a submitted report this round
   inbjudan: Invitation | null;
+  // The herd's latest reminder in the mail queue.
+  last_reminder: {
+    queued_at: string;
+    sent_at: string | null;
+    status: string;
+  } | null;
   ingen_epost: boolean;
   source: "login" | "link" | "paper" | null;
   membership_after_end: Membership | null;
@@ -1131,6 +1257,12 @@ export interface StatusRow {
     forsaljning_avvisad_paverkar: boolean;
     kopt_efter_inskick: number; // sales into the herd approved after its report (FB4)
     kop_anmalt: number; // the herd's open purchase notices that no pending sale matches (4a Task 5)
+    // 5.11, 5.14: the link's changes, without any value
+    andring_vantar?: number;
+    kontobyte_vantar?: boolean;
+    kontobyte_forfoll?: boolean;
+    inte_jag?: boolean;
+    nytt_konto?: number | null; // the self-made account link's id, for "Koppla bort" (5.1)
   };
   villkor: Villkor;
   statistik: {
@@ -1160,6 +1292,57 @@ export interface Round {
   genebanks: RoundGenebank[];
 }
 
+// Fråga 7: the server's defaults for a new round (arsrapport.default_dates).
+export const defaultRoundDates = (year: number) => ({
+  start_date: `${year}-12-31`,
+  deadline: `${year + 1}-01-31`,
+  end_date: `${year + 1}-03-30`,
+});
+
+// The year being reported now, whether or not its round exists: last year's until that round (or its default)
+// closes, then this year's.
+export function regularRoundYear(rounds: Round[], today: string): number {
+  const year = Number(today.slice(0, 4));
+  const last = rounds.find((r) => r.year === year - 1);
+  const lastEnd = last?.end_date ?? defaultRoundDates(year - 1).end_date;
+  return today <= lastEnd ? year - 1 : year;
+}
+
+// The round managers work on: the oldest one open today (a round prepared for later does not count), else the
+// regular year's.
+export function currentRoundYear(rounds: Round[], today: string): number {
+  const open = rounds
+    .filter(
+      (r) =>
+        r.start_date &&
+        r.end_date &&
+        r.start_date <= today &&
+        today <= r.end_date,
+    )
+    .map((r) => r.year);
+  return open.length > 0 ? Math.min(...open) : regularRoundYear(rounds, today);
+}
+
+// A phone field can hold two numbers, "08 - 510 122 07 0709 - 55 72 08": split before each piece that starts like
+// a number of its own ("0NN - ", "+NN - "). From the right, a piece with fewer than the seven digits of a whole
+// number joins the one before it ("070-123 04-56"), and a short first piece joins the next ("Mobil 070-…").
+const digits = (s: string) => s.replace(/\D/g, "").length;
+export function phoneNumbers(text: string): string[] {
+  const pieces = text
+    .trim()
+    .split(/\s+(?=(?:\+|0)\d*\s*-\s*\d)/)
+    .filter(Boolean);
+  const numbers: string[] = [];
+  for (const piece of pieces.reverse()) {
+    if (numbers.length > 0 && digits(numbers[0]) < 7)
+      numbers[0] = `${piece} ${numbers[0]}`;
+    else numbers.unshift(piece);
+  }
+  if (numbers.length > 1 && digits(numbers[0]) < 7)
+    numbers.splice(0, 2, `${numbers[0]} ${numbers[1]}`);
+  return numbers;
+}
+
 export interface StatusView {
   round: Round;
   genebank_id: number;
@@ -1177,6 +1360,7 @@ export interface SaleProposalRow {
   name: string | null;
   to_herd: string | null;
   buyer: { name: string; town: string | null } | null;
+  buyer_not_recorded: boolean; // såld utanför genbanken: no buyer kept (#273)
   sale_date: string;
   day_known: boolean; // false: the report gave it without its day (5.3), so its month is shown
   buyer_notified_at: string | null; // the buyer's own notice (K7)
@@ -1184,10 +1368,10 @@ export interface SaleProposalRow {
   kopanmalan_avviker: PurchaseNotice | null; // its notice dated too far off or across 31/12 (M1)
 }
 
-export type StatusFilter = "att_ringa" | "alla" | RowState;
+export type StatusFilter = "att_ringa" | "ej_svarat" | "alla" | RowState;
 
 export const parseFilter = (v: string | undefined): StatusFilter =>
-  v === "att_ringa" || ROW_STATES.includes(v as RowState)
+  v === "att_ringa" || v === "ej_svarat" || ROW_STATES.includes(v as RowState)
     ? (v as StatusFilter)
     : "alla";
 
@@ -1227,6 +1411,7 @@ export function filterRows(
   today: string = todayStockholm(),
 ): StatusRow[] {
   if (filter === "alla") return rows;
+  if (filter === "ej_svarat") return rows.filter((r) => r.needs_report);
   if (filter === "att_ringa")
     return rows.filter((r) => toCall(r, deadline, today));
   return rows.filter((r) => r.state === filter);

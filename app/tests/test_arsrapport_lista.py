@@ -232,7 +232,8 @@ class ListaTest(ArsrapportTest):
         self.assertEqual([row["number"] for row in view["rabbits"]], ["G1-2111"])
 
         # A helper reads it only on paper, through the taken item; the item shows the account's last two digits.
-        db.Herd.update(bank_account_number="1234-567 8912").where(db.Herd.id == self.g1.id).execute()
+        membership = db.Membership.create(bank_account_number="1234-567 8912")  # the account is the membership's
+        db.Herd.update(membership=membership).where(db.Herd.id == self.g1.id).execute()
         item = self.item(0)
         db.InboxDocument.update(doc_type="arsblankett").where(db.InboxDocument.item == item.id).execute()
         inbox.take(item, self.helper, over=False)
@@ -289,6 +290,7 @@ class ListaTest(ArsrapportTest):
                     "to_herd": "G2",
                     "date": "2025-08-01",
                     "day_known": True,
+                    "undo": None,  # the owner did not register them
                 },
                 {
                     "individual_id": kits[1].id,
@@ -296,6 +298,7 @@ class ListaTest(ArsrapportTest):
                     "to_herd": "GX1",
                     "date": "2025-09-01",
                     "day_known": True,
+                    "undo": None,  # the owner did not register them
                 },
             ],
         )
