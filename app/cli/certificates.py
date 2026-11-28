@@ -30,7 +30,7 @@ import pdfrw
 import utils.data_access as da
 import utils.database as db
 import utils.number_assets as number_assets
-from botocore.exceptions import ClientError
+from botocore.exceptions import BotoCoreError, ClientError
 from flask.cli import AppGroup
 from peewee import fn
 from utils.cert_acess import download_certificate_s3, get_certificate_data, upload_certificate
@@ -78,9 +78,10 @@ def v1_fields(pdf_bytes):
         fields = {}
         for page in pdfrw.PdfReader(fdata=pdf_bytes).pages:
             for annotation in page.Annots or []:
-                if annotation.T is not None:
-                    value = annotation.V
-                    fields[annotation.T.decode()] = value.decode() if hasattr(value, "decode") else str(value or "")
+                value = annotation.V
+                if annotation.T is not None and (value is None or isinstance(value, pdfrw.objects.PdfString)):
+                    # Text fields only: the signature field endesive adds holds a dictionary.
+                    fields[annotation.T.decode()] = value.decode() if value is not None else ""
         return fields
     except Exception as exc:  # pylint: disable=broad-except  # pdfrw's own errors, and bad UTF-16 when decoding
         raise Stop(UNREADABLE) from exc
@@ -136,19 +137,33 @@ def check(rabbit, pdf, names):
 
 
 def reissue(rabbit, names):
-    """Check and reissue one rabbit in its own transaction under its locks. Returns the signed PDF, or Stop."""
-    with db.DATABASE.atomic():
-        if not da.lock_individual_for_edit(rabbit.id):
-            raise Stop(STATE)
-        rabbit = db.Individual.get_by_id(rabbit.id)
-        number_assets.lock_number(rabbit.number, xact=True)  # the key below is the rabbit's until commit
-        user = check(rabbit, v1_pdf(rabbit), names)
-        _, signed = generate_and_store(rabbit, user, rabbit.as_dict(), user.uuid, replaces_v1=True, upload_legacy=False)
-    # The v2 row is committed: only now does the v1 file at the number's key give way.
-    with db.DATABASE.atomic():
-        number_assets.lock_number(rabbit.number, xact=True)
-        upload_certificate(pdf_bytes=signed, ind_number=rabbit.number)
+    """
+    Check and reissue one rabbit in its own transaction, under its row lock and then its number lock, or Stop. The
+    number lock is a session lock held past the commit, so no renumber moves the key before the v1 file there gives
+    way to the v2 one. Returns False when the v2 row is committed but that key could not be written.
+    """
+    locked = None
+    try:
+        with db.DATABASE.atomic():
+            if not da.lock_individual_for_edit(rabbit.id):
+                raise Stop(STATE)
+            rabbit = db.Individual.get_by_id(rabbit.id)
+            number_assets.lock_number(rabbit.number)
+            locked = rabbit.number
+            user = check(rabbit, v1_pdf(rabbit), names)
+            _, signed = generate_and_store(
+                rabbit, user, rabbit.as_dict(), user.uuid, replaces_v1=True, upload_legacy=False
+            )
+        try:
+            upload_certificate(pdf_bytes=signed, ind_number=rabbit.number)
+            written = True
+        except Exception:  # pylint: disable=broad-except  # reported per rabbit: it has its v2 row and is not selected again
+            written = False
+    finally:
+        if locked:
+            number_assets.unlock_number(locked)
     invalidate_caches(rabbit)
+    return written
 
 
 @certificates_cli.command("reissue-v1")
@@ -181,16 +196,12 @@ def reissue_v1(run, limit, number, visa_namn):
         try:
             if run:
                 try:
-                    reissue(rabbit, names)
-                except (Stop, SigningUnavailableError, ClientError):
+                    if not reissue(rabbit, names):
+                        legacy_left.append(rabbit.number)  # committed; only the number's key still holds v1
+                except (Stop, SigningUnavailableError, ClientError, BotoCoreError):
                     raise
                 except Exception as exc:  # pylint: disable=broad-except  # one rabbit's failure must not stop the rest
-                    if db.DigitalCertificateV2.get_or_none(
-                        (db.DigitalCertificateV2.individual == rabbit.id) & db.DigitalCertificateV2.is_current
-                    ):
-                        legacy_left.append(rabbit.number)  # committed; only the number's key still holds v1
-                    else:
-                        raise Stop(f"{FAILED}: {exc.__class__.__name__}") from exc
+                    raise Stop(f"{FAILED}: {exc.__class__.__name__}") from exc
             else:
                 pdf = v1_pdf(rabbit)
                 try:
@@ -204,7 +215,7 @@ def reissue_v1(run, limit, number, visa_namn):
             fields_changed.update(stop.fields)
         except SigningUnavailableError as exc:
             raise click.ClickException(f"Signeringen är inte tillgänglig. {done} återutfärdade innan.") from exc
-        except ClientError as exc:
+        except (ClientError, BotoCoreError) as exc:
             raise click.ClickException(f"S3 svarar inte som väntat: {exc}. {done} klara innan.") from exc
 
     click.echo(f"{'Återutfärdade' if run else 'Skulle återutfärdas'}: {done}")

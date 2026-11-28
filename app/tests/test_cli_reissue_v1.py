@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, mock_open, patch
 import cli.certificates as reissue_cli
 import utils.cert_service_v2 as cert_service
 import utils.database as db
+from botocore.exceptions import ClientError, EndpointConnectionError
 from herdbook import APP
 from pdfrw import PdfArray, PdfDict, PdfName, PdfString, PdfWriter
 from utils.cert_acess import download_certificate_s3, get_certificate_data, upload_certificate
@@ -32,6 +33,16 @@ def pdf_with(fields):
         )
         for name, value in fields.items()
     ]
+    # The signature field endesive adds to every v1 certificate: its value is a dictionary, not a string.
+    annotations.append(
+        PdfDict(
+            Type=PdfName.Annot,
+            Subtype=PdfName.Widget,
+            FT=PdfName.Sig,
+            T=PdfString.encode("Signature1"),
+            V=PdfDict(Type=PdfName.Sig),
+        )
+    )
     writer = PdfWriter()
     writer.addpage(PdfDict(Type=PdfName.Page, MediaBox=PdfArray([0, 0, 595, 842]), Annots=PdfArray(annotations)))
     out = io.BytesIO()
@@ -161,6 +172,25 @@ class ReissueV1Test(CertV2Mixin, FlaskTest):
         self.assertEqual(download_certificate_s3(self.rabbit.number), original)
         self.assertIn("Återutfärdade: 1", self.invoke("--run").output)
         self.assertEqual(download_certificate_s3(self.rabbit.number), V2)
+
+    def test_a_failed_upload_after_the_commit_is_reported(self):
+        failed = ClientError({"Error": {"Code": "SlowDown"}}, "PutObject")
+        with patch.object(reissue_cli, "upload_certificate", side_effect=failed):
+            result = self.invoke("--run")
+        self.assertIn(
+            "Varav v2-raden finns men <nummer>/certificate.pdf är kvar som v1: 1", result.output, result.output
+        )
+        self.assertIn(f"  {self.rabbit.number}", result.output)
+        self.assertIsNotNone(self.current_row())
+
+    def test_an_unreachable_s3_stops_the_run(self):
+        unreachable = EndpointConnectionError(endpoint_url="https://s3.example.invalid")
+        with patch.object(reissue_cli, "download_certificate_s3", side_effect=unreachable):
+            for args in ((), ("--run",)):
+                result = self.invoke(*args)
+                self.assertNotEqual(result.exit_code, 0, result.output)
+                self.assertIn("S3 svarar inte som väntat", result.output)
+        self.assertIsNone(self.current_row())
 
     def test_limit_counts_reissued_rabbits(self):
         upload_certificate(pdf_bytes=b"%PDF-1.4 trasig", ind_number=self.rabbit.number)  # stops, oldest first

@@ -62,6 +62,11 @@ def lock_number(number, xact=False):
     DATABASE.execute_sql(f"SELECT {func}(%s, hashtext(%s))", (_LOCK_NS, number))
 
 
+def unlock_number(number):
+    """Release lock_number's session lock on `number`."""
+    _unlock([number])
+
+
 def _state():
     if not hasattr(_pending, "moves"):
         _pending.moves, _pending.locked = {}, set()
