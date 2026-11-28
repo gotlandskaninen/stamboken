@@ -12,7 +12,11 @@ from unittest import mock
 
 import utils.arsrapport as arsrapport
 import utils.database as db
+import utils.report_code as report_code
+import utils.settings as settings
+from herdbook import APP
 from utils.individual_commands import RecordAttestation, RecordDeath, SetMeasurements, TransferIndividual, execute
+from utils.report_code import CodeActor
 
 from tests.ht_helpers import ht_row
 from tests.inbox_fixtures import InboxTest
@@ -87,6 +91,16 @@ class ArsrapportTest(InboxTest):
         return db.Member.create(
             first_name="Test", last_name="Huvudmedlem", email=email, membership=membership, role="huvudmedlem"
         )
+
+    def link_submit(self, herd, body, year=2025):
+        """The report link's Skicka for `herd`, by its main member's code: its sales become proposals (step 4)."""
+        member = db.Member.get(db.Member.membership == herd.membership_id, db.Member.role == "huvudmedlem")
+        round_ = db.YearlyReportRound.get(db.YearlyReportRound.report_year == year)
+        with APP.app_context(), mock.patch.multiple(settings.mail, link_secret="test-link-secret", link_hosts=[]):
+            code = report_code.issue_code(herd, round_, member, now=arsrapport.now())
+            access = arsrapport.code_access(herd, round_, [code.id])
+            sub = arsrapport.parse_submission(body, paper=False)
+            return arsrapport.submit(herd, round_, access, CodeActor(code), sub)
 
     def at(self, when):
         """Sets utils.arsrapport.now to `when`; a date means noon that day in Stockholm."""

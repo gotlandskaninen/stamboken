@@ -76,7 +76,7 @@ export function Receipt({
   }, [focusOnMount]);
   const sum = receipt?.summary ?? summaryOf(view);
   const unstatedLabel = wordForm(sum.ej_angivna, "Ej angiven", "Ej angivna");
-  // A caretaker's or the link's withdrawal leaves the owner's sales standing (FB5), so it is always offered.
+  // The link's withdrawal leaves the owner's sales standing (FB5), so it is always offered.
   const canWithdraw = !!report?.can_withdraw;
   // right after Skicka, until the view is fetched again, the receipt says what waits; then the view alone, since a
   // retry's receipt is the first one and a proposal may have been decided meanwhile

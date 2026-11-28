@@ -790,7 +790,7 @@ def _has_dependent_breeding(individual_id, row):
     )
 
 
-def sale_undo_denial(user, row, active_rows, transfer_herd_ids=None):
+def sale_undo_denial(user, row, active_rows, seller_herds=None):
     """None if the SELLER may undo this sale, else a Swedish reason. Cheap checks first."""
     if row.kind != "TRANSFER" or row.voided_at is not None:
         return "Bara en aktiv försäljning kan ångras."
@@ -799,7 +799,7 @@ def sale_undo_denial(user, row, active_rows, transfer_herd_ids=None):
     if (
         row.from_herd_id is None
         or row.from_herd.herd in OUTSIDE_GENEBANK_HERDS  # GX1/MX1 owners are never sellers
-        or row.from_herd_id not in (user.transfer_herd_ids() if transfer_herd_ids is None else transfer_herd_ids)
+        or row.from_herd_id not in (user.effective_herd_ids() if seller_herds is None else seller_herds)
     ):
         return f"Bara säljaren kan ångra försäljningen. {CONTACT_MANAGER}"
     if not active_rows or active_rows[-1].id != row.id:
@@ -916,7 +916,7 @@ def latest_death_op(individual_id):
     )
 
 
-def void_denial(user, row, active_rows, individual, transfer_herd_ids=None, owners=None):
+def void_denial(user, row, active_rows, individual, seller_herds=None, owners=None):
     """The void permission table. None = allowed. `owners`: report_owners for the row's op, looked up if not given."""
     if row.kind == "BIRTH":
         return BIRTH_NOT_VOIDABLE
@@ -939,7 +939,7 @@ def void_denial(user, row, active_rows, individual, transfer_herd_ids=None, owne
             return OWN_ROWS_ONLY
         return None
     if row.kind == "TRANSFER":
-        return sale_undo_denial(user, row, active_rows, transfer_herd_ids)
+        return sale_undo_denial(user, row, active_rows, seller_herds)
     return f"Bara genbanksansvarig kan ångra en korrigering. {CONTACT_MANAGER}"
 
 
@@ -947,7 +947,7 @@ def _behind_report_sales(row, active_rows, report_ops):
     """
     K3, fråga 15 b: the report's attestation goes from behind the sales that stay, so the rabbit counts on 31/12 via
     the move. Every later row is a TRANSFER that an approved proposal of the same report wrote, or the report's own
-    (FB5: a sale the owner registered, which a link's or a caretaker's Dra tillbaka keeps).
+    (FB5: a sale the owner registered, which a link's Dra tillbaka keeps).
     """
     later = [r for r in active_rows if ht_sort_key(r) > ht_sort_key(row)]
     if row.kind != "ATTESTATION" or row.yearly_herd_report_id is None or not later:
@@ -1816,7 +1816,7 @@ def herd_tracking_history(individual, user, include_voided=None):
             row.herd = herds[row.herd_id]
         if row.from_herd_id:
             row.from_herd = herds[row.from_herd_id]
-    seller_herds = user.transfer_herd_ids()  # once per call, not per TRANSFER row
+    seller_herds = user.effective_herd_ids()  # once per call, not per TRANSFER row
     death_op = latest_death_op(individual.id)
     owners = report_owners([r.operation_id for r in rows] + [death_op])  # once per call, not per row
     active = sorted((r for r in rows if r.voided_at is None), key=ht_sort_key)

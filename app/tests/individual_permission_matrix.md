@@ -87,7 +87,7 @@ Fält: `herd`, `selling_date`, `reason`
 | manager_current | ✓ | ✓ | ✓ | ✓ |
 | manager_origin | – | – | – | – |
 | owner | ✓ | ✓ | – | – |
-| caretaker | – | – | – | – |
+| caretaker | ✓ | ✓ | – | – |
 | actor | – | – | – | – |
 | handlaggare | ✓ | ✓ | – | – |
 | rapport | – | – | – | – |

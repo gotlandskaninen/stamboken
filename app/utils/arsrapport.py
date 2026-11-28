@@ -411,7 +411,7 @@ class Access:
 
     @property
     def can_sell(self):
-        return self.role not in ("caretaker", "code")  # D12; a link's sale is a proposal (step 4)
+        return self.role != "code"  # a link's sale is a proposal (step 4); a caretaker sells as the owner (#326)
 
     @property
     def editor(self):
@@ -455,7 +455,7 @@ def report_access(user, herd, item_id=None):
         return Access("admin")
     if managed:
         return Access("manager")
-    if herd.id in user.transfer_herd_ids():
+    if herd.id in user.owned_herd_ids():
         return Access("owner")
     if herd.id in user.effective_herd_ids():
         return Access("caretaker")
@@ -492,10 +492,18 @@ def require_valid_code(code_id, herd, on=None, *, lock=False):
         raise ArsrapportError(403, LINK_INVALID, code="lank_ogiltig")
 
 
-def _recheck_code(access, herd, on=None):
-    """E4 again, under the report's lock: the manager may have revoked the code since the page."""
+def _recheck_access(access, user, herd, on=None):
+    """
+    E4 again, under the report's lock: the manager may have revoked the code since the page. An account's
+    membership and grant rows are read again too, so a grant revoked or expired since the route read it writes
+    nothing (#326). Owner and caretaker have the same rights here, so a switch between them is no refusal.
+    """
     if access.code is not None:
         require_valid_code(access.code.id, herd, on, lock=True)
+    elif access.source == "login":
+        now_access = report_access(user, herd)
+        if now_access is None or now_access.editor != access.editor:
+            raise ArsrapportError(403, "Du har inte tillgång till årsrapporten för besättningen.")
 
 
 def without_reason(sub):
@@ -928,7 +936,7 @@ def save_draft(herd, round_, access, user, data, updated_at, submission_key, rev
         round_ = _lock_round(round_)  # first, as Skicka: a round closed meanwhile is read here
         require_open(round_, herd, access, day)
         lock_report(round_, herd)
-        _recheck_code(access, herd, day)
+        _recheck_access(access, user, herd, day)
         draft = _draft(herd, round_)
         report = current_report(herd, round_)
         listed = report_list(herd, round_.report_year, report)
@@ -2204,7 +2212,6 @@ REFUSALS = {  # the copy the client shows (P44)
     "vikt_saknas": "Vuxna kaniner behöver vikt eller Ej vägd.",
     "vikt_ogiltig": "Ange vikten i kilo, till exempel 2,8.",
     "ej_angiven_digitalt": "Ej angiven finns bara när en blankett matas in.",
-    "forsaljning_skotare": "Försäljningen registreras av ägaren eller genbanksansvarig.",
     "salj_via_lank": "Försäljningen registrerar du hos genbanksansvarig. Ring eller mejla.",
     "kopare_saknas": "Fyll i köparen, eller välj såld utanför genbanken.",
     "senare_handelse": "Kaninen har en senare händelse i Stamboken. Genbanksansvarig kan rätta.",
@@ -2231,11 +2238,6 @@ REFUSALS = {  # the copy the client shows (P44)
 }
 # _validate_sale's user: the report never sells into another genebank, since TransferIndividual needs a reason there.
 _NOT_ADMIN = SimpleNamespace(is_admin=False)
-
-
-def _no_sale(individual_id, access):
-    """FB5: a caretaker or the link changes no sale the owner registered; the genebank manager corrects it."""
-    return _refusal(individual_id, "salj_via_lank" if access.role == "code" else "forsaljning_skotare")
 
 
 def _refusal(individual_id, code, message=None):
@@ -2567,9 +2569,10 @@ def check(
             want = _without_sale(want)
         cur = current(report, rabbit)
         remove, add = diff(cur, want, last, before, entry)
-        # FB5: a sale the owner registered is the register's; a new sale by this role is a proposal, checked as a sale
+        # FB5: a sale the owner registered is the register's, so the link changes none (the genebank manager corrects
+        # it); a new sale by the link is a proposal, checked as a sale
         if not access.can_sell and any(e.kind == "transfer" for e in remove):
-            refusals.append(_no_sale(rabbit, access))
+            refusals.append(_refusal(rabbit, "salj_via_lank"))
             continue
         sale = next((e for e in add if e.kind == "transfer"), None)
         # A proposal sells from this herd, which writes no row to check it: the herd holds the rabbit on the sale
@@ -3612,7 +3615,7 @@ def submit(herd, round_, access, user, sub, *, now=None, completion=False) -> di
     with DB_PROXY.atomic():
         round_ = _lock_round(round_)  # the dates check() reads under the locks: a round closed meanwhile is seen
         lock_report(round_, herd)
-        _recheck_code(access, herd, on)  # E4 before a retry's receipt too; the paper item's exception is below
+        _recheck_access(access, user, herd, on)  # E4 before a retry's receipt too; the paper item's exception is below
         saved = find_submission(sub.key, herd, round_, user, digest)
         if saved is not None:  # before any item gate: a retry after the item closed (Codex 5)
             return receipt(saved)
@@ -3922,7 +3925,7 @@ def sell_now(herd, round_, access, user, rabbit_id, sald, *, now=None):
     with DB_PROXY.atomic():
         round_ = _lock_round(round_)
         lock_report(round_, herd)
-        _recheck_code(access, herd, on)
+        _recheck_access(access, user, herd, on)
         if current_report(herd, round_) is not None:
             raise ArsrapportError(409, SOLD_WITH_SKICKA)
         draft = _draft(herd, round_)
@@ -4001,7 +4004,7 @@ def withdraw(herd, round_, access, user, *, revision, reason=None, now=None) -> 
     with DB_PROXY.atomic():
         round_ = _lock_round(round_)  # its end_date as kept_until reads it
         lock_report(round_, herd)
-        _recheck_code(access, herd, on)
+        _recheck_access(access, user, herd, on)
         # The membership before the report row and the link's change rows, as Skicka; the confirmation page takes it
         # before those rows too, so cancelling them below never deadlocks with a Bekräfta (review round 2).
         _lock_matrikel(herd)
@@ -4507,7 +4510,7 @@ def _litter_write(herd, round_, access, user, write):
         round_ = _lock_round(round_)  # first, as Skicka: a round closed meanwhile is read here
         on = require_round_open(herd, round_, access)
         lock_report(round_, herd)
-        _recheck_code(access, herd, on)
+        _recheck_access(access, user, herd, on)
         paper = access.item is not None
         item, pages = _lock_form(access, user, herd) if paper else (None, [])
         report = current_report(herd, round_)

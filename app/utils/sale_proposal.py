@@ -1,7 +1,8 @@
 """
-Sale proposals (spec section 6, 5.9): a sale that a caretaker or the report link reports, which the genebank's
-manager approves or rejects. Each proposal has a `kontroll` item in the queue. The caller holds no lock: the
-functions take the report lock and row, then the items, then the rabbit's litter and the rabbit, the order of 5.9.
+Sale proposals (spec section 6, 5.9): a sale that the report link reports (before #326 a caretaker too), which
+the genebank's manager approves or rejects. Each proposal has a `kontroll` item in the queue. The caller holds no
+lock: the functions take the report lock and row, then the items, then the rabbit's litter and the rabbit, the order
+of 5.9.
 """
 
 from datetime import date, datetime

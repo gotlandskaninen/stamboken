@@ -743,7 +743,7 @@ class AndraTest(ArsrapportTest):
         self.assertEqual(unchanged, 0, counts)
         self.assertLessEqual(changed, 68, counts)
 
-    def test_caretaker_cannot_change_a_sale_and_withdrawing_keeps_it(self):  # I1, D12, FB5: sales are the owner's
+    def test_caretaker_changes_and_withdraws_sales_as_the_owner(self):  # #326: a sale is not the owner's alone
         kept, december, outside = self.rabbits(self.h, 3)
         entries = (
             self.kvar(kept, vikt=2.8),
@@ -751,31 +751,15 @@ class AndraTest(ArsrapportTest):
             self.sald(outside, "utanfor", 2025, 11, 20, kopare=BUYER),
         )
         rid = self.ok(self.body(*entries))["report_id"]
+        sold_december, sold_outside = rows_of(december, "TRANSFER") + rows_of(outside, "TRANSFER")
         self.caretaker()
         self.login("skotare")
-        before = self.counts()
-        refused = {
-            "code": "forsaljning_skotare",
-            "message": "Försäljningen registreras av ägaren eller genbanksansvarig.",
-        }
-        stored = (*entries[:2], self.sald(outside, "utanfor", 2025, 11, 20))  # as submitted: no buyer
-        for changed in (self.kvar(december, vikt=2.8), self.dod(outside, 2025, 11, 10)):  # sald→kvar, sald→dod
-            body = self.body(*[changed if changed[0] == e[0] else e for e in stored], revision=1)
-            dry = self.api("POST", "/besattning/G9001/2025/torrkorning", **body).get_json()
-            self.assertEqual(dry["refusals"], [{"individual_id": int(changed[0]), **refused}])
-            response = self.skicka(body)
-            self.assertEqual(response.status_code, 422, response.get_data(as_text=True))
-            self.assertEqual(response.get_json()["refusals"], [{"individual_id": int(changed[0]), **refused}])
-        self.assertEqual(self.counts(), before)
-        # a change that leaves the sales alone is still the caretaker's
-        self.ok(self.body(self.kvar(kept, vikt=3.0), *stored[1:], revision=1))
-        sales = rows_of(december, "TRANSFER") + rows_of(outside, "TRANSFER")
-        self.withdrawn(2)  # FB5: the rest backs out, and the owner's sales stay the register's
+        stored = self.sald(outside, "utanfor", 2025, 11, 20)  # as submitted: no buyer
+        self.ok(self.body(entries[0], self.kvar(december, vikt=2.8), stored, revision=1))  # sald→kvar
+        self.assertIsNotNone(db.HerdTracking.get_by_id(sold_december.id).voided_at)
+        self.withdrawn(2)  # Dra tillbaka takes the report's sales back, as the owner's does
         self.assertEqual(self.report(rid).status, "voided")
-        (attested,) = rows_of(kept, "ATTESTATION")
-        self.assertIsNotNone(attested.voided_at)
-        self.assertEqual([db.HerdTracking.get_by_id(row.id).voided_at for row in sales], [None, None])
-        self.assertEqual([(c.name, c.town) for c in db.BuyerContact.select()], [(BUYER["name"], BUYER["town"])])
+        self.assertIsNotNone(db.HerdTracking.get_by_id(sold_outside.id).voided_at)
 
     def test_withdraw_window_counts_from_the_rounds_first_submission(self):  # I2: no new 7 days per report row
         (a,) = self.rabbits(self.h, 1)
@@ -842,8 +826,8 @@ class AndraTest(ArsrapportTest):
         subject, text = mail.render("arsrapport.andrad", arsrapport._kvitto(andrad.params))
         self.assertEqual(subject, "Årsrapporten för G9001 är ändrad")
         for line in (
-            "Årsrapporten för besättning G9001 ändrades den 12 januari 2026. Nu har du rapporterat 1 kanin som finns kvar, "
-            "1 död och 1 såld.",
+            "Årsrapporten för besättning G9001 ändrades den 12 januari 2026. Nu har du rapporterat 1 kanin som finns "
+            "kvar, 1 död och 1 såld.",
             "Du kan ändra den så länge rundan är öppen, till och med 30 mars 2026.",
             "Var det inte du? Kontakta genbanksansvarig genom att svara på det här mejlet.",
         ):

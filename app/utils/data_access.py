@@ -1432,7 +1432,7 @@ def _herd_owner_map():
 
     A herd can have MULTIPLE owners (legacy parity — e.g. museum herds
     and shared family herds); lists are sorted by user id for stable
-    output. The owners are those of User.transfer_herd_ids: legacy owner
+    output. The owners are those of User.owned_herd_ids: legacy owner
     roles plus the active main member of the herd's membership (#214),
     never a caretaker with a herd-access grant.
     """

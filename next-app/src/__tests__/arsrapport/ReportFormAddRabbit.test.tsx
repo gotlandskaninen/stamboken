@@ -172,28 +172,20 @@ describe("Lägg till kanin från intyget in the report", () => {
     ).toBeChecked();
   });
 
-  it("a rabbit registered as sold opens the sale dialog for a link and a caretaker too, whose sale is a proposal", () => {
+  it("a rabbit registered as sold opens the sale dialog for a link too, whose sale is a proposal", () => {
     where = "sald";
-    for (const [link, access] of [
-      [true, "code"],
-      [false, "caretaker"],
-    ] as const) {
-      render(
-        <ReportForm
-          link={link || undefined}
-          env="demo"
-          view={view({ access, can_sell: false })}
-          actions={actions()}
-        />,
-      );
-      fireEvent.click(
-        screen.getByRole("button", { name: "Lägg till kanin från intyget" }),
-      );
-      fireEvent.click(screen.getByRole("button", { name: "Registrerad" }));
-      expect(
-        screen.getByRole("dialog", { name: "Såld: G9001-2" }),
-      ).toBeTruthy();
-      cleanup();
-    }
+    render(
+      <ReportForm
+        link
+        env="demo"
+        view={view({ access: "code", can_sell: false })}
+        actions={actions()}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Lägg till kanin från intyget" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Registrerad" }));
+    expect(screen.getByRole("dialog", { name: "Såld: G9001-2" })).toBeTruthy();
   });
 });

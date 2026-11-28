@@ -125,7 +125,7 @@ class ReportCodeTest(ArsrapportTest):
         self.assertIsNone(actor.id)
         self.assertEqual(actor.access_code_id, actor.code.id)
         self.assertEqual(actor.username, "länk G9001/2025")
-        for value in (actor.is_manager, actor.is_helper, actor.transfer_herd_ids(), actor.effective_herd_ids()):
+        for value in (actor.is_manager, actor.is_helper, actor.owned_herd_ids(), actor.effective_herd_ids()):
             self.assertEqual(value, frozenset())
             self.assertEqual(value - frozenset({1}), frozenset())
         self.assertFalse(actor.can_edit(1))

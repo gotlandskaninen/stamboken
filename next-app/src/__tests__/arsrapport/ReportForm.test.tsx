@@ -1753,7 +1753,7 @@ describe("ReportForm", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("offers Dra tillbaka to a caretaker with a sale, and says a pending sale waits", () => {
+  it("offers Dra tillbaka to a link with a sale, and says a pending sale waits", () => {
     // FB5: the withdrawal leaves the owner's sale standing, so it is offered
     const sale = {
       "1": {
@@ -1763,9 +1763,10 @@ describe("ReportForm", () => {
     } as never;
     render(
       <ReportForm
+        link
         env="demo"
         view={view({
-          access: "caretaker",
+          access: "code",
           can_sell: false,
           forslag: [
             {
@@ -1778,7 +1779,7 @@ describe("ReportForm", () => {
           report: {
             id: 1,
             status: "submitted",
-            source: "login",
+            source: "link",
             revision: 0,
             received_at: "2027-01-03T13:32:00+00:00",
             report_date: "2027-01-03",

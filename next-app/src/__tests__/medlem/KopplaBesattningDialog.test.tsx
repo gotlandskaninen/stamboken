@@ -209,7 +209,7 @@ describe("KopplaBesattningDialog", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        /nyttkonto.*redan ändra kaniner.*också sälja och flytta dem/,
+        /nyttkonto.*redan ändra, sälja och flytta kaniner genom sin åtkomst/,
       ),
     ).toHaveTextContent(ownerRights);
     expect(screen.queryByText(/testkonto/)).not.toBeInTheDocument();

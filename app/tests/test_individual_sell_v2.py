@@ -193,7 +193,7 @@ class TestSellIndividualV2(DatabaseTest):
 
 
 class TestTransferPermissionsV2(DatabaseTest):
-    """Who may sell/move (huvudmedlem, legacy owner, manager, admin — never a grant holder)."""
+    """Who may sell/move: huvudmedlem, legacy owner, a holder of an active herd-access grant, manager, admin."""
 
     def setUp(self):
         # nosemgrep: python.flask.security.audit.hardcoded-config.avoid_hardcoded_config_TESTING
@@ -235,23 +235,57 @@ class TestTransferPermissionsV2(DatabaseTest):
     def _tracking_count(self, individual_index=0):
         return db.HerdTracking.select().where(db.HerdTracking.individual == self.individuals[individual_index]).count()
 
-    def test_caretaker_with_grant_cannot_sell(self):
+    def _family_member(self):
+        user = da.register_user("mio@example.com", "pass", username="mio")
+        person = db.Member.create(
+            membership=self.membership,
+            first_name="Mio",
+            last_name="Familjesson",
+            email="mio@example.com",
+            role="familjemedlem",
+            user=user,
+        )
+        db.HerdAccessGrant.create(member=person, herd=self.herds[0], granted_by=self.admin)
+
+    def test_caretaker_and_family_member_with_grant_can_sell(self):
+        """#326: a herd-access grant gives the main member's right to sell, as in the old Stamboken."""
+        self._family_member()
+        for username, number, herd in (("sune", REGISTERED, "G2"), ("mio", UNREGISTERED, "GX1")):
+            self._login(username)
+            response = self._patch({"herd": herd, "selling_date": VALID_DATE}, number=number)
+            self.assertEqual(response.status_code, 200, (username, response.get_data(as_text=True)))
+            self.assertEqual(db.Individual.get(db.Individual.number == number).current_herd.herd, herd)
+
+    def test_expired_or_revoked_grant_cannot_sell(self):
+        """Without an active grant the sale is refused: a 404 when the rabbit is not hers to read, a 403 from the
+        sale's own gate when she still reads it as a viewer of the genebank."""
+        grant = db.HerdAccessGrant.get(db.HerdAccessGrant.member == self.caretaker)
         self._login("sune")
-        before = self._tracking_count()
+        for change in (
+            {"valid_until": datetime.now().date() - timedelta(days=1)},
+            {"valid_until": None, "revoked_at": datetime.now()},
+        ):
+            db.HerdAccessGrant.update(**change).where(db.HerdAccessGrant.id == grant.id).execute()
+            before = self._tracking_count()
+            response = self._patch({"herd": "G2", "selling_date": VALID_DATE})
+            self.assertEqual(response.status_code, 404, (change, response.get_data(as_text=True)))
+            self.assertEqual(self._tracking_count(), before)
+        self.caretaker_user.add_role("viewer", self.genebanks[0].id)
         response = self._patch({"herd": "G2", "selling_date": VALID_DATE})
         self.assertEqual(response.status_code, 403, response.get_data(as_text=True))
         self.assertEqual(self._tracking_count(), before)
         self.assertEqual(db.Individual.get(db.Individual.number == REGISTERED).current_herd.herd, "G1")
 
     def test_caretaker_cannot_move_via_yearly_report_date(self):
+        """The alternate payload follows the sale rules for a grant holder too: no selling_date, no move."""
         self._login("sune")
         before = self._tracking_count()
         response = self._patch({"herd": "G2", "yearly_report_date": VALID_DATE})
-        self.assertEqual(response.status_code, 403, response.get_data(as_text=True))
+        self.assertEqual(response.status_code, 400, response.get_data(as_text=True))
         self.assertEqual(self._tracking_count(), before)
 
     def test_caretaker_can_still_edit_with_current_herd(self):
-        """The grant still conveys edit rights; only transfer is blocked."""
+        """The grant conveys edit rights in the current herd too."""
         self._login("sune")
         response = self._patch({"herd": "G1", "yearly_report_date": "2021-07-01"})
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
@@ -259,17 +293,16 @@ class TestTransferPermissionsV2(DatabaseTest):
     def _legacy_patch(self, body):
         return self.client.patch("/api/individual", json={"id": self.individuals[0].id, "number": REGISTERED, **body})
 
-    def test_caretaker_cannot_sell_via_legacy_patch(self):
-        """Legacy PATCH gets the same rule; the error envelope rolls back the weights sent with it."""
+    def test_caretaker_cannot_sell_into_other_genebank_via_legacy_patch(self):
+        """Legacy PATCH gets the same rule as an owner; the error envelope rolls back the weights sent with it."""
         self._login("sune")
         before = self._tracking_count()
-        for herd in ("G2", "M3"):
-            response = self._legacy_patch(
-                {"herd": herd, "selling_date": VALID_DATE, "weights": [{"weight": 9.9, "date": "2021-05-01"}]}
-            )
-            self.assertEqual(response.status_code, 200)
-            body = response.get_json()
-            self.assertEqual((body["status"], body.get("problem_status")), ("error", 403), body)
+        response = self._legacy_patch(
+            {"herd": "M3", "selling_date": VALID_DATE, "weights": [{"weight": 9.9, "date": "2021-05-01"}]}
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.get_json()
+        self.assertEqual((body["status"], body.get("problem_status")), ("error", 403), body)
         self.assertEqual(db.Individual.get(db.Individual.number == REGISTERED).current_herd.herd, "G1")
         self.assertEqual(self._tracking_count(), before)
         self.assertEqual(db.Weight.select().where(db.Weight.individual == self.individuals[0]).count(), 1)
@@ -286,11 +319,10 @@ class TestTransferPermissionsV2(DatabaseTest):
             self.assertEqual(db.Individual.get(db.Individual.number == REGISTERED).current_herd.herd, "G1")
 
     def test_legacy_sale_and_report_still_work(self):
-        """Keeps legacy's sale by an owner and the caretaker's yearly report in the current herd."""
+        """Keeps legacy's yearly report in the current herd and its sale, both by a caretaker (#326)."""
         self._login("sune")
         report = self._legacy_patch({"herd": "G1", "yearly_report_date": "2021-07-01"})
         self.assertEqual(report.get_json()["status"], "success", report.get_json())
-        self._login("owner")
         sale = self._legacy_patch({"herd": "G2", "selling_date": "2021-08-01"})
         self.assertEqual(sale.get_json()["status"], "success", sale.get_json())
         self.assertEqual(db.Individual.get(db.Individual.number == REGISTERED).current_herd.herd, "G2")
@@ -523,10 +555,11 @@ class TestTransferPermissionsV2(DatabaseTest):
 
     def test_admin_moves_rabbit_into_other_genebank_with_reason(self):
         """An admin corrects a misregistration by moving a rabbit into another genebank; the v2 reason is the
-        TRANSFER row's note in the history. Caretaker, owner and manager stay refused, reason or not."""
+        TRANSFER row's note in the history. Caretaker, owner and manager stay refused, reason or not (#326: the
+        caretaker by the same rule as the owner)."""
         reason = "Felregistrerad i Gotlandsgenbanken"
         body = {"herd": "M3", "selling_date": VALID_DATE, "reason": reason}
-        for username, status in (("sune", 403), ("owner", 400), ("man", 400)):
+        for username, status in (("sune", 400), ("owner", 400), ("man", 400)):
             self._login(username)
             response = self._patch(dict(body))
             self.assertEqual(response.status_code, status, (username, response.get_data(as_text=True)))
@@ -702,7 +735,7 @@ class TestTransferPermissionsV2(DatabaseTest):
         self.assertEqual(results["response"].status_code, 200, results["response"].get_data(as_text=True))
 
     def test_get_individual_exposes_can_transfer(self):
-        expected = {"owner": True, "maja": True, "man": True, "admin": True, "sune": False, "spec": False}
+        expected = {"owner": True, "maja": True, "man": True, "admin": True, "sune": True, "spec": False}
         for username, can_transfer in expected.items():
             self._login(username)
             response = self.client.get(f"/api/v2/individual/{REGISTERED}")

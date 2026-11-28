@@ -49,10 +49,16 @@ class TestIndividualPolicy(unittest.TestCase):
         self.assertIs(allowed("Unknown", frozenset(Role), IN_GENEBANK), False)
         self.assertIs(allowed("EditDescription", frozenset(), IN_GENEBANK), False)
 
-    def test_caretaker_never_transfers(self):
+    def test_caretaker_transfers_as_the_owner(self):
+        """#326: a herd-access grant sells and moves exactly as the owner, and never out of GX1/MX1."""
         for state in STATES:
             with self.subTest(state=str(state)):
-                self.assertIs(allowed("TransferIndividual", frozenset({Role.CARETAKER}), state), False)
+                self.assertIs(
+                    allowed("TransferIndividual", frozenset({Role.CARETAKER}), state),
+                    allowed("TransferIndividual", frozenset({Role.OWNER}), state),
+                )
+                caretaker = allowed("TransferIndividual", frozenset({Role.CARETAKER}), state)
+                self.assertIs(caretaker, not state.outside_genebank)
 
     def test_owner_cannot_touch_certified_guarded_fields(self):
         owner = frozenset({Role.OWNER})

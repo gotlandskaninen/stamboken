@@ -124,7 +124,7 @@ class TestCommandLog(UndoTest):
         self._refusal(
             caretaker,
             EditDescription({"notes": "ny"}),
-            TransferIndividual("G2", "2024-05-01"),
+            TransferIndividual("M3", "2024-05-01"),
             error=HerdTrackingForbidden,
         )
         self.assertEqual(self._log(), [])

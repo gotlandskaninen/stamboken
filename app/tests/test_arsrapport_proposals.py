@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Tests for sales that become proposals in the yearly report (step 4a, Task 2): Skicka, Ändra and Dra tillbaka by a
-caretaker or through the link, and the owner's direct sale beside them. Synthetic herds, rabbits and buyers only.
+Tests for sales that become proposals in the yearly report (step 4a, Task 2): Skicka, Ändra and Dra tillbaka through
+the link, and the direct sale of the owner and of a caretaker beside them (#326). Synthetic herds, rabbits and buyers
+only.
 
 isort:skip_file
 """
@@ -136,12 +137,53 @@ class ProposalsTest(ArsrapportTest):
         view = arsrapport.report_view(self.h, self.round_, *self.actor("code"))
         self.assertEqual([(row["date"], row["day_known"]) for row in view["sales"]], [("2025-05-31", False)])
 
-    def test_caretaker_sale_becomes_proposal(self):
-        receipt = self.send(
+    def test_caretaker_and_family_member_sell_directly(self):  # #326: as the owner, never a proposal
+        family = self.user("familj")
+        person = db.Member.create(
+            first_name="Test", last_name="Familj", membership=self.h.membership, role="familjemedlem", user=family
+        )
+        db.HerdAccessGrant.create(member=person, herd=self.h, granted_by=self.admin)
+        family, (access, _) = db.User.get_by_id(family.id), self.actor("caretaker")
+        family_access = arsrapport.report_access(family, self.h)
+        self.assertEqual((family_access, access.can_sell), (arsrapport.Access("caretaker"), True))
+        body = self.body(
+            self.sald(self.a, "G9002", 2025, 10, 3), self.kvar(self.b, vikt=2.8), self.kvar(self.c, vikt=2.8)
+        )
+        arsrapport.submit(self.h, self.round_, family_access, family, arsrapport.parse_submission(body, paper=False))
+        self.assertEqual([row.herd_id for row in rows(self.a, "TRANSFER")], [self.g9002.id])
+        self.assertEqual(proposals(self.a), [])
+        self.assertEqual(db.SaleProposal.select().count(), 0)
+        db.HerdAccessGrant.update(valid_until=arsrapport.today() - timedelta(days=1)).execute()
+        self.assertIsNone(arsrapport.report_access(db.User.get_by_id(self.caretaker.id), self.h))
+        self.assertIsNone(arsrapport.report_access(db.User.get_by_id(family.id), self.h))
+
+    def test_a_revoked_grant_writes_nothing_with_the_access_it_had(self):  # #326: read again under the report lock
+        self.send(
             self.sald(self.a, "G9002", 2025, 10, 3),
             self.kvar(self.b, vikt=2.8),
             self.kvar(self.c, vikt=2.8),
             who="caretaker",
+        )
+        access, user = self.actor("caretaker")  # as the route read it, before the revoke
+        db.HerdAccessGrant.update(revoked_at=datetime.now()).execute()
+        with self.assertRaises(ArsrapportError) as caught:
+            arsrapport.withdraw(self.h, self.round_, access, user, revision=self.report().revision)
+        self.assertEqual(caught.exception.status, 403)
+        changed = self.body(self.kvar(self.a, vikt=2.8), self.kvar(self.b, vikt=2.8), self.kvar(self.c, vikt=2.8))
+        changed["revision"] = self.report().revision  # Ändra: sald→kvar would take the sale back
+        with self.assertRaises(ArsrapportError) as caught:
+            arsrapport.submit(self.h, self.round_, access, user, arsrapport.parse_submission(changed, paper=False))
+        self.assertEqual(caught.exception.status, 403)
+        self.assertEqual(self.report().status, "submitted")
+        (sale,) = rows(self.a, "TRANSFER")
+        self.assertIsNone(sale.voided_at)
+
+    def test_link_sale_becomes_proposal(self):
+        receipt = self.send(
+            self.sald(self.a, "G9002", 2025, 10, 3),
+            self.kvar(self.b, vikt=2.8),
+            self.kvar(self.c, vikt=2.8),
+            who="code",
         )
         self.assertEqual((rows(self.a, "TRANSFER"), rows(self.a, "ATTESTATION")), ([], []))  # F2, fråga 28
         self.assertEqual(len(rows(self.b, "ATTESTATION")), 1)
@@ -158,7 +200,7 @@ class ProposalsTest(ArsrapportTest):
         self.assertEqual(proposal.submission_id, submission.id)
         self.assertEqual(submission.data["rabbits"][str(self.a.id)]["sald"]["forslag"], proposal.id)
         self.assertEqual(receipt["summary"]["salda"], 1)
-        access, user = self.actor("caretaker")
+        access, user = self.actor("code")
         view = arsrapport.report_view(self.h, self.round_, access, user)
         self.assertEqual(
             view["forslag"],
@@ -253,7 +295,7 @@ class ProposalsTest(ArsrapportTest):
 
     def test_pending_sale_requires_address_when_buyer_changes(self):
         others = [self.kvar(self.b, vikt=2.8), self.kvar(self.c, vikt=2.8)]
-        self.send(self.sald(self.a, "utanfor", 2025, 10, 3, kopare=BUYER), *others, who="caretaker")
+        self.send(self.sald(self.a, "utanfor", 2025, 10, 3, kopare=BUYER), *others)
         changed = self.sald(self.a, "utanfor", 2025, 10, 3, kopare={**OTHER_BUYER, "postal_address": ""})
         for who in ("owner", "code"):
             with self.subTest(who=who), self.assertRaises(ArsrapportError) as caught:
@@ -561,7 +603,7 @@ class ProposalsTest(ArsrapportTest):
 
     def test_reason_naming_a_pending_buyer_is_refused(self):  # SaleProposal.buyer, before anything is stored
         entries = (self.sald(self.a, "utanfor", 2025, 10, 3), self.kvar(self.b, vikt=2.8), self.kvar(self.c, vikt=2.8))
-        self.send(self.sald(self.a, "utanfor", 2025, 10, 3, kopare=BUYER), *entries[1:], who="caretaker")
+        self.send(self.sald(self.a, "utanfor", 2025, 10, 3, kopare=BUYER), *entries[1:])
         self.day(1)
         body = self.body(*entries, revision=1, reason="Zelda hämtar den i mars")
         sub = arsrapport.parse_submission(body, paper=False)
@@ -571,7 +613,7 @@ class ProposalsTest(ArsrapportTest):
             refusals, _ = arsrapport.check(self.h, self.round_, access, self.report(), sub, on=arsrapport.today())
             return [(r.individual_id, r.code) for r in refusals]
 
-        self.assertEqual(codes(self.actor("caretaker")[0]), [])  # a seller's reason is the system's (without_reason)
+        self.assertEqual(codes(self.actor("code")[0]), [])  # a seller's reason is the system's (without_reason)
         self.assertEqual(codes(manager), [(None, "orsak_kopare")])
         refused = self.refused(lambda: arsrapport.submit(self.h, self.round_, manager, self.decider, sub))
         self.assertEqual(refused, [(None, "orsak_kopare")])

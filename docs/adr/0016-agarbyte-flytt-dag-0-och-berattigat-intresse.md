@@ -289,8 +289,8 @@ vänta i rapporten till Skicka.
   ångra den i 7 dagar, som på kaninens sida (`SALE_UNDO_WINDOW`). Dra
   tillbaka lämnar den, och Skicka skriver den aldrig en gång till.
 * Är rapporten redan inskickad (Ändra) går försäljningen med Skicka som
-  förut. Detsamma gäller ett försäljningsförslag från en skötare eller
-  den personliga länken, tills förslag kan finnas före första Skicka.
+  förut. Detsamma gäller ett försäljningsförslag från den personliga
+  länken, tills förslag kan finnas före första Skicka.
 * `purge_uninformed` raderar en köpare som inte har fått mejlet inom en
   månad, också om mejlet ligger i kön eller håller på att skickas och om
   adressen väntar på genbanksansvarigs kontroll: köparen ska få veta inom

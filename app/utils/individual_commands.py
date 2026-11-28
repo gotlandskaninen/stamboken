@@ -251,7 +251,7 @@ def roles_for(user, individual, grant: Grant | None = None) -> frozenset[Role]:
 
 def _herd_roles(user, herd) -> frozenset[Role]:
     """The user's own roles for writing in `herd`."""
-    owned = user.transfer_herd_ids()
+    owned = user.owned_herd_ids()
     roles = {
         Role.ADMIN: user.is_admin,
         Role.MANAGER_CURRENT: herd.genebank_id in (user.is_manager or []),

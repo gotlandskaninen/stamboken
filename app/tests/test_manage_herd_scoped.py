@@ -98,7 +98,7 @@ class TestManageHerdScoped(DatabaseTest):
         return {r["herd"]: r["owner_usernames"] for r in body["herds"]}
 
     def test_manage_herd_list_owner_includes_the_main_member_not_a_caretaker(self):
-        # #214: an active main member with an account owns the membership's herd (transfer_herd_ids), a caretaker
+        # #214: an active main member with an account owns the membership's herd (owned_herd_ids), a caretaker
         # with a grant does not — the owner column and both filters agree with that.
         membership = db.Membership.create(member_number=9)
         main = da.register_user("main@example.invalid", "pass", username="huvud")

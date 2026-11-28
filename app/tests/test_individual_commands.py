@@ -416,14 +416,18 @@ class TestEditDescription(IndividualTest):
         self.assertEqual(self._stored().color_id, gotland.id)
 
     def test_stored_color_sent_back_unchanged_is_kept(self):
-        """Legacy sends the stored name on every save; a rabbit stored with another genebank's colour is not locked out."""
+        """Legacy sends the stored name on every save; a rabbit stored with another genebank's colour is not locked
+        out."""
         rabbit = self.individuals[2]  # in M3
         rabbit.color = self.colors[0]  # Gotland's, not in Mellerud
         rabbit.save()
         self._run(self.admin, EditDescription({"color": "bleighe", "notes": "x"}), ind=rabbit)
         self.assertEqual(self._stored(rabbit).color_id, self.colors[0].id)
         self.assertEqual(self._stored(rabbit).notes, "x")
-        self.assertIn("Unknown color", self._refusal(self.admin, EditDescription({"color": "stgröhn"}), ind=rabbit).envelope["message"])
+        self.assertIn(
+            "Unknown color",
+            self._refusal(self.admin, EditDescription({"color": "stgröhn"}), ind=rabbit).envelope["message"],
+        )
 
     def test_wrong_genebank_albino_is_corrected_on_save(self):
         gotland = db.Color.create(name="Albino", genebank=self.genebanks[0])
@@ -644,7 +648,6 @@ class TestRecordAttestation(IndividualTest):
         self.assertEqual(self._newest(ind)[:2], ("ATTESTATION", "G1"))
 
 
-SALE_REFUSED = "Du får inte sälja eller flytta individen till den besättningen."
 GENEBANK_ADMIN_ONLY = "Bara administratör kan flytta en individ till en annan genbank."
 
 
@@ -674,9 +677,10 @@ class TestTransferIndividual(IndividualTest):
                 self._run(user, TransferIndividual("G2", "2021-06-01"), ind=ind)
                 self.assertEqual(self._transfers(ind), [("G2", None)])
 
-    def test_caretaker_refused_403(self):
-        """A caretaker's grant never sells or moves."""
-        self._forbidden(self._caretaker(), "G2", SALE_REFUSED)
+    def test_caretaker_sells_as_the_owner(self):
+        """#326: a herd-access grant sells and moves as the owner does."""
+        self._run(self._caretaker(), TransferIndividual("G2", "2021-06-01"))
+        self.assertEqual(self._transfers(), [("G2", None)])
 
     def test_viewer_refused(self):
         self.assertEqual(self._refusal(self.viewer, TransferIndividual("G2", "2021-06-01")).envelope, FORBIDDEN)
@@ -687,9 +691,8 @@ class TestTransferIndividual(IndividualTest):
     def test_manager_refused_cross_genebank_403(self):
         self._forbidden(self.manager, "M3", GENEBANK_ADMIN_ONLY)
 
-    def test_caretaker_cross_genebank_gets_sale_refusal(self):
-        """IR-52: the right to sell is asked before the genebank."""
-        self._forbidden(self._caretaker(), "M3", SALE_REFUSED)
+    def test_caretaker_refused_cross_genebank_403(self):
+        self._forbidden(self._caretaker(), "M3", GENEBANK_ADMIN_ONLY)
 
     def test_admin_moves_cross_genebank_with_reason(self):
         """IR-54: the cleaned reason is the TRANSFER row's note, and the change is logged on herdbook.da."""
@@ -731,14 +734,14 @@ class TestTransferIndividual(IndividualTest):
         self._forbidden(self.owner, self.herds[2].id, GENEBANK_ADMIN_ONLY)
 
     def test_caretaker_unknown_herd_is_invalid_not_forbidden(self):
-        """IR-52: the target is resolved before the right to sell is asked."""
+        """IR-52: the target is resolved first, so an unknown herd is invalid."""
         refusal = self._refusal(self._caretaker(), TransferIndividual("Q9", "2021-06-01"), error=HerdTrackingInvalid)
         self.assertEqual((refusal.status, refusal.detail), (400, "Okänd besättning: Q9."))
 
     def test_refusal_rolls_back_weights(self):
         """IR-32: the measurements are written before the refusal and roll back with it."""
-        commands = (SetMeasurements(weights=self.WEIGHTS), TransferIndividual("G2", "2021-06-01"))
-        self._refusal(self._caretaker(), *commands, error=HerdTrackingForbidden)
+        commands = (SetMeasurements(weights=self.WEIGHTS), TransferIndividual("M3", "2021-06-01"))
+        self._refusal(self.owner, *commands, error=HerdTrackingForbidden)
         self.assertFalse(db.Weight.select().where(db.Weight.individual == self.ind.id).exists())
 
 
@@ -1250,11 +1253,12 @@ class TestLegacyAdapter(IndividualTest, FlaskTest):
         self.assertEqual(self._names(commands), expected)
 
     def test_report_to_other_herd_is_a_transfer(self):
-        """Review Focus 3: a yearly report to a herd other than the holder is a move, which needs the right to sell."""
+        """Review Focus 3: a yearly report to a herd other than the holder is a move, under the sale's rules."""
+        refused = da.update_individual(self._body(herd="M3", yearly_report_date="2021-06-01"), self.owner.uuid)
+        expected = {**error(GENEBANK_ADMIN_ONLY), "problem_status": 403, "title": "Åtkomst nekad", "rows": []}
+        self.assertEqual(refused, expected)
         body = self._body(herd="G2", yearly_report_date="2021-06-01")
-        refused = da.update_individual(dict(body), self._caretaker().uuid)
-        self.assertEqual(refused, {**error(SALE_REFUSED), "problem_status": 403, "title": "Åtkomst nekad", "rows": []})
-        self.assertEqual(da.update_individual(dict(body), self.owner.uuid), UPDATED)
+        self.assertEqual(da.update_individual(body, self._caretaker().uuid), UPDATED)  # #326: as the owner
         rows = db.HerdTracking.select().where(db.HerdTracking.individual == self.ind.id, db.ht_not_voided())
         newest = rows.order_by(db.HerdTracking.id.desc()).first()
         self.assertEqual((newest.kind, newest.herd.herd), ("TRANSFER", "G2"))

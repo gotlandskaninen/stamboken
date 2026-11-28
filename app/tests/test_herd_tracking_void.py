@@ -164,6 +164,14 @@ class TestOwnRowsOnly(VoidBase):
         report = record_herd_tracking(self.report_rabbit, self.g1, self.today, "ATTESTATION", caretaker)
         self.assertIsNotNone(void_herd_tracking(report.id, caretaker, "Fel kanin").voided_at)
 
+    def test_caretaker_undoes_own_sale(self):
+        """#326: a grant holder sells as the main member does, so she may undo her own sale in the window."""
+        caretaker = self._caretaker()
+        sale = record_herd_tracking(self.report_rabbit, self.g2, self.today, "TRANSFER", caretaker)
+        rows = herd_tracking_history(db.Individual.get_by_id(self.report_rabbit.id), caretaker)["rows"]
+        self.assertTrue(next(r["can_void"] for r in rows if r["id"] == sale.id))
+        self.assertIsNotNone(void_herd_tracking(sale.id, caretaker, "Fel köpare").voided_at)
+
     def test_unsigned_row_needs_manager(self):
         report = ht_row("ATTESTATION", individual=self.report_rabbit, herd=self.g1, herd_tracking_date=self.today)
         self.assertEqual(self._refused(report, self.owner), OWN_ROWS_ONLY)
