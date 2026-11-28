@@ -36,7 +36,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 from flask.cli import AppGroup
 from peewee import fn
 from utils.cert_acess import download_certificate_s3, get_certificate_data
-from utils.cert_service_v2 import generate_and_store, invalidate_caches
+from utils.cert_service_v2 import generate_and_store, invalidate_caches, sync_directories
 from utils.certificate_lifecycle import CertState
 from utils.certificates import FORM_KEYS
 from utils.certificates_v2 import SigningUnavailableError
@@ -147,25 +147,27 @@ ARCHIVED_OTHER = "arkivet har redan en annan v1-fil för intygsnumret"
 
 
 def archive(rabbit, pdf):
-    """Keep the v1 original on the data volume, once, under its certificate number, which never moves."""
+    """Keep the v1 original on the data volume, once, under its certificate number, which never moves; synced before
+    the v2 row commits, also when an earlier attempt left it unsynced."""
     path = os.path.join(ARCHIVE, f"{rabbit.digital_certificate}.pdf")
     if os.path.exists(path):
         with open(path, "rb") as kept:
             if kept.read() != pdf:
                 raise Stop(ARCHIVED_OTHER)
-        return
-    os.makedirs(ARCHIVE, exist_ok=True)
-    # Complete or not at all: a half-written file under the final name would stop every later run.
-    temporary = f"{path}.{os.getpid()}.tmp"
-    try:
-        with open(temporary, "wb") as copy:
-            copy.write(pdf)
-            copy.flush()
-            os.fsync(copy.fileno())
-        os.link(temporary, path)  # never over an original already archived
-    finally:
-        if os.path.exists(temporary):
-            os.remove(temporary)
+    else:
+        os.makedirs(ARCHIVE, exist_ok=True)
+        # Complete or not at all: a half-written file under the final name would stop every later run.
+        temporary = f"{path}.{os.getpid()}.tmp"
+        try:
+            with open(temporary, "wb") as copy:
+                copy.write(pdf)
+                copy.flush()
+                os.fsync(copy.fileno())
+            os.link(temporary, path)  # never over an original already archived
+        finally:
+            if os.path.exists(temporary):
+                os.remove(temporary)
+    sync_directories(ARCHIVE)  # the link and any directory made for it outlast a crash after the v2 row commits
 
 
 def reissue(rabbit):

@@ -2780,14 +2780,13 @@ def update_certificate(i_number):
     return _certificate_gone()
 
 
-def _certificate_refused(i_number, user_id):
+def _certificate_refused(individual, user_id):
     """403 unless the user may download or preview the certificate (ADR-0016, User.can_view_certificate).
 
-    The same check as GET /api/v2/certificates/<number>: seeing the rabbit is not enough. Call it after
-    da.get_individual has found the rabbit, so an unknown number still answers 404.
+    The same check as GET /api/v2/certificates/<number>: seeing the rabbit is not enough. The caller passes the rabbit
+    da.get_individual found, by id, so the check and the PDF concern one rabbit even if a renumber moves the number.
     """
     user = da.fetch_user_info(user_id)
-    individual = db.Individual.get_or_none(db.Individual.number == i_number)
     if user and individual and user.can_view_certificate(individual):
         return None
     return jsonify({"response": "Bara ägaren, uppfödaren och genbanksansvarig kan hämta intyget"}), 403
@@ -2807,11 +2806,11 @@ def issue_certificate(i_number):
     # get_individual currently returns a dict, not an individual
     if ind_data is None:
         return jsonify({"response": "Individual not found"}), 404
-    refused = _certificate_refused(i_number, user_id)
+    individual = db.Individual.get_by_id(ind_data["id"])  # the rabbit just read, not a number that may have moved
+    refused = _certificate_refused(individual, user_id)
     if refused:
         return refused
 
-    individual = db.Individual.get_by_id(ind_data["id"])  # the rabbit just read, not a number that may have moved
     try:
         if settings.service.demo_instance:  # never a stored certificate (stamboken-drift #117 p3)
             from utils.cert_service_v2 import demo_certificate_pdf  # pylint: disable=import-outside-toplevel
@@ -2838,14 +2837,14 @@ def preview_certificate(i_number):
     ind = da.get_individual(i_number, user_id)
     if ind is None:
         return jsonify({"response": "Individual not found"}), 404
-    refused = _certificate_refused(i_number, user_id)
+    individual = db.Individual.get_by_id(ind["id"])
+    refused = _certificate_refused(individual, user_id)
     if refused:
         return refused
 
     if settings.service.demo_instance:  # watermarked and without an attester, as the demo's downloads
         from utils.cert_service_v2 import demo_certificate_pdf  # pylint: disable=import-outside-toplevel
 
-        individual = db.Individual.get_by_id(ind["id"])
         return create_pdf_response(pdf_bytes=demo_certificate_pdf(individual, ind, user_id), obj_name="preview.pdf")
 
     if request.method == "POST":

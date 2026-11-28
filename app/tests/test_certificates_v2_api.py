@@ -1826,4 +1826,5 @@ class TestCertificateIssueOnTheLockedRow(CertV2Mixin, FlaskTest):
         self.assertTrue(verify_certificate_checksum(individual.number, checksum))
         # A paper certificate replaced it (or a reissue): the file stays in S3 but is no longer the certificate.
         db.Individual.update(digital_certificate=None).where(db.Individual.id == individual.id).execute()
-        self.assertFalse(verify_certificate_checksum(individual.number, checksum))
+        with self.assertRaises(LookupError):  # no certificate: the legacy route answers 400, as before
+            verify_certificate_checksum(individual.number, checksum)

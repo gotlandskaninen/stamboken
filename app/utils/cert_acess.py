@@ -113,13 +113,14 @@ def verify_certificate_checksum(ind_number, checksum):
     Returns whether the rabbit's current certificate has the given checksum: the v2 row's, else the v1 file's in S3.
     """
     individual = db.Individual.get_or_none(db.Individual.number == ind_number)
-    if individual is None:
-        return False
-    cert = current_row(individual)
+    cert = current_row(individual) if individual else None
     if cert is not None:
         return cert.checksum == checksum
-    # A v1 file counts only while it is the certificate: after a reissue or a paper certificate it stays in S3.
-    return individual.digital_certificate is not None and get_certificate_checksum(ind_number) == checksum
+    if individual is None or individual.digital_certificate is None:
+        # No certificate to compare with: raise, as the S3 lookup of a missing key did, so the legacy route keeps
+        # its 400. A v1 file counts only while it is the certificate; after a reissue or a paper one it stays in S3.
+        raise LookupError(f"{ind_number} has no certificate")
+    return get_certificate_checksum(ind_number) == checksum
 
 
 def flatten_list_of_dcts(in_list):

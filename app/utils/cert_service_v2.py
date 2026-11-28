@@ -143,18 +143,30 @@ def issuer_role(user, individual):
     return "breeder"
 
 
+def sync_directories(path):
+    """fsync `path` and each parent up to uploads/, so new entries in them outlast a crash."""
+    while True:
+        directory = os.open(path, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+        if os.path.basename(path) == "uppladdningar" or path in ("", os.sep):
+            return
+        path = os.path.dirname(path)
+
+
 def write_durably(path, data):
-    """Write `data` to `path` and sync file and directory: the only copy must outlast a crash before its row commits."""
+    """
+    Write `data` to `path` and sync the file and every directory up to uploads/: the only copy must outlast a crash
+    before its row commits, also when this first file created certifikat/ or v2/.
+    """
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "wb") as f:
         f.write(data)
         f.flush()
         os.fsync(f.fileno())
-    directory = os.open(os.path.dirname(path), os.O_RDONLY)
-    try:
-        os.fsync(directory)
-    finally:
-        os.close(directory)
+    sync_directories(os.path.dirname(path))
 
 
 def generate_and_store(individual, user, ind_data, user_id, replaces_v1=False):
