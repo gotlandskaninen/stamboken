@@ -46,6 +46,7 @@ const EXPORT_TITLES: Record<string, string> = {
   "avelsprioritet-lista": "Uttag: Avelsprioritet (listan på skärmen)",
   matr: "Uttag: matrikeln (MATR)",
   "address-list": "Uttag: adresslistan till tryckeriet",
+  koharen: "Uttag: Koharens lista över besättningar",
 };
 
 export const tableLabel = (t: string) => TABLE_LABELS[t] ?? t;
@@ -116,6 +117,7 @@ export const FIELD_LABELS: Record<string, string> = {
   wire_phone: "Fast telefon",
   latitude: "Latitud",
   longitude: "Longitud",
+  bank_account_type: "Kontotyp",
   bank_account_number: "Kontonummer",
   bank_name: "Bank",
   // individual

@@ -29,6 +29,7 @@ from PIL import Image
 from psycopg2.errors import LockNotAvailable
 
 import utils.inbox as inbox
+import utils.inbox_interpreter as interpreter
 import utils.mail as mail
 import utils.settings as settings
 from utils.database import (
@@ -421,7 +422,15 @@ def _store(attachments):
 
 def _documents(item, stored):
     return [
-        InboxDocument.create(item=item, original_path=path, mime="image/jpeg", sha256=sha256, quality=quality)
+        InboxDocument.create(
+            item=item,
+            original_path=path,
+            mime="image/jpeg",
+            sha256=sha256,
+            quality=quality,
+            # a reply to a purchase notice brings photos that are never read, as the notice's own are not
+            interpretation_status="av" if inbox.unread(item) else interpreter.initial_status(quality),
+        )
         for path, sha256, quality in stored
     ]
 
@@ -679,11 +688,12 @@ def _receipt_mail(params):
     return {"item_id": params["item_id"], "images": params["images"]} if found else None
 
 
-def ask_breeder(item, user, text, document_id=None, crop=None):
+def ask_breeder(item, user, text, document_id=None, crop=None, rotation=None, straighten=None):
     """
     "Fråga uppfödaren" (POST …/fraga), by the item's handler: the question (and the frame of the photo it is
     about) is an event on the item, inlasning.fraga goes to the herd's holder per the member register, and the
-    item waits for the answer. The answer comes back through read_message.
+    item waits for the answer. The answer comes back through read_message. The frame comes with the rotation and
+    straighten it was drawn in, which must still be the document's: it is cut from the photo turned by them.
     """
     inbox.require_handler(item, user)
     if item.state != "tagen":
@@ -696,7 +706,10 @@ def ask_breeder(item, user, text, document_id=None, crop=None):
             raise inbox.InboxError(400, "Ange dokumentet som utsnittet är ur.")
         document = inbox.document_of(item, document_id)
         crop = inbox._rects([crop])[0]  # pylint: disable=protected-access  # as a masking rectangle
-        detail.update(document=document.id, rotation=document.rotation, crop=crop)
+        drawn = (inbox._rotation(rotation), inbox._straighten(straighten))  # pylint: disable=protected-access
+        if drawn != (document.rotation, document.straighten):
+            raise inbox.InboxError(409, "Fotot har vridits sedan utsnittet ritades. Rita utsnittet igen.")
+        detail.update(document=document.id, rotation=document.rotation, straighten=document.straighten, crop=crop)
     holder = inbox.herd_holder(item.herd_id)
     if holder is None or _normalize(holder.email) is None:
         raise inbox.InboxError(409, "Besättningen har ingen innehavare med e-post i matrikeln.")
@@ -715,10 +728,10 @@ def ask_breeder(item, user, text, document_id=None, crop=None):
     item.save()
 
 
-def _cropped(document, rect, rotation):
+def _cropped(document, rect, rotation, straighten):
     """The framed part of the original, turned as the handler saw it, as a JPEG at most CROP_SIDE a side."""
     with Image.open(inbox.private_path(document.original_path)) as original:
-        image = original.convert("RGB").rotate(-rotation, expand=True)
+        image = inbox.turned(original, rotation, straighten)
     width, height = image.size
     left, top = math.floor(rect["x"] * width), math.floor(rect["y"] * height)
     part = image.crop(
@@ -740,5 +753,7 @@ def _question_mail(params):
     detail, attachments = event.detail, []
     document = InboxDocument.get_or_none(InboxDocument.id == detail["document"]) if "crop" in detail else None
     if document is not None and document.original_path is not None:
-        attachments.append(("utsnitt.jpg", "image/jpeg", _cropped(document, detail["crop"], detail["rotation"])))
+        # A question asked before the photo could be straightened has no straighten: it was 0.
+        cut = _cropped(document, detail["crop"], detail["rotation"], detail.get("straighten", 0))
+        attachments.append(("utsnitt.jpg", "image/jpeg", cut))
     return {"item_id": event.item_id, "text": detail["text"], "crop": bool(attachments), "attachments": attachments}

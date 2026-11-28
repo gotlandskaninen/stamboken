@@ -343,9 +343,38 @@
   border-color: var(--sb-lera);
   outline: 2px solid #fff;
 }
-.rect.frame {
+.rect.frame,
+.rect.copyFrame {
   background: transparent;
   border: 3px dashed var(--sb-lera);
+}
+/* Outside the frame the photo is dimmed: not in the copy. A shadow adds no scroll overflow, and the viewport clips it. */
+.rect.copyFrame {
+  box-shadow: 0 0 0 100vmax rgb(0 0 0 / 0.35);
+  pointer-events: none;
+}
+/* Only the frame's edge and corner take the pointer: inside it, a drag pans the photo as anywhere else. */
+.rect.copyFrame::before {
+  content: "";
+  position: absolute;
+  inset: -9px;
+  pointer-events: auto;
+  clip-path: polygon(
+    evenodd,
+    0 0,
+    100% 0,
+    100% 100%,
+    0 100%,
+    0 0,
+    18px 18px,
+    18px calc(100% - 18px),
+    calc(100% - 18px) calc(100% - 18px),
+    calc(100% - 18px) 18px,
+    18px 18px
+  );
+}
+.rect.copyFrame .handle {
+  pointer-events: auto;
 }
 .handle {
   position: absolute;
@@ -447,6 +476,216 @@
 .submitRow > :first-child {
   flex: 1;
   justify-content: center;
+}
+/* The reconciliation table: Inläst, Pappret, Registret and a status in words
+   per row. A pane under 680px (the phone, or the form beside the photo) shows
+   each row as a card with labels. */
+.reconcile {
+  container-type: inline-size;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.reconcileSummary {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.reconcileFrame {
+  border: 1px solid var(--sb-line);
+  border-radius: var(--sb-r-3);
+  background: var(--sb-card);
+  overflow: hidden;
+}
+.reconcileFrame table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 15px;
+}
+.reconcileFrame th,
+.reconcileFrame td {
+  text-align: left;
+  vertical-align: middle;
+  padding: 6px 10px;
+  border-top: 1px solid var(--sb-line-faint);
+}
+.reconcileFrame thead th {
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--sb-ink-3);
+  font-weight: 600;
+  border-top: 0;
+  background: var(--sb-paper-2);
+  white-space: nowrap;
+}
+.reconcileFrame tbody th {
+  font-weight: 600;
+  line-height: 1.3;
+}
+.reconcileFrame tr[data-grandparent] > th {
+  padding-left: 28px;
+  font-weight: 500;
+  color: var(--sb-ink-2);
+}
+.reconcileRead {
+  font-family: var(--sb-mono);
+  font-size: 14px;
+  color: var(--sb-ink-2);
+  white-space: nowrap;
+}
+.reconcilePaper {
+  min-width: 150px;
+}
+.reconcileInput {
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  font: inherit;
+  font-size: 16px;
+  color: var(--sb-ink);
+  background: #fff;
+  border: 1px solid var(--sb-line-strong);
+  border-radius: 6px;
+  padding: 4px 8px;
+}
+.reconcileInput:focus-visible {
+  outline: 2px solid var(--sb-skog);
+  outline-offset: 1px;
+}
+.reconcileInput[aria-invalid="true"] {
+  border-color: var(--sb-danger);
+}
+.reconcileHint {
+  display: block;
+  font-size: 13px;
+  color: var(--sb-ink-3);
+  margin-top: 2px;
+}
+.reconcileRegistry {
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.reconcileStatus > * + * {
+  margin-left: 6px;
+}
+/* The status in a word, coloured as well: never by colour alone. */
+.chip {
+  display: inline-block;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  padding: 1px 8px;
+  border: 1px solid;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.chip[data-status="stammer"] {
+  background: var(--sb-success-soft);
+  color: var(--sb-skog-deep);
+  border-color: color-mix(in srgb, var(--sb-success) 40%, transparent);
+}
+.chip[data-status="skiljer"] {
+  background: var(--sb-lera-soft);
+  color: color-mix(in srgb, var(--sb-lera) 70%, var(--sb-ink));
+  border-color: color-mix(in srgb, var(--sb-lera) 40%, transparent);
+}
+.chip[data-status="osaker"] {
+  background: var(--sb-warning-soft);
+  color: color-mix(in srgb, var(--sb-warning) 50%, var(--sb-ink));
+  border-color: color-mix(in srgb, var(--sb-warning) 45%, transparent);
+}
+.chip[data-status="ingen"] {
+  background: var(--sb-paper-2);
+  color: var(--sb-ink-2);
+  border-color: var(--sb-line);
+}
+.reconcileFrame .nearRow td {
+  border-top: 0;
+  padding-top: 0;
+}
+.reconcileFrame .nearRow[data-grandparent] td {
+  padding-left: 28px;
+}
+.near {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  font-size: 14px;
+  color: var(--sb-ink-2);
+}
+@container (max-width: 679px) {
+  .reconcileFrame table,
+  .reconcileFrame tbody,
+  .reconcileFrame tr,
+  .reconcileFrame th,
+  .reconcileFrame td {
+    display: block;
+  }
+  .reconcileFrame thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .reconcileFrame tr.reconcileRow {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas: "name status" "paper paper" "read registry";
+    gap: 6px 12px;
+    padding: 10px 12px;
+    border-top: 1px solid var(--sb-line-faint);
+  }
+  .reconcileFrame tr.reconcileRow:first-child {
+    border-top: 0;
+  }
+  .reconcileFrame tr.reconcileRow > * {
+    padding: 0;
+    border: 0;
+    min-width: 0;
+  }
+  .reconcileFrame tr.reconcileRow > th {
+    grid-area: name;
+  }
+  .reconcileFrame tr.reconcileRow > .reconcileStatus {
+    grid-area: status;
+    justify-self: end;
+    text-align: right;
+  }
+  .reconcileFrame tr.reconcileRow > .reconcilePaper {
+    grid-area: paper;
+  }
+  .reconcileFrame tr.reconcileRow > .reconcileRead {
+    grid-area: read;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .reconcileFrame tr.reconcileRow > .reconcileRegistry {
+    grid-area: registry;
+  }
+  .reconcileFrame td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    font: 600 12px var(--sb-body);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--sb-ink-3);
+  }
+  .reconcileFrame tr[data-grandparent] {
+    margin-left: 14px;
+    border-left: 2px solid var(--sb-line);
+  }
+  .reconcileFrame tr[data-grandparent] > th {
+    padding-left: 0;
+  }
+  .reconcileFrame .nearRow td,
+  .reconcileFrame .nearRow[data-grandparent] td {
+    padding: 0 12px 10px;
+  }
 }
 /* A column with nothing to show (a purchase notice's right column): no empty card */
 .hideEmpty:empty {

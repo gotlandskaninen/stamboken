@@ -9,6 +9,8 @@ from datetime import datetime, timedelta
 from unittest import mock
 from zoneinfo import ZoneInfo
 
+from apscheduler.triggers.cron import CronTrigger
+
 os.environ.setdefault("AUTHCONFIGFILE", os.path.join(os.path.dirname(__file__), "auth.ini.test"))
 
 import herdbook  # noqa: E402
@@ -88,3 +90,37 @@ class TestMailJobs(MailTest):
             job.assert_not_called()
             herdbook._catch_up_arsrapport_invitations(datetime(2026, 12, 31, 7, 10, tzinfo=stockholm))
             job.assert_called_once()
+
+    def test_followup_job_runs_on_leader_and_closes_connection(self):
+        lock = os.path.join(tempfile.mkdtemp(), "scheduler.lock")
+        with (
+            mock.patch.object(herdbook, "SCHEDULER_LOCK_PATH", lock),
+            mock.patch.object(ci, "init_redis"),
+            mock.patch.object(ci, "start_pubsub_listener"),
+            mock.patch.object(ci, "set_cache_and_functions"),
+            mock.patch.object(herdbook, "_warm_genetics_in_background"),
+            mock.patch.object(herdbook.apscheduler.schedulers.background, "BackgroundScheduler") as scheduler_cls,
+        ):
+            herdbook.initialize_app()
+        calls = [
+            c
+            for c in scheduler_cls.return_value.add_job.call_args_list
+            if herdbook._send_arsrapport_followups in c.args
+        ]
+        (hourly,) = [c for c in calls if c.args[1:] == ("cron",)]
+        self.assertEqual((hourly.kwargs["minute"], str(hourly.kwargs["timezone"])), (0, "Europe/Stockholm"))
+        self.assertEqual([c.kwargs["trigger"] for c in calls if c is not hourly], ["date"])
+        trigger = CronTrigger(minute=0, timezone=hourly.kwargs["timezone"])
+        started = datetime(2026, 12, 15, 6, 58, tzinfo=ZoneInfo("Europe/Stockholm"))  # a leader up at 06:58
+        self.assertEqual(trigger.get_next_fire_time(None, started), started.replace(hour=7, minute=0))
+        with (
+            mock.patch.object(herdbook, "send_due_reminders", side_effect=RuntimeError("database gone")),
+            mock.patch.object(herdbook, "send_due_unanswered", return_value=0) as unanswered,
+            mock.patch.object(herdbook, "send_missing_questions", return_value=0) as missing,
+            mock.patch.object(herdbook.genetics.ps, "_close_db_connection") as close,
+            self.assertLogs(herdbook.APP.logger, "ERROR"),
+        ):
+            herdbook._send_arsrapport_followups()  # logged, never raised into the scheduler
+        unanswered.assert_called_once()  # one follow-up failing stops no other
+        missing.assert_called_once()
+        close.assert_called_once()

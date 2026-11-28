@@ -176,13 +176,16 @@ def receipt_context(report, submission) -> dict:
     diseases = [_disease(name, value) for name, value in (data.get("diseases") or {}).items()]
     named = _numbers(d["individual_id"] for d in data.get("defects") or [])
     defects = [{"number": named.get(d["individual_id"]), "text": d["beskrivning"]} for d in data.get("defects") or []]
+    # a paper form came in on received_on; created_at is only when it was entered (the mail text says the same). An
+    # answer by link to a paper report keeps the day the form came (step 6), which decides "i tid".
+    received = data.get("received_on") if submission.source == "paper" else None
+    if received is None and arsrapport.from_paper(report):
+        received = f"{report.received_at.astimezone(arsrapport.STOCKHOLM):%Y-%m-%d}"
     return {
         "mode": "kvittens",
         "herd": report.herd.herd,
         "year": report.round.report_year,
-        # a paper form came in on received_on; created_at is only when it was entered (the mail text says the same)
-        "received": (data.get("received_on") if submission.source == "paper" else None)
-        or submission.created_at.astimezone(arsrapport.STOCKHOLM).strftime("%Y-%m-%d %H:%M"),
+        "received": received or submission.created_at.astimezone(arsrapport.STOCKHOLM).strftime("%Y-%m-%d %H:%M"),
         "rabbits": rabbits,
         "health": _HEALTH.get(health, "Sjukdomsfall eller defekter"),
         "diseases": diseases,

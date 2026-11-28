@@ -1,4 +1,4 @@
-{% block subject %}Årsrapporten för {{ herd }} är inskickad{% endblock %}
+{% block subject %}{% if andringar %}Årsrapporten är inskickad, bekräfta dina ändringar{% else %}Årsrapporten för {{ herd }} är inskickad{% endif %}{% endblock %}
 
 {% block body %}
 Hej!
@@ -8,6 +8,9 @@ Hej!
 Kullar som du lade till i Stamboken sedan förra inskicket: {{ kullar|join("; ") }}. De finns kvar även om du drar tillbaka rapporten.
 {% endif %}
 {% if vantar %}Försäljningen väntar på genbanksansvarig. Kaninen står kvar hos dig tills den är godkänd.
+
+{% endif %}{% if andringar %}Du har ändringar att bekräfta. Öppna länken senast {{ andringar_senast }}.{% if andrat_konto %} Kontot ändras först när du också kryssat i kontobytet.{% endif %}
+{{ andringar }}
 
 {% endif %}{{ kvittens }}
 

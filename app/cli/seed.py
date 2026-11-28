@@ -1140,9 +1140,12 @@ def _member_herd(genebank, code, name, email, owner, bank, log):
     herd = _herd(genebank, code, name, True, None, None, log)
     if Individual.select().where(Individual.number.startswith(f"{code}-")).exists():
         raise click.ClickException(f"rabbits numbered {code}- exist already; refusing to seed under them.")
-    membership = Membership.create()
+    number, bank_name = bank
+    membership = Membership.create(
+        bank_account_type=number and "bankkonto", bank_account_number=number, bank_name=bank_name
+    )
     Member.create(first_name="Test", last_name=f"Huvudmedlem {code}", email=email, membership=membership, user=owner)
-    herd.membership, herd.bank_account_number, herd.bank_name = membership, *bank
+    herd.membership = membership
     herd.save()
     return herd
 

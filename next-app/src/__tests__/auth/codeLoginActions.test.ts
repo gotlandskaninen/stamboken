@@ -1,11 +1,13 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const cookieJar = vi.hoisted(() => new Map<string, string>());
 const store = vi.hoisted(() => ({
-  get: (name: string) => ({ name, value: "test-" + name }),
+  get: (name: string) =>
+    cookieJar.has(name) ? { name, value: cookieJar.get(name)! } : undefined,
   getAll: () => [{ name: "sb_mode", value: "demo" }],
-  set: vi.fn(),
-  delete: vi.fn(),
+  set: vi.fn((name: string, value: string) => cookieJar.set(name, value)),
+  delete: vi.fn((name: string) => cookieJar.delete(name)),
 }));
 vi.mock("next/headers", () => ({
   cookies: async () => store,
@@ -25,6 +27,9 @@ const prod = "https://example.org/prod";
 beforeEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
+  cookieJar.clear();
+  for (const name of ["session", "login_request"])
+    cookieJar.set(name, "test-" + name);
   vi.stubGlobal("fetch", http);
   vi.stubEnv("API_INTERNAL_URL", prod);
   vi.stubEnv("API_TEST_INTERNAL_URL", "https://example.org/demo");
@@ -159,6 +164,37 @@ describe("code login server actions", () => {
         }),
       }),
     );
+  });
+  it.each(["digits", "mail link"])(
+    "returns to the invited report via %s",
+    async (via) => {
+      const { requestLoginCode, verifyLoginCode, redeemLoginLink } =
+        await import("@/app/(app)/(auth)/actions");
+      const report = "/stamboken/arsrapport/G9002/2025";
+      http.mockResolvedValueOnce(
+        flask({}, 200, "login_request=test-request; Path=/"),
+      );
+      expect(await requestLoginCode("member@example.org", report)).toBe(true);
+      http.mockResolvedValueOnce(
+        flask({ v2_prod_access: true }, 200, "session=test-login; Path=/"),
+      );
+      const result =
+        via === "digits"
+          ? verifyLoginCode("12345678", report)
+          : redeemLoginLink("test-token");
+      await expect(result).rejects.toThrow("redirect " + report);
+      expect(cookieJar.has("login_return_to")).toBe(false);
+    },
+  );
+  it("keeps a return path with cookie delimiters out of the cookie", async () => {
+    const { requestLoginCode } = await import("@/app/(app)/(auth)/actions");
+    http.mockResolvedValueOnce(
+      flask({}, 200, "login_request=test-request; Path=/"),
+    );
+    expect(
+      await requestLoginCode("member@example.org", "/x; session=test-other"),
+    ).toBe(true);
+    expect(cookieJar.has("login_return_to")).toBe(false);
   });
   it("uses the demo cookie for a nonpromoted account and reports the overnight delay", async () => {
     const { createMemberAccount } = await import("@/app/(app)/(auth)/actions");

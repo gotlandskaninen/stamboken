@@ -6,7 +6,9 @@ import {
   assignItem,
   changeState,
   confirmMask,
+  findPaper,
   previewHerd,
+  reconcileDocument,
   releaseItem,
   saveCertificate,
   takeItem,
@@ -97,8 +99,13 @@ describe("the queue's server actions", () => {
   });
 
   it("pass only the document fields the UI changes", async () => {
-    await updateDocument(12, 31, { rotation: 90, waiting_for: ["X"], foo: 1 });
-    expect(body(0)).toEqual({ rotation: 90 });
+    await updateDocument(12, 31, {
+      rotation: 90,
+      straighten: 2.5,
+      waiting_for: ["X"],
+      foo: 1,
+    });
+    expect(body(0)).toEqual({ rotation: 90, straighten: 2.5 });
   });
 
   it("refuse a document change made for the other environment", async () => {
@@ -137,34 +144,70 @@ describe("the queue's server actions", () => {
 
   it("send the rotation together with the rectangles drawn in it", async () => {
     const rect = { x: 0, y: 0, w: 0.3, h: 1 };
-    await confirmMask(12, 31, 90, [rect]);
+    await confirmMask(12, 31, 90, 0, [rect], null);
     expect(body(0)).toEqual({
       rotation: 90,
+      straighten: 0,
       mask_rects: [rect],
+      copy_frame: null,
+      matches_registry: false,
+    });
+  });
+
+  it("send the frame around the copy rounded inside the image, and no no_personal_data beside it", async () => {
+    const frame = { x: 0.33333333, y: 0, w: 0.66669999, h: 1.00001 };
+    await confirmMask(12, 31, 90, 0, [], frame, true);
+    expect(body(0)).toEqual({
+      rotation: 90,
+      straighten: 0,
+      mask_rects: [],
+      copy_frame: { x: 0.3334, y: 0, w: 0.6666, h: 1 }, // inwards: the copy keeps no more than shown
       matches_registry: false,
     });
   });
 
   it("send whether the handler found the certificate and the registry in agreement", async () => {
     const rect = { x: 0, y: 0, w: 0.3, h: 1 };
-    await confirmMask(12, 31, 0, [rect], false, true);
+    await confirmMask(12, 31, 0, 0, [rect], null, false, true);
     expect(body(0)).toMatchObject({ matches_registry: true });
   });
 
-  it("need the explicit no_personal_data for an empty list", async () => {
-    expect((await confirmMask(12, 31, 0, [])).ok).toBe(false);
+  it("need the explicit no_personal_data for an empty list without a frame", async () => {
+    expect((await confirmMask(12, 31, 0, 0, [], null)).ok).toBe(false);
+    // A frame over the whole photo leaves nothing out: no cover either.
+    const whole = { x: 0, y: 0, w: 1, h: 1 };
+    expect((await confirmMask(12, 31, 0, 0, [], whole)).ok).toBe(false);
     expect(api).not.toHaveBeenCalled();
-    await confirmMask(12, 31, 180, [], true);
+    await confirmMask(12, 31, 180, 0, [], null, true);
     expect(body(0)).toEqual({
       rotation: 180,
+      straighten: 0,
       mask_rects: [],
+      copy_frame: null,
       no_personal_data: true,
       matches_registry: false,
     });
   });
 
+  it("send the view's turn to 'Hitta pappret', and the masking's fixed angle when there is one", async () => {
+    await findPaper(12, 31, 90);
+    expect(api.mock.calls[0][0]).toBe(
+      "/v2/inkorg/12/dokument/31/hitta-pappret",
+    );
+    expect(body(0)).toEqual({ rotation: 90 });
+    await findPaper(12, 31, 0, 2.5);
+    expect(body(1)).toEqual({ rotation: 0, straighten: 2.5 });
+    expect((await findPaper(12, 31, 0, NaN)).ok).toBe(false);
+    expect((await findPaper(12, 31, 45)).ok).toBe(false);
+    expect(api).toHaveBeenCalledTimes(2);
+  });
+
   it("refuse a rotation that is not a quarter turn", async () => {
-    expect((await confirmMask(12, 31, 45, [])).ok).toBe(false);
+    expect((await confirmMask(12, 31, 45, 0, [], null)).ok).toBe(false);
+    for (const angle of [15.5, NaN, "2" as unknown as number])
+      expect((await confirmMask(12, 31, 0, angle, [], null, true)).ok).toBe(
+        false,
+      );
     expect(api).not.toHaveBeenCalled();
   });
 
@@ -202,6 +245,25 @@ describe("the queue's server actions", () => {
     );
     await takeItem(12);
     expect(revalidated).not.toHaveBeenCalled();
+  });
+
+  it("recompute the table as a read: the typed strings posted, nothing revalidated, null on a refusal", async () => {
+    const answer = { rows: {}, checks: [] };
+    api.mockResolvedValueOnce(answer);
+    const typed = { mode: "ny_kanin", mother: "G9001-2211", n: 3 as never };
+    expect(await reconcileDocument(12, 31, typed)).toBe(answer);
+    expect(api.mock.calls[0][0]).toBe("/v2/inkorg/12/dokument/31/avstamning");
+    expect(api.mock.calls[0][1]?.method).toBe("POST");
+    expect(body(0)).toEqual({ mode: "ny_kanin", mother: "G9001-2211" });
+    expect(revalidated).not.toHaveBeenCalled();
+    api.mockRejectedValueOnce(
+      new ApiError({ status: 429, title: "För många anrop", detail: "" }),
+    );
+    expect(await reconcileDocument(12, 31, typed)).toBeNull();
+    api.mockRejectedValueOnce(new TypeError("fetch failed"));
+    expect(await reconcileDocument(12, 31, typed)).toBeNull();
+    expect(await reconcileDocument(0, 31, typed)).toBeNull();
+    expect(api).toHaveBeenCalledTimes(3);
   });
 
   it("answer a dropped connection to the API as a refusal instead of throwing", async () => {

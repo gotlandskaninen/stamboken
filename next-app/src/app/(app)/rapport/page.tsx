@@ -1,9 +1,13 @@
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { isTestHost } from "@/lib/mode";
+import { codeLoginEnabled } from "@/lib/code-login-enabled";
 import { LinkGate, type Missing } from "./LinkGate";
 import {
   addLitter,
   changeLitter,
   dryRun,
+  dryRunCompletion,
   getFathers,
   getGenebankHerds,
   getMothers,
@@ -13,6 +17,7 @@ import {
   saveDraft,
   sendPurchasePhotos,
   submitReport,
+  submitCompletion,
   withdrawReport,
 } from "./actions";
 import { ReportForm } from "../stamboken/(dashboard)/arsrapport/ReportForm";
@@ -23,7 +28,9 @@ export const dynamic = "force-dynamic";
 const actions = {
   saveDraft,
   dryRun,
+  dryRunCompletion,
   submitReport,
+  submitCompletion,
   withdrawReport,
   addLitter,
   changeLitter,
@@ -87,12 +94,17 @@ export default async function RapportPage({
     const missing: Missing = status === 401 ? "ute" : "fel";
     return <LinkGate missing={missing} />;
   }
+  const accountOffer = await codeLoginEnabled(); // off in the demo API (fråga 9)
   return (
     <LinkGate>
       <ReportForm
         key={`${entry.herd}-${entry.year}`}
         link
+        loginTip={
+          (entry.login_tip && !isTestHost(await headers())) || undefined
+        }
         env="prod"
+        accountOffer={accountOffer}
         view={report.data}
         actions={{
           ...actions,

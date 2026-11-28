@@ -20,12 +20,15 @@ import {
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/ReportForm";
 import {
   PENDING_SALE_TEXT,
+  fromBody,
+  toDraft,
+  type BodyEntry,
   type Receipt,
   type ReportCase,
   type ReportView,
   type Submission,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/lib";
-import { rabbit, view } from "./fixtures";
+import { rabbit, submittedReport, view } from "./fixtures";
 import "@/i18n"; // BuyerFields' labels
 
 const receipt: Receipt = {
@@ -93,20 +96,6 @@ const local = () => {
   );
   return key ? window.localStorage.getItem(key) : null;
 };
-const submittedReport = () => ({
-  id: 1,
-  status: "submitted",
-  source: "login",
-  revision: 0,
-  received_at: "2027-01-03T13:32:00+00:00",
-  report_date: "2027-01-03",
-  on_time: true,
-  submitted: { rabbits: { "1": { val: "kvar", vikt: 2.8 } } as never },
-  can_change: true,
-  can_withdraw: true,
-  withdraw_until: "2027-01-10T13:32:00+00:00",
-  villkor: { hane: true, hona: true, kull: false, i_tid: true },
-});
 const row = (n: number) =>
   // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- n is a test constant, not user input
   screen.getByRole("group", { name: new RegExp(`G9001-${n}\\b`) });
@@ -120,8 +109,534 @@ const fillAll = () => {
     });
   }
 };
+const sellOutside = () => {
+  choose(1, "Såld");
+  fireEvent.click(screen.getByLabelText("Utanför genbanken"));
+  fireEvent.click(screen.getByRole("radio", { name: "Ja" })); // the buyer has e-mail (before 2027)
+  fireEvent.change(screen.getByLabelText(/Köparens namn/), {
+    target: { value: "Ola Köpare" },
+  });
+  fireEvent.change(screen.getByLabelText(/^Ort/), {
+    target: { value: "Visby" },
+  });
+  fireEvent.change(screen.getByLabelText(/^Postadress/), {
+    target: { value: "Testgatan 1" },
+  });
+  fireEvent.change(screen.getByLabelText(/^E-post/), {
+    target: { value: "ola@example.invalid" },
+  });
+  fireEvent.change(screen.getByLabelText("Månad"), {
+    target: { value: "6" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Spara försäljningen" }));
+};
 const send = () =>
   fireEvent.click(screen.getByRole("button", { name: "Skicka årsrapporten" }));
+
+describe("paper omissions", () => {
+  const draftKey = "22222222-2222-4222-8222-222222222222";
+  const savedText =
+    "Svaret är sparat. Datumet då årsrapporten kom in är oförändrat.";
+  const completionActions = () => ({
+    ...actions(),
+    dryRunCompletion: vi.fn<NonNullable<ReportActions["dryRunCompletion"]>>(
+      () => ok({ ok: true, refusals: [], warnings: [] }),
+    ),
+    submitCompletion: vi.fn<NonNullable<ReportActions["submitCompletion"]>>(
+      () => ok(receipt),
+    ),
+  });
+  const missingView = (notStated = [1, 2, 3], revision = 4) => {
+    const ids = [1, 2, 3, 4];
+    const rabbits: Record<string, BodyEntry> = {};
+    for (const id of ids)
+      rabbits[id] = notStated.includes(id)
+        ? { val: "ej_angiven" }
+        : { val: "kvar", vikt: 2.8 };
+    return view({
+      report: {
+        ...submittedReport(),
+        source: "paper",
+        revision,
+        not_stated: notStated,
+        can_complete_missing: notStated.length > 0,
+        submitted: { rabbits },
+      },
+      rabbits: ids.map((id) => rabbit(id)),
+      draft: {
+        data: toDraft(fromBody({ rabbits, message: "Min oskickade ändring" })),
+        updated_at: "2027-01-04T10:00:00+00:00",
+        submission_key: draftKey,
+        own: true,
+      },
+    });
+  };
+  const sendAnswer = () =>
+    fireEvent.click(screen.getByRole("button", { name: "Skicka svar" }));
+
+  it("shows the paper's day, not a time, after the last answer by link", () => {
+    const v = missingView([]);
+    v.report = {
+      ...v.report!,
+      source: "link",
+      from_paper: true,
+      received_at: "2027-01-11T23:00:00+00:00",
+    };
+    render(<ReportForm env="demo" view={v} actions={completionActions()} />);
+    expect(
+      screen.getByText(
+        /Klart\. Årsrapporten för G9001 kom in 12 januari 2027\./,
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(/kl\. 00\.00/)).toBeNull();
+  });
+
+  it("shows only missing rabbits and sends only answered rows", async () => {
+    const a = completionActions();
+    render(<ReportForm env="demo" view={missingView()} actions={a} />);
+    expect(screen.getAllByRole("radio", { name: "Finns kvar" })).toHaveLength(
+      3,
+    );
+    expect(screen.queryByText("Kanin4")).toBeNull();
+    expect(screen.queryByRole("radio", { checked: true })).toBeNull();
+    expect(screen.queryByText("✓ Klar")).toBeNull();
+    choose(2, "Finns kvar");
+    fireEvent.change(within(row(2)).getByLabelText("Vikt"), {
+      target: { value: "3,1" },
+    });
+    sendAnswer();
+    expect(await screen.findByText(savedText)).toBeTruthy();
+    const body = {
+      submission_key: expect.stringMatching(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+      ),
+      revision: 4,
+      rabbits: { "2": { val: "kvar", vikt: 3.1, ej_vagd: null, hull: null } },
+    };
+    expect(a.dryRunCompletion).toHaveBeenCalledWith(
+      "G9001",
+      2026,
+      body,
+      "demo",
+    );
+    const sent = a.dryRunCompletion.mock.calls[0][2];
+    expect(sent.submission_key).not.toBe(draftKey);
+    expect(a.submitCompletion).toHaveBeenCalledWith(
+      "G9001",
+      2026,
+      sent,
+      "demo",
+    );
+    expect(a.submitReport).not.toHaveBeenCalled();
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it("answers nothing without a choice", () => {
+    const a = completionActions();
+    render(<ReportForm env="demo" view={missingView()} actions={a} />);
+    sendAnswer();
+    expect(screen.getByRole("alert").textContent).toContain(
+      "Välj för minst en kanin.",
+    );
+    expect(a.dryRunCompletion).not.toHaveBeenCalled();
+    expect(a.submitCompletion).not.toHaveBeenCalled();
+  });
+
+  it("shows what a chosen row still needs before sending any answers", async () => {
+    const a = completionActions();
+    a.dryRunCompletion.mockImplementationOnce(() =>
+      ok({
+        ok: false,
+        refusals: [{ individual_id: 1, code: "vikt_saknas", message: "" }],
+        warnings: [],
+      }),
+    );
+    render(<ReportForm env="demo" view={missingView()} actions={a} />);
+    choose(1, "Finns kvar");
+    choose(2, "Död");
+    sendAnswer();
+    expect(within(row(2)).getByText("Välj månad.")).toBeTruthy();
+    expect(a.dryRunCompletion).not.toHaveBeenCalled();
+    fireEvent.change(within(row(2)).getByLabelText("Månad"), {
+      target: { value: "2" },
+    });
+    sendAnswer();
+    expect(
+      await within(row(1)).findByText(
+        "Vuxna kaniner behöver vikt eller Ej vägd.",
+      ),
+    ).toBeTruthy();
+    expect(a.submitCompletion).not.toHaveBeenCalled();
+  });
+
+  it("keeps a browser copy through an answer: offered, never saved over", async () => {
+    vi.useFakeTimers();
+    const a = completionActions();
+    const v = missingView();
+    // the browser holds an edit the server never got, at the server draft's version
+    const mine = toDraft({
+      ...fromBody(v.draft!.data),
+      message: "Bara i webbläsaren",
+    });
+    const copy = JSON.stringify({
+      data: mine,
+      updated_at: v.draft!.updated_at,
+      revision: 4,
+    });
+    window.localStorage.setItem("arsrapport:demo:G9001:2026", copy);
+    const next = missingView([2, 3], 5);
+    next.draft!.updated_at = "2027-01-04T10:01:00+00:00";
+    // the old code autosaved the copy at its old version: the server answers 409 with its newer draft
+    a.saveDraft.mockImplementation(async (...args: unknown[]) =>
+      args[3] === next.draft!.updated_at
+        ? ok({
+            updated_at: "2027-01-04T10:02:00+00:00",
+            submission_key: draftKey,
+          })
+        : {
+            ok: false as const,
+            problem: {
+              status: 409,
+              title: "Konflikt",
+              detail: "Rapporten har ändrats på en annan enhet.",
+              extensions: { draft: next.draft },
+            },
+          },
+    );
+    const { rerender } = render(<ReportForm env="demo" view={v} actions={a} />);
+    expect(
+      screen.getByText("Du har fler ändringar som inte är skickade."),
+    ).toBeTruthy();
+    choose(1, "Finns kvar");
+    fireEvent.change(within(row(1)).getByLabelText("Vikt"), {
+      target: { value: "2,8" },
+    });
+    await act(async () => {
+      sendAnswer();
+    });
+    expect(screen.getByRole("status").textContent).toBe(savedText);
+    rerender(<ReportForm env="demo" view={next} actions={a} />);
+    expect(screen.queryByText("Kanin1")).toBeNull();
+    choose(2, "Död");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    expect(a.saveDraft).not.toHaveBeenCalled();
+    expect(local()).toBe(copy);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Visa hela rapporten" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Fortsätt ändra" }));
+    // the refreshed draft is shown, the browser copy waits for the member's choice
+    expect(
+      screen.getByText("Osparade ändringar på den här enheten"),
+    ).toBeTruthy();
+    expect(screen.getByDisplayValue("Min oskickade ändring")).toBeTruthy();
+    expect(
+      within(row(2)).getByRole("radio", { name: "Död", checked: true }),
+    ).toBeTruthy();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    expect(a.saveDraft).not.toHaveBeenCalled();
+    expect(local()).toBe(copy);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Använd den lokala kopian" }),
+    );
+    expect(screen.getByDisplayValue("Bara i webbläsaren")).toBeTruthy();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    const [, , data, updatedAt] = a.saveDraft.mock.calls[0];
+    expect(updatedAt).toBe(next.draft!.updated_at); // over the newer draft only by choice, never a 409
+    expect((data as { message: string }).message).toBe("Bara i webbläsaren");
+    expect(screen.getByDisplayValue("Bara i webbläsaren")).toBeTruthy();
+  });
+
+  it("forgets focused answers when a conflict reloads the form", async () => {
+    const a = completionActions();
+    a.submitCompletion.mockImplementationOnce(() => fail(409));
+    const withDeath = (v: ReportView) => {
+      const drafted = fromBody(v.draft!.data);
+      drafted.rabbits[1] = {
+        ...drafted.rabbits[1],
+        val: "dod",
+        dod: { ar: 2026, manad: 6, dag: null, slaktad: false, anteckning: "" },
+      };
+      v.draft = { ...v.draft!, data: toDraft(drafted) };
+      return v;
+    };
+    const { rerender } = render(
+      <ReportForm env="demo" view={withDeath(missingView())} actions={a} />,
+    );
+    choose(1, "Finns kvar");
+    fireEvent.change(within(row(1)).getByLabelText("Vikt"), {
+      target: { value: "2,8" },
+    });
+    sendAnswer(); // the report changed meanwhile: 409, and the form reloads
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+    rerender(
+      <ReportForm
+        env="demo"
+        view={withDeath(missingView([1, 2, 3], 5))}
+        actions={a}
+      />,
+    );
+    expect(within(row(1)).queryByRole("radio", { checked: true })).toBeNull();
+    choose(2, "Finns kvar");
+    fireEvent.change(within(row(2)).getByLabelText("Vikt"), {
+      target: { value: "3,1" },
+    });
+    await act(async () => {
+      sendAnswer();
+    });
+    const [, , sent] = a.submitCompletion.mock.calls[1];
+    expect(Object.keys(sent.rabbits)).toEqual(["2"]); // never the draft's death for rabbit 1
+  });
+
+  it("offers another tab's browser copy on the way back to the full form", async () => {
+    vi.useFakeTimers();
+    const a = completionActions();
+    const v = missingView();
+    const { rerender } = render(<ReportForm env="demo" view={v} actions={a} />);
+    choose(1, "Finns kvar");
+    fireEvent.change(within(row(1)).getByLabelText("Vikt"), {
+      target: { value: "2,8" },
+    });
+    // another tab saved nothing yet: its only copy is in the browser, at the version before the answer
+    const theirs = JSON.stringify({
+      data: toDraft({
+        ...fromBody(v.draft!.data),
+        message: "Från den andra fliken",
+      }),
+      updated_at: v.draft!.updated_at,
+      revision: 4,
+      writer: "another tab",
+    });
+    window.localStorage.setItem("arsrapport:demo:G9001:2026", theirs);
+    await act(async () => {
+      sendAnswer();
+    });
+    const next = missingView([2, 3], 5);
+    next.draft!.updated_at = "2027-01-04T10:01:00+00:00";
+    rerender(<ReportForm env="demo" view={next} actions={a} />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Visa hela rapporten" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Fortsätt ändra" }));
+    expect(
+      screen.getByText("Osparade ändringar på den här enheten"),
+    ).toBeTruthy();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    expect(a.saveDraft).not.toHaveBeenCalled();
+    expect(local()).toBe(theirs);
+  });
+
+  it("takes another tab's newer copy at the same stamps back to the full form", async () => {
+    vi.useFakeTimers();
+    const a = completionActions();
+    const v = missingView();
+    const copyOf = (message: string, writer: string) =>
+      JSON.stringify({
+        data: toDraft({ ...fromBody(v.draft!.data), message }),
+        updated_at: v.draft!.updated_at,
+        revision: 4,
+        writer,
+      });
+    window.localStorage.setItem(
+      "arsrapport:demo:G9001:2026",
+      copyOf("Kopia från början", "this tab"),
+    );
+    render(<ReportForm env="demo" view={v} actions={a} />); // adopts it at mount
+    choose(2, "Finns kvar"); // typed here, not sent
+    fireEvent.change(within(row(2)).getByLabelText("Vikt"), {
+      target: { value: "3,1" },
+    });
+    // another tab replaces the copy at the same server stamps
+    window.localStorage.setItem(
+      "arsrapport:demo:G9001:2026",
+      copyOf("Nyare i den andra fliken", "another tab"),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Visa hela rapporten" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Fortsätt ändra" }));
+    expect(screen.getByDisplayValue("Nyare i den andra fliken")).toBeTruthy();
+    expect(
+      within(row(2)).getByRole("radio", { name: "Finns kvar", checked: true }),
+    ).toBeTruthy();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    const [, , data] = a.saveDraft.mock.calls[0];
+    expect((data as { message: string }).message).toBe(
+      "Nyare i den andra fliken",
+    );
+  });
+
+  it("sends only the rows answered on the focused page, never a draft's", async () => {
+    const a = completionActions();
+    const v = missingView();
+    // the member's draft from the full form has a death for rabbit 2, not sent
+    const drafted = fromBody(v.draft!.data);
+    drafted.rabbits[2] = {
+      ...drafted.rabbits[2],
+      val: "dod",
+      dod: { ar: 2026, manad: 6, dag: null, slaktad: false, anteckning: "" },
+    };
+    v.draft = { ...v.draft!, data: toDraft(drafted) };
+    render(<ReportForm env="demo" view={v} actions={a} />);
+    expect(screen.queryByRole("radio", { checked: true })).toBeNull();
+    choose(1, "Finns kvar");
+    fireEvent.change(within(row(1)).getByLabelText("Vikt"), {
+      target: { value: "2,8" },
+    });
+    await act(async () => {
+      sendAnswer();
+    });
+    expect(screen.getByRole("status").textContent).toBe(savedText);
+    const [, , sent] = a.submitCompletion.mock.calls[0];
+    expect(Object.keys(sent.rabbits)).toEqual(["1"]);
+  });
+
+  it("takes the refreshed draft back to the full form, with unsent answers on top", async () => {
+    vi.useFakeTimers();
+    const a = completionActions();
+    const { rerender } = render(
+      <ReportForm env="demo" view={missingView()} actions={a} />,
+    );
+    choose(1, "Finns kvar");
+    fireEvent.change(within(row(1)).getByLabelText("Vikt"), {
+      target: { value: "2,8" },
+    });
+    await act(async () => {
+      sendAnswer();
+    });
+    // another tab saved a change before the answer; the server kept it and moved the version on
+    const next = missingView([2, 3], 5);
+    const other = "Ändrad i en annan flik";
+    next.draft = {
+      ...next.draft!,
+      data: {
+        ...next.draft!.data,
+        message: other,
+        form: { ...next.draft!.data.form!, message: other },
+      },
+      updated_at: "2027-01-04T10:05:00+00:00",
+    };
+    rerender(<ReportForm env="demo" view={next} actions={a} />);
+    choose(2, "Död"); // typed here, not sent
+    fireEvent.click(
+      screen.getByRole("button", { name: "Visa hela rapporten" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Fortsätt ändra" }));
+    expect(screen.getByDisplayValue("Ändrad i en annan flik")).toBeTruthy();
+    expect(
+      within(row(2)).getByRole("radio", { name: "Död", checked: true }),
+    ).toBeTruthy();
+    fireEvent.change(screen.getByDisplayValue("Ändrad i en annan flik"), {
+      target: { value: "Ändrad i en annan flik." },
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    const [, , data, updatedAt] = a.saveDraft.mock.calls[0];
+    expect(updatedAt).toBe(next.draft!.updated_at);
+    expect((data as { message: string }).message).toBe(
+      "Ändrad i en annan flik.",
+    );
+  });
+
+  it("keeps a typed answer on Ändra without a draft or local copy", () => {
+    const v = { ...missingView(), draft: null };
+    render(<ReportForm env="demo" view={v} actions={completionActions()} />);
+    choose(2, "Finns kvar");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Visa hela rapporten" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Ändra" }));
+    expect(
+      within(row(2)).getByRole("radio", { name: "Finns kvar", checked: true }),
+    ).toBeTruthy();
+  });
+
+  it("retries a timeout with the same key and body", async () => {
+    const a = completionActions();
+    a.submitCompletion.mockImplementationOnce(() => fail(504));
+    const { rerender } = render(
+      <ReportForm env="demo" view={missingView([1, 2])} actions={a} />,
+    );
+    sellOutside();
+    sendAnswer();
+    fireEvent.click(await screen.findByRole("button", { name: "Försök igen" }));
+    expect(await screen.findByText(savedText)).toBeTruthy();
+    expect(a.dryRunCompletion).toHaveBeenCalledTimes(1);
+    expect(a.submitCompletion).toHaveBeenCalledTimes(2);
+    const first = a.submitCompletion.mock.calls[0][2];
+    expect(a.submitCompletion.mock.calls[1][2]).toEqual(first);
+    expect(first.rabbits["1"].sald?.kopare).toMatchObject({
+      name: "Ola Köpare",
+    });
+    rerender(<ReportForm env="demo" view={missingView([2], 5)} actions={a} />);
+    choose(2, "Finns kvar");
+    fireEvent.change(within(row(2)).getByLabelText("Vikt"), {
+      target: { value: "3" },
+    });
+    sendAnswer();
+    await waitFor(() => expect(a.submitCompletion).toHaveBeenCalledTimes(3));
+    expect(a.submitCompletion.mock.calls[2][2].submission_key).not.toBe(
+      first.submission_key,
+    );
+    rerender(<ReportForm env="demo" view={missingView([], 6)} actions={a} />);
+    expect(
+      screen.getByText("Alla kaniner på listan är besvarade."),
+    ).toBeTruthy();
+    expect(screen.queryByRole("radio")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Skicka svar" })).toBeNull();
+  });
+
+  it("reload after link completion still shows remaining paper omissions", async () => {
+    const v = missingView([2, 3], 5);
+    v.report!.source = "link";
+    const a = completionActions();
+    a.submitCompletion.mockImplementationOnce(() => fail(409));
+    const { rerender } = render(
+      <ReportForm link env="prod" view={v} actions={a} />,
+    );
+    expect(
+      screen.getByRole("heading", { name: "Kaniner som saknas på blanketten" }),
+    ).toBeTruthy();
+    expect(screen.getAllByRole("radio", { name: "Finns kvar" })).toHaveLength(
+      2,
+    );
+    expect(row(2)).toBeTruthy();
+    expect(row(3)).toBeTruthy();
+    choose(2, "Finns kvar");
+    sendAnswer();
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+    rerender(
+      <ReportForm link env="prod" view={missingView([3], 6)} actions={a} />,
+    );
+    expect(screen.queryByText("Kanin2")).toBeNull();
+    expect(row(3)).toBeTruthy();
+  });
+
+  it("shows the full receipt when nothing is missing", () => {
+    render(
+      <ReportForm
+        env="demo"
+        view={missingView([])}
+        actions={completionActions()}
+      />,
+    );
+    expect(
+      screen.getByText(/Klart\. Årsrapporten för G9001 kom in/),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Skicka svar" })).toBeNull();
+  });
+});
 
 describe("ReportForm", () => {
   it("renders the heading with no sticky offset and no dashboard shell", () => {
@@ -364,15 +879,145 @@ describe("ReportForm", () => {
     expect(a.saveDraft).toHaveBeenCalled();
   });
 
-  it("asks no consent question and links Dina uppgifter to the profile", () => {
-    render(<ReportForm env="demo" view={view()} actions={actions()} />);
-    expect(screen.queryByText(/Koharen\? Listan/)).toBeNull();
-    expect(screen.getByText("Dina uppgifter")).toBeTruthy();
+  it("lets the main member change Dina uppgifter and sends only what changed (5.11)", async () => {
+    const a = actions();
+    const details = {
+      mode: "main" as const,
+      contact: {
+        address: "Gamla vägen 1",
+        postal_code: "621 41",
+        city: "Slite",
+        phone: "0709-111 222",
+        email: "g9001@example.invalid",
+      },
+      publicering: { ja: false, utom: [] },
+      publicering_version: 7,
+      konto: "••••5512",
+    };
+    render(
+      <ReportForm
+        env="demo"
+        view={view({ member_details: details })}
+        actions={a}
+      />,
+    );
     expect(
-      screen
-        .getByRole("link", { name: "Gå till profilen" })
-        .getAttribute("href"),
-    ).toBe("/stamboken/profil");
+      (screen.getByLabelText("Gatuadress") as HTMLInputElement).value,
+    ).toBe("Gamla vägen 1");
+    expect(screen.getByText("Konto för stödet: ••••5512")).toBeTruthy();
+    expect(screen.getByText("E-post: g9001@example.invalid")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Telefon"), {
+      target: { value: "0709-777 888" },
+    });
+    fireEvent.click(screen.getByRole("radio", { name: "Ja" }));
+    fillAll();
+    send();
+    await waitFor(() => expect(a.submitReport).toHaveBeenCalled());
+    const body = a.submitReport.mock.calls[0][2] as Submission;
+    expect(body.matrikel).toEqual({
+      telefon: "0709-777 888",
+      publicering: {
+        ja: true,
+        utom: ["phone", "email", "address"],
+        version: 7,
+        text_version: "2026-11-20",
+      },
+    });
+    // never in the draft or the browser
+    expect(JSON.stringify(a.saveDraft.mock.calls)).not.toContain("0709-777");
+    expect(JSON.stringify({ ...window.localStorage })).not.toContain(
+      "0709-777",
+    );
+  });
+
+  it("sends nothing of Dina uppgifter when the main member changed nothing", async () => {
+    const a = actions();
+    const details = {
+      mode: "main" as const,
+      contact: {
+        address: "",
+        postal_code: "",
+        city: "",
+        phone: "",
+        email: "",
+      },
+      publicering: null,
+      publicering_version: null,
+      konto: null,
+    };
+    render(
+      <ReportForm
+        env="demo"
+        view={view({ member_details: details })}
+        actions={a}
+      />,
+    );
+    expect(screen.getByText("Inget konto för stödet i matrikeln")).toBeTruthy();
+    fillAll();
+    send();
+    await waitFor(() => expect(a.submitReport).toHaveBeenCalled());
+    expect((a.submitReport.mock.calls[0][2] as Submission).matrikel).toBe(
+      undefined,
+    );
+  });
+
+  it("the link's receipt lists changes to confirm and expired ones, and offers an account last", () => {
+    render(
+      <ReportForm
+        link
+        env="prod"
+        accountOffer
+        view={view({
+          access: "code",
+          source: "link",
+          report: submittedReport(),
+          member_details: {
+            mode: "link",
+            changes: [
+              {
+                falt: "telefon",
+                state: "vantar",
+                expires_at: "2027-01-17T13:32:00+00:00",
+              },
+              {
+                falt: "konto",
+                state: "forfallen",
+                expires_at: "2027-01-01T10:00:00+00:00",
+              },
+            ],
+          },
+        })}
+        actions={actions()}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "Du har ändringar att bekräfta i mejlet (telefon). Bekräfta senast 17 januari 2027.",
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/Ändringen av konto gällde till 1 januari 2027/),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("link", { name: "Skapa konto" }).getAttribute("href"),
+    ).toBe("/auth/sign-in");
+  });
+
+  it("tells an owner who is not the main member who changes the details", () => {
+    render(
+      <ReportForm
+        env="demo"
+        view={view({ member_details: { mode: "none" } })}
+        actions={actions()}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "Huvudmedlemmen ändrar kontaktuppgifterna, kontot för stödet och svaret om Koharen.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByLabelText("Telefon")).toBeNull();
+    expect(screen.queryByRole("link", { name: "Gå till profilen" })).toBeNull();
   });
 
   it("counts done rabbits and keeps a row that became done under 'Inte klara'", () => {
@@ -500,27 +1145,7 @@ describe("ReportForm", () => {
     vi.useFakeTimers();
     const a = actions();
     render(<ReportForm env="demo" view={view()} actions={a} />);
-    choose(1, "Såld");
-    fireEvent.click(screen.getByLabelText("Utanför genbanken"));
-    fireEvent.click(screen.getByRole("radio", { name: "Ja" })); // the buyer has e-mail (before 2027)
-    fireEvent.change(screen.getByLabelText(/Köparens namn/), {
-      target: { value: "Ola Köpare" },
-    });
-    fireEvent.change(screen.getByLabelText(/^Ort/), {
-      target: { value: "Visby" },
-    });
-    fireEvent.change(screen.getByLabelText(/^Postadress/), {
-      target: { value: "Testgatan 1" },
-    });
-    fireEvent.change(screen.getByLabelText(/^E-post/), {
-      target: { value: "ola@example.invalid" },
-    });
-    fireEvent.change(screen.getByLabelText("Månad"), {
-      target: { value: "6" },
-    });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Spara försäljningen" }),
-    );
+    sellOutside();
     expect(
       within(row(1)).getByText(/Såld till utanför genbanken, juni 2026/),
     ).toBeTruthy();
@@ -734,6 +1359,8 @@ describe("ReportForm", () => {
             },
           } as never,
         },
+        not_stated: [],
+        can_complete_missing: false,
         can_change: true,
         can_withdraw: true,
         withdraw_until: "2027-01-10T13:32:00+00:00",
@@ -811,6 +1438,8 @@ describe("ReportForm", () => {
             report_date: "2027-01-03",
             on_time: true,
             submitted: { rabbits: sale },
+            not_stated: [],
+            can_complete_missing: false,
             can_change: true,
             can_withdraw: true,
             withdraw_until: "2027-01-10T13:32:00+00:00",

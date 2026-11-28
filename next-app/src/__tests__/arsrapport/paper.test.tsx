@@ -120,7 +120,7 @@ describe("ReportForm on paper", () => {
     typeNumber("1");
     expect(screen.getByText("1 inmatade, 2 kvar")).toBeTruthy();
   });
-  it("names the item and defaults both dates to the day it came in", () => {
+  it("names the item and defaults the receipt date to the day it came in", () => {
     renderPaper();
     expect(
       screen.getByRole("heading", {
@@ -131,9 +131,6 @@ describe("ReportForm on paper", () => {
     expect((screen.getByLabelText("Mottagen") as HTMLInputElement).value).toBe(
       "2027-01-03",
     );
-    expect(
-      (screen.getByLabelText("Blankettens datum") as HTMLInputElement).value,
-    ).toBe("2027-01-03");
     expect(screen.getByText("Nuvarande konto slutar på ••12")).toBeTruthy();
     expect(screen.queryByRole("link", { name: "Gå till profilen" })).toBeNull();
   });
@@ -334,7 +331,6 @@ describe("ReportForm on paper", () => {
     expect(body).toMatchObject({
       inbox_item_id: 5,
       received_on: "2027-01-03",
-      signed_on: "2027-01-03",
       matrikel: {
         telefon: "070-1234567",
         publicering: { ja: false, utom: [] },
@@ -345,6 +341,7 @@ describe("ReportForm on paper", () => {
         "3": { val: "ej_angiven" },
       },
     });
+    expect(body).not.toHaveProperty("signed_on");
     expect(a.dryRun.mock.calls[0][4]).toBe(5);
     await waitFor(() =>
       expect(p.leave).toHaveBeenCalledWith(
@@ -540,8 +537,7 @@ describe("ReportForm on paper", () => {
           {
             individual_id: null,
             code: "senare_andring",
-            message:
-              "Matrikeln har ändrats efter blankettens datum (adress). Fråga medlemmen.",
+            message: "Kontrollera blankettens uppgift om adress med medlemmen.",
           },
         ],
       }),
@@ -565,7 +561,9 @@ describe("ReportForm on paper", () => {
       await screen.findByText(/Sparat i matrikeln: telefon\./),
     ).toBeTruthy();
     expect(
-      screen.getByText(/ändrats efter blankettens datum \(adress\)/),
+      screen.getByText(
+        "Kontrollera blankettens uppgift om adress med medlemmen.",
+      ),
     ).toBeTruthy();
     expect(screen.getByRole("link", { name: "Nästa blankett" })).toBeTruthy();
     expect(screen.queryByText(/070-1234567/)).toBeNull();
@@ -608,6 +606,20 @@ describe("ReportForm on paper", () => {
     ).toBeTruthy();
   });
 
+  it("asks for a clearing number for a bankkonto only", () => {
+    renderPaper();
+    fireEvent.change(screen.getByLabelText("Clearingnummer"), {
+      target: { value: "8327" },
+    });
+    fireEvent.click(screen.getByLabelText("Plusgiro"));
+    expect(screen.queryByLabelText("Clearingnummer")).toBeNull();
+    fireEvent.click(screen.getByLabelText("Bankkonto"));
+    // the clearing number typed for the other box is gone, not sent with a plusgiro
+    expect(
+      (screen.getByLabelText("Clearingnummer") as HTMLInputElement).value,
+    ).toBe("");
+  });
+
   it("says there is no account when the matrikel has none", () => {
     renderPaper(
       paperView({
@@ -620,6 +632,20 @@ describe("ReportForm on paper", () => {
       }),
     );
     expect(screen.getByText("Inget konto i matrikeln")).toBeTruthy();
+  });
+
+  it("says there is an account when its end is too short to show", () => {
+    renderPaper(
+      paperView({
+        item: {
+          id: 5,
+          received_at: "2027-01-03T10:00:00+00:00",
+          state: "tagen",
+          account_end: "",
+        },
+      }),
+    );
+    expect(screen.getByText("Det finns ett konto i matrikeln")).toBeTruthy();
   });
 
   it("asks nothing of the form first when the intyg are not done", () => {
@@ -750,6 +776,8 @@ describe("ReportForm on paper", () => {
         report_date: "2027-01-02",
         on_time: true,
         submitted: { rabbits: { "1": { val: "kvar", vikt: 2.8 } } as never },
+        not_stated: [],
+        can_complete_missing: false,
         can_change: true,
         can_withdraw: false,
         withdraw_until: null,

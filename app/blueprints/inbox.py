@@ -18,7 +18,9 @@ import pypdfium2
 import utils.data_access as da
 import utils.inbox as inbox
 import utils.inbox_interpreter as interpreter
+import utils.inbox_paper as inbox_paper
 import utils.inbox_purge as inbox_purge
+import utils.inbox_reconcile as inbox_reconcile
 import utils.purchase_notice as purchase_notice
 import utils.settings as settings
 from extensions import limiter
@@ -609,6 +611,37 @@ def reinterpret(item_id, document_id):
     return _locked(item_id, action)
 
 
+# [Next.js] "Hitta pappret": how far the photo is tilted and where the paper lies. It changes nothing. With
+# "straighten" (the masking step, where the angle is fixed) the tilt is not looked for: the paper at that angle.
+# "rotation" is the turn the view shows: the paper is found in the stored one, so another is refused.
+@inbox_bp.route("/inkorg/<int:item_id>/dokument/<int:document_id>/hitta-pappret", methods=["POST"])
+@json_login_required
+@_queue_worker
+def find_paper(item_id, document_id):
+    body = _body()
+    straighten, rotation = body.get("straighten"), body.get("rotation")
+    try:
+        item = InboxItem.get_or_none(InboxItem.id == item_id)
+        if item is None:
+            raise inbox.InboxError(404, "Posten finns inte.")
+        inbox.require_handler(item, current_user)
+        document = inbox.document_of(item, document_id)
+        if document.original_path is None:
+            raise inbox.InboxError(409, "Originalet är raderat.")
+        if straighten is not None:
+            straighten = inbox._straighten(straighten)  # pylint: disable=protected-access  # as PATCH takes it
+        # pylint: disable-next=protected-access
+        if rotation is not None and inbox._rotation(rotation) != document.rotation:
+            raise inbox.InboxError(409, "Fotot visas inte med den sparade vridningen. Ladda om sidan och sök igen.")
+        try:  # no transaction and no lock while the photo is looked at
+            found = inbox_paper.find_paper(inbox.private_path(document.original_path), document.rotation, straighten)
+        except FileNotFoundError:  # erased meanwhile
+            raise inbox.InboxError(409, "Originalet är raderat.") from None
+    except inbox.InboxError as exc:
+        return problem(exc.status, exc.title, exc.detail)
+    return jsonify(found)
+
+
 # [Next.js] A report photo compared with its rabbit (4b): "Stämmer" or "Rättat" closes it.
 @inbox_bp.route("/inkorg/<int:item_id>/dokument/<int:document_id>/kontrollerad", methods=["POST"])
 @json_login_required
@@ -620,6 +653,28 @@ def check_report_photo(item_id, document_id):
         return jsonify({"item": inbox.items_json([item])[0], "document": inbox.documents_json([document], True)[0]})
 
     return _locked(item_id, action)
+
+
+# [Next.js] The reconciliation table: what the handler typed off the certificate beside the registry, recomputed as
+# she types. A read: no lock, nothing written. Only for those who work the item's genebank, since it searches its
+# registry; an item without one searches the genebank its letter names, so it takes a manager.
+@inbox_bp.route("/inkorg/<int:item_id>/dokument/<int:document_id>/avstamning", methods=["POST"])
+@json_login_required
+@_queue_worker
+@limiter.limit("600 per minute", key_func=lambda: str(current_user.id))  # a request as the handler pauses typing
+def reconcile_document(item_id, document_id):
+    user = User.get_by_id(current_user.id)
+    item = InboxItem.get_or_none(InboxItem.id == item_id)
+    try:
+        if item is None:
+            raise inbox.InboxError(404, "Posten finns inte.")
+        if item.genebank_id is None and not inbox.manages(user, None):
+            raise inbox.InboxError(403, "En post utan genbank stäms av av admin eller genbanksansvarig.")
+        inbox.require_worker_of(item, user)
+        document = inbox.document_of(item, document_id)
+    except inbox.InboxError as exc:
+        return problem(exc.status, exc.title, exc.detail)
+    return jsonify(inbox_reconcile.reconcile(item, document, _body(), user))
 
 
 # [Next.js] "Mina inskick": the user's own uploads, in plain words.
@@ -897,6 +952,9 @@ def transfer(item_id, document_id):
             item = inbox.lock_item(item_id)
             document = inbox.document_of(item, document_id)
             inbox.require_saving(item, document, user)
+            # A buyer the form filled from the photo (rule 5 b): only while that reading is still the document's.
+            if body.get("from_photo") is True and "sale" not in (document.proposal or {}):
+                raise inbox.InboxError(409, "Läsningen har ändrats, fyll i köparen igen.")
             individual = _live_individual(body.get("individual"))
             inbox.require_same_rabbit(document, individual)
             if document.herd_tracking_id is not None:
@@ -999,6 +1057,8 @@ def confirm_mask(item_id, document_id):
                 body.get("mask_rects"),
                 body.get("no_personal_data"),
                 body.get("matches_registry"),
+                body.get("copy_frame"),
+                body.get("straighten"),
             )
         ]
         return jsonify({"item": inbox.items_json([item])[0], "document": inbox.documents_json([document])[0]})
@@ -1044,7 +1104,9 @@ def remove_copy(item_id, document_id):
             item = inbox.lock_item(item_id)
             path = inbox.remove_copy(item, inbox.document_of(item, document_id), current_user)
             document = inbox.document_of(item, document_id)
-            answer = {"item": inbox.items_json([item])[0], "document": inbox.documents_json([document])[0]}
+            # The rabbit's manager may not work the item's genebank.
+            shown = inbox.documents_json([document], user=current_user)[0]
+            answer = {"item": inbox.items_json([item])[0], "document": shown}
     except inbox.InboxError as exc:
         return problem(exc.status, exc.title, exc.detail)
     inbox.remove_files([path])

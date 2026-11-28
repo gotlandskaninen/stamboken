@@ -1,0 +1,20 @@
+{% block subject %}Påminnelse om årsrapporten {{ year }} för {{ herd }}{% endblock %}
+
+{% block body %}
+Hej!
+
+{% if draft %}Din årsrapport är påbörjad men inte inskickad.{% else %}Vi saknar årsrapporten för {{ herd }}.{% endif %}
+
+Öppna årsrapporten och tryck Skicka när du är klar:
+{{ link }}
+{% if login_url %}
+Logga gärna in i Stamboken först, med din e-postadress hos föreningen. Vi mejlar en kod, du behöver inget lösenord. Inloggad kan du sälja kaniner direkt, ändra dina uppgifter i rapporten och ångra en försäljning. Logga in på {{ login_url }}.
+
+Vill du inte logga in går det bra att använda länken ovan.
+{% endif %}
+{% if late %}Sista dag för stödet var {{ deadline }}. Rapportera ändå, så räknas dina kaniner.{% else %}Sista dag för stödet är {{ deadline }}.{% endif %} Länken gäller till och med {{ end_date }}.
+
+Har du redan skickat en blankett behöver du inte skicka den igen.
+
+Har du frågor? Svara på det här mejlet.
+{% endblock %}

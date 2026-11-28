@@ -14,7 +14,8 @@ import {
   CONFLICT_TEXT,
   DISEASES,
   EMPTY_ENTRY,
-  emptyPaperFields,
+  detailsBody,
+  detailsFields,
   emptyState,
   fmtDate,
   fmtDayOrMonth,
@@ -37,6 +38,7 @@ import {
   withoutGoneBuyer,
   todayStockholm,
   autosaveAnswerKept,
+  type Completion,
   type DraftData,
   type Entry,
   type FormState,
@@ -44,6 +46,7 @@ import {
   type Membership,
   type PaperField,
   type PaperFields,
+  type RabbitView,
   type Receipt as ReceiptData,
   type Refusal,
   type ReportView,
@@ -51,12 +54,14 @@ import {
   type Submission,
 } from "./lib";
 import { NumberRow } from "./NumberRow";
+import { MemberDetails } from "./MemberDetails";
 import { PaperChanges } from "./PaperChanges";
 import { PurchaseDialog } from "./PurchaseDialog";
 import { RabbitRow } from "./RabbitRow";
 import { Receipt } from "./Receipt";
 import { ReportStatus, type StatusKind } from "./ReportStatus";
 import { SoldDialog } from "./SoldDialog";
+import { useLeaveWarning } from "./useLeaveWarning";
 import { ConfirmCountDialog, LitterDialog } from "./LitterDialog";
 import {
   ADD_FROM_CERTIFICATE,
@@ -79,7 +84,12 @@ export type ReportActions = Pick<
     // the sale and purchase dialogs' herd picker
     Pick<
       typeof Actions,
-      "addLitter" | "changeLitter" | "getFathers" | "getMothers"
+      | "addLitter"
+      | "changeLitter"
+      | "getFathers"
+      | "getMothers"
+      | "dryRunCompletion" // the focused page for the rabbits a paper form left out
+      | "submitCompletion"
     >
   >; // "Kullar under Y"
 
@@ -91,6 +101,7 @@ export interface PaperProps {
   leave: (message: string) => void; // back to the queue, with a message
 }
 const QUEUE = "/stamboken/inkorg";
+const UNSTATED: Entry = { ...EMPTY_ENTRY, val: "ej_angiven" };
 type Gate = "draft" | "reported" | null;
 const enteredFrom = (rabbits: ReportView["rabbits"], s: FormState) =>
   rabbits
@@ -293,32 +304,6 @@ const refusalField: Record<string, string> = {
   epost_kan_inte_anvandas: "paper-email",
 };
 
-// Logged in, the page asks nothing about the matrikel: the profile holds the
-// address, the phone and the answer about Koharen (D13).
-const ProfileCard = (
-  <MbCard title="Dina uppgifter">
-    <p style={{ margin: "0 0 12px" }}>
-      Adress, telefon och svaret om Koharen ändrar du i din profil.
-    </p>
-    <Link
-      href="/stamboken/profil"
-      className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
-    >
-      Gå till profilen
-    </Link>
-  </MbCard>
-);
-
-// Through the personal link there is no profile: the genebank manager changes these (the inline version is step 5).
-const LinkContactCard = (
-  <MbCard title="Dina uppgifter">
-    <p style={{ margin: 0 }}>
-      Har din adress, e-post, ditt konto för stödet eller ditt svar om Koharen
-      ändrats? Kontakta genbanksansvarig.
-    </p>
-  </MbCard>
-);
-
 // Publishes the side column's height as --side-h on the layout, so that Skicka, which
 // comes after the list in the DOM, can stick right under the sticky side column.
 function trackSideHeight(el: HTMLDivElement | null) {
@@ -336,22 +321,28 @@ export function ReportForm({
   actions,
   contactSlot,
   link,
+  loginTip,
   stickyTop = 56,
   post,
   env,
   paper,
+  accountOffer,
 }: {
   view: ReportView;
   actions: ReportActions;
   contactSlot?: React.ReactNode;
-  // The page behind the personal link (/rapport): no sign-in, so no mode cookie, profile or sign-in link.
+  // The page behind the personal link (/rapport) uses its code session.
   link?: true;
+  // The link page can recommend sign-in when /v2/rapport/mina returns login_tip for this report.
+  loginTip?: true;
   stickyTop?: number;
   post?: number;
   paper?: PaperProps;
   // The data environment the view was read from; the page mounts the form
   // with key={env}, so a switch starts over from the other one's draft.
   env: Mode;
+  // The link's receipt offers an account through code login, where that is on (5.1).
+  accountOffer?: boolean;
 }) {
   const router = useRouter();
   const { herd, year, round } = view;
@@ -396,18 +387,48 @@ export function ReportForm({
     startFrom(view, isPaper),
   );
   const [gate, setGate] = React.useState<Gate>(() => gateOf(view, isPaper));
-  const [fields, setFields] = React.useState<PaperFields>(emptyPaperFields);
+  // "Dina uppgifter": the paper form's, or the report's (5.11), in memory only
+  const [fields, setFields] = React.useState<PaperFields>(() =>
+    detailsFields(view.member_details),
+  );
+  // Sent or changed elsewhere: the fields start again from what the server holds now (U15).
+  const detailsKey = JSON.stringify(view.member_details ?? null);
+  const [shownDetails, setShownDetails] = React.useState(detailsKey);
+  if (shownDetails !== detailsKey) {
+    setShownDetails(detailsKey);
+    setFields(detailsFields(view.member_details));
+  }
   const [receivedOn, setReceivedOn] = React.useState(() =>
     item ? stockholmDay(item.received_at) : "",
   );
-  const [signedOn, setSignedOn] = React.useState<string | null>(null); // null: the day it came in
+  const [signedOn, setSignedOn] = React.useState("");
   const [entered, setEntered] = React.useState<number[]>(() =>
     enteredFrom(view.rabbits, startFrom(view, isPaper)),
   );
   const [archiving, setArchiving] = React.useState(false);
   const [archiveError, setArchiveError] = React.useState<React.ReactNode>(null);
-  const [mode, setMode] = React.useState<"form" | "receipt">(
-    view.report && !isPaper ? "receipt" : "form",
+  const initialMode =
+    !isPaper && view.report
+      ? view.report.can_complete_missing &&
+        actions.dryRunCompletion &&
+        actions.submitCompletion
+        ? "missing"
+        : "receipt"
+      : "form";
+  const [mode, setMode] = React.useState<"form" | "receipt" | "missing">(
+    initialMode,
+  );
+  const missing = mode === "missing";
+  const [answerSaved, setAnswerSaved] = React.useState(false);
+  // On the link page a typed buyer and changed member details live only in memory until Skicka:
+  // closing the tab, or following the sign-in tip, would lose them.
+  useLeaveWarning(
+    !!link &&
+      mode === "form" &&
+      (Object.values(state.rabbits).some(
+        (e) => e.val === "sald" && e.sald?.kopare,
+      ) ||
+        !!detailsBody(view.member_details, fields)),
   );
   const [version, setVersion] = React.useState(0);
   const [retry, setRetry] = React.useState(0);
@@ -477,10 +498,16 @@ export function ReportForm({
     keyRef.current = view.draft?.submission_key ?? newKey();
   const updatedAt = React.useRef<string | null>(view.draft?.updated_at ?? null);
   const frozen = React.useRef<Submission | null>(null);
+  const frozenCompletion = React.useRef<Completion | null>(null);
+  const keepMissingEdits = React.useRef(false);
+  // The rows answered on the focused page: only they are sent, never a draft's value the member did not touch there.
+  const [answeredHere, setAnsweredHere] = React.useState<ReadonlySet<number>>(
+    () => new Set(),
+  );
   const visibleIds = React.useRef<number[]>([]);
   const boxRef = React.useRef<HTMLDivElement>(null);
   const stopped = React.useRef(false);
-  const saving = React.useRef(false);
+  const saving = React.useRef<Promise<boolean> | null>(null);
   const again = React.useRef(false);
   const resync = React.useRef(false);
   // the view a reload started from, and whether the local copy waits for the new one
@@ -579,7 +606,9 @@ export function ReportForm({
     setState(next);
     setEntered(enteredFrom(view.rabbits, next));
     setGate(gateOf(view, isPaper));
-    setMode(view.report && !isPaper ? "receipt" : "form");
+    setMode((current) =>
+      current === "missing" && view.report ? "missing" : initialMode,
+    );
     setVersion(0);
     setReceipt(null);
     setPhase("idle");
@@ -589,6 +618,10 @@ export function ReportForm({
     lastDraft.set(key, updatedAt.current);
     setSavedAt(view.draft ? fmtTime(view.draft.updated_at) : null);
     frozen.current = null;
+    frozenCompletion.current = null;
+    setAnswerSaved(false);
+    setAnsweredHere(new Set()); // the state is the new view's: no focused answer stands in it any more
+    keepMissingEdits.current = false;
     if (!keepLocal.current) {
       const copy = readLocal(store, view.herd.herd, view.year);
       if (!copy?.writer || copy.writer === writer)
@@ -606,7 +639,7 @@ export function ReportForm({
         setVersion(1); // autosave sends it
       }
     }
-  }, [view, store, isPaper, writer, key]);
+  }, [view, store, isPaper, writer, key, initialMode]);
 
   // Back brought a view from before this tab's own writes: read it again.
   React.useEffect(() => {
@@ -625,22 +658,19 @@ export function ReportForm({
   // One save in flight at a time: a change made meanwhile is sent after it
   // has been answered, with the version it returned.
   const flush = async () => {
-    if (submitting.current) return;
-    autosavePending.current = false;
+    if (submitting.current) return false;
     if (saving.current) {
       again.current = true;
-      return;
+      return saving.current;
     }
-    saving.current = true;
-    let loopDone = () => {};
-    hold(key, new Promise<void>((resolve) => (loopDone = resolve)));
-    try {
+    const saveChanges = async () => {
       do {
+        autosavePending.current = false;
         again.current = false;
-        if (submitting.current) break;
+        if (submitting.current) return false;
         if (!link && readModeCookieClient() !== env) {
           stopped.current = true; // never save into the other environment
-          break;
+          return false;
         }
         const mine = versionRef.current;
         const sentAt = submissions.current;
@@ -669,7 +699,7 @@ export function ReportForm({
         // Skicka started while this save was on its way: its answer says nothing about the form any more.
         if (!autosaveAnswerKept(sentAt, submissions.current)) {
           setSaveState((s) => (s === "saving" ? "saved" : s));
-          break;
+          return false;
         }
         if (res.ok) {
           setSavedAt(fmtTime(res.data.updated_at));
@@ -696,21 +726,28 @@ export function ReportForm({
           setSaveState("conflict");
         } else if (p.status === 409 && ext.code === "rundan_stangd") {
           stopped.current = true;
+          autosavePending.current = true;
           setSaveState("closed");
         } else if (gone(p)) {
           stopped.current = true;
           router.replace("/rapport/ogiltig");
-        } else if (p.status === 401) setSaveState("loggedout");
-        else {
-          setSaveState("offline");
-          setTimeout(() => setRetry((n) => n + 1), 5000); // the page tries again
+        } else {
+          autosavePending.current = true;
+          if (p.status === 401) setSaveState("loggedout");
+          else {
+            setSaveState("offline");
+            setTimeout(() => setRetry((n) => n + 1), 5000); // the page tries again
+          }
         }
-        again.current = false;
+        return false;
       } while (again.current);
-    } finally {
-      saving.current = false;
-      loopDone();
-    }
+      return true;
+    };
+    saving.current = saveChanges().finally(() => {
+      saving.current = null;
+    });
+    hold(key, saving.current);
+    return saving.current;
   };
   const flushRef = React.useRef(flush);
   React.useEffect(() => {
@@ -743,25 +780,54 @@ export function ReportForm({
     return () => clearTimeout(autosaveTimer.current);
   }, [version, retry, mode, canEdit, env, store, herd.herd, year, writer]);
 
+  const signIn = async (event: React.MouseEvent<HTMLAnchorElement>) => {
+    const anchor = event.currentTarget;
+    if (submitting.current || syncing || olderCopy) {
+      event.preventDefault();
+      return;
+    }
+    if (!saving.current && (!version || !autosavePending.current)) return;
+    event.preventDefault();
+    do {
+      clearTimeout(autosaveTimer.current);
+      if (stopped.current || !(await (saving.current ?? flush()))) return;
+    } while (anchor.isConnected && autosavePending.current);
+    if (anchor.isConnected) window.location.assign(anchor.href);
+  };
+
   const rabbits = view.rabbits;
   const lastId = rabbits.length ? rabbits[rabbits.length - 1].id : null;
   const lastVisible = React.useRef(false);
 
   const done = React.useMemo(() => {
     const m = new Map<number, boolean>();
-    for (const r of rabbits)
+    for (const r of rabbits) {
+      const entry = state.rabbits[r.id];
       m.set(
         r.id,
-        isDone(
-          r,
-          state.rabbits[r.id],
-          state.ending,
-          view.report?.submitted?.rabbits?.[r.id]?.sald,
-          view.can_sell,
-        ),
+        (!missing ||
+          (answeredHere.has(r.id) &&
+            !!entry?.val &&
+            entry.val !== "ej_angiven")) &&
+          isDone(
+            r,
+            entry,
+            !missing && state.ending,
+            view.report?.submitted?.rabbits?.[r.id]?.sald,
+            view.can_sell,
+          ),
       );
+    }
     return m;
-  }, [rabbits, state.rabbits, state.ending, view.report, view.can_sell]);
+  }, [
+    rabbits,
+    state.rabbits,
+    state.ending,
+    view.report,
+    view.can_sell,
+    missing,
+    answeredHere,
+  ]);
   const notDone = rabbits.filter((r) => !done.get(r.id));
   const doneCount = rabbits.length - notDone.length;
 
@@ -786,6 +852,7 @@ export function ReportForm({
 
   const q = search.trim().toLowerCase();
   const visible = rabbits.filter((r) => {
+    if (missing) return view.report?.not_stated.includes(r.id);
     if (
       q &&
       !r.number.toLowerCase().includes(q) &&
@@ -891,8 +958,12 @@ export function ReportForm({
 
   const onRow = React.useCallback(
     (id: number, patch: Partial<Entry>) => {
-      // an edit drops the row's errors that it settles
-      const before = stateRef.current.rabbits[id] ?? EMPTY_ENTRY;
+      // an edit drops the row's errors that it settles; the first answer on the focused page starts afresh
+      const fresh = missing && !answeredHere.has(id);
+      if (fresh) setAnsweredHere((ids) => new Set(ids).add(id));
+      const before = fresh
+        ? EMPTY_ENTRY
+        : (stateRef.current.rabbits[id] ?? EMPTY_ENTRY);
       const rabbit = viewRef.current.rabbits.find((x) => x.id === id);
       const after = { ...before, ...patch };
       const v = viewRef.current;
@@ -901,7 +972,7 @@ export function ReportForm({
         isDone(
           rabbit,
           after,
-          stateRef.current.ending,
+          !missing && stateRef.current.ending,
           v.report?.submitted?.rabbits?.[id]?.sald,
           v.can_sell,
         );
@@ -919,13 +990,13 @@ export function ReportForm({
         rabbits: {
           ...s.rabbits,
           [id]: withoutGoneBuyer({
-            ...(s.rabbits[id] ?? EMPTY_ENTRY),
+            ...(fresh ? EMPTY_ENTRY : (s.rabbits[id] ?? EMPTY_ENTRY)),
             ...patch,
           }),
         },
       }));
     },
-    [edit],
+    [edit, missing, answeredHere],
   );
   const onSell = React.useCallback((id: number) => setSoldFor(id), []);
   const canAddRabbit = canEdit && !isPaper;
@@ -1005,6 +1076,7 @@ export function ReportForm({
       showRefusals(ext.refusals as Refusal[]);
     else if (
       p.status === 409 &&
+      !missing &&
       (ext.code === "rundan_stangd" || ext.code === "epost_kan_inte_anvandas")
     )
       showRefusals([
@@ -1027,17 +1099,30 @@ export function ReportForm({
   };
 
   const ENV_TEXT = "Miljön har bytts. Ladda om sidan.";
-  const send = async (body: Submission) => {
-    if (!link && readModeCookieClient() !== env) return fail(ENV_TEXT);
+  const send = async (body: Submission | Completion) => {
+    if (!link && readModeCookieClient() !== env)
+      return handle({ status: 400, detail: ENV_TEXT });
     setPhase("sending");
+    const full = "ending_genbank" in body;
     const res = await safe(
       track(
         key,
-        actionsRef.current.submitReport(herd.herd, year, body, env, post),
+        full
+          ? actionsRef.current.submitReport(herd.herd, year, body, env, post)
+          : actionsRef.current.submitCompletion!(herd.herd, year, body, env),
       ),
     );
     if (res.ok) {
       submitOver();
+      setPhase("idle");
+      if (!full) {
+        setReplaced(body.revision);
+        frozenCompletion.current = null;
+        setAnswerSaved(true);
+        setSaveState("saved");
+        refreshView();
+        return;
+      }
       keyRef.current = keyAfter("ok", keyRef.current!);
       frozen.current = null;
       updatedAt.current = null;
@@ -1047,11 +1132,11 @@ export function ReportForm({
       setReceipt(res.data);
       setReceiptView(viewRef.current);
       setMode("receipt");
-      setPhase("idle");
       setWithdrawn(null);
       // On paper the submit has closed the item: ReportView is not read again
       // (with ?post= it would be refused), and the Receipt is the answer.
       if (!isPaper) {
+        setFields(detailsFields(view.member_details)); // sent: the private fields leave memory (U15)
         // a first Skicka replaced nothing: Receipt shows no actions until the view has the report
         setReplaced(body.revision ?? undefined);
         refreshView();
@@ -1066,6 +1151,62 @@ export function ReportForm({
     else handle(res.problem);
   };
 
+  const prepareReport = () => {
+    let body = toBody(
+      state,
+      keyRef.current!,
+      view.report?.revision ?? null,
+      view.rabbits.map((r) => r.id),
+    );
+    if (isPaper) {
+      if (!receivedOn) return fail("Ange dagen blanketten kom in.");
+      if (signedOn > receivedOn)
+        return fail(
+          "Blankettens datum kan inte vara senare än dagen den kom in.",
+        );
+      const matrikel = matrikelBody(fields);
+      body = {
+        ...body,
+        inbox_item_id: item.id,
+        received_on: receivedOn,
+        ...(signedOn ? { signed_on: signedOn, signed_on_confirmed: true } : {}),
+        ...(matrikel ? { matrikel } : {}),
+      };
+    } else {
+      const matrikel = detailsBody(view.member_details, fields);
+      if (matrikel) body = { ...body, matrikel };
+    }
+    return body;
+  };
+
+  const prepareCompletion = () => {
+    const report = view.report;
+    if (!report?.can_complete_missing) return;
+    const answered = report.not_stated.filter((id) => {
+      if (!answeredHere.has(id)) return false;
+      const val = state.rabbits[id]?.val;
+      return val === "kvar" || val === "dod" || val === "sald";
+    });
+    if (!answered.length) return fail("Välj för minst en kanin.");
+    const submissionKey = newKey(); // its own, never the draft's (keyRef)
+    const { rabbits } = toBody(state, submissionKey, report.revision, answered);
+    // toBody omits a half-filled death or sale. Show what its row still needs.
+    const incomplete = answered.filter((id) => !rabbits[id]);
+    if (incomplete.length)
+      return showRefusals(
+        incomplete.map((id) => ({
+          individual_id: id,
+          code: "inte_klar",
+          message: "",
+        })),
+      );
+    return {
+      submission_key: submissionKey,
+      revision: report.revision,
+      rabbits,
+    };
+  };
+
   // Skicka is held from the dry run on: a form mounted meanwhile (Back) waits for it.
   const skicka = async () => {
     let over = () => {};
@@ -1077,39 +1218,33 @@ export function ReportForm({
     }
   };
   const checkAndSend = async () => {
-    if (phase !== "idle" || syncing || olderCopy || refreshing) return;
+    if (
+      submitting.current ||
+      phase !== "idle" ||
+      syncing ||
+      olderCopy ||
+      refreshing
+    )
+      return;
     setRefusals(null);
+    setAnswerSaved(false);
     if (!link && readModeCookieClient() !== env) return fail(ENV_TEXT);
-    let body = toBody(
-      state,
-      keyRef.current!,
-      view.report?.revision ?? null,
-      view.rabbits.map((r) => r.id),
-    );
-    if (isPaper) {
-      const signed = signedOn ?? receivedOn;
-      if (!receivedOn) return fail("Ange dagen blanketten kom in.");
-      if (signed > receivedOn)
-        return fail(
-          "Blankettens datum kan inte vara senare än dagen den kom in.",
-        );
-      const matrikel = matrikelBody(fields);
-      body = {
-        ...body,
-        inbox_item_id: item.id,
-        received_on: receivedOn,
-        signed_on: signed,
-        ...(matrikel ? { matrikel } : {}),
-      };
-    }
-    frozen.current = body; // never stored: it may hold a buyer or a matrikel
+    const body = missing ? prepareCompletion() : prepareReport();
+    if (!body) return;
+    const full = "ending_genbank" in body;
+    // Held only in memory: a retry may include a buyer or matrikel details.
+    if (full) frozen.current = body;
+    else frozenCompletion.current = body;
     clearTimeout(autosaveTimer.current); // a pending autosave must not reach the server after the submission
-    resumeAutosave.current = autosavePending.current;
+    // a save on its way may fail, and Skicka drops its answer: save again if Skicka is refused
+    resumeAutosave.current = autosavePending.current || saving.current !== null;
     submitting.current = true;
     submissions.current += 1;
     setPhase("checking");
     const dry = await safe(
-      actionsRef.current.dryRun(herd.herd, year, body, env, post),
+      full
+        ? actionsRef.current.dryRun(herd.herd, year, body, env, post)
+        : actionsRef.current.dryRunCompletion!(herd.herd, year, body, env),
     );
     if (!dry.ok) {
       return handle(dry.problem);
@@ -1141,6 +1276,7 @@ export function ReportForm({
     setWithdrawing(false);
     if (res.ok) {
       keyRef.current = keyAfter("withdrawn", keyRef.current!);
+      keepMissingEdits.current = false;
       const d = res.data.draft;
       if (d) {
         setState(fromBody(d.data));
@@ -1169,10 +1305,26 @@ export function ReportForm({
   };
 
   const startChange = () => {
-    if (!localCopy) {
-      setState(fromBody(view.draft?.data ?? view.report?.submitted ?? {}));
-      updatedAt.current = view.draft?.updated_at ?? null;
-    }
+    // The browser copy as it is now, also one this or another tab wrote after the mount (the same stamps too): a copy
+    // at the server's version is the base and sent, an older one is offered (#275's "Osparade ändringar på den här
+    // enheten"). Only answers typed on the focused page and not sent go on top.
+    const local = localChoice(view, store, isPaper);
+    const next =
+      local?.adopt ??
+      fromBody(view.draft?.data ?? view.report?.submitted ?? {});
+    if (keepMissingEdits.current)
+      for (const id of view.report?.not_stated ?? []) {
+        const e = state.rabbits[id];
+        if (answeredHere.has(id) && e?.val && e.val !== "ej_angiven")
+          next.rabbits[id] = e;
+      }
+    setState(next);
+    updatedAt.current = view.draft?.updated_at ?? null;
+    if (local?.older) {
+      setOlderCopy(local.older);
+      setVersion(0); // nothing is saved before the choice
+    } else if (local?.adopt) setVersion((n) => n + 1); // autosave sends it
+    keepMissingEdits.current = false;
     setLocalCopy(false);
     setMode("form");
   };
@@ -1194,6 +1346,7 @@ export function ReportForm({
           : saveState === "loggedout"
             ? {
                 kind: "loggedout",
+                autosave: !missing,
                 href: link
                   ? null
                   : `/auth/sign-in?return_to=${encodeURIComponent(typeof window === "undefined" ? "/stamboken/arsrapport" : window.location.pathname)}`,
@@ -1288,8 +1441,8 @@ export function ReportForm({
             setEntered(enteredFrom(rabbits, s));
             setLocalCopy(true);
             setOlderCopy(null);
-            setMode("form");
-            setVersion((n) => n + 1); // autosave sends it over the saved one
+            if (!missing) setMode("form");
+            setVersion((n) => n + 1);
           }}
         >
           Använd den lokala kopian
@@ -1351,6 +1504,7 @@ export function ReportForm({
         <Receipt
           view={view}
           receipt={receipt}
+          accountOffer={accountOffer}
           hasDraft={!!view.draft || localCopy}
           busy={withdrawing || syncing || refreshing}
           onChange={startChange}
@@ -1491,13 +1645,207 @@ export function ReportForm({
   const emailRefusal = lonely.find(
     (r) => refusalField[r.code] === "paper-email",
   );
-  const buttonText = isPaper
-    ? "Skicka och nästa blankett"
-    : view.report
-      ? "Skicka ändringarna"
-      : "Skicka årsrapporten";
+  const buttonText = missing
+    ? "Skicka svar"
+    : isPaper
+      ? "Skicka och nästa blankett"
+      : view.report
+        ? "Skicka ändringarna"
+        : "Skicka årsrapporten";
   const sending = phase === "checking" || phase === "sending";
   const lower = <ReportStatus status={status} />;
+  const errorBox = refusals && (
+    <div
+      ref={boxRef}
+      tabIndex={-1}
+      role="alert"
+      className={styles.errorBox}
+      id="felruta"
+    >
+      <h2>
+        {rabbitErrors.length > 0
+          ? `${rabbitErrors.length} ${rabbitErrors.length === 1 ? "kanin är" : "kaniner är"} inte klara`
+          : "Rapporten kan inte skickas"}
+      </h2>
+      <ul>
+        {rabbitErrors.map((id) => {
+          const r = byId.get(id!);
+          const text = rowErrors.get(id!);
+          return (
+            <li key={id}>
+              <a
+                href={`#rabbit-${id}`}
+                onClick={(e) => {
+                  e.preventDefault();
+                  reveal(id!);
+                }}
+              >
+                {r ? `${r.number} ${r.name ?? ""}` : `Kanin ${id}`}
+              </a>
+              : {text}
+            </li>
+          );
+        })}
+        {lonely.map((r, i) => (
+          <li key={i}>
+            {refusalField[r.code] ? (
+              <a
+                href={`#${refusalField[r.code]}`}
+                onClick={(e) => {
+                  e.preventDefault();
+                  focusId(refusalField[r.code]);
+                }}
+              >
+                {refusalText(r)}
+              </a>
+            ) : (
+              (r.error ?? refusalText(r))
+            )}
+          </li>
+        ))}
+      </ul>
+      {!missing && rabbitErrors.length > 0 && (
+        <button
+          type="button"
+          className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
+          onClick={() => chooseFilter("inte_klara")}
+        >
+          Visa bara dem som inte är klara
+        </button>
+      )}
+    </div>
+  );
+  const memberRow = (r: RabbitView) => (
+    <RabbitRow
+      key={r.id}
+      r={r}
+      entry={
+        missing && !answeredHere.has(r.id)
+          ? UNSTATED // the paper's answer, not a draft's
+          : state.rabbits[r.id]
+      }
+      ending={!missing && state.ending}
+      year={year}
+      canSell={view.can_sell}
+      proposal={proposalFor(r.id)}
+      done={!!done.get(r.id)}
+      error={rowErrors.get(r.id)}
+      onChange={onRow}
+      onSell={onSell}
+      onNextWeight={onNextWeight}
+    />
+  );
+  const soldDialog = (
+    <SoldDialog
+      open={soldFor !== null && !syncing}
+      number={soldRabbit?.number ?? ""}
+      year={year}
+      genebankId={herd.genebank_id}
+      ownHerd={herd.herd}
+      loadHerds={actions.getGenebankHerds}
+      existing={
+        soldFor !== null ? (state.rabbits[soldFor]?.sald ?? null) : null
+      }
+      submitted={
+        soldFor !== null
+          ? (view.report?.submitted?.rabbits?.[soldFor]?.sald ?? null)
+          : null
+      }
+      canSell={view.can_sell}
+      guardTyping={!!link}
+      rabbit={soldRabbit}
+      addressRequired={
+        !isPaper && view.access !== "manager" && view.access !== "admin"
+      }
+      onSave={(s: SaldState) => {
+        if (syncing) return;
+        onRow(soldFor!, { val: "sald", sald: s });
+        setSoldFor(null);
+        if (isPaper) focusLater("paper-number"); // the next row
+      }}
+      onClose={() => setSoldFor(null)}
+    />
+  );
+  const sendButton =
+    phase === "timeout" ? (
+      <button
+        type="button"
+        className={`sb-btn ${styles.btn}`}
+        onClick={() =>
+          send(missing ? frozenCompletion.current! : frozen.current!)
+        }
+      >
+        Försök igen
+      </button>
+    ) : (
+      <button
+        type="button"
+        className={`sb-btn ${styles.btn}`}
+        onClick={skicka}
+        disabled={sending || syncing || !!olderCopy || !ready || refreshing}
+      >
+        {sending ? "Skickar…" : buttonText}
+      </button>
+    );
+
+  if (missing && view.report) {
+    return (
+      <div className={styles.root} style={root}>
+        {heading}
+        <h2 className={styles.headline}>Kaniner som saknas på blanketten</h2>
+        <p className={styles.lead}>
+          Årsrapporten är inskickad. Här kan du komplettera de kaniner som
+          saknas.
+        </p>
+        <p className={styles.lead}>Du kan svara för en kanin i taget.</p>
+        {answerSaved && (
+          <p role="status">
+            Svaret är sparat. Datumet då årsrapporten kom in är oförändrat.
+          </p>
+        )}
+        {olderNotice}
+        {status.kind !== "saved" && lower}
+        {timeoutAlert}
+        {errorBox}
+        {view.report.can_complete_missing ? (
+          <fieldset
+            className={styles.main}
+            disabled={
+              phase !== "idle" || syncing || refreshing || !!olderCopy || !ready
+            }
+          >
+            <div className="sb-card-flat">
+              <div className={styles.list}>{visible.map(memberRow)}</div>
+            </div>
+          </fieldset>
+        ) : (
+          <p>Alla kaniner på listan är besvarade.</p>
+        )}
+        {(view.report.can_complete_missing || phase === "timeout") &&
+          sendButton}
+        {(view.draft || localCopy || olderCopy) && (
+          <p className={styles.lead}>
+            Du har fler ändringar som inte är skickade.
+          </p>
+        )}
+        <div className={styles.actions}>
+          <button
+            type="button"
+            className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
+            disabled={phase !== "idle" || syncing}
+            onClick={() => {
+              keepMissingEdits.current = version > 0;
+              setRefusals(null);
+              setMode("receipt");
+            }}
+          >
+            Visa hela rapporten
+          </button>
+        </div>
+        {soldDialog}
+      </div>
+    );
+  }
   const endCard = (
     <MbCard title="Jag avslutar min besättning">
       <div className={styles.detail}>
@@ -1578,6 +1926,19 @@ export function ReportForm({
       <p className={styles.lead}>
         {`Rapporten gäller kaninerna som fanns i ${isPaper ? "besättningen" : "din besättning"} den 31 december ${year}.`}
       </p>
+      {link && loginTip && (
+        <p className={styles.lead}>
+          Logga gärna in i Stamboken, så kan du sälja direkt och ändra dina
+          uppgifter.{" "}
+          <a
+            href={`/auth/sign-in?return_to=/stamboken/arsrapport/${herd.herd}/${year}`}
+            onClick={signIn}
+          >
+            Logga in
+          </a>{" "}
+          Rapporterar du åt någon annan? Fortsätt då här utan att logga in.
+        </p>
+      )}
       {link && (
         <p className={styles.lead}>
           <a
@@ -1609,67 +1970,7 @@ export function ReportForm({
             <div>
               {deadline && <ReportStatus status={deadline} />}
               {timeoutAlert}
-              {refusals && (
-                <div
-                  ref={boxRef}
-                  tabIndex={-1}
-                  role="alert"
-                  className={styles.errorBox}
-                  id="felruta"
-                >
-                  <h2>
-                    {rabbitErrors.length > 0
-                      ? `${rabbitErrors.length} ${rabbitErrors.length === 1 ? "kanin är" : "kaniner är"} inte klara`
-                      : "Rapporten kan inte skickas"}
-                  </h2>
-                  <ul>
-                    {rabbitErrors.map((id) => {
-                      const r = byId.get(id!);
-                      const text = rowErrors.get(id!);
-                      return (
-                        <li key={id}>
-                          <a
-                            href={`#rabbit-${id}`}
-                            onClick={(e) => {
-                              e.preventDefault();
-                              reveal(id!);
-                            }}
-                          >
-                            {r ? `${r.number} ${r.name ?? ""}` : `Kanin ${id}`}
-                          </a>
-                          : {text}
-                        </li>
-                      );
-                    })}
-                    {lonely.map((r, i) => (
-                      <li key={i}>
-                        {refusalField[r.code] ? (
-                          <a
-                            href={`#${refusalField[r.code]}`}
-                            onClick={(e) => {
-                              e.preventDefault();
-                              focusId(refusalField[r.code]);
-                            }}
-                          >
-                            {refusalText(r)}
-                          </a>
-                        ) : (
-                          (r.error ?? refusalText(r))
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                  {rabbitErrors.length > 0 && (
-                    <button
-                      type="button"
-                      className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
-                      onClick={() => chooseFilter("inte_klara")}
-                    >
-                      Visa bara dem som inte är klara
-                    </button>
-                  )}
-                </div>
-              )}
+              {errorBox}
             </div>
             {isPaper && (
               <div className={styles.sticky}>
@@ -1780,7 +2081,7 @@ export function ReportForm({
                       type="date"
                       className={styles.field}
                       style={{ width: "100%", boxSizing: "border-box" }}
-                      value={signedOn ?? receivedOn}
+                      value={signedOn}
                       max={receivedOn || undefined}
                       onChange={(e) => setSignedOn(e.target.value)}
                     />
@@ -1888,22 +2189,7 @@ export function ReportForm({
             ) : (
               <div className="sb-card-flat">
                 <div className={styles.list}>
-                  {visible.map((r) => (
-                    <RabbitRow
-                      key={r.id}
-                      r={r}
-                      entry={state.rabbits[r.id]}
-                      ending={state.ending}
-                      year={year}
-                      canSell={view.can_sell}
-                      proposal={proposalFor(r.id)}
-                      done={!!done.get(r.id)}
-                      error={rowErrors.get(r.id)}
-                      onChange={onRow}
-                      onSell={onSell}
-                      onNextWeight={onNextWeight}
-                    />
-                  ))}
+                  {visible.map(memberRow)}
                   {visible.length === 0 && (
                     <p className={styles.meta} style={{ padding: 16 }}>
                       Ingen kanin matchar.
@@ -2307,7 +2593,15 @@ export function ReportForm({
             {!isPaper && endCard}
 
             {!isPaper &&
-              (contactSlot ?? (link ? LinkContactCard : ProfileCard))}
+              (contactSlot ?? (
+                <MemberDetails
+                  details={view.member_details}
+                  fields={fields}
+                  onChange={setFields}
+                  track={(call) => track(key, call)}
+                  returnTo={`/stamboken/arsrapport/${herd.herd}/${year}`}
+                />
+              ))}
 
             {(isPaper ? needReason : editor) && (
               <MbCard title="Orsak">
@@ -2331,26 +2625,7 @@ export function ReportForm({
           </fieldset>
           <div className={styles.sideSend}>
             {lower}
-            {phase === "timeout" ? (
-              <button
-                type="button"
-                className={`sb-btn ${styles.btn}`}
-                onClick={() => send(frozen.current!)}
-              >
-                Försök igen
-              </button>
-            ) : (
-              <button
-                type="button"
-                className={`sb-btn ${styles.btn}`}
-                onClick={skicka}
-                disabled={
-                  sending || syncing || !!olderCopy || !ready || refreshing
-                }
-              >
-                {sending ? "Skickar…" : buttonText}
-              </button>
-            )}
+            {sendButton}
           </div>
         </div>
       )}
@@ -2420,34 +2695,7 @@ export function ReportForm({
         />
       )}
 
-      <SoldDialog
-        open={soldFor !== null && !syncing}
-        number={soldRabbit?.number ?? ""}
-        year={year}
-        genebankId={herd.genebank_id}
-        ownHerd={herd.herd}
-        loadHerds={actions.getGenebankHerds}
-        existing={
-          soldFor !== null ? (state.rabbits[soldFor]?.sald ?? null) : null
-        }
-        submitted={
-          soldFor !== null
-            ? (view.report?.submitted?.rabbits?.[soldFor]?.sald ?? null)
-            : null
-        }
-        canSell={view.can_sell}
-        rabbit={soldRabbit}
-        addressRequired={
-          !isPaper && view.access !== "manager" && view.access !== "admin"
-        }
-        onSave={(s: SaldState) => {
-          if (syncing) return;
-          onRow(soldFor!, { val: "sald", sald: s });
-          setSoldFor(null);
-          if (isPaper) focusLater("paper-number"); // the next row
-        }}
-        onClose={() => setSoldFor(null)}
-      />
+      {soldDialog}
       <PurchaseDialog
         open={buying}
         year={year}

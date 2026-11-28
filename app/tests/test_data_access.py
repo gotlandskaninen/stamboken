@@ -183,6 +183,8 @@ class TestDataAccess(DatabaseTest):
                     target = None
                 else:
                     target["individuals"] = [i.as_dict() for i in herd_members(herd)]
+                    if "bank_account_number" in target:  # the herd read carries the account's revision too
+                        target["bank_account_revision"] = da.support_account_revision(herd.membership_id)
 
                 if value is None or target is None:
                     self.assertEqual(value, target)

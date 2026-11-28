@@ -125,6 +125,34 @@ def _granted_outside(person):
     )
 
 
+def _account_conflict(person, address):
+    return (
+        data_access.account_with_email(person.email) is not None
+        or _existing_account(person, address)
+        or (person.role != "huvudmedlem" and _granted_outside(person))
+    )
+
+
+def _new_account_prod_access():
+    return os.getenv("SJALVSKAPAT_KONTO_PROD", "false").lower() == "true"
+
+
+def leads_to_prod(person, address):
+    """Could this invitation recipient use its delivery address to sign in to production?"""
+    if not login_code.enabled():
+        return False
+    try:
+        login_code.refuse_unsafe()
+    except login_code.CodeRefused:
+        return False
+    address = login_code.request_address(address)
+    if not address or not login_code.login_address(person, address_hash(address)):
+        return False
+    if person.user_id is not None:
+        return bool(person.user.v2_promoted)
+    return bool((person.email or "").strip()) and _new_account_prod_access() and not _account_conflict(person, address)
+
+
 def create_pending_account(_displayed_version, displayed_sha256):
     """Recheck the proof and possible accounts under lock, then insert and link one new user atomically."""
     rules = published_rules()
@@ -148,7 +176,7 @@ def create_pending_account(_displayed_version, displayed_sha256):
         contact = (person.email or "").strip()
         if not contact or address_hash(contact) != session["pending_contact"]:
             raise InvalidPending
-        login_code.lock_holder_addresses(person)
+        login_code.lock_holder_addresses(person)  # includes the contact address used for the new account
         # Existing accounts can acquire an address or an owner role outside the registry.
         # Serialize the duplicate check and insert with all writes to hbuser, including new accounts.
         DB_PROXY.execute_sql("LOCK TABLE hbuser IN SHARE ROW EXCLUSIVE MODE")
@@ -158,14 +186,7 @@ def create_pending_account(_displayed_version, displayed_sha256):
         login_code.require_open()
         if not pending_valid():
             raise InvalidPending
-        try:
-            data_access._lock_available_account_email(contact)
-        except data_access.AddressInUseError as exc:
-            raise AccountConflict from exc
-        if _existing_account(person, address):
-            raise AccountConflict
-        # shortcut: the page then says an account may already exist; the way out, matrikelansvarig, is the same.
-        if person.role != "huvudmedlem" and _granted_outside(person):
+        if _account_conflict(person, address):
             raise AccountConflict
         accepted_at = datetime.now(timezone.utc)
         AccountRulesSnapshot.get_or_create(
@@ -179,7 +200,7 @@ def create_pending_account(_displayed_version, displayed_sha256):
             rules_version=version,
             rules_accepted_at=accepted_at,
             rules_snapshot=digest,
-            v2_prod_access=os.getenv("SJALVSKAPAT_KONTO_PROD", "false").lower() == "true",
+            v2_prod_access=_new_account_prod_access(),
         )
         try:
             _, conveyed = matrikel.link_member_user(
