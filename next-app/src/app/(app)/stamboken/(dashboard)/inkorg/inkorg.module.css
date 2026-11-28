@@ -530,6 +530,20 @@
   font-weight: 500;
   color: var(--sb-ink-2);
 }
+.requiredMark {
+  margin-left: 2px;
+  color: var(--sb-ink-3);
+}
+/* A mandatory row still empty: Spara waits for it. */
+.reconcileFrame tr[data-missing] > th {
+  color: color-mix(in srgb, var(--sb-lera) 70%, var(--sb-ink));
+}
+.reconcileFrame tr[data-missing] .requiredMark {
+  color: inherit;
+}
+.reconcileFrame tr[data-missing] .reconcileInput {
+  border-color: var(--sb-lera);
+}
 .reconcileRead {
   font-family: var(--sb-mono);
   font-size: 14px;

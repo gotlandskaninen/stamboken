@@ -22,7 +22,7 @@ import {
   type RowKey,
   type SaveMode,
 } from "../lib";
-import { ReconcileTable } from "./ReconcileTable";
+import { missingRows, ReconcileTable } from "./ReconcileTable";
 import styles from "../inkorg.module.css";
 
 const RECOMPUTE_MS = 250; // after the last keystroke
@@ -30,13 +30,16 @@ const RECOMPUTE_MS = 250; // after the last keystroke
 const noLookup: Lookup = async () => undefined;
 // The numbers as the table matched them ("g9001 2411" is G9001-2411), so what stämmer is what Spara sends.
 const NUMBERS = ["individual", "paper_number", "mother", "father"];
+// Okänt is sent as normal registration sends it: null.
 const asMatched = (payload: Record<string, unknown>) =>
   Object.fromEntries(
     Object.entries(payload).map(([key, value]) => [
       key,
-      NUMBERS.includes(key) && typeof value === "string"
-        ? (normalNumber(value) ?? value)
-        : value,
+      key === "sex" && value === "unknown"
+        ? null
+        : NUMBERS.includes(key) && typeof value === "string"
+          ? (normalNumber(value) ?? value)
+          : value,
     ]),
   );
 
@@ -51,14 +54,21 @@ const asMatched = (payload: Record<string, unknown>) =>
 export function CertificateForm({
   itemId,
   doc,
-  colors,
+  colors: itemColors,
+  colorsByLetter,
   canSave,
   onSaved,
   onSkip,
 }: {
   itemId: number;
   doc: InboxDocument;
+  /** The colours of the item's genebank; empty when the list could not be fetched. */
   colors: string[];
+  /**
+   * An item without a genebank: each genebank's colours by its letter, the list taken by the letter of the paper's
+   * number; null when the lists could not be fetched. Left out for an item with a genebank.
+   */
+  colorsByLetter?: Record<string, string[]> | null;
   canSave: boolean;
   onSaved: (document: InboxDocument) => void;
   onSkip: () => void;
@@ -148,6 +158,16 @@ export function CertificateForm({
     return () => clearTimeout(timer);
   }, [version, mode, form, grandparents, latest, ask]);
   const shown = answer?.version === version ? answer.result : null;
+  // Spara waits until nothing mandatory is left, as in "Registrera kanin" (Jonas 2026-11-27).
+  const letter = form.paper_number.trim().charAt(0).toUpperCase();
+  const colors =
+    colorsByLetter === undefined
+      ? itemColors
+      : (colorsByLetter?.[letter] ?? []);
+  // No list to choose from: the fetch failed, or an item without a genebank has no number to tell it yet.
+  const noList = mode === "ny_kanin" && colors.length === 0;
+  const unfetched = colorsByLetter === undefined || colorsByLetter === null;
+  const lacking = missingRows(mode, { ...form, ...grandparents }, colors);
 
   return (
     <RegisterFromCertificate
@@ -157,7 +177,7 @@ export function CertificateForm({
       rex={rex}
       colors={colors}
       lookup={noLookup}
-      canSave={canSave}
+      canSave={canSave && lacking.length === 0}
       submitLabel="Spara och nästa"
       conflictHint="Stämmer pappret? Lämna ärendet till genbanksansvarig."
       onSave={async (payload) => {
@@ -280,9 +300,32 @@ export function CertificateForm({
         </button>
       }
       footer={
-        <p className={styles.muted}>
-          Samma kontroller som när uppfödaren registrerar kaninen.
-        </p>
+        <>
+          {canSave && noList && unfetched && (
+            <p className={styles.error}>
+              Färglistan kunde inte hämtas, så en ny kanin kan inte sparas här
+              nu. Ladda om sidan, eller lämna ärendet till genbanksansvarig.
+            </p>
+          )}
+          {canSave && noList && !unfetched && (
+            <p className={styles.muted}>
+              Välj färg när individnumret på pappret är ifyllt: färgerna är
+              genbankens, och numret visar vilken genbank det är.
+            </p>
+          )}
+          {canSave && lacking.length > 0 && (
+            <p className={styles.muted} aria-live="polite">
+              Kvar att fylla i:{" "}
+              {lacking
+                .map((label) => label[0].toLowerCase() + label.slice(1))
+                .join(", ")}
+              .
+            </p>
+          )}
+          <p className={styles.muted}>
+            Samma kontroller som när uppfödaren registrerar kaninen.
+          </p>
+        </>
       }
     />
   );

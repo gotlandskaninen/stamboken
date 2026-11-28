@@ -892,6 +892,11 @@ Två sorters anrop, valda med `action`.
 Registrerar kaninen precis som `POST /api/v2/individual` gör (samma regler och felsvar), alltid
 med pappersintyg. Kullen anges med föräldrarna och födelsedatumet; finns den inte skapas den.
 
+Kön kräver mer än `POST /api/v2/individual`: färg, kön och båda antalen ska också finnas, som i
+"Registrera kanin" (Jonas beslut 2026-11-27). Går intyget inte att läsa letar handläggaren fram
+uppgifterna innan kaninen sparas; ingen kanin sparas med tomma obligatoriska fält. Formuläret
+låter inte handläggaren klicka Spara förrän allt är ifyllt.
+
 ```json
 {
   "action": "ny_kanin",
@@ -915,11 +920,11 @@ Vad på intyget som hör till vilket fält:
 | Kaninens nummer (individnumret) | `paper_number`, krävs, till exempel `G1-2511` |
 | Intygsnummer | `paper_certificate`, krävs, högst 20 tecken |
 | Namn | `name`, högst 50 tecken |
-| Kön | `sex`: `female`, `male` |
+| Kön | `sex`, krävs: `female`, `male` eller `null` för okänt (nyckeln måste finnas) |
 | Födelsedatum | `birth_date`, krävs om `breeding_id` saknas |
-| Färg | `color`: färgens namn som det står i genbankens färglista |
-| Kullstorlek (antal födda) | `litter_size`, krävs när kullen skapas, minst 1 |
-| Antal levande vid 6 veckor | `litter_size6w`, krävs när kullen skapas, minst 1 och högst `litter_size`; står inte alltid på intyget |
+| Färg | `color`, krävs: färgens namn som det står i färglistan för genbanken kaninen registreras i (kullens besättning) |
+| Kullstorlek (antal födda) | `litter_size`, krävs, minst 1; för en kull som finns lika med kullens |
+| Antal levande vid 6 veckor | `litter_size6w`, krävs, minst 1 och högst `litter_size` |
 | Mor: nummer | `mother`, krävs om `breeding_id` saknas: en registrerad kanin |
 | Far: nummer | `father`, som `mother`; samma genbank som modern |
 | Mor och far: namn och färg; far- och morföräldrarna (nummer, namn och färg) | skickas inte. De följer av mor och far i registret. Visa registrets uppgifter bredvid fotot så att handläggaren kan jämföra. |
@@ -947,7 +952,7 @@ Kullen skapas i moderns besättning, och kaninen föds där. Kaninen måste vara
 
 | Status | När |
 |---|---|
-| 400 | `Välj mor och far bland registrerade kaniner.` (en unge utan föräldrar), ett datum, en kullstorlek eller ett individnummer som saknas eller är fel |
+| 400 | `Välj färg.`, `Välj kön: hona, hane eller okänt.`, `Ange antal födda (minst 1).`, `Ange antal levande vid 6 veckor (minst 1).`, `Antal levande vid 6 veckor kan inte vara fler än antal födda.`, och efter registreringens egna kontroller `Välj en färg ur genbankens lista.` (färgen finns inte i listan för genbanken kaninen registreras i) `Kullen har N födda i Stamboken.` (en kull som finns har ett annat antal födda än pappret; har den inget tar den pappersintygets), `Kullen har redan N kaniner i Stamboken.` (pappersintygets antal födda rymmer inte kullens kaniner och den nya) och `Kullen har N levande efter 6 veckor i Stamboken.` (kullens bekräftade antal är ett annat än papprets; ett preliminärt ersätts av papprets) (med `field`, inget sparas); `Välj mor och far bland registrerade kaniner.` (en unge utan föräldrar), ett datum, en kullstorlek eller ett individnummer som saknas eller är fel |
 | 403 | anroparen får inte registrera i moderns besättning (`Modern finns inte i en besättning där du får registrera kaniner.` eller `Åtkomst nekad`) |
 | 409, `title: "number_conflict"` | pappersintygets individnummer stämmer inte med det Stamboken ger. Svaret har kontrollens fält: `stamboken_number`, `paper_number`, `check_status`, `conflicts`, `choices`, `actions`. Inget sparas. Visa skillnaden; väljer handläggaren Stambokens nummer, skicka samma anrop med `"resolution": {"expected_number": "<stamboken_number>", "choice": "use_stamboken_number"}`. Stämmer pappret, lämna posten till genbanksansvarig. |
 | 409, `title: "litter_order_conflict"` | kullen är född före en kull som redan har kullnummer det året |

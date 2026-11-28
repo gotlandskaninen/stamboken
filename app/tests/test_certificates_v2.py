@@ -219,7 +219,28 @@ class TestPedigreeTemplateV2(unittest.TestCase):
 
     def test_breed_under_title(self):
         html = self._html(breed="Mellerudskanin", genebank="Mellerud")
-        self.assertIn('<p class="breed">Ras: Mellerudskanin</p>', html)
+        self.assertIn('<p class="breed">Mellerudskanin</p>', html)
+        self.assertNotIn("Ras:", html)
+        self.assertIn("Färg och kännetecken", html)  # as on the paper certificate
+
+    def test_long_notes_keep_one_page(self):
+        """The header must not grow: long notes still fit on one A4 page with the footer, for both breeds, a new
+        certificate and both reissues. The word counts sit just under origin/main's limits (140, 126, 105)."""
+        from weasyprint import HTML  # pylint: disable=import-outside-toplevel
+
+        gen = CertificateGeneratorV2()
+        qr_svg = gen.generate_qr_svg("https://example.com/verify/abc")
+        cases = (({}, 136), ({"replaces_date": "2024-07-05"}, 122), ({"replaces_v1": True}, 104))
+        for breed in ("Gotlandskanin", "Mellerudskanin"):
+            for reissue, words in cases:
+                with self.subTest(breed=breed, reissue=reissue):
+                    data = _sample_data()
+                    data.update(breed=breed, notes=" ".join(["Ord"] * words), **reissue)
+                    html = gen.env.get_template("pedigree.html").render(  # nosemgrep: direct-use-of-jinja2
+                        qr_svg=qr_svg, **data
+                    )
+                    pages = HTML(string=html, base_url=gen.env.loader.searchpath[0]).render().pages
+                    self.assertEqual(len(pages), 1)
 
     def test_individual_number_in_one_field(self):
         # the whole number in one weight, the letter without a coloured box

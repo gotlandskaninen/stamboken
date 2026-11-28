@@ -499,7 +499,8 @@ export type CertForm = {
   paper_number: string;
   paper_certificate: string;
   name: string;
-  sex: "" | "female" | "male";
+  /** "unknown" only in the queue, where Okänt is a choice of its own (sent as null). */
+  sex: "" | "female" | "male" | "unknown";
   birth_date: string;
   color: string;
   litter_size: string;
@@ -526,10 +527,16 @@ const EMPTY_FORM: CertForm = {
   individual: "",
 };
 
-/** The form's first values: empty, or what the image reading proposes (läst and härlett carry a value). */
+/**
+ * The form's first values: empty, or what the image reading proposes (läst and härlett carry a value). The count
+ * alive at 6 weeks only as read: one taken from the registry may be a litter's unconfirmed copy of its count born,
+ * and saving would confirm it.
+ */
 export function initialCertForm(proposal: Proposal | null): CertForm {
   const form = { ...EMPTY_FORM };
   for (const key of Object.keys(EMPTY_FORM) as (keyof CertForm)[]) {
+    if (key === "litter_size6w" && proposal?.fields[key]?.source !== "läst")
+      continue;
     const value = proposal?.fields[key]?.value;
     if (value !== undefined && value !== null)
       Object.assign(form, { [key]: String(value) });
@@ -618,7 +625,13 @@ export function takeRead(
   const text = read.trim();
   switch (key) {
     case "sex":
-      return /^hon/i.test(text) ? "female" : /^han/i.test(text) ? "male" : null;
+      return /^hon/i.test(text)
+        ? "female"
+        : /^han/i.test(text)
+          ? "male"
+          : /^okän/i.test(text)
+            ? "unknown"
+            : null;
     case "birth_date":
       return isoDate(text);
     case "litter_size":

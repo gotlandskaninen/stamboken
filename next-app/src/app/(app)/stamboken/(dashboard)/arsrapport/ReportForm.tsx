@@ -1842,7 +1842,7 @@ export function ReportForm({
       onChange={onRow}
       onSell={onSell}
       onUndo={
-        actions.undoSale
+        actions.undoSale && !missing // the focused page answers only what paper left out
           ? (id) =>
               askUndo({
                 id,
