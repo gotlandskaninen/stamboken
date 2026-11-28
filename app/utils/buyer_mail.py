@@ -6,7 +6,6 @@ utils.herd_tracking imports this module, so it imports nothing that imports that
 """
 
 import logging
-import os
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -18,7 +17,6 @@ from utils.database import (
     HOLDER_CHANGING_KINDS,
     MEMBERSHIP_OPTIN_FOR,
     BuyerContact,
-    DigitalCertificateV2,
     HerdTracking,
     Individual,
     SaleProposal,
@@ -137,21 +135,9 @@ def _certificate_pdf(rabbit):
     file that cannot be fetched raises: the queue tries again rather than send the mail without it.
     """
     # Imported here: cert_acess imports data_access, which imports utils.herd_tracking.
-    from utils.cert_acess import (  # pylint: disable=import-outside-toplevel
-        download_certificate_s3,
-        download_certificate_v2,
-    )
+    from utils.cert_acess import current_certificate_pdf  # pylint: disable=import-outside-toplevel
 
-    cert = DigitalCertificateV2.get_or_none(
-        (DigitalCertificateV2.individual == rabbit.id) & DigitalCertificateV2.is_current
-    )
-    if cert is None:
-        return None if rabbit.digital_certificate is None else download_certificate_s3(rabbit.number)
-    path = os.path.join("uppladdningar", cert.file_path)
-    if not os.path.exists(path):
-        return download_certificate_v2(cert.verification_token)
-    with open(path, "rb") as pdf:
-        return pdf.read()
+    return current_certificate_pdf(rabbit)
 
 
 def lock_certificate_holder(params):

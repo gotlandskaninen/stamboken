@@ -51,9 +51,8 @@ from flask_talisman import Talisman
 from limits import parse as parse_limit
 from peewee import fn
 from utils.cert_acess import (
-    check_certificate_s3,
     create_pdf_response,
-    download_certificate_s3,
+    current_certificate_pdf,
     get_certificate,
     get_certificate_data,
     verify_certificate_checksum,
@@ -2811,17 +2810,21 @@ def issue_certificate(i_number):
     if refused:
         return refused
 
-    certificate_exists = ind_data.get("digital_certificate", None)
+    individual = db.Individual.get(db.Individual.number == i_number)
+    try:
+        if settings.service.demo_instance:  # never a stored certificate (stamboken-drift #117 p3)
+            from utils.cert_service_v2 import demo_certificate_pdf  # pylint: disable=import-outside-toplevel
 
-    if request.method == "GET":
-        try:
-            present = check_certificate_s3(ind_number=ind_data["number"])
-            if certificate_exists and present:
-                cert = download_certificate_s3(i_number)
-                return create_pdf_response(pdf_bytes=cert, obj_name=f"{i_number}_certificate.pdf")
-        except Exception as ex:  # pylint: disable=broad-except
-            print(ex)
-            return jsonify({"response": "Error processing your request"}), 400
+            has_one = individual.digital_certificate is not None
+            cert = demo_certificate_pdf(individual, ind_data, user_id) if has_one else None
+        else:  # the current v2 certificate from the data volume, or a v1 one from S3
+            cert = current_certificate_pdf(individual)
+    except Exception as ex:  # pylint: disable=broad-except
+        APP.logger.warning("Could not fetch the certificate of %s: %s", i_number, ex)
+        return jsonify({"response": "Error processing your request"}), 400
+    if cert is None:
+        return jsonify({"response": "Inget intyg finns"}), 404
+    return create_pdf_response(pdf_bytes=cert, obj_name=f"{i_number}_certificate.pdf")
 
 
 @APP.route("/api/certificates/preview/<i_number>", methods=["POST", "GET"])

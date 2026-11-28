@@ -17,12 +17,14 @@ summary says why:
   original attester's name.
 
 Without --run nothing is signed or stored (the S3 client still sends its usual CreateBucket). With --run each rabbit
-is its own transaction under the rabbit and number locks; the v1 PDF stays at <number>/certificate.pdf until the v2
-row has been committed, and only then is that key overwritten, so a failed attempt can be run again. A rabbit that has
-a current v2 row is not selected. The summary names rabbits, herds and fields, never people, unless --visa-namn asks
-for the attesters of the herds where more than one person issued.
+is its own transaction under the rabbit and number locks: the v1 PDF is copied to the data volume as
+uppladdningar/certifikat/v1/<certificate number>.pdf and the v2 certificate is written next to the other v2 files.
+S3 is only read (stamboken-drift #69, step A), so the v1 file stays where it is and a failed attempt can be run
+again. A rabbit that has a current v2 row is not selected. The summary names rabbits, herds and fields, never people,
+unless --visa-namn asks for the attesters of the herds where more than one person issued.
 """
 
+import os
 from collections import Counter, defaultdict
 
 import click
@@ -33,7 +35,7 @@ import utils.number_assets as number_assets
 from botocore.exceptions import BotoCoreError, ClientError
 from flask.cli import AppGroup
 from peewee import fn
-from utils.cert_acess import download_certificate_s3, get_certificate_data, upload_certificate
+from utils.cert_acess import download_certificate_s3, get_certificate_data
 from utils.cert_service_v2 import generate_and_store, invalidate_caches
 from utils.certificate_lifecycle import CertState
 from utils.certificates import FORM_KEYS
@@ -140,34 +142,35 @@ def check(rabbit, pdf):
     return user
 
 
+ARCHIVE = os.path.join("uppladdningar", "certifikat", "v1")
+ARCHIVED_OTHER = "arkivet har redan en annan v1-fil för intygsnumret"
+
+
+def archive(rabbit, pdf):
+    """Keep the v1 original on the data volume, once, under its certificate number, which never moves."""
+    path = os.path.join(ARCHIVE, f"{rabbit.digital_certificate}.pdf")
+    if os.path.exists(path):
+        with open(path, "rb") as kept:
+            if kept.read() != pdf:
+                raise Stop(ARCHIVED_OTHER)
+        return
+    os.makedirs(ARCHIVE, exist_ok=True)
+    with open(path, "xb") as copy:
+        copy.write(pdf)
+
+
 def reissue(rabbit):
-    """
-    Check and reissue one rabbit in its own transaction, under its row lock and then its number lock, or Stop. The
-    number lock is a session lock held past the commit, so no renumber moves the key before the v1 file there gives
-    way to the v2 one. Returns False when the v2 row is committed but that key could not be written.
-    """
-    locked = None
-    try:
-        with db.DATABASE.atomic():
-            if not da.lock_individual_for_edit(rabbit.id):
-                raise Stop(STATE)
-            rabbit = db.Individual.get_by_id(rabbit.id)
-            number_assets.lock_number(rabbit.number)
-            locked = rabbit.number
-            user = check(rabbit, v1_pdf(rabbit))
-            _, signed = generate_and_store(
-                rabbit, user, rabbit.as_dict(), user.uuid, replaces_v1=True, upload_legacy=False
-            )
-        try:
-            upload_certificate(pdf_bytes=signed, ind_number=rabbit.number)
-            written = True
-        except Exception:  # pylint: disable=broad-except  # reported per rabbit: it has its v2 row and is not selected again
-            written = False
-    finally:
-        if locked:
-            number_assets.unlock_number(locked)
+    """Check, archive and reissue one rabbit in its own transaction under its row and number locks, or Stop."""
+    with db.DATABASE.atomic():
+        if not da.lock_individual_for_edit(rabbit.id):
+            raise Stop(STATE)
+        rabbit = db.Individual.get_by_id(rabbit.id)
+        number_assets.lock_number(rabbit.number, xact=True)  # a renumber moves the v1 file in S3 under this lock
+        pdf = v1_pdf(rabbit)
+        user = check(rabbit, pdf)
+        archive(rabbit, pdf)
+        generate_and_store(rabbit, user, rabbit.as_dict(), user.uuid, replaces_v1=True)
     invalidate_caches(rabbit)
-    return written
 
 
 @certificates_cli.command("reissue-v1")
@@ -186,7 +189,7 @@ def reissue_v1(run, limit, number, visa_namn):
     if number:
         query = query.where(db.Individual.number == number)
 
-    done, stopped, fields_changed, legacy_left = 0, [], Counter(), []
+    done, stopped, fields_changed = 0, [], Counter()
     attesters = defaultdict(set)  # origin herd -> names read, to list the herds with more than one
     for rabbit in query.order_by(db.Individual.id):
         if limit is not None and done >= limit:
@@ -195,8 +198,7 @@ def reissue_v1(run, limit, number, visa_namn):
         try:
             if run:
                 try:
-                    if not reissue(rabbit):
-                        legacy_left.append(rabbit.number)  # committed; only the number's key still holds v1
+                    reissue(rabbit)
                 except (Stop, SigningUnavailableError, ClientError, BotoCoreError):
                     raise
                 except Exception as exc:  # pylint: disable=broad-except  # one rabbit's failure must not stop the rest
@@ -218,10 +220,6 @@ def reissue_v1(run, limit, number, visa_namn):
             raise click.ClickException(f"S3 svarar inte som väntat: {exc}. {done} klara innan.") from exc
 
     click.echo(f"{'Återutfärdade' if run else 'Skulle återutfärdas'}: {done}")
-    if legacy_left:
-        click.echo(f"Varav v2-raden finns men <nummer>/certificate.pdf är kvar som v1: {len(legacy_left)}")
-        for rabbit_number in legacy_left:
-            click.echo(f"  {rabbit_number}")
     click.echo(f"Stoppade, behåller v1-intyget: {len(stopped)}")
     for reason, count in Counter(reason for _, _, reason in stopped).most_common():
         click.echo(f"  {count} {reason}")

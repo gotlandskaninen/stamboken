@@ -152,8 +152,6 @@ class TestCertificateStateMachine(CertV2Mixin, FlaskTest):
         stubs = (
             patch.object(cert_service._generator, "generate_pedigree", return_value=b"%PDF-1.4 stub"),
             patch.object(cert_service, "sign_pdf", side_effect=lambda pdf, **kw: pdf),
-            patch.object(cert_service, "upload_certificate_v2"),
-            patch.object(cert_service, "upload_certificate"),
             patch.object(cert_service, "open", mock_open(), create=True),
         )
         for stub in stubs:

@@ -1,10 +1,12 @@
 import datetime
 import hashlib
+import os
 
 from flask import abort, make_response
 from werkzeug.utils import secure_filename
 
 import utils.data_access as da  # isort:skip
+import utils.database as db  # isort:skip
 import utils.certificates as certs  # isort:skip
 import utils.s3 as s3  # isort:skip
 import utils.settings as settings  # isort:skip
@@ -83,12 +85,37 @@ def check_certificate_s3(ind_number):
     return s3.get_s3_client().head_object(object_name=f"{ind_number}/certificate.pdf")
 
 
+def _current_row(individual):
+    return db.DigitalCertificateV2.get_or_none(
+        (db.DigitalCertificateV2.individual == individual.id) & db.DigitalCertificateV2.is_current
+    )
+
+
+def current_certificate_pdf(individual):
+    """
+    The rabbit's certificate as GET /api/v2/certificates/<number> serves it: the current v2 row's file on the data
+    volume (its S3 copy when the disk lost it), else a v1 certificate from S3, else None. A file that cannot be
+    fetched raises.
+    """
+    cert = _current_row(individual)
+    if cert is None:
+        return None if individual.digital_certificate is None else download_certificate_s3(individual.number)
+    path = os.path.join("uppladdningar", cert.file_path)
+    if not os.path.exists(path):
+        return download_certificate_v2(cert.verification_token)
+    with open(path, "rb") as pdf:
+        return pdf.read()
+
+
 def verify_certificate_checksum(ind_number, checksum):
     """
-    Returns whether a certificate exists with the given checksum.
+    Returns whether the rabbit's current certificate has the given checksum: the v2 row's, else the v1 file's in S3.
     """
-    s3_sum = get_certificate_checksum(ind_number)
-    return s3_sum == checksum
+    individual = db.Individual.get_or_none(db.Individual.number == ind_number)
+    cert = _current_row(individual) if individual else None
+    if cert is not None:
+        return cert.checksum == checksum
+    return get_certificate_checksum(ind_number) == checksum
 
 
 def flatten_list_of_dcts(in_list):
