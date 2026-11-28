@@ -8,6 +8,7 @@ import { hideTyckTillWhileClicking } from "./hide-tyck-till";
 // och att MANUAL_CERT_UUID pekar på ett utfärdat intyg (annars hoppas den bilden).
 
 const USERS = {
+  member: { username: "test-member", password: "test-member-pass" },
   owner: { username: "test-gk-owner", password: "test-gk-owner-pass" },
   manager: { username: "test-gk-manager", password: "test-gk-pass" },
   admin: { username: "test-admin", password: "test-admin-pass" },
@@ -129,7 +130,7 @@ const SHOTS: Shot[] = [
   { name: "profil", role: "owner", path: "/stamboken/profil" },
   {
     name: "lagg-till-person",
-    role: "owner",
+    role: "member",
     path: "/stamboken/profil",
     actions: [
       "click:Lägg till person",

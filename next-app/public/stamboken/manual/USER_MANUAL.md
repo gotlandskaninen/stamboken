@@ -736,7 +736,7 @@ Bara huvudmedlemmen kan lägga till personer i medlemskapet. En familjemedlem
 eller skötare loggar sedan in med sin egen e-postadress och en kod, och kan
 sköta besättningen när du har gett personen åtkomst.
 
-1. Öppna avatarmenyn och klicka **Min profil**. Gå till rutan **Personer i medlemskapet**.
+1. Öppna avatarmenyn och klicka **Profil**. Du kommer till sidan **Min profil**. Gå till rutan **Personer i medlemskapet**.
 2. Klicka **Lägg till person**.
 3. Fyll i **Förnamn**, **Efternamn** och personens **egen e-post**. Utan e-post kan
    personen inte logga in med kod. **Telefon** är valfritt.
@@ -744,8 +744,9 @@ sköta besättningen när du har gett personen åtkomst.
    (åtkomst i ett år, som du kan förnya).
 5. Klicka **Lägg till**. Personen syns nu i rutan.
 6. Ska personen sköta kaniner klickar du **Ge åtkomst** på personens rad, väljer
-   **Besättning** och klickar **Ge åtkomst**. Utan åtkomst syns ingen besättning
-   för personen.
+   **Besättning** och klickar **Ge åtkomst**. Personen får då redigera den valda
+   besättningen. Kontrollera under **Besättningsåtkomst** på personens rad att
+   åtkomsten står där.
 7. Be personen gå till inloggningen och logga in med sin e-postadress och koden i
    mejlet, se [Logga in med kod](#logga-in-med-kod). Kontot skapas första gången
    personen loggar in, se [Skapa ditt konto första gången](#skapa-ditt-konto-första-gången).
@@ -753,13 +754,16 @@ sköta besättningen när du har gett personen åtkomst.
 ![Dialogen Lägg till person](lagg-till-person-desktop.png)
 
 Adressen måste vara personens egen. Används den redan av en annan aktiv person i
-matrikeln står det "Personen är tillagd, men e-postadressen används redan av en
-annan aktiv person." Personen är då tillagd, men inget mejl med kod kommer till
-henne eller honom. Ta bort personen med **Ta bort** och lägg till den igen med en
-egen adress, eller mejla <admin@gotlandskaninen.se>.
+ditt medlemskap står det "Personen är tillagd, men e-postadressen används redan av
+en annan aktiv person." Personen är då tillagd, men koden kan gå till den andra
+personens brevlåda. Ta bort personen med **Ta bort** och lägg till den igen med en
+egen adress. Finns adressen i ett annat medlemskap varnar inte formuläret, men
+personen kan ändå inte logga in med kod. Kommer det ingen kod, mejla
+<admin@gotlandskaninen.se>.
 
 Förnya en skötares åtkomst med **Förnya** och dra tillbaka den med **Återkalla**.
-**Ta bort** tar personen ur medlemskapet och återkallar all åtkomst. Är du inte
+**Ta bort** tar personen ur medlemskapet och återkallar personens besättningsåtkomst.
+Har personen en äldre ägarroll på sitt konto kan administratören behöva ta bort den. Är du inte
 huvudmedlem saknas knappen **Lägg till person**: be huvudmedlemmen lägga till dig.
 Fungerar något inte, mejla <admin@gotlandskaninen.se>.
 
