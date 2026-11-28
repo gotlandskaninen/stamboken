@@ -171,13 +171,53 @@ class ReissueV1Test(CertV2Mixin, FlaskTest):
         self.assertIn("ändrat fält IdNamn: 1", result.output)
 
     def test_a_number_changed_since_v1_is_reported_apart_and_can_be_allowed(self):
-        self.rabbit = self.v1_rabbit(self.rabbit, 4711, IdÅrKullIndivid="2111", FarÅrKullIndivid="1999")
+        self.rabbit = self.v1_rabbit(self.rabbit, 4711, IdÅrKullIndivid="2111")
         result = self.assert_stopped(reissue_cli.NUMBER_CHANGED)
         self.assertNotIn(reissue_cli.CHANGED + "\n", result.output)
         self.assertIn("ändrat fält IdÅrKullIndivid: 1", result.output)
         result = self.invoke("--run", "--tillat-nytt-nummer")
         self.assertIn("Återutfärdade: 1", result.output, result.output)
         self.assertEqual(self.pedigree.call_args.args[0]["genebank_aki"], self.rabbit.number.split("-")[1])  # today's
+
+    def test_a_renumbered_father_counts_as_a_number_change_only_with_the_audit_log(self):
+        father = self.rabbit.breeding.father
+        herd, aki = father.number.split("-")
+        self.rabbit = self.v1_rabbit(self.rabbit, 4711, FarÅrKullIndivid="1999")
+        self.assert_stopped(reissue_cli.UNPROVEN, "--tillat-nytt-nummer")  # a littermate put in as father looks alike
+        db.AuditLog.create(
+            table_name="individual",
+            record_id=str(father.id),
+            operation="UPDATE",
+            old_data={"number": f"{herd}-1999"},
+            new_data={"number": f"{herd}-{aki}"},
+        )
+        self.assert_stopped(reissue_cli.NUMBER_CHANGED)
+        self.assertIn("Återutfärdade: 1", self.invoke("--run", "--tillat-nytt-nummer").output)
+
+    def test_a_number_another_rabbit_also_held_is_no_proof(self):
+        father = self.rabbit.breeding.father
+        herd, aki = father.number.split("-")
+        self.rabbit = self.v1_rabbit(self.rabbit, 4711, FarÅrKullIndivid="1999")
+        for record in (father, self.individuals[0]):  # the old number went on to another rabbit
+            db.AuditLog.create(
+                table_name="individual",
+                record_id=str(record.id),
+                operation="UPDATE",
+                old_data={"number": f"{herd}-1999"},
+                new_data={"number": record.number},
+            )
+        self.assert_stopped(reissue_cli.UNPROVEN, "--tillat-nytt-nummer")
+
+    def test_fields_the_v1_certificate_never_had_are_left_empty_unless_asked(self):
+        update = db.Individual.update(foot_ring="FGK 218", microchip="752098100012345", rex=True)
+        update.where(db.Individual.id == self.rabbit.id).execute()
+        self.assertIn("Återutfärdade: 1", self.invoke("--run").output)
+        data = self.pedigree.call_args.args[0]
+        self.assertEqual((data["foot_ring"], data["microchip"], data["rex"]), (None, None, None))
+        rabbit = self.v1_rabbit(self.individuals[0], 4712)
+        db.Individual.update(foot_ring="FGK 219").where(db.Individual.id == rabbit.id).execute()
+        self.assertIn("Återutfärdade: 1", self.invoke("--run", "--ta-med-nya-falt").output)
+        self.assertEqual(self.pedigree.call_args.args[0]["foot_ring"], "FGK 219")
 
     def test_a_number_and_another_field_changed_is_a_change(self):
         self.rabbit = self.v1_rabbit(self.rabbit, 4711, IdÅrKullIndivid="2111", IdNamn="Ett annat namn")

@@ -34,7 +34,7 @@ import utils.database as db
 import utils.number_assets as number_assets
 from botocore.exceptions import BotoCoreError, ClientError
 from flask.cli import AppGroup
-from peewee import fn
+from peewee import SQL, fn
 from utils.cert_acess import download_certificate_s3, get_certificate_data
 from utils.cert_service_v2 import generate_and_store, invalidate_caches, sync_directories
 from utils.certificate_lifecycle import CertState
@@ -55,6 +55,7 @@ NO_RIGHT = "kontot med namnet får inte utfärda för uppfödarbesättningen"
 OTHER_HERD = "v1-intyget utfärdades i en annan besättning än uppfödarens"
 CHANGED = "uppgifterna har ändrats sedan v1-intyget"
 NUMBER_CHANGED = "bara numret har ändrats sedan v1-intyget (kaninens eller en förälders)"
+UNPROVEN = "en anfaders nummer har ändrats, utan belägg i audit-loggen för att det är samma kanin"
 FAILED = "fel vid utfärdandet"
 
 # Fields that are not facts about the rabbit: who, where and when it was attested, and the number checked on its own.
@@ -62,6 +63,18 @@ NOT_COMPARED = {"", "fullname", "herd", "issue_date", "digital_certificate"}
 # A renumbering (a new number, litters renumbered, a corrected birth year or origin herd) is a correction the genebank
 # managers may make (Jonas 2026-11-28): reported apart, and with --tillat-nytt-nummer reissued under today's number.
 NUMBER_FIELDS = {field for field, key in FORM_KEYS.items() if key.endswith(("genebank_number", "genebank_aki"))}
+# Each number on the v1 form: its two fields and how to reach that rabbit from the one reissued.
+NUMBERS = {
+    "": ("IdGenbanksNummer", "IdÅrKullIndivid", ()),
+    "F": ("FarGenbanksNummer", "FarÅrKullIndivid", ("father",)),
+    "M": ("MorGenbanksNummer", "MorÅrKullIndivid", ("mother",)),
+    "FF": ("FarfarGenbanksNummer", "FarfarÅrKullInvidid", ("father", "father")),
+    "FM": ("FarmorGenbanksNummer", "FarmorÅrKullInvidid", ("father", "mother")),
+    "MF": ("MorfarGenbanksNummer", "MorfarÅrKullIndivid", ("mother", "father")),
+    "MM": ("MormorGenbanksNummer", "MormorÅrKullIndivid", ("mother", "mother")),
+}
+# Printed on the v2 certificate but never on v1: left empty unless --ta-med-nya-falt (Jonas has not decided).
+NOT_ON_V1 = ("foot_ring", "microchip", "rex")
 
 
 class Stop(Exception):
@@ -143,9 +156,43 @@ def check(rabbit, pdf, allow_number=False):
     )
     if changed and not set(changed) <= NUMBER_FIELDS:
         raise Stop(CHANGED, changed)
+    if changed and not all(renumbered(rabbit, fields, today, changed)):
+        raise Stop(UNPROVEN, changed)
     if changed and not allow_number:
         raise Stop(NUMBER_CHANGED, changed)
     return user
+
+
+def renumbered(rabbit, fields, today, changed):
+    """
+    For each number that differs from the v1 form: whether it is provably the same rabbit under a new number. The
+    reissued rabbit is (its PDF carries its certificate number). An ancestor is only when today's certificate prints
+    that ancestor's number, and the audit log shows that it, and no other rabbit, ever held the v1 number: a littermate
+    put in as parent, a number handed on to another rabbit, or an ancestor the attester can no longer see is not.
+    """
+    for herd_field, aki_field, path in NUMBERS.values():
+        if herd_field not in changed and aki_field not in changed:
+            continue
+        if not path:
+            yield True
+            continue
+        ancestor = rabbit
+        for parent in path:
+            ancestor = getattr(ancestor.breeding, parent, None) if ancestor and ancestor.breeding else None
+        printed = f"{today.get(FORM_KEYS[herd_field]) or ''}-{today.get(FORM_KEYS[aki_field]) or ''}"
+        if ancestor is None or printed != ancestor.number:
+            yield False
+            continue
+        old = f"{fields.get(herd_field, '').strip()}-{fields.get(aki_field, '').strip()}"
+        holders = {
+            row.record_id
+            for row in db.AuditLog.select(db.AuditLog.record_id).where(
+                (db.AuditLog.table_name == "individual")
+                & SQL("(old_data->>'number' = %s OR new_data->>'number' = %s)", (old, old))
+            )
+        }
+        held_now = db.Individual.select().where(db.Individual.number == old, db.Individual.id != ancestor.id).exists()
+        yield holders == {str(ancestor.id)} and not held_now
 
 
 ARCHIVE = os.path.join("uppladdningar", "certifikat", "v1")
@@ -176,9 +223,12 @@ def archive(rabbit, pdf):
     sync_directories(ARCHIVE)  # the link and any directory made for it outlast a crash after the v2 row commits
 
 
-def reissue(rabbit, allow_number=False):
+def reissue(rabbit, allow_number=False, new_fields=False):
     """Check, archive and reissue one rabbit in its own transaction under its row and number locks, or Stop."""
     with db.DATABASE.atomic():
+        # One snapshot for the check and the render: a grandparent changed meanwhile in another litter would otherwise
+        # be signed unchecked. A conflicting write fails the rabbit, and a rerun checks it again.
+        db.DATABASE.execute_sql("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
         if not da.lock_individual_for_edit(rabbit.id):
             raise Stop(STATE)
         rabbit = db.Individual.get_by_id(rabbit.id)
@@ -186,7 +236,8 @@ def reissue(rabbit, allow_number=False):
         pdf = v1_pdf(rabbit)
         user = check(rabbit, pdf, allow_number)
         archive(rabbit, pdf)
-        generate_and_store(rabbit, user, rabbit.as_dict(), user.uuid, replaces_v1=True)
+        blank = () if new_fields else NOT_ON_V1
+        generate_and_store(rabbit, user, rabbit.as_dict(), user.uuid, replaces_v1=True, blank=blank)
     invalidate_caches(rabbit)
 
 
@@ -198,7 +249,8 @@ def reissue(rabbit, allow_number=False):
 @click.option(
     "--tillat-nytt-nummer", is_flag=True, help="Återutfärda också när bara numret har ändrats sedan v1-intyget."
 )
-def reissue_v1(run, limit, number, visa_namn, tillat_nytt_nummer):
+@click.option("--ta-med-nya-falt", is_flag=True, help="Skriv ut benring, chip och päls, som inte stod på v1-intyget.")
+def reissue_v1(run, limit, number, visa_namn, tillat_nytt_nummer, ta_med_nya_falt):
     """Give the v1 certificates a v2 certificate attested by the original issuer (stamboken #142)."""
     current = db.DigitalCertificateV2.select().where(
         (db.DigitalCertificateV2.individual == db.Individual.id) & db.DigitalCertificateV2.is_current
@@ -218,7 +270,7 @@ def reissue_v1(run, limit, number, visa_namn, tillat_nytt_nummer):
         try:
             if run:
                 try:
-                    reissue(rabbit, tillat_nytt_nummer)
+                    reissue(rabbit, tillat_nytt_nummer, ta_med_nya_falt)
                 except (Stop, SigningUnavailableError, ClientError, BotoCoreError):
                     raise
                 except Exception as exc:  # pylint: disable=broad-except  # one rabbit's failure must not stop the rest
