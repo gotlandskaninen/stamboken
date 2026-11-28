@@ -70,11 +70,14 @@ def _sold_and_dead(herd, round_):
         )
         .order_by(HerdTracking.herd_tracking_date, HerdTracking.id)
     )
+    sold = list(sold)
+    dialog = arsrapport.month_only([row.operation_id for row in sold])  # the sale dialog's, without their day
     sold = [
         (
             row.individual_id,
             row.herd_tracking_date,
-            arsrapport.dayless(written.get(str(row.operation_id)), row.individual_id, "sald"),
+            str(row.operation_id) in dialog
+            or arsrapport.dayless(written.get(str(row.operation_id)), row.individual_id, "sald"),
         )
         for row in sold
     ]
@@ -171,6 +174,18 @@ def receipt_context(report, submission) -> dict:
             "hull": _HULL.get(entry.hull),
         }
         for rabbit, entry in sorted(entries.items(), key=lambda item: numbers[item[0]])
+    ]
+    besides = data.get("salda_direkt") or []  # sold in the year without the report: the sale dialog's, or Sälj
+    sold_numbers = _numbers(sale["individual_id"] for sale in besides)
+    rabbits += [
+        {
+            "number": sold_numbers[sale["individual_id"]],
+            "choice": "Såld " + ("utanför genbanken" if sale["till"] == "utanfor" else f"till {sale['till']}"),
+            "when": _when(sale),
+            "weight": None,
+            "hull": None,
+        }
+        for sale in besides
     ]
     health = data.get("health")
     diseases = [_disease(name, value) for name, value in (data.get("diseases") or {}).items()]

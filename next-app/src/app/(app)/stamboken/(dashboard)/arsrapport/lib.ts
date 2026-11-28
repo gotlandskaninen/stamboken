@@ -30,7 +30,10 @@ export interface RabbitView {
   death_date: string | null;
   death_day_known: boolean; // false: the report gave it without its day, so its month is shown
   state: "att_valja" | "redan_rapporterad" | "via_flytt";
-  later: { kind: string; date: string } | null;
+  // day_known false: the report's sale dialog gave it without its day, so its month is shown
+  later: { kind: string; date: string; day_known?: boolean } | null;
+  undo?: number | null; // a sale after 31 December the viewer may Ångra (the `later` move)
+  undo_to?: string; // that sale's buyer herd, for Ångra's question
   buyer_removed?: boolean;
   removed_buyer_dates?: string[];
   registered_buyer_date?: string;
@@ -264,6 +267,7 @@ export interface ReportView {
     to_herd: string;
     date: string;
     day_known: boolean; // false: the report gave it without its day (5.3), so its month is shown
+    undo?: number | null; // the sale's row, when the viewer may Ångra it as on the rabbit page
   }[];
   // The report's sale proposals not taken back (5.9), without the buyer.
   forslag: {
@@ -284,7 +288,12 @@ export interface ReportView {
     received_at: string;
     report_date: string;
     on_time: boolean;
-    submitted: (Partial<DraftData> & { received_on?: string }) | null;
+    submitted:
+      | (Partial<DraftData> & {
+          received_on?: string;
+          salda_direkt?: { individual_id: number }[]; // the year's sales no report wrote
+        })
+      | null;
     can_change: boolean;
     not_stated: number[];
     from_paper?: boolean; // a submission came from paper: the receipt shows its day, not a time
@@ -753,6 +762,8 @@ export function toBody(
   revision: number | null,
   // Skicka sends only the rabbits on the current list: a sold one may linger in a local copy (FB1)
   listed?: readonly number[],
+  // and the year's sold rabbits (view.sales), whose defects still go with the report
+  sold: readonly number[] = [],
 ): Submission {
   const rabbits: Record<string, BodyEntry> = {};
   for (const [id, e] of Object.entries(state.rabbits)) {
@@ -782,7 +793,12 @@ export function toBody(
     defects:
       state.health === "ja"
         ? state.defects
-            .filter((d) => !listed || listed.includes(d.individual_id))
+            .filter(
+              (d) =>
+                !listed ||
+                listed.includes(d.individual_id) ||
+                sold.includes(d.individual_id),
+            )
             .map((d) => ({
               individual_id: d.individual_id,
               beskrivning: d.beskrivning.trim() || null,

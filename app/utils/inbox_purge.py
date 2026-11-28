@@ -511,6 +511,10 @@ def erase_buyer_from_inbox(herd_tracking_id, whole_items=False):
             & (InboxDocument.individual == sale.individual_id)
             & InboxDocument.doc_type.in_(ORIGINAL_TYPES)
         )
+        # a sale entered from a paper form (the report's direct sale, or Skicka on paper): every page of that form
+        traced = InboxOperation.select(InboxOperation.document).where(InboxOperation.operation_id == sale.operation_id)
+        forms = InboxDocument.select(InboxDocument.item).where(InboxDocument.id.in_(traced))
+        shown |= InboxDocument.item.in_(forms) & (InboxDocument.doc_type == "arsblankett")
     paths = _null_originals(shown)
     _clear_text(InboxDocument.select(InboxDocument.item).where(shown))
     return paths

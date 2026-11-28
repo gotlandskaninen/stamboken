@@ -181,6 +181,11 @@ async function markSold(
   await dialog.getByLabel(/^År/).selectOption(when.ar);
   await dialog.getByLabel(/^Månad/).selectOption(when.manad);
   if (when.dag) await dialog.getByLabel("Dag (frivillig)").fill(when.dag);
+  // Before the first Skicka the sale is registered at once, after Sälj's tick box (Jonas 2026-11-26).
+  const ack = dialog.getByRole("checkbox", {
+    name: /^Jag har tagit del av informationen/,
+  });
+  if (await ack.count()) await ack.check();
   await dialog.getByRole("button", { name: "Spara försäljningen" }).click();
   await expect(dialog).toBeHidden();
 }
@@ -395,6 +400,9 @@ test("5. Typ C: stor besättning med döda och sålda", async ({
   for (const n of outside)
     await markSold(page, r(n), { outside: `Köpare ${n}` });
   await markSold(page, r(2556), { herd: "M1220" });
+  // Registered at once and sold in 2025: off the list, under "Sålda under 2025".
+  await expect(rows(page)).toHaveCount(24);
+  await expect(page.getByText(/^M9003-2556 till M1220/)).toBeVisible();
   // 20 stay: 17 adults with a weight, 3 kits.
   for (const n of [...range(2314, 2320), ...range(2431, 2440)]) {
     await kvar(r(n)).check();
@@ -408,7 +416,7 @@ test("5. Typ C: stor besättning med döda och sålda", async ({
   await test.step("bred skärm", async () => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await rows(page).last().scrollIntoViewIfNeeded();
-    await expect(page.getByText(/av 30 klara/)).toBeInViewport();
+    await expect(page.getByText(/av 24 klara/)).toBeInViewport();
     await expect(page.getByLabel("Hitta en kanin")).toBeInViewport();
     await expect(page.getByRole("button", { name: SEND })).toBeInViewport();
 
@@ -468,17 +476,8 @@ test("5. Typ C: stor besättning med döda och sålda", async ({
   await expect(page.getByText(/^Inskickad/)).toHaveCount(0);
   expect((await storedReport(page, "M9003")).report).toBeNull();
   await shot(page, "typ-c-dragen-tillbaka");
-  await expect(rows(page)).toHaveCount(30);
-  // The five buyers outside the genebank are kept across Dra tillbaka (Jonas 2026-11-16), shown only as saved,
-  // so Skicka goes through at once.
-  await r(outside[0])
-    .getByRole("button", { name: "Ändra", exact: true })
-    .click();
-  const dialog = page.getByRole("dialog");
-  await expect(dialog).toContainText("Köparen finns sparad.");
-  await expect(dialog).not.toContainText(`Köpare ${outside[0]}`);
-  await dialog.getByRole("button", { name: "Avbryt" }).click();
-  await expect(dialog).toBeHidden();
+  // The six sales are the register's, not the report's: Dra tillbaka leaves them, and the rabbits stay off the list.
+  await expect(rows(page)).toHaveCount(24);
   await page.getByRole("button", { name: SEND }).click();
   await submitted(page);
   await shot(page, "typ-c-kvitto-igen");
@@ -637,7 +636,8 @@ test("9. Typ G: död och försäljning vid årsskiftet", async ({
   await submitted(page);
   await loginInline(page, context, USERS.manager);
   expect(await villkor()).toMatchObject({ hane: true, hona: true });
-  expect(await alive()).toEqual(["M9007-2411", "M9007-2412"]);
+  // The female's sale was registered at once: she counts by her move, without the report's attestation.
+  expect(await alive()).toEqual(["M9007-2411"]);
 
   // b) The same on 31 December 2025: both were gone on 31 December.
   await loginInline(page, context, USERS.owner);
@@ -646,13 +646,19 @@ test("9. Typ G: död och försäljning vid årsskiftet", async ({
   await male.getByLabel(/^År/).selectOption("2025");
   await male.locator('select[id^="month-"]').selectOption("12");
   await male.getByLabel("Dag (frivillig)").fill("31");
-  await female.getByRole("button", { name: "Ändra", exact: true }).click();
-  const dialog = page.getByRole("dialog");
-  await dialog.getByLabel(/^År/).selectOption("2025");
-  await dialog.getByLabel(/^Månad/).selectOption("12");
-  await dialog.getByLabel("Dag (frivillig)").fill("31");
-  await dialog.getByRole("button", { name: "Spara försäljningen" }).click();
-  await expect(dialog).toBeHidden();
+  // Her sale is the register's: Ångra it, then sell her in the report, which goes with Skicka now.
+  await female.getByRole("button", { name: "Ångra" }).click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Ångra försäljning" })
+    .click(); // Ångra asks first
+  await expect(female.getByRole("radio", { name: "Såld" })).toBeVisible();
+  await markSold(
+    page,
+    female,
+    { herd: "M9001" },
+    { ar: "2025", manad: "12", dag: "31" },
+  );
   await shot(page, "typ-g-andrad");
   await page.getByRole("button", { name: SEND }).click();
   await submitted(page);

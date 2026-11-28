@@ -11,8 +11,10 @@ import {
   getMothers,
   reportPurchase,
   saveDraft,
+  sellNow,
   sendPurchasePhotos,
   submitReport,
+  undoSale,
   submitCompletion,
   withdrawReport,
 } from "../../actions";
@@ -71,6 +73,8 @@ export default async function ReportPage({
           changeLitter,
           getFathers,
           getMothers,
+          sellNow,
+          undoSale,
         }}
       />
     );
@@ -94,6 +98,8 @@ export default async function ReportPage({
         changeLitter,
         getFathers,
         getMothers,
+        sellNow,
+        undoSale,
       }}
       post={post}
     />

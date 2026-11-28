@@ -70,6 +70,8 @@ import {
 } from "./AddRabbit";
 import { uploadPhoto } from "./rabbitActions";
 import { reportError } from "./reportError";
+import type { HerdTrackingRow } from "@/lib/herdTracking";
+import { VoidHerdTrackingDialog } from "@/components/individual/VoidHerdTrackingDialog";
 import styles from "./arsrapport.module.css";
 
 export type ReportActions = Pick<
@@ -88,10 +90,12 @@ export type ReportActions = Pick<
       | "changeLitter"
       | "getFathers"
       | "getMothers"
+      | "sellNow"
+      | "undoSale"
       | "dryRunCompletion" // the focused page for the rabbits a paper form left out
       | "submitCompletion"
     >
-  >; // "Kullar under Y"
+  >; // "Kullar under Y", and a sale registered at once with its Ångra (the link has neither)
 
 // "Från blankett": what the page around the form supplies (PaperEntry).
 export interface PaperProps {
@@ -999,6 +1003,60 @@ export function ReportForm({
     [edit, missing, answeredHere],
   );
   const onSell = React.useCallback((id: number) => setSoldFor(id), []);
+  // Jonas 2026-11-26: before the first Skicka a sale is registered at once, as Sälj does; then the row lets go
+  // of it, and the view (the rabbit off the list, or counted by its move) shows it.
+  // after the last day a sale needs the reason Skicka asks for, so it goes with Skicka
+  const direct =
+    !!actions.sellNow && view.can_sell && !view.report && canEdit && !late;
+  const register = async (s: SaldState) => {
+    const id = soldFor!;
+    const res = await track(
+      key,
+      actions.sellNow!(herd.herd, year, id, s, env, post),
+    );
+    if (!res.ok) {
+      const refusals = res.problem.extensions?.refusals;
+      if (Array.isArray(refusals)) return refusalText(refusals[0] as Refusal);
+      refreshView(); // a lost answer may hide a sale that went through
+      return reportError("Försäljningen", "registreras", res.problem);
+    }
+    edit((st) => {
+      const rabbits = { ...st.rabbits };
+      delete rabbits[id];
+      return { ...st, rabbits };
+    });
+    setEntered((e) => e.filter((x) => x !== id));
+    setSoldFor(null);
+    refreshView();
+    if (isPaper) focusLater("paper-number"); // the next row
+    return null;
+  };
+  // Ångra asks first, in the rabbit page's dialog (Jonas 2026-11-26): the sale's row, its day and buyer herd.
+  const [undoing, setUndoing] = React.useState<{
+    id: number;
+    date: string;
+    to: string;
+  } | null>(null);
+  const [undoBusy, setUndoBusy] = React.useState(false);
+  const [undoError, setUndoError] = React.useState<string | null>(null);
+  const askUndo = (id: number, date: string, to: string) => {
+    setUndoError(null);
+    setUndoing({ id, date, to });
+  };
+  const undoSale = async (operationId: string) => {
+    setUndoBusy(true);
+    const res = await track(
+      key,
+      actions.undoSale!(herd.herd, year, undoing!.id, operationId, env),
+    );
+    setUndoBusy(false);
+    refreshView();
+    if (!res.ok)
+      return setUndoError(
+        res.problem.detail || "Försäljningen kunde inte ångras. Försök igen.",
+      );
+    setUndoing(null);
+  };
   const canAddRabbit = canEdit && !isPaper;
   const addRabbit = canAddRabbit && (
     <AddRabbitPrompt
@@ -1157,6 +1215,7 @@ export function ReportForm({
       keyRef.current!,
       view.report?.revision ?? null,
       view.rabbits.map((r) => r.id),
+      view.sales.map((s) => s.individual_id),
     );
     if (isPaper) {
       if (!receivedOn) return fail("Ange dagen blanketten kom in.");
@@ -1732,6 +1791,11 @@ export function ReportForm({
       error={rowErrors.get(r.id)}
       onChange={onRow}
       onSell={onSell}
+      onUndo={
+        actions.undoSale && !missing // the focused page answers only what paper left out
+          ? (id) => askUndo(id, r.later?.date ?? "", r.undo_to ?? "")
+          : undefined
+      }
       onNextWeight={onNextWeight}
     />
   );
@@ -1754,6 +1818,8 @@ export function ReportForm({
       canSell={view.can_sell}
       guardTyping={!!link}
       rabbit={soldRabbit}
+      onRegister={direct ? register : undefined}
+      undoable={view.access === "owner" && !isPaper}
       addressRequired={
         !isPaper && view.access !== "manager" && view.access !== "admin"
       }
@@ -2389,6 +2455,18 @@ export function ReportForm({
                         ? "utanför genbanken"
                         : s.to_herd}
                       , {fmtDayOrMonth(s.date, s.day_known)}
+                      {s.undo && actions.undoSale && (
+                        <>
+                          {" "}
+                          <button
+                            type="button"
+                            className="sb-btn sb-btn-secondary sb-btn-sm"
+                            onClick={() => askUndo(s.undo!, s.date, s.to_herd)}
+                          >
+                            Ångra
+                          </button>
+                        </>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -2516,6 +2594,19 @@ export function ReportForm({
                               {r.number} {r.name}
                             </option>
                           ))}
+                          {view.sales // sold in the year: off the list, but its defect still counts
+                            .filter(
+                              (s) =>
+                                !rabbits.some((r) => r.id === s.individual_id),
+                            )
+                            .map((s) => (
+                              <option
+                                key={s.individual_id}
+                                value={s.individual_id}
+                              >
+                                {s.number}
+                              </option>
+                            ))}
                         </select>
                         <input
                           className={styles.field}
@@ -2696,6 +2787,33 @@ export function ReportForm({
       )}
 
       {soldDialog}
+      <VoidHerdTrackingDialog
+        open={!!undoing}
+        mode="undoSale"
+        row={
+          undoing &&
+          ({
+            date: undoing.date,
+            kind: "TRANSFER",
+            herd: {
+              label:
+                undoing.to === "GX1" || undoing.to === "MX1"
+                  ? "Såld utanför genbanken"
+                  : undoing.to,
+            },
+            reason_replaced: true, // the report asks no reason: the system's, as for a seller with a buyer outside
+          } as unknown as HerdTrackingRow)
+        }
+        note={
+          undoing?.to === "GX1" || undoing?.to === "MX1"
+            ? "Kaninen kommer tillbaka till din besättning, och köparens uppgifter tas bort."
+            : "Kaninen kommer tillbaka till din besättning." // a herd in the genebank: no buyer details are kept
+        }
+        busy={undoBusy}
+        error={undoError}
+        onClose={() => setUndoing(null)}
+        onConfirm={(_reason, operationId) => void undoSale(operationId)}
+      />
       <PurchaseDialog
         open={buying}
         year={year}

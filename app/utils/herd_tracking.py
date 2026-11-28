@@ -28,6 +28,7 @@ from utils.database import (
     HerdTracking,
     InboxDocument,
     InboxItem,
+    InboxOperation,
     Individual,
     IndividualCommand,
     SaleProposal,
@@ -239,8 +240,13 @@ def buyer_items(rows, lock=False):
         return set()
     individual_ids = {r.individual_id for r in rows}
     sales = HerdTracking.select(HerdTracking.id).where(HerdTracking.individual.in_(individual_ids))
+    # a sale entered from a paper form traces its operation to the form's page (InboxOperation)
+    ops = HerdTracking.select(HerdTracking.operation_id).where(HerdTracking.individual.in_(individual_ids))
+    traced = InboxOperation.select(InboxOperation.document).where(InboxOperation.operation_id.in_(ops))
     documents = InboxDocument.select(InboxDocument.item).where(
-        InboxDocument.individual.in_(individual_ids) | InboxDocument.herd_tracking_id.in_(sales)
+        InboxDocument.individual.in_(individual_ids)
+        | InboxDocument.herd_tracking_id.in_(sales)
+        | InboxDocument.id.in_(traced)
     )
     query = InboxItem.select(InboxItem.id).where(InboxItem.id.in_(documents)).order_by(InboxItem.id)
     return {item_id for (item_id,) in (query.for_update() if lock else query).tuples()}
@@ -454,6 +460,90 @@ def _operation_rows(individual_ids, operation_id):
 KEPT_BUYER_GONE = "Köparen finns inte längre sparad. Fyll i köparen, eller välj såld utanför genbanken."
 
 
+def removed_sale_buyers(herd_id, genebank_id, rabbits, current_ops=()):
+    """Erased outside sales by rabbit and date, and the rabbits with an erased sale in current_ops."""
+    sales = (
+        HerdTracking.select()
+        .join(Herd, on=(HerdTracking.herd == Herd.id))
+        .where(
+            HerdTracking.individual.in_(rabbits),
+            HerdTracking.kind == "TRANSFER",
+            HerdTracking.from_herd == herd_id,
+            HerdTracking.buyer_removed,
+            Herd.genebank == genebank_id,
+            Herd.herd.in_(OUTSIDE_GENEBANK_HERDS),
+        )
+    )
+    if not sales.exists():  # most sales need no audit history
+        return set(), {}
+    reports = YearlyHerdReport.select(YearlyHerdReport.id).where(YearlyHerdReport.herd == herd_id)
+    ops = YearlyReportSubmission.select(fn.jsonb_array_elements_text(YearlyReportSubmission.operation_ids)).where(
+        YearlyReportSubmission.report.in_(reports)
+    )
+    own_sale = HerdTracking.operation_id.cast("text").in_(ops)
+    # The FK is now NULL. The tracking audit still names the contact id it lost, and the contact audit says why.
+    deleted = AuditLog.select(AuditLog.record_id).where(
+        AuditLog.table_name == BuyerContact._meta.table_name,
+        AuditLog.operation == "DELETE",
+        AuditLog.new_data["action"].in_(
+            ("radering", "invandning", "gallring_fem_ar", "gallring_dod", "studs", "ej_informerad")
+        ),
+    )
+    history = AuditLog.select(AuditLog.transaction_id).where(
+        AuditLog.table_name == HerdTracking._meta.table_name, AuditLog.record_id == HerdTracking.id.cast("text")
+    )
+    erased_contact = history.where(
+        AuditLog.operation == "UPDATE",
+        AuditLog.new_data["holder_contact_id"].is_null(),
+        AuditLog.old_data["holder_contact_id"].in_(deleted),
+    )
+    born_removed = history.where(AuditLog.operation == "INSERT", AuditLog.new_data["buyer_removed"] == "true")
+    voided = (
+        history.where(AuditLog.changed_fields.contains("voided_at"), AuditLog.new_data["voided_at"].is_null(False))
+        .order_by(AuditLog.id.desc())
+        .limit(1)
+    )
+    returned = HerdTracking.alias()
+    bought_back = returned.select(returned.id).where(
+        returned.individual == HerdTracking.individual, returned.herd == herd_id, sold_on(HerdTracking, returned)
+    )
+    sales = (
+        sales.select(
+            HerdTracking.individual,
+            HerdTracking.herd_tracking_date,
+            HerdTracking.created_at,
+            HerdTracking.operation_id,
+            HerdTracking.voided_at,
+            own_sale.alias("from_report"),
+            fn.EXISTS(erased_contact).alias("erased"),
+            born_removed.alias("removed_transaction"),
+            voided.alias("void_transaction"),
+        )
+        .where(
+            # an erasure on request counts on a voided sale too: Ångra of a direct sale, or one undone elsewhere
+            ht_not_voided() | own_sale | fn.EXISTS(erased_contact),
+            ~fn.EXISTS(bought_back),
+        )
+        .order_by(HerdTracking.id)
+        .objects()
+    )
+    current = set()
+    dates, replaced = {}, set()
+    for sale in sales:
+        rabbit, day = sale.individual_id, sale.herd_tracking_date
+        if not sale.erased:
+            # A report can write a buyer_removed transfer on resubmission even if its inferred day has moved.
+            carried = sale.from_report or (rabbit, sale.removed_transaction) in replaced or day in dates.get(rabbit, ())
+            if sale.removed_transaction is None or (not carried and BuyerContact.purge_at_for(day) > sale.created_at):
+                continue
+        dates.setdefault(rabbit, set()).add(day)
+        if sale.void_transaction is not None:
+            replaced.add((rabbit, sale.void_transaction))
+        if sale.voided_at is None and str(sale.operation_id) in current_ops:
+            current.add(rabbit)
+    return current, dates
+
+
 def record_herd_tracking(
     individual,
     herd,
@@ -530,6 +620,11 @@ def record_herd_tracking(
                 f"Kaninen finns redan i {target.herd}. En ny köpare utanför föreningen registreras av "
                 "genbanksansvarig, med köparens namn och ort."
             )
+        if kind == "TRANSFER" and target.herd in OUTSIDE_GENEBANK_HERDS and not buyer_removed:
+            _, erased_dates = removed_sale_buyers(holder_id, target.genebank_id, [individual_id])
+            buyer_removed = when in erased_dates.get(individual_id, ())
+            if buyer_removed and (contact_fields or holder_contact is not None):
+                raise HerdTrackingConflict(BUYER_REMOVED)
         contact = None
         if holder_contact is not None:  # locked against the nightly purge, which deletes by id
             contact = BuyerContact.select().where(BuyerContact.id == holder_contact).for_update().first()

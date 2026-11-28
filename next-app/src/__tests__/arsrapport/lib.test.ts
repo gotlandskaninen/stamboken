@@ -492,6 +492,15 @@ describe("a body-shaped draft with wrong types", () => {
   });
 });
 
+describe("a rabbit sold in the year", () => {
+  it("keeps its defect at Skicka, though it left the list", () => {
+    const defects = [{ individual_id: 9, beskrivning: "Skev tand" }];
+    const s: FormState = { ...emptyState(), health: "ja", defects };
+    expect(toBody(s, "k", null, [1, 2], [9]).defects).toEqual(defects);
+    expect(toBody(s, "k", null, [1, 2]).defects).toEqual([]);
+  });
+});
+
 describe("keyAfter", () => {
   it("keeps the key after a timeout and renews it otherwise", () => {
     const k = "11111111-1111-4111-8111-111111111111";

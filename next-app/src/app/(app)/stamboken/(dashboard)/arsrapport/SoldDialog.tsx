@@ -14,6 +14,7 @@ import {
   useTheme,
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
+import { useTranslation } from "react-i18next";
 import {
   BuyerFields,
   buyerComplete,
@@ -55,6 +56,9 @@ interface Props {
   >;
   addressRequired: boolean;
   canSell: boolean; // a proposal takes no kept buyer (F1, K1)
+  // Registered at once (Jonas 2026-11-26): ticked as in Sälj, then `onRegister`, whose error stays in the dialog.
+  onRegister?: (s: SaldState) => Promise<React.ReactNode>;
+  undoable?: boolean; // the seller may Ångra it for 7 days, as on the rabbit page
   guardTyping?: boolean; // the link page: a buyer typed here lives only in memory, so the tab asks before it closes
   onSave: (s: SaldState) => void;
   onClose: () => void;
@@ -175,10 +179,16 @@ function Body({
   rabbit,
   canSell,
   addressRequired,
+  onRegister,
+  undoable,
   guardTyping,
   onSave,
   onClose,
 }: Props) {
+  const { t } = useTranslation();
+  const [acknowledged, setAcknowledged] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+  const [refused, setRefused] = React.useState<React.ReactNode>(null);
   const theme = useTheme();
   const mobile = useMediaQuery(theme.breakpoints.down("sm"));
   const [outside, setOutside] = React.useState(existing?.till === "utanfor");
@@ -263,6 +273,10 @@ function Body({
         ? "Skriv köparens e-post."
         : null,
     month: manad === null ? "Välj månad." : null,
+    acknowledge:
+      onRegister && !acknowledged
+        ? "Kryssa i rutan för att registrera försäljningen."
+        : null,
   };
   const problem = Object.values(errors).some(Boolean);
   const shown = (e: string | null) => (tried ? e : null);
@@ -276,19 +290,28 @@ function Body({
         ?.focus();
   }, [attempt]);
 
-  const save = () => {
+  const sale = (): SaldState => ({
+    till: outside ? "utanfor" : code,
+    ar,
+    manad,
+    dag: dag ? Number(dag) : null,
+    kopare:
+      outside && !removed && complete ? buyerPayload(buyer, ar, true) : null,
+    ...(outside && !removed && kept ? { kopare_id: existing.kopare_id } : {}),
+  });
+  const save = async () => {
     setTried(true);
     if (problem) return setAttempt((n) => n + 1);
-    onSave({
-      till: outside ? "utanfor" : code,
-      ar,
-      manad,
-      dag: dag ? Number(dag) : null,
-      kopare:
-        outside && !removed && complete ? buyerPayload(buyer, ar, true) : null,
-      ...(outside && !removed && kept ? { kopare_id: existing.kopare_id } : {}),
-    });
+    if (!onRegister) return onSave(sale());
+    if (busy) return;
+    setBusy(true);
+    setRefused(null);
+    const error = await onRegister(sale()); // the caller closes the dialog when it went through
+    setBusy(false);
+    setRefused(error);
   };
+  const s = sale();
+  const mailed = !!s.kopare && "email" in s.kopare && !!s.kopare.email;
 
   return (
     <Dialog
@@ -386,7 +409,7 @@ function Body({
                 email: shown(errors.email) ?? undefined,
               }}
             />
-            {!kept && (
+            {!kept && !onRegister && (
               <p className={styles.meta}>
                 Köparens uppgifter sparas när du skickar rapporten, inte innan.
               </p>
@@ -450,6 +473,43 @@ function Body({
             />
           </label>
         </div>
+        {onRegister && (
+          <>
+            <label className={styles.choice}>
+              <input
+                type="checkbox"
+                checked={acknowledged}
+                aria-invalid={!!shown(errors.acknowledge)}
+                aria-describedby={
+                  shown(errors.acknowledge) ? "sold-ack-error" : undefined
+                }
+                onChange={(e) => setAcknowledged(e.target.checked)}
+              />
+              <span>{t("individual.sell.acknowledge")}</span>
+            </label>
+            {shown(errors.acknowledge) && (
+              <p id="sold-ack-error" className={styles.errorText}>
+                {errors.acknowledge}
+              </p>
+            )}
+            <p className={styles.meta}>{t("individual.sell.lockNote")}</p>
+            {(mailed || undoable) && (
+              <p className={styles.meta}>
+                {[
+                  mailed && "Köparen får ett mejl om vad föreningen sparar.",
+                  undoable && "Du kan ångra försäljningen i 7 dagar.",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+              </p>
+            )}
+            {refused && (
+              <p className={styles.errorText} role="alert">
+                {refused}
+              </p>
+            )}
+          </>
+        )}
       </DialogContent>
       <DialogActions
         sx={{
@@ -470,7 +530,8 @@ function Body({
         <button
           type="button"
           className={`sb-btn ${styles.btn}`}
-          onClick={asking ? onClose : save}
+          onClick={asking ? onClose : () => void save()}
+          disabled={busy}
         >
           {asking ? "Stäng" : "Spara försäljningen"}
         </button>
