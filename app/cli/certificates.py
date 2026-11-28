@@ -153,18 +153,19 @@ def check(rabbit, pdf, allow_number=False):
         for field, key in FORM_KEYS.items()
         if key not in NOT_COMPARED and normalised(fields.get(field)) != normalised(today.get(key))
     )
-    if changed and not (set(changed) <= NUMBER_FIELDS and all(renumbered(rabbit, fields, changed))):
+    if changed and not (set(changed) <= NUMBER_FIELDS and all(renumbered(rabbit, fields, today, changed))):
         raise Stop(CHANGED, changed)
     if changed and not allow_number:
         raise Stop(NUMBER_CHANGED, changed)
     return user
 
 
-def renumbered(rabbit, fields, changed):
+def renumbered(rabbit, fields, today, changed):
     """
     For each number that differs from the v1 form: whether it is provably the same rabbit under a new number. The
-    reissued rabbit is (its PDF carries its certificate number). An ancestor is only when the audit log shows that
-    rabbit once had the v1 number; a littermate with the same name and colour put in as parent is not.
+    reissued rabbit is (its PDF carries its certificate number). An ancestor is only when today's certificate prints
+    that ancestor's number, and the audit log shows that it, and no other rabbit, ever held the v1 number: a littermate
+    put in as parent, a number handed on to another rabbit, or an ancestor the attester can no longer see is not.
     """
     for herd_field, aki_field, path in NUMBERS.values():
         if herd_field not in changed and aki_field not in changed:
@@ -175,16 +176,20 @@ def renumbered(rabbit, fields, changed):
         ancestor = rabbit
         for parent in path:
             ancestor = getattr(ancestor.breeding, parent, None) if ancestor and ancestor.breeding else None
+        printed = f"{today.get(FORM_KEYS[herd_field]) or ''}-{today.get(FORM_KEYS[aki_field]) or ''}"
+        if ancestor is None or printed != ancestor.number:
+            yield False
+            continue
         old = f"{fields.get(herd_field, '').strip()}-{fields.get(aki_field, '').strip()}"
-        yield ancestor is not None and (
-            db.AuditLog.select()
-            .where(
+        holders = {
+            row.record_id
+            for row in db.AuditLog.select(db.AuditLog.record_id).where(
                 (db.AuditLog.table_name == "individual")
-                & (db.AuditLog.record_id == str(ancestor.id))
-                & SQL("old_data->>'number' = %s", (old,))
+                & SQL("(old_data->>'number' = %s OR new_data->>'number' = %s)", (old, old))
             )
-            .exists()
-        )
+        }
+        held_now = db.Individual.select().where(db.Individual.number == old, db.Individual.id != ancestor.id).exists()
+        yield holders == {str(ancestor.id)} and not held_now
 
 
 ARCHIVE = os.path.join("uppladdningar", "certifikat", "v1")
@@ -218,6 +223,9 @@ def archive(rabbit, pdf):
 def reissue(rabbit, allow_number=False, new_fields=False):
     """Check, archive and reissue one rabbit in its own transaction under its row and number locks, or Stop."""
     with db.DATABASE.atomic():
+        # One snapshot for the check and the render: a grandparent changed meanwhile in another litter would otherwise
+        # be signed unchecked. A conflicting write fails the rabbit, and a rerun checks it again.
+        db.DATABASE.execute_sql("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
         if not da.lock_individual_for_edit(rabbit.id):
             raise Stop(STATE)
         rabbit = db.Individual.get_by_id(rabbit.id)

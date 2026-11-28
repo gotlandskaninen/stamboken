@@ -194,6 +194,20 @@ class ReissueV1Test(CertV2Mixin, FlaskTest):
         self.assert_stopped(reissue_cli.NUMBER_CHANGED)
         self.assertIn("Återutfärdade: 1", self.invoke("--run", "--tillat-nytt-nummer").output)
 
+    def test_a_number_another_rabbit_also_held_is_no_proof(self):
+        father = self.rabbit.breeding.father
+        herd, aki = father.number.split("-")
+        self.rabbit = self.v1_rabbit(self.rabbit, 4711, FarÅrKullIndivid="1999")
+        for record in (father, self.individuals[0]):  # the old number went on to another rabbit
+            db.AuditLog.create(
+                table_name="individual",
+                record_id=str(record.id),
+                operation="UPDATE",
+                old_data={"number": f"{herd}-1999"},
+                new_data={"number": record.number},
+            )
+        self.assert_stopped(reissue_cli.CHANGED, "--tillat-nytt-nummer")
+
     def test_fields_the_v1_certificate_never_had_are_left_empty_unless_asked(self):
         update = db.Individual.update(foot_ring="FGK 218", microchip="752098100012345", rex=True)
         update.where(db.Individual.id == self.rabbit.id).execute()
