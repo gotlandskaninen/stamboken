@@ -24,6 +24,10 @@ async function modeFromProd(
   request: NextRequest,
   session: string,
 ): Promise<Mode | null> {
+  // Without a test API every user is prod (initialMode), so there is nothing to look up. Asking anyway
+  // let a slow API miss the 500 ms timeout, which left sb_mode unset, read as demo and made the
+  // report's server actions answer "Det gick inte att nå testmiljön" (flaky e2e, #45).
+  if (!process.env.API_TEST_INTERNAL_URL) return initialMode(false);
   try {
     const res = await fetch(`${API_BASE}/api/user`, {
       headers: {

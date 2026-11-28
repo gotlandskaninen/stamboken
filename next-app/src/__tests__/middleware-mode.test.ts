@@ -58,6 +58,16 @@ describe("middleware sb_mode resolution", () => {
     expect(render).toContain("sb_mode=demo");
   });
 
+  it("no test API configured: prod without asking Flask", async () => {
+    vi.stubEnv("API_TEST_INTERNAL_URL", "");
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    const { setCookie, retry } = await run("session=abc");
+    expect(setCookie).toBe("prod");
+    expect(retry).toBeUndefined();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it("an invalid sb_mode is resolved like a missing one", async () => {
     vi.stubGlobal("fetch", prodUser(true));
     expect((await run("session=abc; sb_mode=PROD")).setCookie).toBe("prod");

@@ -4,7 +4,8 @@ import { test, expect, type Page } from "@playwright/test";
 // test.step heter som steget i manualen; ändras manualen ändras testet.
 // Kör i projektet mutation-tests (filnamnet matchar /mutation-.*/) mot den
 // seedade e2e-stacken: G1274 ägs av test-gk-owner; föräldraparet
-// Visby Saga × Visby Storm används inte av något annat mutationstest.
+// Visby Saga × Visby Storm delas med mutation-mating-registration, som håller
+// sig till januari-september 2024 (före alla dräktighetsfönster här).
 // Digitalt intyg kräver S3 (s3backend) i stacken.
 
 test.describe.configure({ mode: "serial" });
