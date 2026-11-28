@@ -193,7 +193,13 @@ describe("OnboardingChecklist", () => {
     const hideOffer = vi.fn();
     render(
       <TourContext.Provider
-        value={{ start, offerOpen: false, decline: vi.fn(), hideOffer }}
+        value={{
+          start,
+          offerOpen: () => false,
+          subscribeOffer: () => () => {},
+          decline: vi.fn(),
+          hideOffer,
+        }}
       >
         <OnboardingChecklist
           herd={{ is_active: true, individuals: [] }}

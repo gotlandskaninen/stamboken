@@ -1,4 +1,5 @@
 import "@testing-library/jest-dom/vitest";
+import React from "react";
 import "@/i18n";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -36,6 +37,7 @@ vi.mock("driver.js", () => ({
 }));
 
 import {
+  TourContext,
   TourOffer,
   TourProvider,
   useHideTourOffer,
@@ -131,6 +133,24 @@ describe("the offer", () => {
     mocks.pathname = "/stamboken/arsrapport";
     renderShell();
     expect(screen.queryByRole("region", OFFER)).toBeNull();
+  });
+
+  // A context change while the page hydrates makes React client-render a
+  // page still streaming in, and its server HTML stays as a hidden copy.
+  it("never changes the context value when the offer shows or hides", () => {
+    const values = new Set<unknown>();
+    function Probe() {
+      values.add(React.useContext(TourContext));
+      return null;
+    }
+    renderShell(
+      <>
+        <Probe />
+        <Checklist />
+      </>,
+    );
+    expect(screen.queryByRole("region", OFFER)).toBeNull();
+    expect(values.size).toBe(1);
   });
 
   it("hides while the checklist shows its own Visa runt", () => {

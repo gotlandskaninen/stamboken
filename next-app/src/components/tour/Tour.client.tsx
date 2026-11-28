@@ -16,7 +16,9 @@ interface Tour {
   /** Starts the tour on the current page. */
   start: () => void;
   /** The first-login offer is still unanswered and nothing hides it. */
-  offerOpen: boolean;
+  offerOpen: () => boolean;
+  /** Calls back when offerOpen() may have changed. */
+  subscribeOffer: (onChange: () => void) => () => void;
   /** Nej tack: saved at once. */
   decline: () => void;
   /** Hides the offer while another Visa runt button is on the page. */
@@ -58,13 +60,20 @@ export function TourProvider({ children }: { children: React.ReactNode }) {
   const tour = React.useRef<Driver | null>(null);
   // Bumped by every end: a start still loading driver.js sees it and stops.
   const generation = React.useRef(0);
-  const [answered, setAnswered] = React.useState(false);
-  const [offerHidden, setOfferHidden] = React.useState(false);
-  // localStorage on the client, "no" on the server, so hydration matches.
-  const unanswered = React.useSyncExternalStore(
-    noSubscription,
-    () => !!user && shouldOffer(user.id),
-    () => false,
+  // The offer's state is kept out of the context value, which never changes
+  // while the page hydrates: a change there makes React client-render a page
+  // still streaming in, and its server HTML stays behind as a hidden copy.
+  const offer = React.useRef({
+    answered: false,
+    hidden: false,
+    listeners: new Set<() => void>(),
+  });
+  const setOffer = React.useCallback(
+    (change: { answered?: boolean; hidden?: boolean }) => {
+      Object.assign(offer.current, change);
+      offer.current.listeners.forEach((onChange) => onChange());
+    },
+    [],
   );
 
   const end = React.useCallback(() => {
@@ -102,7 +111,7 @@ export function TourProvider({ children }: { children: React.ReactNode }) {
     // The tour will run: it now counts as the answer to the offer. The offer
     // leaves the page before driver.js measures it, so nothing shifts after.
     answerOffer(user.id);
-    flushSync(() => setAnswered(true));
+    flushSync(() => setOffer({ answered: true }));
     const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     // A resize or rotation can hide a top link mid-step: point anew.
     const onResize = () => {
@@ -166,20 +175,29 @@ export function TourProvider({ children }: { children: React.ReactNode }) {
     tour.current = running;
     window.addEventListener("resize", onResize);
     running.drive();
-  }, [user, t, end, showSnackbar]);
+  }, [user, t, end, showSnackbar, setOffer]);
 
   const value = React.useMemo<Tour>(
     () => ({
       start,
-      offerOpen: !!user && unanswered && !answered && !offerHidden,
+      // localStorage, read on the client only (see TourOffer).
+      offerOpen: () =>
+        !!user &&
+        !offer.current.answered &&
+        !offer.current.hidden &&
+        shouldOffer(user.id),
+      subscribeOffer: (onChange) => {
+        offer.current.listeners.add(onChange);
+        return () => offer.current.listeners.delete(onChange);
+      },
       decline: () => {
         end(); // a start still loading driver.js must not open the tour
         if (user) answerOffer(user.id);
-        setAnswered(true);
+        setOffer({ answered: true });
       },
-      hideOffer: setOfferHidden,
+      hideOffer: (hidden) => setOffer({ hidden }),
     }),
-    [start, end, user, unanswered, answered, offerHidden],
+    [start, end, user, setOffer],
   );
 
   return <TourContext.Provider value={value}>{children}</TourContext.Provider>;
@@ -193,8 +211,14 @@ export function TourOffer() {
   const tour = React.useContext(TourContext);
   const pathname = usePathname();
   const { t } = useTranslation();
+  // "No" on the server, so hydration matches.
+  const open = React.useSyncExternalStore(
+    tour?.subscribeOffer ?? noSubscription,
+    () => !!tour?.offerOpen(),
+    () => false,
+  );
 
-  if (!tour?.offerOpen) return null;
+  if (!tour || !open) return null;
   if (!pathname.startsWith("/stamboken/min-besattning")) return null;
 
   return (
